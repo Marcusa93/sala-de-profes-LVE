@@ -60,7 +60,7 @@ export default function NuevaNotificacionPage() {
   const [supabase] = useState(() => createClient())
 
   const canCreate =
-    profile?.role === 'encargado' || profile?.role === 'chef'
+    profile?.role === 'socio' || profile?.role === 'encargado' || profile?.role === 'chef'
 
   // Form state
   const [title, setTitle] = useState('')

@@ -177,7 +177,7 @@ export default function EquipoPage() {
 
   if (profileLoading) return <LoadingState message="Cargando..." />
 
-  if (!profile || profile.role !== 'encargado') {
+  if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center">
         <ShieldAlert className="size-12 text-[#ea504c]" strokeWidth={1.5} />

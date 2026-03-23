@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import Link from 'next/link'
 import {
   AlertTriangle,
@@ -57,7 +58,7 @@ export default function AlertasPage() {
   const [activeTab, setActiveTab] = useState<'active' | 'resolved'>('active')
   const [resolvingId, setResolvingId] = useState<string | null>(null)
 
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
 
   // -------------------------------------------------------------------------
   // Fetch alerts

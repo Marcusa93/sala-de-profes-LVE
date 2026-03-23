@@ -291,8 +291,15 @@ export default function NuevoExpedientePage() {
             type="date"
             value={targetDate}
             onChange={(e) => setTargetDate(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'f' || e.key === 'F') {
+                e.preventDefault()
+                setTargetDate(new Date().toISOString().split('T')[0])
+              }
+            }}
             className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
           />
+          <p className="mt-1 text-[10px] text-muted-foreground">Presioná <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[9px] font-semibold">F</kbd> para fecha de hoy</p>
         </div>
 
         {/* Submit */}

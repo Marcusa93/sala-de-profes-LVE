@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import {
   Truck,
   Phone,
@@ -101,7 +102,7 @@ export default function ProveedoresPage() {
   const [assigning, setAssigning] = useState(false)
   const [assignFilter, setAssignFilter] = useState('')
 
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
 
   // -------------------------------------------------------------------------
   // Fetch suppliers + low stock items
@@ -488,8 +489,8 @@ export default function ProveedoresPage() {
     )
   }
 
-  // Solo encargado puede acceder a proveedores
-  if (profile && profile.role !== 'encargado') {
+  // Solo encargado/socio puede acceder a proveedores
+  if (profile && !isEncargado) {
     return (
       <div className="mx-auto max-w-lg pb-28 pt-2">
         <div className="card-elevated-lg rounded-2xl p-8 text-center">
@@ -627,7 +628,7 @@ export default function ProveedoresPage() {
       {isEncargado && (
         <button
           onClick={openCreateDialog}
-          className="fixed bottom-20 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:shadow-xl hover:shadow-[#006d5a]/30 sm:bottom-6 sm:right-6"
+          className="fixed bottom-24 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:shadow-xl hover:shadow-[#006d5a]/30 sm:bottom-6 sm:right-6"
           aria-label="Agregar proveedor"
         >
           <Plus className="size-6" />

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import {
   format,
   startOfWeek,
@@ -106,7 +107,7 @@ export default function EquipoTurnosPage() {
   const [formRole, setFormRole] = useState<AppRole>('runner')
   const [formNotes, setFormNotes] = useState('')
 
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
 
   // ------------------------------------------
   // Fetch shifts for the current week
@@ -575,7 +576,7 @@ export default function EquipoTurnosPage() {
       {/* ========================================== */}
       <button
         onClick={openCreateDialog}
-        className="fixed bottom-20 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-8 md:right-8"
+        className="fixed bottom-24 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-8 md:right-8"
         aria-label="Agregar turno"
       >
         <Plus className="size-6" />

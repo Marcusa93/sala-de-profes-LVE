@@ -34,6 +34,11 @@ async function getToken(): Promise<string> {
     body: JSON.stringify({ apiKey: FUDO_API_KEY, apiSecret: FUDO_API_SECRET }),
   })
 
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get('retry-after') ?? '60')
+    throw new Error(`Fudo rate limited. Reintentar en ${retryAfter}s`)
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => '')
     throw new Error(`Fudo auth failed (${res.status}): ${body}`)
@@ -229,11 +234,15 @@ export const fudo = {
   },
 
   getSales: async (params?: { from?: string; to?: string }): Promise<FudoSale[]> => {
-    const filters: string[] = []
-    if (params?.from) filters.push(`filter[from]=${params.from}`)
-    if (params?.to) filters.push(`filter[to]=${params.to}`)
-    const qs = filters.length > 0 ? `?${filters.join('&')}` : ''
-    return fudoFetchAll<FudoSale>(`/sales${qs}`)
+    // Fudo v1alpha1 doesn't support date filters on /sales — fetch all and filter client-side
+    const all = await fudoFetchAll<FudoSale>('/sales')
+    if (!params?.from && !params?.to) return all
+    return all.filter((s) => {
+      const d = s.createdAt || s.closedAt || ''
+      if (params.from && d < params.from) return false
+      if (params.to && d > params.to + 'T23:59:59') return false
+      return true
+    })
   },
 
   getSaleItems: async (saleId: string): Promise<FudoSaleItem[]> => {

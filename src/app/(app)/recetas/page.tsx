@@ -68,8 +68,9 @@ export default function RecetasPage() {
   const [formPreparation, setFormPreparation] = useState('')
   const [formNotes, setFormNotes] = useState('')
 
-  const isChef = profile?.role === 'chef'
+  const isChef = profile?.role === 'chef' || profile?.role === 'socio'
   const canView =
+    profile?.role === 'socio' ||
     profile?.role === 'chef' ||
     profile?.role === 'encargado' ||
     profile?.role === 'cocina'
@@ -365,7 +366,7 @@ export default function RecetasPage() {
       {isChef && (
         <button
           onClick={openCreateDialog}
-          className="fixed bottom-20 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-8 md:right-8"
+          className="fixed bottom-24 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-8 md:right-8"
           aria-label="Nueva receta"
         >
           <Plus className="size-6" />

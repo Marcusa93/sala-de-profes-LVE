@@ -39,9 +39,9 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!callerProfile || callerProfile.role !== 'encargado') {
+    if (!callerProfile || callerProfile.role !== 'encargado' && callerProfile.role !== 'socio') {
       return NextResponse.json(
-        { error: 'Solo el encargado puede crear usuarios' },
+        { error: 'Solo socios y encargados pueden crear usuarios' },
         { status: 403 },
       )
     }

@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
         .eq('id', user.id)
         .single()
 
-      const allowedRoles = ['chef', 'cocina', 'encargado']
+      const allowedRoles = ['chef', 'cocina', 'encargado', 'socio']
       if (!profile || !allowedRoles.includes(profile.role)) {
         return NextResponse.json({ success: false, error: 'No tenés permiso para crear pedidos' }, { status: 403 })
       }
@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
         .eq('id', user.id)
         .single()
 
-      if (!profile || profile.role !== 'encargado') {
+      if (!profile || profile.role !== 'encargado' && profile.role !== 'socio') {
         return NextResponse.json({ success: false, error: 'Solo encargados pueden cambiar estado' }, { status: 403 })
       }
 

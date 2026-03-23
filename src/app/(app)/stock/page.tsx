@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import {
   Package,
   Plus,
@@ -119,7 +120,7 @@ export default function StockPage() {
   const [editingQty, setEditingQty] = useState<number | null>(null)
   const [qtyValue, setQtyValue] = useState('')
 
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
 
   // -------------------------------------------------------------------------
   // Fetch data
@@ -379,8 +380,8 @@ export default function StockPage() {
     )
   }
 
-  // Solo encargado puede acceder a stock
-  if (profile && profile.role !== 'encargado') {
+  // Solo encargado/socio puede acceder a stock
+  if (profile && !isEncargado) {
     return (
       <div className="mx-auto max-w-lg pb-28 pt-2">
         <div className="card-elevated-lg rounded-2xl p-8 text-center">
@@ -399,11 +400,21 @@ export default function StockPage() {
   return (
     <div className="relative mx-auto max-w-2xl space-y-5 pb-24">
       {/* Header */}
-      <div className="space-y-1">
-        <h1 className="font-display text-2xl font-semibold tracking-tight text-[#3d2c24]">
-          Stock
-        </h1>
-        <p className="section-label">Inventario y control</p>
+      <div className="flex items-center justify-between">
+        <div className="space-y-1">
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-[#3d2c24]">
+            Stock
+          </h1>
+          <p className="section-label">Inventario y control</p>
+        </div>
+        {isEncargado && (
+          <a
+            href="/stock/historial"
+            className="flex items-center gap-1.5 rounded-xl bg-[#f0f7f5] px-3 py-1.5 text-[11px] font-bold text-[#006d5a] transition-colors hover:bg-[#e8f5f1]"
+          >
+            📊 Historial
+          </a>
+        )}
       </div>
 
       {/* Category filter: horizontal scrollable pills */}
@@ -513,7 +524,7 @@ export default function StockPage() {
       {isEncargado && (
         <button
           onClick={openCreateDialog}
-          className="fixed bottom-20 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:shadow-xl hover:shadow-[#006d5a]/30 sm:bottom-6 sm:right-6"
+          className="fixed bottom-24 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:shadow-xl hover:shadow-[#006d5a]/30 sm:bottom-6 sm:right-6"
           aria-label="Agregar item de stock"
         >
           <Plus className="size-6" />
@@ -753,7 +764,7 @@ function StockCard({
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 space-y-1">
             <div className="flex items-center gap-2.5">
-              <h3 className="font-semibold text-[#3d2c24]">{item.name}</h3>
+              <h3 className="truncate font-semibold text-[#3d2c24]">{item.name}</h3>
               <StockSemaphoreBadge semaphore={semaphore} />
             </div>
             <p className="text-xs text-[#a39e97]">

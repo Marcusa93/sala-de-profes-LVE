@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import Link from 'next/link'
 import {
   ArrowLeft,
@@ -93,7 +94,7 @@ let itemCounter = 0
 
 export default function PedidosCocinaPage() {
   const { profile } = useProfileContext()
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
   const canCreate = ['chef', 'cocina', 'encargado'].includes(profile?.role ?? '')
 
   // --- New order state ---

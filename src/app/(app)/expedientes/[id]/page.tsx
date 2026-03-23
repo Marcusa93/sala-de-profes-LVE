@@ -429,6 +429,7 @@ export default function ExpedienteDetailPage() {
         {/* Tasks */}
         <TasksSection
           expedienteId={expediente.id}
+          currentUserId={profile?.id ?? ''}
           isSocio={profile?.role === 'socio'}
           canManage={isSocioOrEncargado}
           isClosed={isClosed}

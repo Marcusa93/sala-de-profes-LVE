@@ -155,8 +155,10 @@ export default function ExpedientesPage() {
           description={
             hasActiveFilters
               ? 'No se encontraron resultados. Probá limpiando los filtros.'
-              : 'Creá tu primer expediente con el botón +'
+              : 'Abrí tu primer expediente para empezar a gestionar.'
           }
+          actionLabel={hasActiveFilters ? undefined : 'Crear expediente'}
+          actionHref={hasActiveFilters ? undefined : '/expedientes/nuevo'}
         />
       ) : (
         <StaggerList className="mt-2 space-y-3">

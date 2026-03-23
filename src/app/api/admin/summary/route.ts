@@ -22,7 +22,7 @@ export async function GET() {
       .eq('id', user.id)
       .single()
 
-    if (profile?.role !== 'encargado') {
+    if (profile?.role !== 'encargado' && profile?.role !== 'socio') {
       return NextResponse.json({ error: 'Acceso restringido' }, { status: 403 })
     }
 

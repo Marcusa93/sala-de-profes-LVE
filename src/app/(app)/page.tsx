@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -105,7 +106,7 @@ export default function DashboardPage() {
 
   const [today] = useState(() => new Date())
   const todayStr = format(today, 'yyyy-MM-dd')
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
 
   // Fetch all dashboard data
   useEffect(() => {
@@ -140,7 +141,7 @@ export default function DashboardPage() {
           .select('*', { count: 'exact', head: true })
           .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
 
-        const teamPromise = profile!.role === 'encargado'
+        const teamPromise = isEncargado
           ? supabase
               .from('attendance_logs')
               .select(
@@ -150,7 +151,7 @@ export default function DashboardPage() {
               .is('clock_out_at', null)
           : null
 
-        const stockPromise = profile!.role === 'encargado'
+        const stockPromise = isEncargado
           ? supabase
               .from('stock_items')
               .select('id, current_qty, min_qty')
@@ -235,7 +236,7 @@ export default function DashboardPage() {
             <div className="card-elevated-lg overflow-hidden rounded-2xl">
               <div className="flex items-stretch">
                 <div className="w-1.5 shrink-0" style={{ backgroundColor: statusColor }} />
-                <div className="flex-1 p-5">
+                <div className="flex-1 p-4 sm:p-5">
                   <div className="flex items-center gap-2">
                     <div className="flex size-8 items-center justify-center rounded-lg bg-[#f0f7f5]">
                       <Clock className="size-4 text-[#006d5a]" />
@@ -257,7 +258,7 @@ export default function DashboardPage() {
                         En turno
                       </span>
                     ) : (
-                      <span className="text-lg font-medium text-[#a39e97]">
+                      <span className="text-lg font-semibold text-[#3d2c24]">
                         Sin registrar
                       </span>
                     )}
@@ -335,8 +336,8 @@ export default function DashboardPage() {
                     </>
                   ) : (
                     <>
-                      <p className="text-sm font-medium text-[#a39e97]">Sin turnos</p>
-                      <p className="mt-1 text-xs text-[#a39e97]">Consultá con tu encargado</p>
+                      <p className="text-sm font-medium text-[#3d2c24]">Sin turnos</p>
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-[#a39e97]">Tocá para ver horarios</p>
                     </>
                   )}
                 </div>
@@ -355,7 +356,7 @@ export default function DashboardPage() {
                   <span className="section-label">Avisos</span>
                 </div>
                 <div className="mt-3">
-                  <span className="font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
+                  <span className="font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
                     <AnimatedNumber value={announcementCount} />
                   </span>
                 </div>
@@ -378,7 +379,7 @@ export default function DashboardPage() {
                     <span className="section-label">Equipo Hoy</span>
                   </div>
                   <div className="mt-3">
-                    <span className="font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
+                    <span className="font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
                       <AnimatedNumber value={teamToday.length} />
                     </span>
                   </div>
@@ -520,7 +521,7 @@ export default function DashboardPage() {
             className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
             onClick={() => setReportOpen(false)}
           />
-          <div className="relative z-10 mx-3 mb-3 w-full max-w-md rounded-2xl bg-white p-5 shadow-xl sm:mb-0">
+          <div className="relative z-10 mx-3 mb-[calc(0.75rem+env(safe-area-inset-bottom))] w-full max-w-md rounded-2xl bg-white p-4 sm:p-5 shadow-xl sm:mb-0">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
               <button
@@ -535,7 +536,7 @@ export default function DashboardPage() {
               value={reportMsg}
               onChange={(e) => setReportMsg(e.target.value)}
               placeholder="¿Qué problema hay? Ej: Se rompió la máquina de café, falta leche urgente..."
-              rows={3}
+              rows={2}
               className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] p-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
             />
 

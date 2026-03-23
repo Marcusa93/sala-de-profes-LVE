@@ -23,6 +23,8 @@ import {
   ShoppingCart,
   FolderOpen,
   Lightbulb,
+  Wine,
+  BarChart3,
   X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -72,9 +74,9 @@ const SOCIO_MORE: ExpandableNavItem = {
     {
       label: 'Gestión',
       items: [
-        { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
         { label: 'Control', href: '/admin', icon: LayoutDashboard },
         { label: 'Equipo', href: '/equipo', icon: Users },
+        { label: 'Turnos', href: '/equipo/turnos', icon: Calendar },
         { label: 'Alertas', href: '/alertas', icon: AlertTriangle },
       ],
     },
@@ -83,13 +85,15 @@ const SOCIO_MORE: ExpandableNavItem = {
       items: [
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
+        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
         { label: 'Stock', href: '/stock', icon: Package },
-        { label: 'Proveed.', href: '/proveedores', icon: Truck },
       ],
     },
     {
-      label: 'Herramientas',
+      label: 'Más',
       items: [
+        { label: 'Proveed.', href: '/proveedores', icon: Truck },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
@@ -123,6 +127,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
@@ -213,9 +218,10 @@ function getAllMoreItems(more?: ExpandableNavItem): NavItem[] {
   return more.groups.flatMap((g) => g.items)
 }
 
-// Socios get Expedientes in the main bar instead of Horarios
+// Socios get Ventas + Expedientes in the main bar
 const SOCIO_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Ventas', href: '/ventas', icon: BarChart3 },
   { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
@@ -318,7 +324,7 @@ export function BottomNav() {
           >
             <div className="absolute inset-0 bg-black/20 backdrop-blur-[3px]" />
             <motion.div
-              className="absolute bottom-20 left-3 right-3 glass rounded-2xl p-4 ring-1 ring-[#ebe6df]/50 shadow-xl"
+              className="absolute bottom-[4.5rem] left-3 right-3 glass rounded-2xl p-4 ring-1 ring-[#ebe6df]/50 shadow-xl"
               onClick={(e) => e.stopPropagation()}
               initial={{ opacity: 0, y: 40, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -377,7 +383,7 @@ export function BottomNav() {
         aria-label="Navegacion principal"
         className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/60 bg-[#fefcf9] pb-[env(safe-area-inset-bottom)]"
       >
-        <div className="flex h-16 items-center justify-around px-1">
+        <div className="flex h-[4.25rem] items-center justify-around px-1">
           {items.map((item) => {
             const Icon = item.icon
             const active = isActive(item.href)
@@ -393,7 +399,7 @@ export function BottomNav() {
                     : 'text-[#a39e97] hover:text-foreground',
                 )}
               >
-                <div className="relative flex size-9 items-center justify-center rounded-xl transition-all">
+                <div className="relative flex size-11 items-center justify-center rounded-xl transition-all">
                   {/* Animated active background */}
                   {active && (
                     <motion.div
@@ -403,7 +409,7 @@ export function BottomNav() {
                     />
                   )}
                   <Icon
-                    className="relative size-5"
+                    className="relative size-[22px]"
                     strokeWidth={active ? 2.25 : 1.75}
                   />
                   {showBadge && (
@@ -429,7 +435,7 @@ export function BottomNav() {
                   : 'text-[#a39e97] hover:text-foreground',
               )}
             >
-              <div className="relative flex size-9 items-center justify-center rounded-xl transition-all">
+              <div className="relative flex size-11 items-center justify-center rounded-xl transition-all">
                 {(moreOpen || isMoreActive()) && !items.some((i) => isActive(i.href)) && (
                   <motion.div
                     layoutId="nav-active-bg"
@@ -438,7 +444,7 @@ export function BottomNav() {
                   />
                 )}
                 <MoreHorizontal
-                  className="relative size-5"
+                  className="relative size-[22px]"
                   strokeWidth={moreOpen || isMoreActive() ? 2.25 : 1.75}
                 />
               </div>

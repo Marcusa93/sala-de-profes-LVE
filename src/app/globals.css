@@ -293,14 +293,30 @@
     border-color: rgba(0, 109, 90, 0.15);
   }
 
+  /* Page title utility */
+  .page-title {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #3d2c24;
+  }
+
   /* Editorial section label */
   .section-label {
     font-family: var(--font-barlow), sans-serif;
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--muted-foreground);
+  }
+
+  /* Form label standard */
+  .form-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #3d2c24;
   }
 
   /* Glass effect for overlays */
@@ -308,5 +324,24 @@
     backdrop-filter: blur(12px) saturate(1.8);
     -webkit-backdrop-filter: blur(12px) saturate(1.8);
     background: rgba(254, 252, 249, 0.85);
+  }
+}
+
+/* ===================================================================
+   Reduced motion — respect user preference
+   =================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .press-scale:active,
+  .card-interactive:active {
+    transform: none !important;
   }
 }

@@ -316,11 +316,9 @@ export default function MiTurnoPage() {
       {/* Hero Clock — Ceremonial, display-driven                        */}
       {/* ============================================================= */}
       <FadeIn className="pt-4 text-center">
-        <p className="font-display text-7xl font-bold tabular-nums tracking-tight text-[#3d2c24]">
+        <p className="font-display text-5xl sm:text-7xl font-bold tabular-nums tracking-tight text-[#3d2c24]">
           {format(currentTime, 'HH:mm')}
-        </p>
-        <p className="font-display text-2xl font-medium tabular-nums text-[#a39e97]">
-          {format(currentTime, ':ss')}
+          <span className="text-2xl sm:text-3xl font-medium text-[#a39e97]">{format(currentTime, ':ss')}</span>
         </p>
         <p className="section-label mt-4">
           {format(currentTime, "EEEE d 'de' MMMM, yyyy", { locale: es })}
@@ -360,7 +358,7 @@ export default function MiTurnoPage() {
             <Button
               onClick={handleClockIn}
               disabled={actionLoading || geoLoading}
-              className="h-16 w-full rounded-2xl bg-[#006d5a] text-base font-semibold text-white shadow-md hover:bg-[#005a4a] active:scale-[0.98]"
+              className="h-14 sm:h-16 w-full rounded-2xl bg-[#006d5a] text-base font-semibold text-white shadow-md hover:bg-[#005a4a] active:scale-[0.98]"
             >
               {actionLoading || geoLoading ? (
                 <Loader2 className="mr-2.5 size-5 animate-spin" />
@@ -478,9 +476,13 @@ export default function MiTurnoPage() {
         </div>
 
         {history.length === 0 ? (
-          <div className="card-elevated px-6 py-10 text-center">
-            <p className="text-sm text-[#a39e97]">
-              No hay registros de asistencia.
+          <div className="card-elevated flex flex-col items-center gap-2 px-6 py-10 text-center">
+            <History className="size-8 text-[#ebe6df]" />
+            <p className="text-sm font-medium text-[#a39e97]">
+              Aún no hay registros
+            </p>
+            <p className="text-xs text-[#a39e97]/70">
+              ¡Marcá tu primer ingreso!
             </p>
           </div>
         ) : (
@@ -488,7 +490,7 @@ export default function MiTurnoPage() {
             {history.map((record) => (
               <StaggerItem key={record.id}>
               <div
-                className="card-elevated flex items-center gap-4 px-4 py-3.5"
+                className="card-elevated flex items-center gap-4 rounded-xl px-4 py-3.5"
                 style={{
                   borderLeftWidth: '3px',
                   borderLeftColor: getRecordAccentColor(record),

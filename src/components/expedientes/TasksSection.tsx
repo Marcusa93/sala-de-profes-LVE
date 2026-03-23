@@ -29,8 +29,9 @@ type TeamMember = { id: string; first_name: string; last_name: string; role: str
 
 type TasksSectionProps = {
   expedienteId: string
-  isSocio: boolean    // only socios can create/assign tasks
-  canManage: boolean  // socio/encargado can change statuses
+  currentUserId: string // logged in user
+  isSocio: boolean      // only socios can create/assign tasks
+  canManage: boolean    // socio/encargado can change statuses
   isClosed: boolean
 }
 
@@ -38,7 +39,7 @@ type TasksSectionProps = {
 // Component
 // ---------------------------------------------------------------------------
 
-export function TasksSection({ expedienteId, isSocio, canManage, isClosed }: TasksSectionProps) {
+export function TasksSection({ expedienteId, currentUserId, isSocio, canManage, isClosed }: TasksSectionProps) {
   const [tasks, setTasks] = useState<TaskWithAssignee[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -203,12 +204,22 @@ export function TasksSection({ expedienteId, isSocio, canManage, isClosed }: Tas
                 </option>
               ))}
             </select>
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a] sm:w-40"
-            />
+            <div className="w-full sm:w-44">
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'f' || e.key === 'F') {
+                    e.preventDefault()
+                    setDueDate(new Date().toISOString().split('T')[0])
+                  }
+                }}
+                placeholder="Vencimiento"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+              />
+              <p className="mt-0.5 text-[10px] text-muted-foreground"><kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[9px] font-semibold">F</kbd> = hoy</p>
+            </div>
           </div>
           <button
             onClick={handleCreate}
@@ -236,6 +247,9 @@ export function TasksSection({ expedienteId, isSocio, canManage, isClosed }: Tas
             const StatusIcon = statusConfig.icon
             const isActive = task.status !== 'done' && task.status !== 'cancelled'
             const isOverdue = task.due_date && new Date(task.due_date) < new Date() && isActive
+            // Only the assigned person can manage the task (it's a "pase")
+            const isAssignedToMe = task.assigned_to === currentUserId
+            const canActOnTask = isAssignedToMe || (!task.assigned_to && isSocio)
 
             return (
               <div
@@ -247,8 +261,8 @@ export function TasksSection({ expedienteId, isSocio, canManage, isClosed }: Tas
               >
                 {/* Row: status icon + content + actions */}
                 <div className="flex items-start gap-2">
-                  {/* Status toggle */}
-                  {!isClosed && isActive && canManage ? (
+                  {/* Status toggle — only assigned person can act */}
+                  {!isClosed && isActive && canActOnTask ? (
                     <button
                       onClick={() => handleStatusChange(task.id, task.status === 'pending' ? 'in_progress' : 'done')}
                       className="mt-0.5 shrink-0 transition-colors hover:opacity-70"
@@ -298,8 +312,8 @@ export function TasksSection({ expedienteId, isSocio, canManage, isClosed }: Tas
                     </div>
                   </div>
 
-                  {/* Quick actions — only socios */}
-                  {isSocio && !isClosed && isActive && (
+                  {/* Quick actions — only assigned person */}
+                  {canActOnTask && !isClosed && isActive && (
                     <div className="flex shrink-0 gap-1">
                       {task.status !== 'done' && (
                         <button

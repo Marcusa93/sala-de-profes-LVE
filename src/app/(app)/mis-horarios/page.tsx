@@ -181,11 +181,11 @@ export default function MisHorariosPage() {
       ) : shifts.length === 0 ? (
         <EmptyState
           icon={CalendarX2}
-          title="No tienes turnos programados"
+          title="Sin turnos programados"
           description={
             weekFilter === 'this_week'
-              ? 'No hay turnos asignados para esta semana.'
-              : 'No hay turnos asignados para la proxima semana.'
+              ? 'No tenés turnos esta semana. Consultá con tu encargado para que te asigne.'
+              : 'Aún no hay turnos para la próxima semana. Se suelen cargar con anticipación.'
           }
         />
       ) : (

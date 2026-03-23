@@ -123,7 +123,7 @@ export default function ConfiguracionPage() {
   // -------------------------------------------------------------------------
 
   return (
-    <div className="mx-auto max-w-md space-y-6 pb-8">
+    <div className="mx-auto max-w-md space-y-6 px-1 pb-8">
       {/* Page title */}
       <h1 className="font-display text-2xl font-semibold tracking-tight text-[#3d2c24]">
         Mi Perfil
@@ -132,7 +132,7 @@ export default function ConfiguracionPage() {
       {/* Profile header */}
       <div className="flex flex-col items-center gap-4 py-4">
         {/* Avatar */}
-        <div className="flex size-24 items-center justify-center rounded-full bg-[#f0f7f5]">
+        <div className="flex size-20 sm:size-24 items-center justify-center rounded-full bg-[#f0f7f5]">
           <span className="font-display text-2xl font-bold text-[#006d5a]">
             {initials || '?'}
           </span>
@@ -148,8 +148,8 @@ export default function ConfiguracionPage() {
       </div>
 
       {/* Form card */}
-      <div className="card-elevated-lg p-6">
-        <form onSubmit={handleSave} className="space-y-5">
+      <div className="card-elevated-lg p-4 sm:p-6">
+        <form onSubmit={handleSave} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="config-first-name" className="text-sm font-medium text-[#3d2c24]">
               Nombre
@@ -159,6 +159,7 @@ export default function ConfiguracionPage() {
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               placeholder="Tu nombre"
+              autoComplete="given-name"
               className="rounded-xl border-[#ebe6df] bg-[#faf8f5] focus-visible:ring-[#006d5a]/20"
             />
           </div>
@@ -172,6 +173,7 @@ export default function ConfiguracionPage() {
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               placeholder="Tu apellido"
+              autoComplete="family-name"
               className="rounded-xl border-[#ebe6df] bg-[#faf8f5] focus-visible:ring-[#006d5a]/20"
             />
           </div>
@@ -186,6 +188,8 @@ export default function ConfiguracionPage() {
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="+54 11 1234-5678"
+              autoComplete="tel"
+              inputMode="tel"
               className="rounded-xl border-[#ebe6df] bg-[#faf8f5] focus-visible:ring-[#006d5a]/20"
             />
           </div>
@@ -213,21 +217,20 @@ export default function ConfiguracionPage() {
         </form>
       </div>
 
-      {/* Danger zone */}
-      <div className="card-elevated-lg p-6">
-        <p className="section-label mb-4">Zona de peligro</p>
+      {/* Logout */}
+      <div className="card-elevated-lg p-4 sm:p-6">
         <Button
           variant="outline"
           onClick={handleLogout}
           disabled={loggingOut}
-          className="w-full rounded-xl border-[#ea504c]/30 bg-[#ea504c]/5 text-[#ea504c] hover:bg-[#ea504c]/10 hover:text-[#ea504c]"
+          className="w-full rounded-xl border-[#ea504c]/40 bg-[#ea504c] py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#d43d39]"
         >
           {loggingOut ? (
             <Loader2 className="mr-2 size-4 animate-spin" />
           ) : (
             <LogOut className="mr-2 size-4" />
           )}
-          Cerrar Sesion
+          Cerrar Sesión
         </Button>
       </div>
     </div>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -170,7 +171,7 @@ export default function CocinaHubPage() {
   const [barUrgent, setBarUrgent] = useState(0)
   const [barPending, setBarPending] = useState(0)
 
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
   const canCreateOrders = ['chef', 'cocina', 'encargado'].includes(profile?.role ?? '')
   const shiftConfig = currentShiftType ? KITCHEN_SHIFT_TYPES[currentShiftType] : null
 
@@ -301,8 +302,8 @@ export default function CocinaHubPage() {
 
   if (profileLoading || loading) return <DashboardSkeleton />
 
-  // Solo encargado, chef y cocina pueden acceder
-  if (profile && !['encargado', 'chef', 'cocina'].includes(profile.role)) {
+  // Solo socio, encargado, chef y cocina pueden acceder
+  if (profile && !['socio', 'encargado', 'chef', 'cocina'].includes(profile.role)) {
     return (
       <div className="mx-auto max-w-lg pb-28 pt-2">
         <FadeIn>

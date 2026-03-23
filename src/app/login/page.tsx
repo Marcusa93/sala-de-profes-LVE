@@ -87,7 +87,7 @@ export default function LoginPage() {
                 alt="La Vieja Escuela"
                 width={220}
                 height={220}
-                className="h-52 w-auto"
+                className="h-40 sm:h-52 w-auto"
                 priority
               />
             </motion.div>
@@ -120,7 +120,7 @@ export default function LoginPage() {
           /* ============================================================= */
           <motion.div
             key="login"
-            className="w-full max-w-sm"
+            className="w-full max-w-[22rem] sm:max-w-sm"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}

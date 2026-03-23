@@ -147,11 +147,21 @@ export async function PATCH(
     // Get current task
     const { data: task } = await admin
       .from('expediente_tasks')
-      .select('title, assigned_to, status')
+      .select('title, assigned_to, status, created_by')
       .eq('id', task_id)
       .single()
 
     if (!task) return NextResponse.json({ error: 'Tarea no encontrada' }, { status: 404 })
+
+    // Only the assigned person can change status (it's a "pase")
+    // If no one assigned, the creator can manage it
+    const canAct = task.assigned_to
+      ? task.assigned_to === user.id
+      : task.created_by === user.id
+
+    if (!canAct) {
+      return NextResponse.json({ error: 'Solo la persona asignada puede gestionar esta tarea' }, { status: 403 })
+    }
 
     // Update
     const { error } = await admin

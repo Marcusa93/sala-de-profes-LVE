@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import Link from 'next/link'
 import {
   ArrowLeft,
@@ -88,7 +89,7 @@ export default function BarraPage() {
   const [orderNote, setOrderNote] = useState('')
   const [ordering, setOrdering] = useState(false)
 
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
   const canEdit = ['encargado', 'barista'].includes(profile?.role ?? '')
 
   const fetchData = useCallback(async () => {
@@ -261,8 +262,8 @@ export default function BarraPage() {
     return <div className="flex min-h-[60vh] items-center justify-center"><Loader2 className="size-6 animate-spin text-[#006d5a]" /></div>
   }
 
-  // Solo encargado y barista pueden acceder a barra
-  if (profile && !['encargado', 'barista'].includes(profile.role)) {
+  // Solo socio, encargado y barista pueden acceder a barra
+  if (profile && !['socio', 'encargado', 'barista'].includes(profile.role)) {
     return (
       <div className="mx-auto max-w-lg pb-28 pt-4">
         <div className="flex items-center gap-3 mb-6">

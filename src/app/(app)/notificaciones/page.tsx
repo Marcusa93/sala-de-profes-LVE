@@ -49,7 +49,7 @@ export default function NotificacionesPage() {
   const [activeTab, setActiveTab] = useState<FilterTab>('todos')
 
   const canCreate =
-    profile?.role === 'encargado' || profile?.role === 'chef'
+    profile?.role === 'socio' || profile?.role === 'encargado' || profile?.role === 'chef'
 
   // ------------------------------------------
   // Fetch notifications
@@ -222,7 +222,9 @@ export default function NotificacionesPage() {
         <EmptyState
           icon={Bell}
           title="Sin notificaciones"
-          description="No hay notificaciones para esta categoría. Vuelve más tarde."
+          description="¡Todo tranquilo por acá! No hay avisos pendientes."
+          actionLabel="Ir al inicio"
+          actionHref="/"
         />
       ) : (
         <div className="space-y-3.5">
@@ -242,7 +244,7 @@ export default function NotificacionesPage() {
       {canCreate && (
         <Link
           href="/notificaciones/nueva"
-          className="fixed bottom-20 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
+          className="fixed bottom-24 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
           aria-label="Nueva notificación"
         >
           <Plus className="size-6" />
