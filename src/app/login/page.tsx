@@ -1,20 +1,28 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { Coffee, Lock, Mail, Loader2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { motion, AnimatePresence } from 'framer-motion'
 
 export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showSplash, setShowSplash] = useState(true)
+
+  // Splash screen → login form transition
+  useEffect(() => {
+    const timer = setTimeout(() => setShowSplash(false), 1200)
+    return () => clearTimeout(timer)
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -53,87 +61,178 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-svh items-center justify-center bg-gradient-to-br from-[#F5E6D3] via-[#FAF6F1] to-[#E6D5C3] px-4 py-8">
-      <div className="w-full max-w-sm">
-        {/* Logo & Brand */}
-        <div className="mb-8 flex flex-col items-center gap-2 text-center">
-          <div className="flex items-center justify-center rounded-2xl bg-[#8B4513] p-3 shadow-lg">
-            <Coffee className="size-8 text-[#FAF6F1]" />
-          </div>
-          <h1 className="mt-3 text-2xl font-bold tracking-tight text-[#3C2415]">
-            La Vieja Escuela
-          </h1>
-          <p className="text-sm font-medium text-[#8C7161]">Sala de Profes</p>
-        </div>
+    <div className="flex min-h-svh items-center justify-center bg-[#faf8f5] px-5 py-10">
+      <AnimatePresence mode="wait">
+        {showSplash ? (
+          /* ============================================================= */
+          /* Splash screen — "Tranqui profe..." + café spinning            */
+          /* ============================================================= */
+          <motion.div
+            key="splash"
+            className="flex cursor-pointer flex-col items-center gap-8"
+            onClick={() => setShowSplash(false)}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, y: -30 }}
+            transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
+          >
+            {/* Logo grande */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2, duration: 0.6 }}
+            >
+              <Image
+                src="/Logos/logo positivo (1).png"
+                alt="La Vieja Escuela"
+                width={220}
+                height={220}
+                className="h-52 w-auto"
+                priority
+              />
+            </motion.div>
 
-        {/* Login Card */}
-        <Card className="border-0 shadow-xl ring-0">
-          <CardContent className="pt-2">
-            <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-              {/* Email */}
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="email" className="text-[#3C2415]">
-                  <Mail className="size-3.5 text-[#8C7161]" />
-                  Correo electronico
-                </Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="tu@correo.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="email"
-                  disabled={loading}
-                  className="h-10"
-                />
-              </div>
-
-              {/* Password */}
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="password" className="text-[#3C2415]">
-                  <Lock className="size-3.5 text-[#8C7161]" />
-                  Contrasena
-                </Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="Tu contrasena"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  disabled={loading}
-                  className="h-10"
-                />
-              </div>
-
-              {/* Submit */}
-              <Button
-                type="submit"
-                size="lg"
-                disabled={loading}
-                className="mt-1 h-10 w-full text-sm font-semibold"
+            {/* Spinning coffee + text */}
+            <motion.div
+              className="flex flex-col items-center gap-4"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.6, duration: 0.5 }}
+            >
+              <motion.span
+                className="text-4xl"
+                animate={{ rotate: [0, 15, -15, 10, -10, 0] }}
+                transition={{ duration: 1.5, repeat: Infinity, repeatDelay: 0.5, ease: 'easeInOut' }}
               >
-                {loading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Entrando...
-                  </>
-                ) : (
-                  <>
-                    <Coffee className="size-4" />
-                    Iniciar sesion
-                  </>
-                )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+                ☕
+              </motion.span>
+              <p className="font-display text-2xl tracking-tight text-[#3d2c24]">
+                Tranqui profe...
+              </p>
+              <p className="text-sm text-[#a39e97]">
+                Preparando tu espacio
+              </p>
+            </motion.div>
+          </motion.div>
+        ) : (
+          /* ============================================================= */
+          /* Login form                                                     */
+          /* ============================================================= */
+          <motion.div
+            key="login"
+            className="w-full max-w-sm"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
+          >
+            {/* Logo & Brand */}
+            <div className="mb-10 flex flex-col items-center gap-4 text-center">
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ delay: 0.1, duration: 0.4, type: 'spring', stiffness: 200 }}
+              >
+                <Image
+                  src="/Logos/logo positivo (1).png"
+                  alt="La Vieja Escuela"
+                  width={200}
+                  height={200}
+                  className="h-44 w-auto"
+                  priority
+                />
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.25, duration: 0.4 }}
+              >
+                <h1 className="font-display text-3xl tracking-tight text-[#3d2c24]">
+                  Sala de Profes
+                </h1>
+                <p className="section-label mt-2">
+                  La Vieja Escuela
+                </p>
+              </motion.div>
+            </div>
 
-        {/* Footer */}
-        <p className="mt-6 text-center text-xs text-[#8C7161]">
-          Acceso exclusivo para el equipo de La Vieja Escuela
-        </p>
-      </div>
+            {/* Login Card */}
+            <motion.div
+              className="card-elevated-lg px-6 py-8"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.35, duration: 0.4 }}
+            >
+              <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+                {/* Email */}
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="email" className="text-sm font-medium text-[#3d2c24]">
+                    <Mail className="size-3.5 text-[#a39e97]" />
+                    Correo electronico
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="tu@correo.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="email"
+                    disabled={loading}
+                    className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
+                  />
+                </div>
+
+                {/* Password */}
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="password" className="text-sm font-medium text-[#3d2c24]">
+                    <Lock className="size-3.5 text-[#a39e97]" />
+                    Contrasena
+                  </Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Tu contrasena"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    disabled={loading}
+                    className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
+                  />
+                </div>
+
+                {/* Submit */}
+                <Button
+                  type="submit"
+                  size="lg"
+                  disabled={loading}
+                  className="mt-2 h-13 w-full rounded-xl bg-[#006d5a] text-sm font-semibold text-white shadow-md transition-all hover:bg-[#004d3f] hover:shadow-lg active:scale-[0.98]"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Entrando...
+                    </>
+                  ) : (
+                    <>
+                      <Coffee className="size-4" />
+                      Iniciar sesion
+                    </>
+                  )}
+                </Button>
+              </form>
+            </motion.div>
+
+            {/* Footer */}
+            <motion.p
+              className="mt-8 text-center text-xs tracking-wide text-[#a39e97]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.5, duration: 0.4 }}
+            >
+              Acceso exclusivo para el equipo de La Vieja Escuela
+            </motion.p>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

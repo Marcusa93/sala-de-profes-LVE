@@ -3,6 +3,9 @@ import { createClient } from '@/lib/supabase/server'
 import { ProfileProvider } from '@/lib/hooks/use-profile'
 import { TopBar } from '@/components/layout/TopBar'
 import { BottomNav } from '@/components/layout/BottomNav'
+import { PageTransition } from '@/components/layout/PageTransition'
+import { FloatingChat } from '@/components/chat/FloatingChat'
+import { ForcePasswordChange } from '@/components/auth/ForcePasswordChange'
 
 export default async function AppLayout({
   children,
@@ -22,10 +25,12 @@ export default async function AppLayout({
     <ProfileProvider>
       <div className="flex min-h-svh flex-col bg-background">
         <TopBar />
-        <main className="flex-1 overflow-y-auto px-4 pb-20 pt-4">
-          {children}
+        <main className="flex-1 overflow-y-auto px-4 pb-24 pt-5 sm:px-6">
+          <PageTransition>{children}</PageTransition>
         </main>
         <BottomNav />
+        <FloatingChat />
+        <ForcePasswordChange />
       </div>
     </ProfileProvider>
   )

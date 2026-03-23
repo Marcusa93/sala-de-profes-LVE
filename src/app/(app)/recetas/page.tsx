@@ -1,0 +1,413 @@
+'use client'
+
+import { useEffect, useState, useCallback, useMemo } from 'react'
+import {
+  ChefHat,
+  Plus,
+  Search,
+  ShieldAlert,
+} from 'lucide-react'
+import { toast } from 'sonner'
+import { Input } from '@/components/ui/input'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
+import { useProfileContext } from '@/lib/hooks/use-profile'
+import { createClient } from '@/lib/supabase/client'
+import { RECIPE_CATEGORY_OPTIONS } from '@/lib/constants'
+import type { RecipeCategory } from '@/lib/constants'
+import type { Recipe, LegacyRecipeIngredient as RecipeIngredient, RecipeInsert } from '@/types/database'
+
+import { RecipeCard } from '@/components/recipes/RecipeCard'
+import { RecipeDetailDialog } from '@/components/recipes/RecipeDetailDialog'
+import { RecipeFormDialog } from '@/components/recipes/RecipeFormDialog'
+import { RecipeDeleteDialog } from '@/components/recipes/RecipeDeleteDialog'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+type FilterTab = 'todas' | RecipeCategory
+
+const EMPTY_INGREDIENT: RecipeIngredient = { name: '', qty: '', unit: 'g' }
+
+// ---------------------------------------------------------------------------
+// Recipes Page
+// ---------------------------------------------------------------------------
+
+export default function RecetasPage() {
+  const { profile, loading: profileLoading } = useProfileContext()
+  const [supabase] = useState(() => createClient())
+
+  // Data
+  const [recipes, setRecipes] = useState<Recipe[]>([])
+  const [loading, setLoading] = useState(true)
+
+  // Filters
+  const [activeTab, setActiveTab] = useState<FilterTab>('todas')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Dialog
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  // Detail dialog
+  const [detailRecipe, setDetailRecipe] = useState<Recipe | null>(null)
+
+  // Delete
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deletingRecipe, setDeletingRecipe] = useState<Recipe | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  // Form state
+  const [formName, setFormName] = useState('')
+  const [formCategory, setFormCategory] = useState<RecipeCategory>('bebidas')
+  const [formIngredients, setFormIngredients] = useState<RecipeIngredient[]>([
+    { ...EMPTY_INGREDIENT },
+  ])
+  const [formPreparation, setFormPreparation] = useState('')
+  const [formNotes, setFormNotes] = useState('')
+
+  const isChef = profile?.role === 'chef'
+  const canView =
+    profile?.role === 'chef' ||
+    profile?.role === 'encargado' ||
+    profile?.role === 'cocina'
+
+  // ------------------------------------------
+  // Fetch recipes
+  // ------------------------------------------
+  const fetchRecipes = useCallback(async () => {
+    setLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('recipes')
+        .select('*')
+        .eq('is_active', true)
+        .order('name', { ascending: true })
+
+      if (error) throw error
+      setRecipes((data as Recipe[]) ?? [])
+    } catch (err) {
+      console.error('Error al cargar recetas:', err)
+      toast.error('Error al cargar las recetas')
+    } finally {
+      setLoading(false)
+    }
+  }, [supabase])
+
+  useEffect(() => {
+    if (canView) fetchRecipes()
+  }, [canView, fetchRecipes])
+
+  // ------------------------------------------
+  // Filtered recipes
+  // ------------------------------------------
+  const filteredRecipes = useMemo(() => {
+    let result = recipes
+    if (activeTab !== 'todas') {
+      result = result.filter((r) => r.category === activeTab)
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      result = result.filter((r) => r.name.toLowerCase().includes(q))
+    }
+    return result
+  }, [recipes, activeTab, searchQuery])
+
+  // ------------------------------------------
+  // Dialog helpers
+  // ------------------------------------------
+  function resetForm() {
+    setFormName('')
+    setFormCategory('bebidas')
+    setFormIngredients([{ ...EMPTY_INGREDIENT }])
+    setFormPreparation('')
+    setFormNotes('')
+  }
+
+  function openCreateDialog() {
+    setEditingRecipe(null)
+    resetForm()
+    setDialogOpen(true)
+  }
+
+  function openEditDialog(recipe: Recipe) {
+    setEditingRecipe(recipe)
+    setFormName(recipe.name)
+    setFormCategory(recipe.category as RecipeCategory)
+    setFormIngredients(
+      recipe.ingredients.length > 0
+        ? recipe.ingredients.map((i) => ({ ...i }))
+        : [{ ...EMPTY_INGREDIENT }],
+    )
+    setFormPreparation(recipe.preparation)
+    setFormNotes(recipe.notes ?? '')
+    setDialogOpen(true)
+  }
+
+  // ------------------------------------------
+  // Ingredients management
+  // ------------------------------------------
+  function addIngredient() {
+    setFormIngredients((prev) => [...prev, { ...EMPTY_INGREDIENT }])
+  }
+
+  function removeIngredient(index: number) {
+    setFormIngredients((prev) => {
+      if (prev.length <= 1) return prev
+      return prev.filter((_, i) => i !== index)
+    })
+  }
+
+  function updateIngredient(
+    index: number,
+    field: keyof RecipeIngredient,
+    value: string,
+  ) {
+    setFormIngredients((prev) =>
+      prev.map((ing, i) => (i === index ? { ...ing, [field]: value } : ing)),
+    )
+  }
+
+  // ------------------------------------------
+  // Save (create/update)
+  // ------------------------------------------
+  async function handleSave() {
+    if (!profile) return
+    if (!formName.trim()) {
+      toast.error('El nombre es obligatorio')
+      return
+    }
+
+    const cleanIngredients = formIngredients.filter(
+      (i) => i.name.trim() !== '',
+    )
+
+    setSaving(true)
+    try {
+      if (editingRecipe) {
+        const { error } = await supabase
+          .from('recipes')
+          .update({
+            name: formName.trim(),
+            category: formCategory,
+            ingredients: cleanIngredients,
+            preparation: formPreparation.trim(),
+            notes: formNotes.trim() || null,
+          })
+          .eq('id', editingRecipe.id)
+
+        if (error) throw error
+        toast.success('Receta actualizada')
+      } else {
+        const insertData: RecipeInsert = {
+          name: formName.trim(),
+          category: formCategory,
+          ingredients: cleanIngredients,
+          preparation: formPreparation.trim(),
+          notes: formNotes.trim() || null,
+          created_by: profile.id,
+        }
+
+        const { error } = await supabase.from('recipes').insert(insertData)
+        if (error) throw error
+        toast.success('Receta creada')
+      }
+
+      setDialogOpen(false)
+      await fetchRecipes()
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Error al guardar la receta'
+      toast.error('Error', { description: message })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // ------------------------------------------
+  // Delete (soft delete)
+  // ------------------------------------------
+  function openDeleteDialog(recipe: Recipe) {
+    setDeletingRecipe(recipe)
+    setDeleteDialogOpen(true)
+  }
+
+  async function handleDelete() {
+    if (!deletingRecipe) return
+    setDeleting(true)
+    try {
+      const { error } = await supabase
+        .from('recipes')
+        .update({ is_active: false })
+        .eq('id', deletingRecipe.id)
+
+      if (error) throw error
+      toast.success('Receta eliminada')
+      setDeleteDialogOpen(false)
+      setDeletingRecipe(null)
+      await fetchRecipes()
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Error al eliminar'
+      toast.error('Error', { description: message })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  // ------------------------------------------
+  // Loading / Permission states
+  // ------------------------------------------
+  if (profileLoading) return <LoadingState />
+
+  if (!profile || !canView) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-[#e8f5f1]">
+            <ShieldAlert className="size-7 text-[#006d5a]" />
+          </div>
+          <h3 className="font-display text-base font-semibold text-[#3d2c24]">
+            Sin permisos
+          </h3>
+          <p className="max-w-xs text-sm text-[#a39e97]">
+            No tienes acceso al recetario.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // ------------------------------------------
+  // Render
+  // ------------------------------------------
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 pb-28">
+      {/* Header */}
+      <div>
+        <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">
+          Recetario
+        </h1>
+        <p className="section-label mt-2">Recetas y preparaciones</p>
+      </div>
+
+      {/* Category pill tabs */}
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 scrollbar-none">
+        <button
+          type="button"
+          onClick={() => setActiveTab('todas')}
+          className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
+            activeTab === 'todas'
+              ? 'bg-[#006d5a] text-white shadow-sm'
+              : 'border border-[#ebe6df] bg-[#fefcf9] text-[#a39e97] hover:border-[#006d5a]/30 hover:text-[#3d2c24]'
+          }`}
+        >
+          Todas
+        </button>
+        {RECIPE_CATEGORY_OPTIONS.map((cat) => (
+          <button
+            key={cat.value}
+            type="button"
+            onClick={() => setActiveTab(cat.value)}
+            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
+              activeTab === cat.value
+                ? 'bg-[#006d5a] text-white shadow-sm'
+                : 'border border-[#ebe6df] bg-[#fefcf9] text-[#a39e97] hover:border-[#006d5a]/30 hover:text-[#3d2c24]'
+            }`}
+          >
+            {cat.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Search bar */}
+      <div className="relative">
+        <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
+        <Input
+          placeholder="Buscar receta..."
+          className="rounded-xl border-[#ebe6df] bg-[#faf8f5] pl-10"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+      </div>
+
+      {/* Content */}
+      {loading ? (
+        <LoadingState message="Cargando recetas..." />
+      ) : filteredRecipes.length === 0 ? (
+        <EmptyState
+          icon={ChefHat}
+          title="Sin recetas"
+          description={
+            isChef
+              ? 'Agrega tu primera receta para comenzar.'
+              : 'Aun no hay recetas cargadas.'
+          }
+        />
+      ) : (
+        <div className="space-y-3">
+          {filteredRecipes.map((recipe) => (
+            <RecipeCard
+              key={recipe.id}
+              recipe={recipe}
+              isChef={isChef}
+              onClick={() => setDetailRecipe(recipe)}
+              onEdit={() => openEditDialog(recipe)}
+              onDelete={() => openDeleteDialog(recipe)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* FAB: Create Recipe (chef only) */}
+      {isChef && (
+        <button
+          onClick={openCreateDialog}
+          className="fixed bottom-20 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-8 md:right-8"
+          aria-label="Nueva receta"
+        >
+          <Plus className="size-6" />
+        </button>
+      )}
+
+      {/* Dialogs */}
+      <RecipeDetailDialog
+        recipe={detailRecipe}
+        isChef={isChef}
+        onClose={() => setDetailRecipe(null)}
+        onEdit={openEditDialog}
+        onDelete={openDeleteDialog}
+      />
+
+      <RecipeFormDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        isEditing={!!editingRecipe}
+        saving={saving}
+        formName={formName}
+        setFormName={setFormName}
+        formCategory={formCategory}
+        setFormCategory={setFormCategory}
+        formIngredients={formIngredients}
+        formPreparation={formPreparation}
+        setFormPreparation={setFormPreparation}
+        formNotes={formNotes}
+        setFormNotes={setFormNotes}
+        onAddIngredient={addIngredient}
+        onRemoveIngredient={removeIngredient}
+        onUpdateIngredient={updateIngredient}
+        onSave={handleSave}
+      />
+
+      <RecipeDeleteDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        recipeName={deletingRecipe?.name ?? ''}
+        deleting={deleting}
+        onConfirm={handleDelete}
+      />
+    </div>
+  )
+}

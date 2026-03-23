@@ -1,0 +1,443 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import {
+  Coffee,
+  Send,
+  Bot,
+  User,
+  Sparkles,
+  Loader2,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useProfileContext } from '@/lib/hooks/use-profile'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type ChatMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: Date
+}
+
+// ---------------------------------------------------------------------------
+// Simple markdown renderer for bot messages
+// ---------------------------------------------------------------------------
+
+function renderMarkdown(text: string): React.ReactNode {
+  const lines = text.split('\n')
+  const elements: React.ReactNode[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i]
+
+    // Headers
+    if (line.startsWith('### ')) {
+      elements.push(<h4 key={i} className="mb-1 mt-3 text-xs font-bold first:mt-0">{parseBoldAndEmoji(line.slice(4))}</h4>)
+      continue
+    }
+    if (line.startsWith('## ')) {
+      elements.push(<h3 key={i} className="mb-1.5 mt-3 text-sm font-bold first:mt-0">{parseBoldAndEmoji(line.slice(3))}</h3>)
+      continue
+    }
+
+    // List items
+    if (line.startsWith('- ')) {
+      elements.push(
+        <div key={i} className="flex gap-1.5 py-0.5 pl-1">
+          <span className="shrink-0 text-[10px] leading-relaxed">•</span>
+          <span>{parseBoldAndEmoji(line.slice(2))}</span>
+        </div>
+      )
+      continue
+    }
+
+    // Numbered list
+    const numMatch = line.match(/^(\d+)\.\s(.+)/)
+    if (numMatch) {
+      elements.push(
+        <div key={i} className="flex gap-1.5 py-0.5 pl-1">
+          <span className="shrink-0 font-semibold text-[#006d5a]">{numMatch[1]}.</span>
+          <span>{parseBoldAndEmoji(numMatch[2])}</span>
+        </div>
+      )
+      continue
+    }
+
+    // Empty line = spacer
+    if (line.trim() === '') {
+      elements.push(<div key={i} className="h-1.5" />)
+      continue
+    }
+
+    // Regular paragraph
+    elements.push(<p key={i} className="py-0.5">{parseBoldAndEmoji(line)}</p>)
+  }
+
+  return <>{elements}</>
+}
+
+function parseBoldAndEmoji(text: string): React.ReactNode {
+  // Parse **bold** markers
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
+    }
+    return part
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Preguntas sugeridas por rol
+// ---------------------------------------------------------------------------
+
+type SuggestedQuestion = { label: string; question: string }
+
+const SUGGESTED_ENCARGADO: SuggestedQuestion[] = [
+  { label: '📋 Resumen del día', question: 'Dame un resumen ejecutivo del día: asistencia, stock crítico, pedidos pendientes y avisos urgentes.' },
+  { label: '👥 ¿Quién trabaja?', question: '¿Quién está trabajando hoy y quién tiene turno programado?' },
+  { label: '🔴 Stock crítico', question: '¿Qué items de stock general y barra están en rojo o hay que pedir urgente?' },
+  { label: '☕ Estado de barra', question: '¿Cómo está el stock de barra y hay pedidos pendientes?' },
+  { label: '⚠️ Avisos urgentes', question: '¿Qué avisos urgentes hay activos?' },
+  { label: '🛒 Qué hay que pedir', question: '¿Qué productos necesito pedir, a qué proveedor y con qué urgencia?' },
+]
+
+const SUGGESTED_BARISTA: SuggestedQuestion[] = [
+  { label: '☕ Stock de barra', question: '¿Cómo está el stock de barra hoy? ¿Qué falta?' },
+  { label: '🔴 Qué hay que pedir', question: '¿Qué items de barra están bajos y necesito pedir?' },
+  { label: '📦 Pedidos pendientes', question: '¿Hay pedidos de barra pendientes?' },
+  { label: '👥 ¿Quién trabaja?', question: '¿Quién está trabajando hoy en barra?' },
+  { label: '⚠️ Avisos', question: '¿Hay avisos importantes para mí?' },
+]
+
+const SUGGESTED_COCINA: SuggestedQuestion[] = [
+  { label: '👨‍🍳 Tareas pendientes', question: '¿Qué tareas del checklist de cocina están pendientes?' },
+  { label: '📋 Estado del turno', question: '¿Cómo va el turno de cocina hoy?' },
+  { label: '🥩 Stock cocina', question: '¿Qué items de stock están bajos que necesito para cocinar?' },
+  { label: '📖 Recetas', question: '¿Qué recetas tenemos disponibles?' },
+  { label: '⚠️ Avisos', question: '¿Hay avisos importantes para cocina?' },
+  { label: '👥 ¿Quién trabaja?', question: '¿Quién está trabajando hoy en cocina?' },
+]
+
+const SUGGESTED_RUNNER: SuggestedQuestion[] = [
+  { label: '⏰ Mi turno', question: '¿Cuál es mi turno hoy y mañana?' },
+  { label: '👥 ¿Quién trabaja?', question: '¿Quiénes están trabajando hoy?' },
+  { label: '⚠️ Avisos', question: '¿Hay avisos importantes para mí?' },
+]
+
+function getSuggestedQuestions(role?: string): SuggestedQuestion[] {
+  switch (role) {
+    case 'encargado': return SUGGESTED_ENCARGADO
+    case 'barista': return SUGGESTED_BARISTA
+    case 'chef':
+    case 'cocina': return SUGGESTED_COCINA
+    case 'runner': return SUGGESTED_RUNNER
+    default: return SUGGESTED_RUNNER
+  }
+}
+
+function getRoleGreeting(role?: string): string {
+  switch (role) {
+    case 'encargado': return 'Preguntame nomás lo que necesités saber del local.'
+    case 'barista': return 'Preguntame sobre la barra, el stock de cafetería o los pedidos.'
+    case 'chef': return 'Preguntame sobre la cocina, recetas, checklists o el stock.'
+    case 'cocina': return 'Preguntame sobre la cocina, las tareas pendientes o las recetas.'
+    case 'runner': return 'Preguntame sobre tus turnos, horarios o los avisos del equipo.'
+    default: return 'Preguntame lo que necesités saber.'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+export default function AsistentePage() {
+  const { profile, loading: profileLoading } = useProfileContext()
+  const router = useRouter()
+
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [input, setInput] = useState('')
+  const [isThinking, setIsThinking] = useState(false)
+
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // -------------------------------------------------------------------------
+  // Auto-scroll al ultimo mensaje
+  // -------------------------------------------------------------------------
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, isThinking])
+
+  // -------------------------------------------------------------------------
+  // Enviar mensaje
+  // -------------------------------------------------------------------------
+
+  async function handleSend(text?: string) {
+    const messageText = (text ?? input).trim()
+    if (!messageText || isThinking) return
+
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: messageText,
+      timestamp: new Date(),
+    }
+
+    setMessages((prev) => [...prev, userMessage])
+    setInput('')
+    setIsThinking(true)
+
+    try {
+      // Build conversation history for context
+      const history = [...messages, userMessage]
+        .slice(-10)
+        .map((m) => ({ role: m.role, content: m.content }))
+
+      const res = await fetch('/api/chatbot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: messageText, history }),
+      })
+
+      if (!res.ok) {
+        throw new Error('Error en la respuesta del servidor')
+      }
+
+      const data = await res.json()
+
+      const botMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: data.response ?? 'No pude procesar tu consulta.',
+        timestamp: new Date(),
+      }
+
+      setMessages((prev) => [...prev, botMessage])
+    } catch {
+      const errorMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content:
+          'Hubo un error al procesar tu consulta. Por favor, intenta de nuevo.',
+        timestamp: new Date(),
+      }
+
+      setMessages((prev) => [...prev, errorMessage])
+    } finally {
+      setIsThinking(false)
+      // Refocus el input
+      setTimeout(() => inputRef.current?.focus(), 100)
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Loading
+  // -------------------------------------------------------------------------
+
+  if (profileLoading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-[#a39e97]">
+          <Loader2 className="size-8 animate-spin text-[#006d5a]" />
+          <p className="text-sm font-medium">Cargando...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!profile) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <p className="text-[#a39e97]">
+          No tienes acceso a esta seccion.
+        </p>
+      </div>
+    )
+  }
+
+  const suggestedQuestions = getSuggestedQuestions(profile.role)
+
+  // -------------------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------------------
+
+  return (
+    <div
+      className="mx-auto flex max-w-2xl flex-col"
+      style={{ height: 'calc(100svh - 8rem)' }}
+    >
+      {/* Header */}
+      <div className="mb-5 flex items-center gap-3.5">
+        <div className="flex size-11 items-center justify-center rounded-xl bg-[#f0f7f5]">
+          <Coffee className="size-5 text-[#006d5a]" />
+        </div>
+        <div>
+          <h1 className="font-display text-xl font-semibold tracking-tight text-[#3d2c24]">
+            La Vieja de Historia
+          </h1>
+          <p className="section-label mt-0.5">
+            Tu asistente tucumana del café ☕
+          </p>
+        </div>
+      </div>
+
+      {/* Chat area */}
+      <div className="flex-1 space-y-5 overflow-y-auto rounded-2xl border border-[#ebe6df] bg-[#faf8f5] p-5">
+        {/* Welcome state */}
+        {messages.length === 0 && !isThinking && (
+          <div className="flex flex-col items-center justify-center gap-6 py-14">
+            <div className="flex size-18 items-center justify-center rounded-2xl bg-[#f0f7f5]">
+              <Sparkles className="size-8 text-[#006d5a]" />
+            </div>
+            <div className="text-center">
+              <p className="font-display text-lg font-semibold text-[#3d2c24]">
+                ¡Hola {profile.first_name}, che!
+              </p>
+              <p className="mt-2 text-sm leading-relaxed text-[#a39e97]">
+                Soy La Vieja de Historia, tu asistente del café.{' '}
+                {getRoleGreeting(profile.role)}
+              </p>
+            </div>
+
+            {/* Suggested question pills */}
+            <div className="flex flex-wrap justify-center gap-2.5 px-4">
+              {suggestedQuestions.map((sq) => (
+                <button
+                  key={sq.question}
+                  onClick={() => handleSend(sq.question)}
+                  className="rounded-full border border-[#ebe6df] bg-[#fefcf9] px-4 py-2 text-xs font-medium text-[#006d5a] transition-colors hover:bg-[#f0f7f5]"
+                >
+                  {sq.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Message list */}
+        {messages.map((msg) => (
+          <div
+            key={msg.id}
+            className={`flex items-end gap-3 ${
+              msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
+            }`}
+          >
+            {/* Avatar */}
+            <div
+              className={`flex size-8 shrink-0 items-center justify-center rounded-full ${
+                msg.role === 'user'
+                  ? 'bg-[#006d5a] text-white'
+                  : 'border border-[#ebe6df] bg-[#fefcf9] text-[#006d5a]'
+              }`}
+            >
+              {msg.role === 'user' ? (
+                <User className="size-3.5" />
+              ) : (
+                <Bot className="size-3.5" />
+              )}
+            </div>
+
+            {/* Bubble */}
+            <div
+              className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed ${
+                msg.role === 'user'
+                  ? 'rounded-2xl rounded-br-md bg-[#006d5a] text-white'
+                  : 'rounded-2xl rounded-bl-md border border-[#ebe6df] bg-[#fefcf9] text-[#3d2c24]'
+              }`}
+            >
+              {msg.role === 'assistant' ? (
+                <div className="whitespace-pre-wrap">{renderMarkdown(msg.content)}</div>
+              ) : (
+                <p className="whitespace-pre-wrap">{msg.content}</p>
+              )}
+              <p
+                className={`mt-1.5 text-[10px] ${
+                  msg.role === 'user'
+                    ? 'text-white/50'
+                    : 'text-[#a39e97]'
+                }`}
+              >
+                {msg.timestamp.toLocaleTimeString('es-AR', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </p>
+            </div>
+          </div>
+        ))}
+
+        {/* Thinking indicator */}
+        {isThinking && (
+          <div className="flex items-end gap-3">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[#ebe6df] bg-[#fefcf9] text-[#006d5a]">
+              <Bot className="size-3.5" />
+            </div>
+            <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md border border-[#ebe6df] bg-[#fefcf9] px-5 py-3.5">
+              <span className="size-1.5 animate-bounce rounded-full bg-[#006d5a] [animation-delay:0ms]" />
+              <span className="size-1.5 animate-bounce rounded-full bg-[#006d5a] [animation-delay:150ms]" />
+              <span className="size-1.5 animate-bounce rounded-full bg-[#006d5a] [animation-delay:300ms]" />
+            </div>
+          </div>
+        )}
+
+        {/* Suggested questions after response */}
+        {messages.length > 0 && !isThinking && (
+          <div className="flex flex-wrap gap-2 pt-2">
+            {suggestedQuestions.map((sq) => (
+              <button
+                key={sq.question}
+                onClick={() => handleSend(sq.question)}
+                className="rounded-full border border-[#ebe6df] bg-[#fefcf9] px-3 py-1.5 text-[11px] font-medium text-[#006d5a] transition-colors hover:bg-[#f0f7f5]"
+              >
+                {sq.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input area */}
+      <div className="card-elevated mt-4 flex items-center gap-3 p-3">
+        <Input
+          ref={inputRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Pregunta sobre el local..."
+          disabled={isThinking}
+          className="flex-1 rounded-xl border-[#ebe6df] bg-[#faf8f5] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]/20"
+        />
+        <Button
+          size="icon"
+          onClick={() => handleSend()}
+          disabled={!input.trim() || isThinking}
+          aria-label="Enviar mensaje"
+          className="size-10 rounded-full bg-[#006d5a] text-white shadow-sm hover:bg-[#005a4a] disabled:opacity-40"
+        >
+          {isThinking ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Send className="size-4" />
+          )}
+        </Button>
+      </div>
+    </div>
+  )
+}

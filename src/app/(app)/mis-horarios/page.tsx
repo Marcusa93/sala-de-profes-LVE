@@ -6,13 +6,13 @@ import {
   startOfWeek,
   endOfWeek,
   addWeeks,
-  isWithinInterval,
 } from 'date-fns'
 import { es } from 'date-fns/locale/es'
-import { CalendarDays, Loader2, CalendarX2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CalendarX2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { ShiftCard, type ShiftCardData } from '@/components/shifts/ShiftCard'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
 
@@ -29,14 +29,13 @@ export default function MisHorariosPage() {
   const [loading, setLoading] = useState(true)
   const [weekFilter, setWeekFilter] = useState<WeekFilter>('this_week')
 
-  const today = new Date()
-
   // ------------------------------------------
   // Week boundaries
   // ------------------------------------------
   const weekStart = useMemo(() => {
+    const now = new Date()
     const base =
-      weekFilter === 'this_week' ? today : addWeeks(today, 1)
+      weekFilter === 'this_week' ? now : addWeeks(now, 1)
     return startOfWeek(base, { weekStartsOn: 1 }) // Monday
   }, [weekFilter])
 
@@ -91,20 +90,13 @@ export default function MisHorariosPage() {
   // Loading state
   // ------------------------------------------
   if (profileLoading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="size-8 animate-spin" />
-          <p className="text-sm">Cargando...</p>
-        </div>
-      </div>
-    )
+    return <LoadingState />
   }
 
   if (!profile) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <p className="text-muted-foreground">No se pudo cargar el perfil.</p>
+        <p className="text-sm text-muted-foreground">No se pudo cargar el perfil.</p>
       </div>
     )
   }
@@ -113,63 +105,89 @@ export default function MisHorariosPage() {
   // Render
   // ------------------------------------------
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-bold text-foreground">
-          <CalendarDays className="size-5" />
+    <div className="mx-auto max-w-2xl space-y-6 pb-28">
+      {/* ============================================================= */}
+      {/* Header                                                         */}
+      {/* ============================================================= */}
+      <div className="px-1">
+        <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">
           Mis Horarios
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="section-label mt-1.5">
           Consulta tus turnos programados
         </p>
       </div>
 
-      {/* Week filter */}
-      <div className="flex items-center gap-2">
-        <Button
-          variant={weekFilter === 'this_week' ? 'default' : 'outline'}
-          size="sm"
+      {/* ============================================================= */}
+      {/* Week segmented control                                         */}
+      {/* ============================================================= */}
+      <div className="card-elevated flex items-center gap-1 p-1.5">
+        <button
           onClick={() => setWeekFilter('this_week')}
+          className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
+            weekFilter === 'this_week'
+              ? 'bg-[#006d5a] text-white shadow-sm'
+              : 'text-[#a39e97] hover:text-[#3d2c24]'
+          }`}
         >
           Esta semana
-        </Button>
-        <Button
-          variant={weekFilter === 'next_week' ? 'default' : 'outline'}
-          size="sm"
+        </button>
+        <button
           onClick={() => setWeekFilter('next_week')}
+          className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
+            weekFilter === 'next_week'
+              ? 'bg-[#006d5a] text-white shadow-sm'
+              : 'text-[#a39e97] hover:text-[#3d2c24]'
+          }`}
         >
           Proxima semana
-        </Button>
-        <span className="ml-auto text-xs capitalize text-muted-foreground">
-          {weekLabel}
-        </span>
+        </button>
       </div>
 
-      {/* Shifts list */}
+      {/* ============================================================= */}
+      {/* Week navigation                                                */}
+      {/* ============================================================= */}
+      <div className="flex items-center justify-between px-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-9 rounded-xl text-[#a39e97] hover:text-[#3d2c24]"
+          onClick={() => setWeekFilter('this_week')}
+          disabled={weekFilter === 'this_week'}
+        >
+          <ChevronLeft className="size-5" />
+        </Button>
+
+        <span className="section-label capitalize">
+          {weekLabel}
+        </span>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-9 rounded-xl text-[#a39e97] hover:text-[#3d2c24]"
+          onClick={() => setWeekFilter('next_week')}
+          disabled={weekFilter === 'next_week'}
+        >
+          <ChevronRight className="size-5" />
+        </Button>
+      </div>
+
+      {/* ============================================================= */}
+      {/* Shifts list                                                    */}
+      {/* ============================================================= */}
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="size-6 animate-spin text-muted-foreground" />
-        </div>
+        <LoadingState message="Cargando turnos..." />
       ) : shifts.length === 0 ? (
-        /* Empty state */
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-12">
-            <div className="rounded-full bg-muted p-3">
-              <CalendarX2 className="size-8 text-muted-foreground" />
-            </div>
-            <div className="text-center">
-              <p className="font-medium text-foreground">
-                No tienes turnos programados
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {weekFilter === 'this_week'
-                  ? 'No hay turnos asignados para esta semana.'
-                  : 'No hay turnos asignados para la proxima semana.'}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={CalendarX2}
+          title="No tienes turnos programados"
+          description={
+            weekFilter === 'this_week'
+              ? 'No hay turnos asignados para esta semana.'
+              : 'No hay turnos asignados para la proxima semana.'
+          }
+        />
       ) : (
         <div className="space-y-3">
           {shifts.map((shift) => (

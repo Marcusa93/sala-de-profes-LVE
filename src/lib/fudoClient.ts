@@ -1,0 +1,281 @@
+// ---------------------------------------------------------------------------
+// Fudo API Client v1alpha1 — Server-side only
+// ---------------------------------------------------------------------------
+// Auth: POST https://auth.fu.do/api → Bearer token (24h)
+// API:  https://api.fu.do/v1alpha1/...
+// Format: JSON:API (data[].attributes, relationships)
+// Docs: https://dev.fu.do/api/
+// ---------------------------------------------------------------------------
+
+const FUDO_AUTH_URL = 'https://auth.fu.do/api'
+const FUDO_API_URL = 'https://api.fu.do/v1alpha1'
+const FUDO_API_KEY = process.env.FUDO_API_KEY ?? ''
+const FUDO_API_SECRET = process.env.FUDO_API_SECRET ?? ''
+
+// ---------------------------------------------------------------------------
+// Token cache
+// ---------------------------------------------------------------------------
+
+let cachedToken: string | null = null
+let tokenExpiresAt = 0
+
+async function getToken(): Promise<string> {
+  if (cachedToken && Date.now() / 1000 < tokenExpiresAt - 300) {
+    return cachedToken
+  }
+
+  if (!FUDO_API_KEY || !FUDO_API_SECRET) {
+    throw new Error('Faltan FUDO_API_KEY o FUDO_API_SECRET')
+  }
+
+  const res = await fetch(FUDO_AUTH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ apiKey: FUDO_API_KEY, apiSecret: FUDO_API_SECRET }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`Fudo auth failed (${res.status}): ${body}`)
+  }
+
+  const data = await res.json()
+  cachedToken = data.token
+  tokenExpiresAt = data.exp ?? (Date.now() / 1000 + 86400)
+  return cachedToken!
+}
+
+// ---------------------------------------------------------------------------
+// JSON:API helpers
+// ---------------------------------------------------------------------------
+
+type JsonApiResource = {
+  type: string
+  id: string
+  attributes: Record<string, unknown>
+  relationships?: Record<string, { data: unknown }>
+}
+
+type JsonApiResponse = {
+  data: JsonApiResource | JsonApiResource[]
+}
+
+function flattenResource(resource: JsonApiResource) {
+  return {
+    id: resource.id,
+    ...resource.attributes,
+    _relationships: resource.relationships,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fetch with auth + auto-retry on 401
+// ---------------------------------------------------------------------------
+
+async function fudoFetch<T = unknown>(path: string, options?: RequestInit): Promise<T> {
+  const token = await getToken()
+
+  const res = await fetch(`${FUDO_API_URL}${path}`, {
+    ...options,
+    headers: {
+      'Accept': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      ...options?.headers,
+    },
+  })
+
+  if (!res.ok) {
+    if (res.status === 401 && cachedToken) {
+      cachedToken = null
+      tokenExpiresAt = 0
+      return fudoFetch<T>(path, options)
+    }
+    const body = await res.text().catch(() => '')
+    throw new Error(`Fudo API ${res.status} on ${path}: ${body}`)
+  }
+
+  return res.json() as Promise<T>
+}
+
+/** Fetch all pages, flatten JSON:API resources */
+async function fudoFetchAll<T = Record<string, unknown>>(path: string): Promise<T[]> {
+  const pageSize = 500
+  let page = 1
+  const all: T[] = []
+
+  while (true) {
+    const sep = path.includes('?') ? '&' : '?'
+    const response = await fudoFetch<JsonApiResponse>(`${path}${sep}page[size]=${pageSize}&page[number]=${page}`)
+
+    const items = Array.isArray(response.data) ? response.data : response.data ? [response.data] : []
+    const flattened = items.map(flattenResource) as T[]
+    all.push(...flattened)
+
+    if (items.length < pageSize) break
+    page++
+    if (page > 100) break
+  }
+
+  return all
+}
+
+// ---------------------------------------------------------------------------
+// Types (flattened from JSON:API)
+// ---------------------------------------------------------------------------
+
+export type FudoProduct = {
+  id: string
+  name: string
+  price: number
+  cost: number | null
+  code: string | null
+  active: boolean
+  stock: number | null
+  stockControl: boolean
+  description: string | null
+  sellAlone: boolean
+  _relationships?: Record<string, { data: unknown }>
+}
+
+export type FudoCategory = {
+  id: string
+  name: string
+  position: number
+  _relationships?: Record<string, { data: unknown }>
+}
+
+export type FudoSale = {
+  id: string
+  total: number
+  saleType: string
+  saleState: string
+  createdAt: string
+  closedAt: string | null
+  comment: string | null
+  _relationships?: Record<string, { data: unknown }>
+}
+
+export type FudoSaleItem = {
+  id: string
+  name: string
+  quantity: number
+  price: number
+  total: number
+  _relationships?: Record<string, { data: unknown }>
+}
+
+export type FudoRoom = {
+  id: string
+  name: string
+}
+
+export type FudoTable = {
+  id: string
+  number: number
+  column: number
+  row: number
+  shape: string
+  size: string
+  _relationships?: Record<string, { data: unknown }>
+}
+
+export type FudoPaymentMethod = {
+  id: string
+  name: string
+  active: boolean
+  code: string
+  position: number
+}
+
+export type FudoCustomer = {
+  id: string
+  name: string
+  phone: string | null
+  email: string | null
+  active: boolean
+  address: string | null
+  comment: string | null
+}
+
+export type FudoIngredient = {
+  id: string
+  name: string
+  cost: number | null
+  stock: number | null
+  stockControl: boolean | null
+  _relationships?: Record<string, { data: unknown }>
+}
+
+// ---------------------------------------------------------------------------
+// Exported client
+// ---------------------------------------------------------------------------
+
+export const fudo = {
+  testConnection: async () => {
+    try {
+      const token = await getToken()
+      return { ok: true, token: token.slice(0, 10) + '...' }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Unknown' }
+    }
+  },
+
+  getCategories: async (): Promise<FudoCategory[]> => {
+    return fudoFetchAll<FudoCategory>('/product-categories')
+  },
+
+  getProducts: async (): Promise<FudoProduct[]> => {
+    return fudoFetchAll<FudoProduct>('/products')
+  },
+
+  getSales: async (params?: { from?: string; to?: string }): Promise<FudoSale[]> => {
+    const filters: string[] = []
+    if (params?.from) filters.push(`filter[from]=${params.from}`)
+    if (params?.to) filters.push(`filter[to]=${params.to}`)
+    const qs = filters.length > 0 ? `?${filters.join('&')}` : ''
+    return fudoFetchAll<FudoSale>(`/sales${qs}`)
+  },
+
+  getSaleItems: async (saleId: string): Promise<FudoSaleItem[]> => {
+    return fudoFetchAll<FudoSaleItem>(`/sales/${saleId}/items`)
+  },
+
+  getRooms: async (): Promise<FudoRoom[]> => {
+    return fudoFetchAll<FudoRoom>('/rooms')
+  },
+
+  getTables: async (): Promise<FudoTable[]> => {
+    return fudoFetchAll<FudoTable>('/tables')
+  },
+
+  getPaymentMethods: async (): Promise<FudoPaymentMethod[]> => {
+    return fudoFetchAll<FudoPaymentMethod>('/payment-methods')
+  },
+
+  getCustomers: async (): Promise<FudoCustomer[]> => {
+    return fudoFetchAll<FudoCustomer>('/customers')
+  },
+
+  getIngredients: async (): Promise<FudoIngredient[]> => {
+    return fudoFetchAll<FudoIngredient>('/ingredients')
+  },
+
+  updateIngredientStock: async (ingredientId: string, stock: number): Promise<void> => {
+    await fudoFetch(`/ingredients/${ingredientId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: {
+          type: 'Ingredient',
+          id: ingredientId,
+          attributes: { stock },
+        },
+      }),
+    })
+  },
+
+  fetch: fudoFetch,
+  fetchAll: fudoFetchAll,
+}
+
+export { fudoFetch, fudoFetchAll }

@@ -22,12 +22,7 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -48,13 +43,13 @@ import {
   DialogFooter,
   DialogClose,
 } from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
 import { ShiftCard, type ShiftCardData } from '@/components/shifts/ShiftCard'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
 import { ROLES, ROLE_OPTIONS } from '@/lib/constants'
-import type { AppRole, Profile, ShiftInsert } from '@/types/database'
+import type { AppRole, ShiftInsert } from '@/types/database'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,7 +72,7 @@ type EmployeeOption = {
 
 export default function EquipoTurnosPage() {
   const { profile, loading: profileLoading } = useProfileContext()
-  const supabase = createClient()
+  const [supabase] = useState(() => createClient())
 
   // Week navigation
   const [currentWeekStart, setCurrentWeekStart] = useState(() =>
@@ -120,7 +115,7 @@ export default function EquipoTurnosPage() {
     setLoading(true)
     try {
       const fromDate = format(currentWeekStart, 'yyyy-MM-dd')
-      const toDate = format(weekEnd, 'yyyy-MM-dd')
+      const toDate = format(endOfWeek(currentWeekStart, { weekStartsOn: 1 }), 'yyyy-MM-dd')
 
       const { data, error } = await supabase
         .from('shifts')
@@ -154,32 +149,37 @@ export default function EquipoTurnosPage() {
     } finally {
       setLoading(false)
     }
-  }, [currentWeekStart, weekEnd, supabase])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentWeekStart, supabase])
 
   // ------------------------------------------
   // Fetch employees list
   // ------------------------------------------
-  const fetchEmployees = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, first_name, last_name, role')
-        .eq('is_active', true)
-        .order('first_name')
+  useEffect(() => {
+    if (!isEncargado) return
+    async function load() {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, first_name, last_name, role')
+          .eq('is_active', true)
+          .order('first_name')
 
-      if (error) throw error
-      setEmployees(data ?? [])
-    } catch (err) {
-      console.error('Error al cargar empleados:', err)
+        if (error) throw error
+        setEmployees(data ?? [])
+      } catch (err) {
+        console.error('Error al cargar empleados:', err)
+      }
     }
-  }, [supabase])
+    load()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEncargado])
 
   useEffect(() => {
     if (isEncargado) {
       fetchShifts()
-      fetchEmployees()
     }
-  }, [isEncargado, fetchShifts, fetchEmployees])
+  }, [isEncargado, fetchShifts])
 
   // ------------------------------------------
   // Week navigation
@@ -317,25 +317,18 @@ export default function EquipoTurnosPage() {
   // Loading / Permission states
   // ------------------------------------------
   if (profileLoading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="size-8 animate-spin" />
-          <p className="text-sm">Cargando...</p>
-        </div>
-      </div>
-    )
+    return <LoadingState />
   }
 
   if (!profile || !isEncargado) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="flex items-center justify-center rounded-xl bg-muted p-3">
-            <ShieldAlert className="size-6 text-muted-foreground" />
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-[#e8f5f1]">
+            <ShieldAlert className="size-7 text-[#006d5a]" />
           </div>
-          <h3 className="text-sm font-medium text-foreground">Sin permisos</h3>
-          <p className="max-w-xs text-sm text-muted-foreground">
+          <h3 className="font-display text-base font-semibold text-[#3d2c24]">Sin permisos</h3>
+          <p className="max-w-xs text-sm text-[#a39e97]">
             Solo los encargados pueden gestionar los turnos del equipo.
           </p>
         </div>
@@ -352,46 +345,55 @@ export default function EquipoTurnosPage() {
   // Render
   // ------------------------------------------
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 pb-28">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            <CalendarDays className="mb-1 mr-1.5 inline-block size-6 text-primary" />
-            Turnos del Equipo
-          </h1>
-          <p className="mt-1 text-sm capitalize text-muted-foreground">
-            {weekLabel}
-          </p>
-        </div>
-        <Button onClick={openCreateDialog}>
-          <Plus className="size-4" />
-          Agregar Turno
-        </Button>
+      <div>
+        <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">
+          Turnos del Equipo
+        </h1>
+        <p className="section-label mt-2">
+          Gestiona los horarios de todo tu equipo
+        </p>
       </div>
 
       {/* Week navigation */}
-      <div className="flex items-center justify-center gap-2">
-        <Button variant="outline" size="icon" onClick={goToPreviousWeek}>
-          <ChevronLeft className="size-4" />
-        </Button>
-        <Button variant="outline" size="sm" onClick={goToCurrentWeek}>
-          Semana actual
-        </Button>
-        <Button variant="outline" size="icon" onClick={goToNextWeek}>
-          <ChevronRight className="size-4" />
-        </Button>
+      <div className="card-elevated flex items-center justify-between rounded-xl px-3 py-3">
+        <button
+          onClick={goToPreviousWeek}
+          className="flex size-10 items-center justify-center rounded-xl text-[#a39e97] transition-colors hover:bg-[#f3efe9] hover:text-[#3d2c24]"
+        >
+          <ChevronLeft className="size-5" />
+        </button>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={goToCurrentWeek}
+            className="rounded-xl border border-[#ebe6df] bg-transparent px-3 py-1.5 text-xs font-semibold text-[#a39e97] transition-colors hover:border-[#006d5a] hover:text-[#006d5a]"
+          >
+            Hoy
+          </button>
+          <span className="text-sm font-semibold capitalize text-[#3d2c24]">
+            {weekLabel}
+          </span>
+        </div>
+
+        <button
+          onClick={goToNextWeek}
+          className="flex size-10 items-center justify-center rounded-xl text-[#a39e97] transition-colors hover:bg-[#f3efe9] hover:text-[#3d2c24]"
+        >
+          <ChevronRight className="size-5" />
+        </button>
       </div>
 
       {/* Loading */}
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="size-6 animate-spin text-primary" />
-        </div>
+        <LoadingState message="Cargando turnos..." />
       ) : (
         <>
-          {/* Desktop: 7-column grid */}
-          <div className="hidden md:grid md:grid-cols-7 md:gap-2">
+          {/* ======================================== */}
+          {/* Desktop: 7-column grid (Mon - Sun)       */}
+          {/* ======================================== */}
+          <div className="hidden md:grid md:grid-cols-7 md:gap-2.5">
             {weekDays.map((day) => {
               const dayShifts = getShiftsForDay(day)
               const isToday = isSameDay(day, new Date())
@@ -400,24 +402,24 @@ export default function EquipoTurnosPage() {
                 <div key={day.toISOString()} className="min-h-[160px]">
                   {/* Day header */}
                   <div
-                    className={`mb-2 rounded-lg px-2 py-1.5 text-center ${
+                    className={`mb-2.5 rounded-xl px-2 py-2.5 text-center transition-colors ${
                       isToday
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted'
+                        ? 'bg-[#006d5a] text-white shadow-sm'
+                        : 'border border-[#ebe6df] bg-[#fefcf9]'
                     }`}
                   >
-                    <p className="text-xs font-medium capitalize">
+                    <p className={`text-[11px] font-semibold uppercase tracking-wider ${isToday ? 'opacity-80' : 'text-[#a39e97]'}`}>
                       {format(day, 'EEE', { locale: es })}
                     </p>
-                    <p className="text-lg font-bold tabular-nums">
+                    <p className={`text-lg font-bold tabular-nums ${isToday ? '' : 'text-[#3d2c24]'}`}>
                       {format(day, 'd')}
                     </p>
                   </div>
 
-                  {/* Shift cards */}
+                  {/* Shift cards for this day */}
                   <div className="space-y-2">
                     {dayShifts.length === 0 ? (
-                      <p className="py-4 text-center text-xs text-muted-foreground">
+                      <p className="py-4 text-center text-[11px] text-[#a39e97]">
                         Sin turnos
                       </p>
                     ) : (
@@ -427,30 +429,32 @@ export default function EquipoTurnosPage() {
                             className="cursor-pointer"
                             onClick={() => openEditDialog(shift)}
                           >
-                            <Card className="overflow-hidden">
+                            <Card className="hover-lift overflow-hidden rounded-xl border border-[#ebe6df] bg-[#fefcf9] shadow-none">
                               <div className="flex">
+                                {/* Left border with role color */}
                                 <div
-                                  className="w-1 shrink-0"
+                                  className="w-1 shrink-0 rounded-l-xl"
                                   style={{
                                     backgroundColor: ROLES[shift.shift_role].color,
                                   }}
                                 />
-                                <CardContent className="flex-1 py-2 px-2.5">
+                                <CardContent className="flex-1 p-2.5">
                                   {/* Person name */}
-                                  <p className="text-xs font-medium text-foreground truncate">
-                                    {shift.profile ? `${shift.profile.first_name} ${shift.profile.last_name}` : 'Sin nombre'}
+                                  <p className="truncate text-xs font-semibold text-[#3d2c24]">
+                                    {shift.profile
+                                      ? `${shift.profile.first_name} ${shift.profile.last_name}`
+                                      : 'Sin nombre'}
                                   </p>
                                   {/* Time */}
-                                  <p className="mt-0.5 text-xs text-muted-foreground">
+                                  <p className="mt-0.5 text-[11px] tabular-nums text-[#a39e97]">
                                     {shift.start_time.slice(0, 5)} -{' '}
                                     {shift.end_time.slice(0, 5)}
                                   </p>
                                   {/* Role badge */}
                                   <span
-                                    className="mt-1 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                                    className="mt-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
                                     style={{
-                                      backgroundColor:
-                                        ROLES[shift.shift_role].color + '1A',
+                                      backgroundColor: ROLES[shift.shift_role].bg,
                                       color: ROLES[shift.shift_role].color,
                                     }}
                                   >
@@ -462,27 +466,25 @@ export default function EquipoTurnosPage() {
                             </Card>
                           </div>
                           {/* Action buttons on hover */}
-                          <div className="absolute top-1 right-1 hidden gap-0.5 group-hover:flex">
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
+                          <div className="absolute right-1.5 top-1.5 hidden gap-1 group-hover:flex">
+                            <button
+                              className="flex size-6 items-center justify-center rounded-lg border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#f3efe9]"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 openEditDialog(shift)
                               }}
                             >
-                              <Pencil className="size-3" />
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="icon-xs"
+                              <Pencil className="size-3 text-[#a39e97]" />
+                            </button>
+                            <button
+                              className="flex size-6 items-center justify-center rounded-lg border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#fef2f2]"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 openDeleteDialog(shift)
                               }}
                             >
-                              <Trash2 className="size-3" />
-                            </Button>
+                              <Trash2 className="size-3 text-[#ea504c]" />
+                            </button>
                           </div>
                         </div>
                       ))
@@ -493,8 +495,10 @@ export default function EquipoTurnosPage() {
             })}
           </div>
 
-          {/* Mobile: scrollable daily list */}
-          <div className="space-y-4 md:hidden">
+          {/* ======================================== */}
+          {/* Mobile: List view grouped by day          */}
+          {/* ======================================== */}
+          <div className="space-y-5 md:hidden">
             {weekDays.map((day) => {
               const dayShifts = getShiftsForDay(day)
               const isToday = isSameDay(day, new Date())
@@ -503,50 +507,48 @@ export default function EquipoTurnosPage() {
                 <div key={day.toISOString()}>
                   {/* Day header */}
                   <div
-                    className={`mb-2 rounded-lg px-3 py-2 ${
+                    className={`mb-3 rounded-xl px-4 py-3 ${
                       isToday
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted'
+                        ? 'bg-[#006d5a] text-white shadow-sm'
+                        : 'border border-[#ebe6df] bg-[#fefcf9]'
                     }`}
                   >
-                    <p className="text-sm font-medium capitalize">
+                    <p className={`text-sm font-semibold capitalize ${isToday ? '' : 'text-[#3d2c24]'}`}>
                       {format(day, "EEEE d 'de' MMMM", { locale: es })}
                     </p>
                   </div>
 
                   {/* Shift cards */}
                   {dayShifts.length === 0 ? (
-                    <p className="py-3 text-center text-sm text-muted-foreground">
+                    <p className="py-4 text-center text-sm text-[#a39e97]">
                       Sin turnos programados
                     </p>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {dayShifts.map((shift) => (
                         <div key={shift.id} className="relative">
                           <div onClick={() => openEditDialog(shift)}>
                             <ShiftCard shift={shift} showPerson />
                           </div>
-                          <div className="absolute top-2 right-2 flex gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
+                          <div className="absolute right-2.5 top-2.5 flex gap-1.5">
+                            <button
+                              className="flex size-8 items-center justify-center rounded-xl border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#f3efe9]"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 openEditDialog(shift)
                               }}
                             >
-                              <Pencil className="size-3" />
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="icon-xs"
+                              <Pencil className="size-3.5 text-[#a39e97]" />
+                            </button>
+                            <button
+                              className="flex size-8 items-center justify-center rounded-xl border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#fef2f2]"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 openDeleteDialog(shift)
                               }}
                             >
-                              <Trash2 className="size-3" />
-                            </Button>
+                              <Trash2 className="size-3.5 text-[#ea504c]" />
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -562,44 +564,65 @@ export default function EquipoTurnosPage() {
             <EmptyState
               icon={CalendarDays}
               title="Sin turnos esta semana"
-              description="No hay turnos programados para esta semana. Usa el boton 'Agregar Turno' para crear uno."
+              description="No hay turnos programados para esta semana. Toca el boton + para crear uno."
             />
           )}
         </>
       )}
 
       {/* ========================================== */}
+      {/* FAB: Floating Action Button (Add Shift)    */}
+      {/* ========================================== */}
+      <button
+        onClick={openCreateDialog}
+        className="fixed bottom-20 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-8 md:right-8"
+        aria-label="Agregar turno"
+      >
+        <Plus className="size-6" />
+      </button>
+
+      {/* ========================================== */}
       {/* Create / Edit Dialog                       */}
       {/* ========================================== */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {editingShift ? 'Editar Turno' : 'Agregar Turno'}
+            <DialogTitle className="font-display text-lg font-bold text-[#3d2c24]">
+              {editingShift ? 'Editar Turno' : 'Nuevo Turno'}
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-[#a39e97]">
               {editingShift
                 ? 'Modifica los datos del turno.'
                 : 'Completa los datos para crear un nuevo turno.'}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
+          <div className="space-y-4 py-3">
             {/* Employee select */}
             <div className="space-y-2">
-              <Label htmlFor="shift-employee">Empleado</Label>
+              <Label htmlFor="shift-employee" className="text-sm font-medium text-[#3d2c24]">Empleado</Label>
               <Select
                 value={formUserId}
                 onValueChange={(v) => v && setFormUserId(v)}
               >
-                <SelectTrigger className="w-full" id="shift-employee">
+                <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5]" id="shift-employee">
                   <SelectValue placeholder="Seleccionar empleado" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="rounded-xl border-[#ebe6df]">
                   {employees.map((emp) => (
                     <SelectItem key={emp.id} value={emp.id}>
-                      {emp.first_name} {emp.last_name} ({ROLES[emp.role].emoji}{' '}
-                      {ROLES[emp.role].label})
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+                          style={{
+                            backgroundColor: ROLES[emp.role].bg,
+                            color: ROLES[emp.role].color,
+                          }}
+                        >
+                          {ROLES[emp.role].emoji}
+                        </span>
+                        {emp.first_name} {emp.last_name}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -608,10 +631,11 @@ export default function EquipoTurnosPage() {
 
             {/* Date */}
             <div className="space-y-2">
-              <Label htmlFor="shift-date">Fecha</Label>
+              <Label htmlFor="shift-date" className="text-sm font-medium text-[#3d2c24]">Fecha</Label>
               <Input
                 id="shift-date"
                 type="date"
+                className="rounded-xl border-[#ebe6df] bg-[#faf8f5]"
                 value={formDate}
                 onChange={(e) => setFormDate(e.target.value)}
               />
@@ -620,19 +644,21 @@ export default function EquipoTurnosPage() {
             {/* Times */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label htmlFor="shift-start">Hora inicio</Label>
+                <Label htmlFor="shift-start" className="text-sm font-medium text-[#3d2c24]">Hora inicio</Label>
                 <Input
                   id="shift-start"
                   type="time"
+                  className="rounded-xl border-[#ebe6df] bg-[#faf8f5]"
                   value={formStartTime}
                   onChange={(e) => setFormStartTime(e.target.value)}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="shift-end">Hora fin</Label>
+                <Label htmlFor="shift-end" className="text-sm font-medium text-[#3d2c24]">Hora fin</Label>
                 <Input
                   id="shift-end"
                   type="time"
+                  className="rounded-xl border-[#ebe6df] bg-[#faf8f5]"
                   value={formEndTime}
                   onChange={(e) => setFormEndTime(e.target.value)}
                 />
@@ -641,15 +667,15 @@ export default function EquipoTurnosPage() {
 
             {/* Role */}
             <div className="space-y-2">
-              <Label htmlFor="shift-role">Rol</Label>
+              <Label htmlFor="shift-role" className="text-sm font-medium text-[#3d2c24]">Rol</Label>
               <Select
                 value={formRole}
                 onValueChange={(v) => v && setFormRole(v as AppRole)}
               >
-                <SelectTrigger className="w-full" id="shift-role">
+                <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5]" id="shift-role">
                   <SelectValue placeholder="Seleccionar rol" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="rounded-xl border-[#ebe6df]">
                   {ROLE_OPTIONS.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
@@ -661,10 +687,11 @@ export default function EquipoTurnosPage() {
 
             {/* Notes */}
             <div className="space-y-2">
-              <Label htmlFor="shift-notes">Notas (opcional)</Label>
+              <Label htmlFor="shift-notes" className="text-sm font-medium text-[#3d2c24]">Notas (opcional)</Label>
               <Textarea
                 id="shift-notes"
                 placeholder="Notas adicionales..."
+                className="rounded-xl border-[#ebe6df] bg-[#faf8f5]"
                 value={formNotes}
                 onChange={(e) => setFormNotes(e.target.value)}
                 rows={2}
@@ -672,11 +699,15 @@ export default function EquipoTurnosPage() {
             </div>
           </div>
 
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <DialogClose render={<Button variant="outline" className="rounded-xl border-[#ebe6df] text-[#3d2c24]" />}>
               Cancelar
             </DialogClose>
-            <Button onClick={handleSave} disabled={saving}>
+            <Button
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded-xl bg-[#006d5a] text-white hover:bg-[#005a4a]"
+            >
               {saving && <Loader2 className="mr-1.5 size-4 animate-spin" />}
               {editingShift ? 'Guardar cambios' : 'Crear turno'}
             </Button>
@@ -688,16 +719,20 @@ export default function EquipoTurnosPage() {
       {/* Delete Confirmation Dialog                 */}
       {/* ========================================== */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
+        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Eliminar turno</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="font-display text-lg font-bold text-[#3d2c24]">
+              Eliminar turno
+            </DialogTitle>
+            <DialogDescription className="text-[#a39e97]">
               Esta accion no se puede deshacer. Se eliminara el turno de{' '}
-              <strong>
-                {deletingShift?.profile ? `${deletingShift.profile.first_name} ${deletingShift.profile.last_name}` : 'este empleado'}
+              <strong className="text-[#3d2c24]">
+                {deletingShift?.profile
+                  ? `${deletingShift.profile.first_name} ${deletingShift.profile.last_name}`
+                  : 'este empleado'}
               </strong>{' '}
               del dia{' '}
-              <strong>
+              <strong className="text-[#3d2c24]">
                 {deletingShift
                   ? format(
                       new Date(deletingShift.shift_date + 'T12:00:00'),
@@ -709,12 +744,13 @@ export default function EquipoTurnosPage() {
               .
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <DialogClose render={<Button variant="outline" className="rounded-xl border-[#ebe6df] text-[#3d2c24]" />}>
               Cancelar
             </DialogClose>
             <Button
               variant="destructive"
+              className="rounded-xl bg-[#ea504c] hover:bg-[#d4413e]"
               onClick={handleDelete}
               disabled={deleting}
             >

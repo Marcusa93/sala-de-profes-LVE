@@ -1,43 +1,54 @@
-import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import { Toaster } from "@/components/ui/sonner";
-import "./globals.css";
+import type { Metadata, Viewport } from 'next'
+import { Barlow, Playfair_Display } from 'next/font/google'
+import { Toaster } from '@/components/ui/sonner'
+import './globals.css'
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+const barlow = Barlow({
+  variable: '--font-barlow',
+  subsets: ['latin'],
+  weight: ['300', '400', '500', '600', '700'],
+  display: 'swap',
+})
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const playfairDisplay = Playfair_Display({
+  variable: '--font-playfair',
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  display: 'swap',
+})
 
 export const metadata: Metadata = {
-  title: "La Vieja Escuela - Sala de Profes",
-  description: "Gestión interna de La Vieja Escuela",
-};
+  title: 'Sala de Profes — La Vieja Escuela',
+  description: 'Gestión interna de La Vieja Escuela',
+}
 
 export const viewport: Viewport = {
-  width: "device-width",
+  width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-};
+  themeColor: '#006d5a',
+}
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode;
+  children: React.ReactNode
 }>) {
   return (
     <html lang="es">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${barlow.variable} ${playfairDisplay.variable} font-sans antialiased`}
       >
         {children}
-        <Toaster />
+        <Toaster
+          position="top-center"
+          toastOptions={{
+            style: {
+              borderRadius: '0.875rem',
+              fontFamily: 'var(--font-barlow), sans-serif',
+            },
+          }}
+        />
       </body>
     </html>
-  );
+  )
 }

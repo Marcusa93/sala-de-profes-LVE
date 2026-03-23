@@ -9,19 +9,32 @@ import {
   Calendar,
   Bell,
   Package,
-  Menu,
+  MoreHorizontal,
   MessageCircle,
   Users,
   AlertTriangle,
   Truck,
+  ChefHat,
+  UtensilsCrossed,
+  Bot,
+  BookOpen,
+  LayoutDashboard,
+  Coffee,
+  ShoppingCart,
+  FolderOpen,
+  Lightbulb,
+  X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
 import { cn } from '@/lib/utils'
-import { useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { useState, useEffect, useCallback } from 'react'
+import { motion, AnimatePresence, StaggerList, StaggerItem } from '@/components/ui/motion'
+import { onNotificationRead } from '@/lib/sounds'
 
 // ---------------------------------------------------------------------------
-// Nav item types
+// Types
 // ---------------------------------------------------------------------------
 
 type NavItem = {
@@ -30,45 +43,191 @@ type NavItem = {
   icon: LucideIcon
 }
 
+type NavGroup = {
+  label: string
+  items: NavItem[]
+}
+
 type ExpandableNavItem = {
   label: string
   icon: LucideIcon
-  children: NavItem[]
+  groups: NavGroup[]
 }
 
 // ---------------------------------------------------------------------------
-// Nav config per role
+// Nav config per role — grouped by section
 // ---------------------------------------------------------------------------
 
 const BASE_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
-  { label: 'Mi Turno', href: '/attendance', icon: Clock },
-  { label: 'Horarios', href: '/shifts', icon: Calendar },
-  { label: 'Avisos', href: '/announcements', icon: Bell },
+  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
+  { label: 'Horarios', href: '/mis-horarios', icon: Calendar },
+  { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
-const ENCARGADO_MORE: ExpandableNavItem = {
-  label: 'Mas',
-  icon: Menu,
-  children: [
-    { label: 'Proveedores', href: '/suppliers', icon: Truck },
-    { label: 'Stock', href: '/stock', icon: Package },
-    { label: 'Alertas', href: '/stock/alerts', icon: AlertTriangle },
-    { label: 'Equipo', href: '/team', icon: Users },
-    { label: 'Chatbot', href: '/chatbot', icon: MessageCircle },
+const SOCIO_MORE: ExpandableNavItem = {
+  label: 'Más',
+  icon: MoreHorizontal,
+  groups: [
+    {
+      label: 'Gestión',
+      items: [
+        { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
+        { label: 'Control', href: '/admin', icon: LayoutDashboard },
+        { label: 'Equipo', href: '/equipo', icon: Users },
+        { label: 'Alertas', href: '/alertas', icon: AlertTriangle },
+      ],
+    },
+    {
+      label: 'Operaciones',
+      items: [
+        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
+        { label: 'Stock', href: '/stock', icon: Package },
+        { label: 'Proveed.', href: '/proveedores', icon: Truck },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'La Vieja', href: '/asistente', icon: Bot },
+      ],
+    },
   ],
 }
 
+const ENCARGADO_MORE: ExpandableNavItem = {
+  label: 'Más',
+  icon: MoreHorizontal,
+  groups: [
+    {
+      label: 'Operaciones',
+      items: [
+        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
+        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
+        { label: 'Stock', href: '/stock', icon: Package },
+      ],
+    },
+    {
+      label: 'Gestión',
+      items: [
+        { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
+        { label: 'Control', href: '/admin', icon: LayoutDashboard },
+        { label: 'Equipo', href: '/equipo', icon: Users },
+        { label: 'Alertas', href: '/alertas', icon: AlertTriangle },
+        { label: 'Proveed.', href: '/proveedores', icon: Truck },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'La Vieja', href: '/asistente', icon: Bot },
+      ],
+    },
+  ],
+}
+
+const CHEF_MORE: ExpandableNavItem = {
+  label: 'Más',
+  icon: MoreHorizontal,
+  groups: [
+    {
+      label: 'Operaciones',
+      items: [
+        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
+        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'La Vieja', href: '/asistente', icon: Bot },
+      ],
+    },
+  ],
+}
+
+const COCINA_MORE: ExpandableNavItem = {
+  label: 'Más',
+  icon: MoreHorizontal,
+  groups: [
+    {
+      label: 'Operaciones',
+      items: [
+        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
+        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'La Vieja', href: '/asistente', icon: Bot },
+      ],
+    },
+  ],
+}
+
+const BARISTA_MORE: ExpandableNavItem = {
+  label: 'Más',
+  icon: MoreHorizontal,
+  groups: [
+    {
+      label: 'Operaciones',
+      items: [
+        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
+        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
+        { label: 'La Vieja', href: '/asistente', icon: Bot },
+      ],
+    },
+  ],
+}
+
+const RUNNER_MORE: ExpandableNavItem = {
+  label: 'Más',
+  icon: MoreHorizontal,
+  groups: [
+    {
+      label: 'Herramientas',
+      items: [
+        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
+        { label: 'La Vieja', href: '/asistente', icon: Bot },
+      ],
+    },
+  ],
+}
+
+function getAllMoreItems(more?: ExpandableNavItem): NavItem[] {
+  if (!more) return []
+  return more.groups.flatMap((g) => g.items)
+}
+
+// Socios get Expedientes in the main bar instead of Horarios
+const SOCIO_NAV: NavItem[] = [
+  { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
+  { label: 'Avisos', href: '/notificaciones', icon: Bell },
+]
+
 function getNavItems(role?: AppRole): { items: NavItem[]; more?: ExpandableNavItem } {
-  if (role === 'encargado') {
-    return { items: BASE_NAV, more: ENCARGADO_MORE }
-  }
-  if (role === 'chef') {
-    return {
-      items: [...BASE_NAV, { label: 'Stock', href: '/stock', icon: Package }],
-    }
-  }
-  return { items: BASE_NAV }
+  if (role === 'socio') return { items: SOCIO_NAV, more: SOCIO_MORE }
+  if (role === 'encargado') return { items: BASE_NAV, more: ENCARGADO_MORE }
+  if (role === 'chef') return { items: BASE_NAV, more: CHEF_MORE }
+  if (role === 'cocina') return { items: BASE_NAV, more: COCINA_MORE }
+  if (role === 'barista') return { items: BASE_NAV, more: BARISTA_MORE }
+  if (role === 'runner') return { items: BASE_NAV, more: RUNNER_MORE }
+  return { items: BASE_NAV, more: RUNNER_MORE }
 }
 
 // ---------------------------------------------------------------------------
@@ -79,8 +238,60 @@ export function BottomNav() {
   const pathname = usePathname()
   const { profile } = useProfileContext()
   const [moreOpen, setMoreOpen] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
 
   const { items, more } = getNavItems(profile?.role)
+
+  // Fetch unread notification count
+  const fetchUnread = useCallback(async () => {
+    if (!profile) return
+    try {
+      const supabase = createClient()
+      const [annResult, readsResult] = await Promise.all([
+        supabase.rpc('get_my_announcements'),
+        supabase
+          .from('announcement_reads')
+          .select('announcement_id')
+          .eq('user_id', profile.id),
+      ])
+      if (annResult.error || !annResult.data) return
+      const readSet = new Set((readsResult.data ?? []).map((r) => r.announcement_id))
+      const unread = (annResult.data as { id: string }[]).filter((a) => !readSet.has(a.id)).length
+      setUnreadCount(unread)
+    } catch {
+      // Silently fail — badge will show stale count
+    }
+  }, [profile])
+
+  useEffect(() => {
+    fetchUnread()
+    const interval = setInterval(fetchUnread, 60_000)
+    return () => clearInterval(interval)
+  }, [fetchUnread])
+
+  // Immediately decrement badge when a notification is marked as read
+  useEffect(() => {
+    return onNotificationRead(() => {
+      setUnreadCount((prev) => Math.max(0, prev - 1))
+    })
+  }, [])
+
+  useEffect(() => {
+    if (pathname === '/notificaciones') {
+      const timer = setTimeout(fetchUnread, 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [pathname, fetchUnread])
+
+  // Close on Escape
+  useEffect(() => {
+    if (!moreOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [moreOpen])
 
   function isActive(href: string) {
     if (href === '/') return pathname === '/'
@@ -89,86 +300,149 @@ export function BottomNav() {
 
   function isMoreActive() {
     if (!more) return false
-    return more.children.some((child) => isActive(child.href))
+    return getAllMoreItems(more).some((child) => isActive(child.href))
   }
 
   return (
     <>
-      {/* "More" overlay menu */}
-      {moreOpen && more && (
-        <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)}>
-          <div className="absolute inset-0 bg-black/20" />
-          <div
-            className="absolute bottom-16 left-0 right-0 mx-4 rounded-xl border border-border bg-card p-2 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
+      {/* "More" overlay panel — animated */}
+      <AnimatePresence>
+        {moreOpen && more && (
+          <motion.div
+            className="fixed inset-0 z-40"
+            onClick={() => setMoreOpen(false)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
           >
-            <div className="grid grid-cols-3 gap-1">
-              {more.children.map((child) => {
-                const Icon = child.icon
-                const active = isActive(child.href)
-                return (
-                  <Link
-                    key={child.href}
-                    href={child.href}
-                    onClick={() => setMoreOpen(false)}
-                    className={cn(
-                      'flex flex-col items-center gap-1.5 rounded-lg px-2 py-3 text-xs font-medium transition-colors',
-                      active
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                    )}
-                  >
-                    <Icon className="size-5" />
-                    {child.label}
-                  </Link>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+            <div className="absolute inset-0 bg-black/20 backdrop-blur-[3px]" />
+            <motion.div
+              className="absolute bottom-20 left-3 right-3 glass rounded-2xl p-4 ring-1 ring-[#ebe6df]/50 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+              initial={{ opacity: 0, y: 40, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+            >
+              <div className="mb-3 flex items-center justify-between px-1">
+                <span className="section-label">Más opciones</span>
+                <motion.button
+                  onClick={() => setMoreOpen(false)}
+                  aria-label="Cerrar"
+                  className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-secondary"
+                  whileTap={{ scale: 0.85 }}
+                >
+                  <X className="size-4" />
+                </motion.button>
+              </div>
+              <StaggerList className="space-y-3" staggerDelay={0.03}>
+                {more.groups.map((group) => (
+                  <StaggerItem key={group.label}>
+                    <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                      {group.label}
+                    </p>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {group.items.map((child) => {
+                        const Icon = child.icon
+                        const active = isActive(child.href)
+                        return (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            onClick={() => setMoreOpen(false)}
+                            className={cn(
+                              'flex flex-col items-center gap-1.5 rounded-xl px-2 py-3 text-[11px] font-medium transition-all active:scale-95',
+                              active
+                                ? 'bg-[#006d5a] text-white'
+                                : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                            )}
+                          >
+                            <Icon className="size-5" strokeWidth={1.75} />
+                            {child.label}
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  </StaggerItem>
+                ))}
+              </StaggerList>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Bottom navigation bar */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
-        <div className="flex h-16 items-center justify-around px-2">
+      {/* Navigation bar */}
+      <nav
+        aria-label="Navegacion principal"
+        className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/60 bg-[#fefcf9] pb-[env(safe-area-inset-bottom)]"
+      >
+        <div className="flex h-16 items-center justify-around px-1">
           {items.map((item) => {
             const Icon = item.icon
             const active = isActive(item.href)
+            const showBadge = item.href === '/notificaciones' && unreadCount > 0
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'flex min-w-0 flex-1 flex-col items-center gap-0.5 py-1 text-[10px] font-medium transition-colors',
+                  'relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium transition-all active:scale-90',
                   active
-                    ? 'text-primary'
-                    : 'text-muted-foreground hover:text-foreground',
+                    ? 'text-[#006d5a]'
+                    : 'text-[#a39e97] hover:text-foreground',
                 )}
               >
-                <Icon className={cn('size-5', active && 'text-primary')} />
+                <div className="relative flex size-9 items-center justify-center rounded-xl transition-all">
+                  {/* Animated active background */}
+                  {active && (
+                    <motion.div
+                      layoutId="nav-active-bg"
+                      className="absolute inset-0 rounded-xl bg-[#e8f5f1]"
+                      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                    />
+                  )}
+                  <Icon
+                    className="relative size-5"
+                    strokeWidth={active ? 2.25 : 1.75}
+                  />
+                  {showBadge && (
+                    <span className="absolute -right-1.5 -top-1 flex size-4.5 items-center justify-center rounded-full bg-[#ea504c] text-[9px] font-bold text-white shadow-sm">
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                </div>
                 <span className="truncate">{item.label}</span>
               </Link>
             )
           })}
 
-          {/* "More" button for encargado */}
           {more && (
             <button
               onClick={() => setMoreOpen(!moreOpen)}
+              aria-expanded={moreOpen}
+              aria-label="Mas opciones"
               className={cn(
-                'flex min-w-0 flex-1 flex-col items-center gap-0.5 py-1 text-[10px] font-medium transition-colors',
+                'relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium transition-all active:scale-90',
                 moreOpen || isMoreActive()
-                  ? 'text-primary'
-                  : 'text-muted-foreground hover:text-foreground',
+                  ? 'text-[#006d5a]'
+                  : 'text-[#a39e97] hover:text-foreground',
               )}
             >
-              <Menu
-                className={cn(
-                  'size-5',
-                  (moreOpen || isMoreActive()) && 'text-primary',
+              <div className="relative flex size-9 items-center justify-center rounded-xl transition-all">
+                {(moreOpen || isMoreActive()) && !items.some((i) => isActive(i.href)) && (
+                  <motion.div
+                    layoutId="nav-active-bg"
+                    className="absolute inset-0 rounded-xl bg-[#e8f5f1]"
+                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                  />
                 )}
-              />
-              <span>Mas</span>
+                <MoreHorizontal
+                  className="relative size-5"
+                  strokeWidth={moreOpen || isMoreActive() ? 2.25 : 1.75}
+                />
+              </div>
+              <span>Más</span>
             </button>
           )}
         </div>

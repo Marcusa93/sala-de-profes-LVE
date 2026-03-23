@@ -11,19 +11,44 @@ import {
   AlertCircle,
   Loader2,
   History,
+  MapPin,
+  MapPinOff,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { LoadingState } from '@/components/ui/LoadingState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
+import { FadeIn, StaggerList, StaggerItem, ScalePress, PulseRing, AnimatePresence, motion } from '@/components/ui/motion'
+import { SuccessBurst } from '@/components/ui/success-burst'
+import { playSchoolBell } from '@/lib/sounds'
+
+// ---------------------------------------------------------------------------
+// Geolocation constants
+// ---------------------------------------------------------------------------
+
+const RESTAURANT_LOCATION = { lat: -26.8241, lng: -65.2226 }
+const MAX_DISTANCE_METERS = 150
+
+/**
+ * Calculate distance between two GPS coordinates using the Haversine formula.
+ * Returns distance in meters.
+ */
+function haversineDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371000 // Earth radius in meters
+  const toRad = (deg: number) => (deg * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +78,9 @@ export default function MiTurnoPage() {
   const [history, setHistory] = useState<AttendanceRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
+  const [showSuccess, setShowSuccess] = useState(false)
+  const [geoStatus, setGeoStatus] = useState<'unknown' | 'checking' | 'in_range' | 'out_of_range' | 'error'>('unknown')
+  const [geoLoading, setGeoLoading] = useState(false)
 
   const todayStr = format(new Date(), 'yyyy-MM-dd')
 
@@ -120,19 +148,74 @@ export default function MiTurnoPage() {
   const status = getStatus()
 
   // ------------------------------------------
-  // Clock In
+  // Geolocation verification helper
+  // ------------------------------------------
+  const verifyLocation = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        toast.error('Necesitás activar la ubicación para fichar')
+        setGeoStatus('error')
+        resolve(false)
+        return
+      }
+
+      setGeoLoading(true)
+      setGeoStatus('checking')
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const distance = haversineDistance(
+            position.coords.latitude,
+            position.coords.longitude,
+            RESTAURANT_LOCATION.lat,
+            RESTAURANT_LOCATION.lng,
+          )
+
+          if (distance <= MAX_DISTANCE_METERS) {
+            setGeoStatus('in_range')
+            setGeoLoading(false)
+            resolve(true)
+          } else {
+            setGeoStatus('out_of_range')
+            setGeoLoading(false)
+            toast.error(
+              'Estás fuera del rango del local. Acercate a La Vieja Escuela para fichar.',
+            )
+            resolve(false)
+          }
+        },
+        () => {
+          setGeoStatus('error')
+          setGeoLoading(false)
+          toast.error('Necesitás activar la ubicación para fichar')
+          resolve(false)
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      )
+    })
+  }
+
+  // ------------------------------------------
+  // Clock In (with geolocation check)
   // ------------------------------------------
   const handleClockIn = async () => {
     if (!profile) return
     setActionLoading(true)
 
     try {
+      const locationOk = await verifyLocation()
+      if (!locationOk) {
+        setActionLoading(false)
+        return
+      }
+
       const { error } = await supabase.rpc('clock_in')
 
       if (error) throw error
 
+      playSchoolBell()
+      setShowSuccess(true)
       toast.success('Ingreso registrado correctamente')
-
       await fetchAttendance()
     } catch (err) {
       const message =
@@ -155,8 +238,9 @@ export default function MiTurnoPage() {
 
       if (error) throw error
 
+      playSchoolBell()
+      setShowSuccess(true)
       toast.success('Egreso registrado correctamente')
-
       await fetchAttendance()
     } catch (err) {
       const message =
@@ -173,7 +257,7 @@ export default function MiTurnoPage() {
   function getRecordStatusBadge(record: AttendanceRecord) {
     if (record.clock_out_at) {
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+        <span className="inline-flex items-center gap-1 rounded-full bg-[#e8f5f1] px-2.5 py-0.5 text-xs font-medium text-[#006d5a]">
           <CheckCircle className="size-3" />
           Completado
         </span>
@@ -183,7 +267,7 @@ export default function MiTurnoPage() {
     // Check if it's today
     if (record.operative_date === todayStr) {
       return (
-        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+        <span className="inline-flex items-center gap-1 rounded-full bg-[#fdf6ec] px-2.5 py-0.5 text-xs font-medium text-[#d4943a]">
           <Clock className="size-3" />
           En turno
         </span>
@@ -191,7 +275,7 @@ export default function MiTurnoPage() {
     }
 
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+      <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-[#ea504c]">
         <AlertCircle className="size-3" />
         Sin egreso
       </span>
@@ -199,17 +283,19 @@ export default function MiTurnoPage() {
   }
 
   // ------------------------------------------
+  // Accent color for history row left bar
+  // ------------------------------------------
+  function getRecordAccentColor(record: AttendanceRecord): string {
+    if (record.clock_out_at) return '#006d5a'
+    if (record.operative_date === todayStr) return '#d4943a'
+    return '#ea504c'
+  }
+
+  // ------------------------------------------
   // Loading state
   // ------------------------------------------
   if (profileLoading || loading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="size-8 animate-spin" />
-          <p className="text-sm">Cargando...</p>
-        </div>
-      </div>
-    )
+    return <LoadingState message="Cargando tu turno..." />
   }
 
   if (!profile) {
@@ -224,158 +310,222 @@ export default function MiTurnoPage() {
   // Render
   // ------------------------------------------
   return (
-    <div className="mx-auto max-w-lg space-y-6 py-6">
-      {/* Current Date & Time */}
-      <div className="text-center">
-        <p className="text-sm capitalize text-muted-foreground">
+    <div className="mx-auto max-w-lg space-y-8 pb-28">
+      <SuccessBurst show={showSuccess} onComplete={() => setShowSuccess(false)} />
+      {/* ============================================================= */}
+      {/* Hero Clock — Ceremonial, display-driven                        */}
+      {/* ============================================================= */}
+      <FadeIn className="pt-4 text-center">
+        <p className="font-display text-7xl font-bold tabular-nums tracking-tight text-[#3d2c24]">
+          {format(currentTime, 'HH:mm')}
+        </p>
+        <p className="font-display text-2xl font-medium tabular-nums text-[#a39e97]">
+          {format(currentTime, ':ss')}
+        </p>
+        <p className="section-label mt-4">
           {format(currentTime, "EEEE d 'de' MMMM, yyyy", { locale: es })}
         </p>
-        <p className="mt-1 font-mono text-4xl font-bold tabular-nums tracking-tight">
-          {format(currentTime, 'HH:mm:ss')}
-        </p>
-      </div>
+      </FadeIn>
 
-      {/* Status Card */}
-      <Card>
-        <CardContent className="py-8">
-          {/* NOT CLOCKED IN */}
-          {status === 'not_clocked_in' && (
-            <div className="flex flex-col items-center gap-4">
-              <div className="rounded-full bg-green-100 p-4">
-                <LogIn className="size-8 text-green-700" />
-              </div>
-              <p className="text-center text-sm text-muted-foreground">
+      {/* ============================================================= */}
+      {/* Status Card — card-elevated-lg, accent bar                     */}
+      {/* ============================================================= */}
+      <FadeIn delay={0.1}>
+      <div
+        className="card-elevated-lg relative overflow-hidden px-6 py-10"
+        style={{
+          borderLeftWidth: '4px',
+          borderLeftColor:
+            status === 'clocked_in'
+              ? '#d4943a'
+              : status === 'completed'
+                ? '#006d5a'
+                : 'transparent',
+        }}
+      >
+        {/* NOT CLOCKED IN */}
+        {status === 'not_clocked_in' && (
+          <div className="flex flex-col items-center gap-6">
+            <div className="flex size-20 items-center justify-center rounded-2xl bg-[#f0f7f5]">
+              <LogIn className="size-9 text-[#006d5a]" strokeWidth={1.5} />
+            </div>
+            <div className="text-center">
+              <p className="font-display text-lg font-semibold text-[#3d2c24]">
+                Buenos dias
+              </p>
+              <p className="mt-1 text-sm text-[#a39e97]">
                 No has registrado ingreso hoy.
               </p>
-              <Button
-                onClick={handleClockIn}
-                disabled={actionLoading}
-                className="h-14 w-full max-w-xs bg-green-600 text-base font-semibold text-white hover:bg-green-700"
-              >
-                {actionLoading ? (
-                  <Loader2 className="mr-2 size-5 animate-spin" />
-                ) : (
-                  <LogIn className="mr-2 size-5" />
-                )}
-                MARCAR INGRESO
-              </Button>
             </div>
-          )}
+            <Button
+              onClick={handleClockIn}
+              disabled={actionLoading || geoLoading}
+              className="h-16 w-full rounded-2xl bg-[#006d5a] text-base font-semibold text-white shadow-md hover:bg-[#005a4a] active:scale-[0.98]"
+            >
+              {actionLoading || geoLoading ? (
+                <Loader2 className="mr-2.5 size-5 animate-spin" />
+              ) : (
+                <LogIn className="mr-2.5 size-5" />
+              )}
+              {geoLoading ? 'Verificando ubicación...' : 'Marcar Ingreso'}
+            </Button>
 
-          {/* CLOCKED IN - needs clock out */}
-          {status === 'clocked_in' && todayRecord && (
-            <div className="flex flex-col items-center gap-4">
-              <div className="rounded-full bg-amber-100 p-4">
-                <Clock className="size-8 text-amber-600" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm text-muted-foreground">
-                  Ingreso registrado a las
-                </p>
-                <p className="mt-1 font-mono text-2xl font-bold text-foreground">
-                  {format(new Date(todayRecord.clock_in_at), 'HH:mm')}
-                </p>
-              </div>
-              <Button
-                onClick={handleClockOut}
-                disabled={actionLoading}
-                className="h-14 w-full max-w-xs bg-amber-500 text-base font-semibold text-white hover:bg-amber-600"
-              >
-                {actionLoading ? (
-                  <Loader2 className="mr-2 size-5 animate-spin" />
-                ) : (
-                  <LogOut className="mr-2 size-5" />
-                )}
-                MARCAR EGRESO
-              </Button>
+            {/* Location status badge */}
+            <div className="flex items-center justify-center">
+              {geoStatus === 'checking' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f5f0e8] px-3 py-1 text-xs font-medium text-[#a39e97]">
+                  <Loader2 className="size-3 animate-spin" />
+                  Verificando ubicación...
+                </span>
+              )}
+              {geoStatus === 'in_range' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1 text-xs font-medium text-[#006d5a]">
+                  <MapPin className="size-3" />
+                  Dentro del rango del local
+                </span>
+              )}
+              {geoStatus === 'out_of_range' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-[#ea504c]">
+                  <MapPinOff className="size-3" />
+                  Fuera del rango del local
+                </span>
+              )}
+              {geoStatus === 'error' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-[#ea504c]">
+                  <MapPinOff className="size-3" />
+                  Ubicación no disponible
+                </span>
+              )}
+              {geoStatus === 'unknown' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f5f0e8] px-3 py-1 text-xs font-medium text-[#a39e97]">
+                  <MapPin className="size-3" />
+                  Se verificará tu ubicación al fichar
+                </span>
+              )}
             </div>
-          )}
+          </div>
+        )}
 
-          {/* COMPLETED */}
-          {status === 'completed' && todayRecord && (
-            <div className="flex flex-col items-center gap-4">
-              <div className="rounded-full bg-green-100 p-4">
-                <CheckCircle className="size-8 text-green-700" />
-              </div>
-              <div className="text-center">
-                <p className="text-lg font-semibold text-green-700">
-                  Turno completado
-                </p>
-                <div className="mt-3 flex items-center justify-center gap-6 text-sm">
-                  <div>
-                    <p className="text-muted-foreground">Ingreso</p>
-                    <p className="font-mono text-lg font-bold">
-                      {format(new Date(todayRecord.clock_in_at), 'HH:mm')}
-                    </p>
-                  </div>
-                  <div className="h-8 w-px bg-border" />
-                  <div>
-                    <p className="text-muted-foreground">Egreso</p>
-                    <p className="font-mono text-lg font-bold">
-                      {todayRecord.clock_out_at?.slice(0, 5)}
-                    </p>
-                  </div>
+        {/* CLOCKED IN - needs clock out */}
+        {status === 'clocked_in' && todayRecord && (
+          <div className="flex flex-col items-center gap-6">
+            <div className="flex size-20 items-center justify-center rounded-2xl bg-[#fdf6ec]">
+              <Clock className="size-9 text-[#d4943a]" strokeWidth={1.5} />
+            </div>
+            <div className="text-center">
+              <p className="section-label">Ingreso registrado</p>
+              <p className="mt-2 font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
+                {format(new Date(todayRecord.clock_in_at), 'HH:mm')}
+              </p>
+            </div>
+            <Button
+              onClick={handleClockOut}
+              disabled={actionLoading}
+              className="h-16 w-full rounded-2xl bg-[#d4943a] text-base font-semibold text-white shadow-md hover:bg-[#c0852f] active:scale-[0.98]"
+            >
+              {actionLoading ? (
+                <Loader2 className="mr-2.5 size-5 animate-spin" />
+              ) : (
+                <LogOut className="mr-2.5 size-5" />
+              )}
+              Marcar Egreso
+            </Button>
+          </div>
+        )}
+
+        {/* COMPLETED */}
+        {status === 'completed' && todayRecord && (
+          <div className="flex flex-col items-center gap-6">
+            <div className="flex size-20 items-center justify-center rounded-2xl bg-[#e8f5f1]">
+              <CheckCircle className="size-9 text-[#006d5a]" strokeWidth={1.5} />
+            </div>
+            <div className="text-center">
+              <p className="font-display text-xl font-semibold text-[#006d5a]">
+                Turno completado
+              </p>
+              <div className="mt-6 flex items-center justify-center gap-8">
+                <div className="text-center">
+                  <p className="section-label">Ingreso</p>
+                  <p className="mt-1 font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
+                    {format(new Date(todayRecord.clock_in_at), 'HH:mm')}
+                  </p>
+                </div>
+                <div className="h-12 w-px bg-[#ebe6df]" />
+                <div className="text-center">
+                  <p className="section-label">Egreso</p>
+                  <p className="mt-1 font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
+                    {todayRecord.clock_out_at
+                      ? format(new Date(todayRecord.clock_out_at), 'HH:mm')
+                      : '--:--'}
+                  </p>
                 </div>
               </div>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+      </div>
+      </FadeIn>
 
-      {/* History */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <History className="size-4" />
+      {/* ============================================================= */}
+      {/* History Section                                                 */}
+      {/* ============================================================= */}
+      <FadeIn delay={0.2} className="space-y-4">
+        <div className="flex items-center gap-2.5 px-1">
+          <History className="size-4 text-[#a39e97]" strokeWidth={1.5} />
+          <h2 className="font-display text-lg font-semibold text-[#3d2c24]">
             Historial reciente
-          </CardTitle>
-          <CardDescription>Ultimos 7 registros</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {history.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">
+          </h2>
+        </div>
+
+        {history.length === 0 ? (
+          <div className="card-elevated px-6 py-10 text-center">
+            <p className="text-sm text-[#a39e97]">
               No hay registros de asistencia.
             </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-4 font-medium">Fecha</th>
-                    <th className="pb-2 pr-4 font-medium">Ingreso</th>
-                    <th className="pb-2 pr-4 font-medium">Egreso</th>
-                    <th className="pb-2 font-medium">Estado</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {history.map((record) => (
-                    <tr key={record.id}>
-                      <td className="py-2.5 pr-4 capitalize">
-                        {format(
-                          new Date(record.operative_date + 'T12:00:00'),
-                          'EEE d MMM',
-                          { locale: es },
-                        )}
-                      </td>
-                      <td className="py-2.5 pr-4 font-mono">
-                        {format(new Date(record.clock_in_at), 'HH:mm')}
-                      </td>
-                      <td className="py-2.5 pr-4 font-mono">
-                        {record.clock_out_at
-                          ? format(new Date(record.clock_out_at), 'HH:mm')
-                          : '—'}
-                      </td>
-                      <td className="py-2.5">
-                        {getRecordStatusBadge(record)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        ) : (
+          <StaggerList className="space-y-2.5">
+            {history.map((record) => (
+              <StaggerItem key={record.id}>
+              <div
+                className="card-elevated flex items-center gap-4 px-4 py-3.5"
+                style={{
+                  borderLeftWidth: '3px',
+                  borderLeftColor: getRecordAccentColor(record),
+                }}
+              >
+                {/* Date */}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium capitalize text-[#3d2c24]">
+                    {format(
+                      new Date(record.operative_date + 'T12:00:00'),
+                      'EEE d MMM',
+                      { locale: es },
+                    )}
+                  </p>
+                  <div className="mt-0.5 flex items-center gap-3 text-xs text-[#a39e97]">
+                    <span className="tabular-nums">
+                      {format(new Date(record.clock_in_at), 'HH:mm')}
+                    </span>
+                    <span className="text-[#ebe6df]">/</span>
+                    <span className="tabular-nums">
+                      {record.clock_out_at
+                        ? format(new Date(record.clock_out_at), 'HH:mm')
+                        : '--:--'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Badge */}
+                <div className="shrink-0">
+                  {getRecordStatusBadge(record)}
+                </div>
+              </div>
+              </StaggerItem>
+            ))}
+          </StaggerList>
+        )}
+      </FadeIn>
     </div>
   )
 }

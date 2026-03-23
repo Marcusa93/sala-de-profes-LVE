@@ -2,46 +2,32 @@ import { cn } from '@/lib/utils'
 
 type SemaphoreValue = 'green' | 'yellow' | 'red'
 
-type StockSemaphoreBadgeProps = {
+const CONFIG: Record<SemaphoreValue, { label: string; dot: string; text: string; bg: string }> = {
+  green:  { label: 'Normal',   dot: 'bg-[#006d5a]', text: 'text-[#006d5a]', bg: 'bg-[#f0f7f5]' },
+  yellow: { label: 'Atención', dot: 'bg-[#d4943a]', text: 'text-[#9a6d28]', bg: 'bg-[#fdf6ec]' },
+  red:    { label: 'Crítico',  dot: 'bg-[#ea504c]', text: 'text-[#c42b28]', bg: 'bg-[#fef2f2]' },
+}
+
+export function StockSemaphoreBadge({
+  semaphore,
+  className,
+}: {
   semaphore: SemaphoreValue
   className?: string
-}
-
-const CONFIG: Record<SemaphoreValue, { label: string; dotColor: string; textColor: string; bgColor: string }> = {
-  green: {
-    label: 'Normal',
-    dotColor: 'bg-green-500',
-    textColor: 'text-green-700 dark:text-green-400',
-    bgColor: 'bg-green-50 dark:bg-green-950/30',
-  },
-  yellow: {
-    label: 'Atencion',
-    dotColor: 'bg-yellow-500',
-    textColor: 'text-yellow-700 dark:text-yellow-400',
-    bgColor: 'bg-yellow-50 dark:bg-yellow-950/30',
-  },
-  red: {
-    label: 'Critico',
-    dotColor: 'bg-red-500',
-    textColor: 'text-red-700 dark:text-red-400',
-    bgColor: 'bg-red-50 dark:bg-red-950/30',
-  },
-}
-
-export function StockSemaphoreBadge({ semaphore, className }: StockSemaphoreBadgeProps) {
-  const { label, dotColor, textColor, bgColor } = CONFIG[semaphore]
+}) {
+  const c = CONFIG[semaphore]
 
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium',
-        bgColor,
-        textColor,
+        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold',
+        c.bg,
+        c.text,
         className,
       )}
     >
-      <span className={cn('size-2 rounded-full', dotColor)} />
-      {label}
+      <span className={cn('size-2 rounded-full', c.dot)} />
+      {c.label}
     </span>
   )
 }

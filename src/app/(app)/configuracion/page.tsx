@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Settings, LogOut, Loader2, User, Save } from 'lucide-react'
+import { LogOut, Loader2, Save } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -11,8 +11,7 @@ import { ROLES } from '@/lib/constants'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
+import { RoleBadge } from '@/components/ui/RoleBadge'
 
 // ---------------------------------------------------------------------------
 // Page
@@ -98,9 +97,9 @@ export default function ConfiguracionPage() {
   if (profileLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="size-8 animate-spin" />
-          <p className="text-sm">Cargando...</p>
+        <div className="flex flex-col items-center gap-3 text-[#a39e97]">
+          <Loader2 className="size-8 animate-spin text-[#006d5a]" />
+          <p className="text-sm font-medium">Cargando...</p>
         </div>
       </div>
     )
@@ -109,115 +108,128 @@ export default function ConfiguracionPage() {
   if (!profile) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <p className="text-muted-foreground">No se pudo cargar el perfil.</p>
+        <p className="text-[#a39e97]">No se pudo cargar el perfil.</p>
       </div>
     )
   }
 
   const roleConfig = ROLES[profile.role]
+  const initials =
+    (profile.first_name?.[0] ?? '').toUpperCase() +
+    (profile.last_name?.[0] ?? '').toUpperCase()
 
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
-      {/* Header */}
-      <h1 className="text-xl font-semibold tracking-tight">
-        <Settings className="mb-0.5 mr-1.5 inline-block size-5 text-primary" />
-        Configuracion
+    <div className="mx-auto max-w-md space-y-6 pb-8">
+      {/* Page title */}
+      <h1 className="font-display text-2xl font-semibold tracking-tight text-[#3d2c24]">
+        Mi Perfil
       </h1>
 
-      {/* Profile info card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <User className="size-4" />
-            Mi Perfil
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {/* Read-only info */}
+      {/* Profile header */}
+      <div className="flex flex-col items-center gap-4 py-4">
+        {/* Avatar */}
+        <div className="flex size-24 items-center justify-center rounded-full bg-[#f0f7f5]">
+          <span className="font-display text-2xl font-bold text-[#006d5a]">
+            {initials || '?'}
+          </span>
+        </div>
+
+        {/* Name */}
+        <p className="font-display text-xl font-semibold text-[#3d2c24]">
+          {profile.first_name} {profile.last_name}
+        </p>
+
+        {/* Role badge */}
+        <RoleBadge role={profile.role} size="md" />
+      </div>
+
+      {/* Form card */}
+      <div className="card-elevated-lg p-6">
+        <form onSubmit={handleSave} className="space-y-5">
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Rol</span>
-              <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
-                style={{
-                  backgroundColor: roleConfig.color + '1A',
-                  color: roleConfig.color,
-                }}
-              >
-                {roleConfig.emoji} {roleConfig.label}
-              </span>
+            <Label htmlFor="config-first-name" className="text-sm font-medium text-[#3d2c24]">
+              Nombre
+            </Label>
+            <Input
+              id="config-first-name"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              placeholder="Tu nombre"
+              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] focus-visible:ring-[#006d5a]/20"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="config-last-name" className="text-sm font-medium text-[#3d2c24]">
+              Apellido
+            </Label>
+            <Input
+              id="config-last-name"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              placeholder="Tu apellido"
+              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] focus-visible:ring-[#006d5a]/20"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="config-phone" className="text-sm font-medium text-[#3d2c24]">
+              Telefono
+            </Label>
+            <Input
+              id="config-phone"
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+54 11 1234-5678"
+              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] focus-visible:ring-[#006d5a]/20"
+            />
+          </div>
+
+          {/* Role display (read-only) */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium text-[#3d2c24]">Rol</Label>
+            <div className="flex items-center rounded-xl border border-[#ebe6df] bg-[#faf8f5] px-4 py-3">
+              <RoleBadge role={profile.role} size="md" />
             </div>
           </div>
 
-          <Separator />
-
-          {/* Editable form */}
-          <form onSubmit={handleSave} className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="config-first-name">Nombre</Label>
-              <Input
-                id="config-first-name"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                placeholder="Tu nombre"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="config-last-name">Apellido</Label>
-              <Input
-                id="config-last-name"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                placeholder="Tu apellido"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="config-phone">Telefono</Label>
-              <Input
-                id="config-phone"
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+54 11 1234-5678"
-              />
-            </div>
-
-            <Button type="submit" disabled={saving} className="w-full">
-              {saving ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Save className="size-4" />
-              )}
-              Guardar cambios
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      {/* Logout */}
-      <Card>
-        <CardContent>
           <Button
-            variant="destructive"
-            onClick={handleLogout}
-            disabled={loggingOut}
-            className="w-full"
+            type="submit"
+            disabled={saving}
+            className="w-full rounded-xl bg-[#006d5a] py-3 text-white shadow-sm hover:bg-[#005a4a]"
           >
-            {loggingOut ? (
-              <Loader2 className="size-4 animate-spin" />
+            {saving ? (
+              <Loader2 className="mr-2 size-4 animate-spin" />
             ) : (
-              <LogOut className="size-4" />
+              <Save className="mr-2 size-4" />
             )}
-            Cerrar sesion
+            Guardar cambios
           </Button>
-        </CardContent>
-      </Card>
+        </form>
+      </div>
+
+      {/* Danger zone */}
+      <div className="card-elevated-lg p-6">
+        <p className="section-label mb-4">Zona de peligro</p>
+        <Button
+          variant="outline"
+          onClick={handleLogout}
+          disabled={loggingOut}
+          className="w-full rounded-xl border-[#ea504c]/30 bg-[#ea504c]/5 text-[#ea504c] hover:bg-[#ea504c]/10 hover:text-[#ea504c]"
+        >
+          {loggingOut ? (
+            <Loader2 className="mr-2 size-4 animate-spin" />
+          ) : (
+            <LogOut className="mr-2 size-4" />
+          )}
+          Cerrar Sesion
+        </Button>
+      </div>
     </div>
   )
 }

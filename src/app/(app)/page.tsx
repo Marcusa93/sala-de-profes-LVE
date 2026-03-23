@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -12,21 +12,29 @@ import {
   AlertTriangle,
   LogIn,
   ArrowRight,
+  CheckCircle,
+  UtensilsCrossed,
   Coffee,
+  ShoppingCart,
+  Bot,
+  Send,
   Loader2,
+  X,
 } from 'lucide-react'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
 import { ROLES } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
+import { DashboardSkeleton } from '@/components/ui/skeleton'
+import {
+  FadeIn,
+  StaggerList,
+  StaggerItem,
+  ScalePress,
+  AnimatedNumber,
+  PulseRing,
+} from '@/components/ui/motion'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,15 +65,45 @@ type TeamMember = {
 export default function DashboardPage() {
   const { profile, loading: profileLoading } = useProfileContext()
 
-  const [todayAttendance, setTodayAttendance] =
-    useState<TodayAttendance>(null)
+  const [todayAttendance, setTodayAttendance] = useState<TodayAttendance>(null)
   const [nextShift, setNextShift] = useState<NextShift>(null)
   const [announcementCount, setAnnouncementCount] = useState(0)
   const [teamToday, setTeamToday] = useState<TeamMember[]>([])
   const [criticalStockCount, setCriticalStockCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
-  const today = new Date()
+  // Report dialog state
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reportMsg, setReportMsg] = useState('')
+  const [reportUrgency, setReportUrgency] = useState<'normal' | 'urgente'>('normal')
+  const [reportSending, setReportSending] = useState(false)
+
+  const sendReport = useCallback(async () => {
+    if (!reportMsg.trim()) {
+      toast.error('Escribí qué problema hay')
+      return
+    }
+    setReportSending(true)
+    try {
+      const res = await fetch('/api/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: reportMsg.trim(), urgency: reportUrgency }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+      toast.success('Reporte enviado al encargado')
+      setReportOpen(false)
+      setReportMsg('')
+      setReportUrgency('normal')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al enviar')
+    } finally {
+      setReportSending(false)
+    }
+  }, [reportMsg, reportUrgency])
+
+  const [today] = useState(() => new Date())
   const todayStr = format(today, 'yyyy-MM-dd')
   const isEncargado = profile?.role === 'encargado'
 
@@ -78,8 +116,7 @@ export default function DashboardPage() {
       const supabase = createClient()
 
       try {
-        // 1. Today's attendance for current user
-        const { data: attendance } = await supabase
+        const attendancePromise = supabase
           .from('attendance_logs')
           .select('id, clock_in_at, clock_out_at')
           .eq('user_id', profile!.id)
@@ -88,10 +125,7 @@ export default function DashboardPage() {
           .limit(1)
           .maybeSingle()
 
-        setTodayAttendance(attendance)
-
-        // 2. Next upcoming shift
-        const { data: shift } = await supabase
+        const shiftPromise = supabase
           .from('shifts')
           .select('shift_date, start_time, end_time, shift_role')
           .eq('user_id', profile!.id)
@@ -101,36 +135,47 @@ export default function DashboardPage() {
           .limit(1)
           .maybeSingle()
 
-        setNextShift(shift)
-
-        // 3. Active announcements count (not expired)
-        const { count } = await supabase
+        const announcementsPromise = supabase
           .from('announcements')
           .select('*', { count: 'exact', head: true })
           .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
 
-        setAnnouncementCount(count ?? 0)
+        const teamPromise = profile!.role === 'encargado'
+          ? supabase
+              .from('attendance_logs')
+              .select(
+                'clock_in_at, profiles!attendance_logs_user_id_fkey(first_name, last_name, role)',
+              )
+              .eq('operative_date', todayStr)
+              .is('clock_out_at', null)
+          : null
 
-        // 4. Encargado-only: team working today
-        if (profile!.role === 'encargado') {
-          const { data: team } = await supabase
-            .from('attendance_logs')
-            .select(
-              'clock_in_at, profiles!attendance_logs_user_id_fkey(first_name, last_name, role)',
-            )
-            .eq('operative_date', todayStr)
-            .is('clock_out_at', null)
+        const stockPromise = profile!.role === 'encargado'
+          ? supabase
+              .from('stock_items')
+              .select('id, current_qty, min_qty')
+              .eq('is_active', true)
+          : null
 
-          setTeamToday((team as unknown as TeamMember[]) ?? [])
+        const [attendanceRes, shiftRes, announcementsRes, teamRes, stockRes] =
+          await Promise.all([
+            attendancePromise,
+            shiftPromise,
+            announcementsPromise,
+            teamPromise,
+            stockPromise,
+          ])
 
-          // 5. Critical stock: items where current_qty <= min_qty
-          const { data: allItems } = await supabase
-            .from('stock_items')
-            .select('id, current_qty, min_qty')
-            .eq('is_active', true)
+        setTodayAttendance(attendanceRes.data)
+        setNextShift(shiftRes.data)
+        setAnnouncementCount(announcementsRes.count ?? 0)
 
+        if (teamRes) {
+          setTeamToday((teamRes.data as unknown as TeamMember[]) ?? [])
+        }
+        if (stockRes) {
           const critical =
-            allItems?.filter(
+            stockRes.data?.filter(
               (item) => item.current_qty <= item.min_qty,
             ) ?? []
           setCriticalStockCount(critical.length)
@@ -145,284 +190,393 @@ export default function DashboardPage() {
     fetchData()
   }, [profile, todayStr])
 
-  // First name extraction
   const firstName = profile?.first_name ?? ''
 
   // ------------------------------------------
-  // Loading state
+  // Skeleton while loading
   // ------------------------------------------
-
   if (profileLoading || loading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="size-8 animate-spin" />
-          <p className="text-sm">Cargando...</p>
-        </div>
-      </div>
-    )
+    return <DashboardSkeleton />
   }
 
   if (!profile) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <p className="text-muted-foreground">No se pudo cargar el perfil.</p>
+        <p className="text-[#a39e97]">No se pudo cargar el perfil.</p>
       </div>
     )
   }
 
-  // ------------------------------------------
-  // Render
-  // ------------------------------------------
+  // Attendance status helpers
+  const isCompleted = !!todayAttendance?.clock_out_at
+  const isInProgress = !!todayAttendance && !todayAttendance.clock_out_at
+  const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : 'transparent'
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {/* Header / Welcome */}
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          <Coffee className="mb-1 mr-1.5 inline-block size-6 text-primary" />
-          Hola, {firstName}
+    <div className="mx-auto max-w-2xl space-y-7 pb-8">
+      {/* ---------------------------------------------------------------- */}
+      {/* Header / Welcome                                                 */}
+      {/* ---------------------------------------------------------------- */}
+      <FadeIn className="pt-1">
+        <h1 className="font-display text-3xl tracking-tight text-[#3d2c24]">
+          Hola, <span className="text-[#006d5a]">{firstName}</span>
         </h1>
-        <p className="mt-1 text-sm capitalize text-muted-foreground">
+        <p className="section-label mt-2 capitalize">
           {format(today, "EEEE d 'de' MMMM, yyyy", { locale: es })}
         </p>
-      </div>
+      </FadeIn>
 
-      {/* KPI Cards */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        {/* Mi Estado Hoy */}
-        <Card>
-          <CardHeader>
-            <CardDescription className="flex items-center gap-1.5">
-              <Clock className="size-4" />
-              Mi Estado Hoy
-            </CardDescription>
-            <CardTitle>
-              {todayAttendance ? (
-                todayAttendance.clock_out_at ? (
-                  <span className="text-green-700">Turno completado</span>
-                ) : (
-                  <span className="text-amber-600">En turno</span>
-                )
-              ) : (
-                <span className="text-muted-foreground">Sin registrar</span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {todayAttendance ? (
-              <div className="space-y-1 text-sm text-muted-foreground">
-                <p>
-                  Ingreso:{' '}
-                  <span className="font-medium text-foreground">
-                    {todayAttendance.clock_in_at.slice(0, 5)}
-                  </span>
-                </p>
-                {todayAttendance.clock_out_at && (
-                  <p>
-                    Egreso:{' '}
-                    <span className="font-medium text-foreground">
-                      {todayAttendance.clock_out_at.slice(0, 5)}
-                    </span>
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No has marcado ingreso hoy.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Mi Proximo Turno */}
-        <Card>
-          <CardHeader>
-            <CardDescription className="flex items-center gap-1.5">
-              <CalendarDays className="size-4" />
-              Mi Proximo Turno
-            </CardDescription>
-            <CardTitle>
-              {nextShift ? (
-                <span className="capitalize">
-                  {format(
-                    new Date(nextShift.shift_date + 'T12:00:00'),
-                    "EEEE d 'de' MMMM",
-                    { locale: es },
-                  )}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">
-                  Sin turnos programados
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {nextShift ? (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-muted-foreground">
-                  {nextShift.start_time.slice(0, 5)} -{' '}
-                  {nextShift.end_time.slice(0, 5)}
-                </span>
-                <span
-                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
-                  style={{
-                    backgroundColor: ROLES[nextShift.shift_role].color + '1A',
-                    color: ROLES[nextShift.shift_role].color,
-                  }}
-                >
-                  {ROLES[nextShift.shift_role].emoji} {ROLES[nextShift.shift_role].label}
-                </span>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Consulta con tu encargado.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Avisos Activos */}
-        <Card>
-          <CardHeader>
-            <CardDescription className="flex items-center gap-1.5">
-              <Bell className="size-4" />
-              Avisos Activos
-            </CardDescription>
-            <CardTitle>
-              <span className="text-3xl font-bold tabular-nums">
-                {announcementCount}
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              {announcementCount === 1
-                ? 'aviso pendiente'
-                : 'avisos pendientes'}
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Equipo Hoy (encargado only) */}
-        {isEncargado && (
-          <Card>
-            <CardHeader>
-              <CardDescription className="flex items-center gap-1.5">
-                <Users className="size-4" />
-                Equipo Hoy
-              </CardDescription>
-              <CardTitle>
-                <span className="text-3xl font-bold tabular-nums">
-                  {teamToday.length}
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {teamToday.length > 0 ? (
-                <div className="space-y-1">
-                  {teamToday.map((member, i) => (
-                    <p key={i} className="text-sm text-muted-foreground">
-                      {member.profiles ? `${member.profiles.first_name} ${member.profiles.last_name}` : 'Desconocido'}{' '}
-                      <span className="text-xs">
-                        ({ROLES[member.profiles?.role ?? 'runner'].emoji}{' '}
-                        {ROLES[member.profiles?.role ?? 'runner'].label})
-                      </span>
-                    </p>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Nadie ha marcado ingreso aun.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Stock Critico (encargado only) */}
-        {isEncargado && (
-          <Card>
-            <CardHeader>
-              <CardDescription className="flex items-center gap-1.5">
-                <AlertTriangle className="size-4" />
-                Stock Critico
-              </CardDescription>
-              <CardTitle>
-                <span
-                  className={`text-3xl font-bold tabular-nums ${
-                    criticalStockCount > 0
-                      ? 'text-red-600'
-                      : 'text-green-700'
-                  }`}
-                >
-                  {criticalStockCount}
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                {criticalStockCount === 0
-                  ? 'Todo en orden'
-                  : criticalStockCount === 1
-                    ? 'producto bajo minimo'
-                    : 'productos bajo minimo'}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      {/* Quick Actions */}
-      <div className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">
-          Acciones rapidas
-        </h2>
-        <div className="grid gap-3 sm:grid-cols-3">
+      {/* ---------------------------------------------------------------- */}
+      {/* Hero KPI — Mi Estado Hoy                                         */}
+      {/* ---------------------------------------------------------------- */}
+      <FadeIn delay={0.05}>
+        <ScalePress>
           <Link href="/mi-turno">
-            <Button
-              variant="outline"
-              size="lg"
-              className="w-full justify-between gap-2"
-            >
-              <span className="flex items-center gap-2">
-                <LogIn className="size-4" />
-                Marcar Ingreso/Egreso
-              </span>
-              <ArrowRight className="size-4 text-muted-foreground" />
-            </Button>
-          </Link>
+            <div className="card-elevated-lg overflow-hidden rounded-2xl">
+              <div className="flex items-stretch">
+                <div className="w-1.5 shrink-0" style={{ backgroundColor: statusColor }} />
+                <div className="flex-1 p-5">
+                  <div className="flex items-center gap-2">
+                    <div className="flex size-8 items-center justify-center rounded-lg bg-[#f0f7f5]">
+                      <Clock className="size-4 text-[#006d5a]" />
+                    </div>
+                    <span className="section-label">Mi Estado Hoy</span>
+                    {isInProgress && <PulseRing color="#d4943a" />}
+                  </div>
 
-          <Link href="/mis-horarios">
-            <Button
-              variant="outline"
-              size="lg"
-              className="w-full justify-between gap-2"
-            >
-              <span className="flex items-center gap-2">
-                <CalendarDays className="size-4" />
-                Ver Horarios
-              </span>
-              <ArrowRight className="size-4 text-muted-foreground" />
-            </Button>
-          </Link>
+                  <div className="mt-4">
+                    {isCompleted ? (
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="size-5 text-[#006d5a]" />
+                        <span className="font-display text-2xl font-bold text-[#006d5a]">
+                          Turno completado
+                        </span>
+                      </div>
+                    ) : isInProgress ? (
+                      <span className="font-display text-2xl font-bold text-[#d4943a]">
+                        En turno
+                      </span>
+                    ) : (
+                      <span className="text-lg font-medium text-[#a39e97]">
+                        Sin registrar
+                      </span>
+                    )}
+                  </div>
 
-          <Link href="/notificaciones">
-            <Button
-              variant="outline"
-              size="lg"
-              className="w-full justify-between gap-2"
-            >
-              <span className="flex items-center gap-2">
-                <Bell className="size-4" />
-                Ver Avisos
-              </span>
-              <ArrowRight className="size-4 text-muted-foreground" />
-            </Button>
+                  <div className="mt-3">
+                    {todayAttendance ? (
+                      <div className="flex items-center gap-4 text-sm text-[#a39e97]">
+                        <p>
+                          Ingreso:{' '}
+                          <span className="font-semibold tabular-nums text-[#3d2c24]">
+                            {format(new Date(todayAttendance.clock_in_at), 'HH:mm')}
+                          </span>
+                        </p>
+                        {todayAttendance.clock_out_at && (
+                          <p>
+                            Egreso:{' '}
+                            <span className="font-semibold tabular-nums text-[#3d2c24]">
+                              {format(new Date(todayAttendance.clock_out_at), 'HH:mm')}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-[#a39e97]">
+                        Tocá para marcar ingreso
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center pr-4">
+                  <ArrowRight className="size-4 text-[#d1cdc7]" />
+                </div>
+              </div>
+            </div>
           </Link>
+        </ScalePress>
+      </FadeIn>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* KPI Grid — Turno + Avisos (+ Equipo + Stock for encargado)       */}
+      {/* ---------------------------------------------------------------- */}
+      <StaggerList className="grid grid-cols-2 gap-3" staggerDelay={0.06}>
+        {/* Proximo Turno */}
+        <StaggerItem>
+          <ScalePress>
+            <Link href="/mis-horarios">
+              <div className="card-interactive rounded-xl p-4">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="size-3.5 text-[#b8906e]" />
+                  <span className="section-label">Proximo Turno</span>
+                </div>
+                <div className="mt-3">
+                  {nextShift ? (
+                    <>
+                      <p className="text-xs font-semibold capitalize text-[#3d2c24]">
+                        {format(
+                          new Date(nextShift.shift_date + 'T12:00:00'),
+                          "EEE d MMM",
+                          { locale: es },
+                        )}
+                      </p>
+                      <p className="mt-1 font-display text-lg font-bold tabular-nums text-[#3d2c24]">
+                        {nextShift.start_time.slice(0, 5)} – {nextShift.end_time.slice(0, 5)}
+                      </p>
+                      <span
+                        className="mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                        style={{
+                          backgroundColor: ROLES[nextShift.shift_role].bg,
+                          color: ROLES[nextShift.shift_role].color,
+                        }}
+                      >
+                        {ROLES[nextShift.shift_role].emoji} {ROLES[nextShift.shift_role].label}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-[#a39e97]">Sin turnos</p>
+                      <p className="mt-1 text-xs text-[#a39e97]">Consultá con tu encargado</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </Link>
+          </ScalePress>
+        </StaggerItem>
+
+        {/* Avisos */}
+        <StaggerItem>
+          <ScalePress>
+            <Link href="/notificaciones">
+              <div className="card-interactive rounded-xl p-4">
+                <div className="flex items-center gap-2">
+                  <Bell className="size-3.5 text-[#d4943a]" />
+                  <span className="section-label">Avisos</span>
+                </div>
+                <div className="mt-3">
+                  <span className="font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
+                    <AnimatedNumber value={announcementCount} />
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-[#a39e97]">
+                  {announcementCount === 1 ? 'aviso pendiente' : 'avisos pendientes'}
+                </p>
+              </div>
+            </Link>
+          </ScalePress>
+        </StaggerItem>
+
+        {/* Encargado: Equipo Hoy */}
+        {isEncargado && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/equipo">
+                <div className="card-interactive rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <Users className="size-3.5 text-[#006d5a]" />
+                    <span className="section-label">Equipo Hoy</span>
+                  </div>
+                  <div className="mt-3">
+                    <span className="font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
+                      <AnimatedNumber value={teamToday.length} />
+                    </span>
+                  </div>
+                  <div className="mt-2">
+                    {teamToday.length > 0 ? (
+                      <div className="space-y-0.5">
+                        {teamToday.slice(0, 3).map((member, i) => (
+                          <p key={i} className="truncate text-[11px] text-[#a39e97]">
+                            <span className="font-medium text-[#3d2c24]">
+                              {member.profiles?.first_name}
+                            </span>{' '}
+                            {ROLES[member.profiles?.role ?? 'runner'].emoji}
+                          </p>
+                        ))}
+                        {teamToday.length > 3 && (
+                          <p className="text-[11px] text-[#a39e97]">
+                            +{teamToday.length - 3} más
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[#a39e97]">Nadie aún</p>
+                    )}
+                  </div>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Encargado: Stock Crítico */}
+        {isEncargado && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/stock">
+                <div className="card-interactive rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="size-3.5 text-[#ea504c]" />
+                    <span className="section-label">Stock Critico</span>
+                  </div>
+                  <div className="mt-3">
+                    <span
+                      className={`font-display text-4xl font-bold tabular-nums ${
+                        criticalStockCount > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'
+                      }`}
+                    >
+                      <AnimatedNumber value={criticalStockCount} />
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#a39e97]">
+                    {criticalStockCount === 0
+                      ? 'Todo en orden'
+                      : criticalStockCount === 1
+                        ? 'producto bajo mínimo'
+                        : 'productos bajo mínimo'}
+                  </p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+      </StaggerList>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Quick Actions                                                    */}
+      {/* ---------------------------------------------------------------- */}
+      <FadeIn delay={0.25}>
+        <h2 className="section-label mb-3">Acciones rápidas</h2>
+        <StaggerList className="flex flex-col gap-2.5" staggerDelay={0.06}>
+          {[
+            { href: '/mi-turno', icon: LogIn, label: 'Marcar Ingreso/Egreso' },
+            ...(isEncargado ? [
+              { href: '/admin', icon: CalendarDays, label: 'Centro de Control' },
+              { href: '/cocina', icon: UtensilsCrossed, label: 'Cocina' },
+              { href: '/cocina/pedidos', icon: ShoppingCart, label: 'Pedidos de Cocina' },
+            ] : profile?.role === 'chef' || profile?.role === 'cocina' ? [
+              { href: '/cocina', icon: UtensilsCrossed, label: 'Cocina' },
+              { href: '/cocina/pedidos', icon: ShoppingCart, label: 'Pedir mercadería' },
+            ] : profile?.role === 'barista' ? [
+              { href: '/cocina/barra', icon: Coffee, label: 'Barra' },
+              { href: '/mis-horarios', icon: CalendarDays, label: 'Ver Horarios' },
+            ] : [
+              { href: '/mis-horarios', icon: CalendarDays, label: 'Ver Horarios' },
+            ]),
+            { href: '/asistente', icon: Bot, label: 'La Vieja de Historia' },
+          ].map((action) => (
+            <StaggerItem key={action.href}>
+              <ScalePress>
+                <Link href={action.href}>
+                  <div className="card-interactive flex items-center overflow-hidden rounded-xl">
+                    <div className="w-1 self-stretch bg-[#006d5a]" />
+                    <div className="flex flex-1 items-center justify-between px-4 py-3.5">
+                      <span className="flex items-center gap-3">
+                        <div className="flex size-9 items-center justify-center rounded-xl bg-[#f0f7f5]">
+                          <action.icon className="size-4 text-[#006d5a]" />
+                        </div>
+                        <span className="text-sm font-medium text-[#3d2c24]">
+                          {action.label}
+                        </span>
+                      </span>
+                      <ArrowRight className="size-4 text-[#d1cdc7]" />
+                    </div>
+                  </div>
+                </Link>
+              </ScalePress>
+            </StaggerItem>
+          ))}
+          {/* Reportar problema — inline button */}
+          <StaggerItem>
+            <ScalePress>
+              <button
+                onClick={() => setReportOpen(true)}
+                className="card-interactive flex w-full items-center overflow-hidden rounded-xl text-left"
+              >
+                <div className="w-1 self-stretch bg-[#ea504c]" />
+                <div className="flex flex-1 items-center justify-between px-4 py-3.5">
+                  <span className="flex items-center gap-3">
+                    <div className="flex size-9 items-center justify-center rounded-xl bg-[#fef2f2]">
+                      <AlertTriangle className="size-4 text-[#ea504c]" />
+                    </div>
+                    <span className="text-sm font-medium text-[#3d2c24]">
+                      Reportar problema
+                    </span>
+                  </span>
+                  <ArrowRight className="size-4 text-[#d1cdc7]" />
+                </div>
+              </button>
+            </ScalePress>
+          </StaggerItem>
+        </StaggerList>
+      </FadeIn>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Report Problem Dialog                                            */}
+      {/* ---------------------------------------------------------------- */}
+      {reportOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+          <div
+            className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
+            onClick={() => setReportOpen(false)}
+          />
+          <div className="relative z-10 mx-3 mb-3 w-full max-w-md rounded-2xl bg-white p-5 shadow-xl sm:mb-0">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
+              <button
+                onClick={() => setReportOpen(false)}
+                className="rounded-full p-1.5 text-[#a39e97] hover:bg-[#f3efe9]"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <textarea
+              value={reportMsg}
+              onChange={(e) => setReportMsg(e.target.value)}
+              placeholder="¿Qué problema hay? Ej: Se rompió la máquina de café, falta leche urgente..."
+              rows={3}
+              className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] p-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+            />
+
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={() => setReportUrgency('normal')}
+                className={`flex-1 rounded-xl border py-2 text-sm font-medium transition-all ${
+                  reportUrgency === 'normal'
+                    ? 'border-[#006d5a] bg-[#e8f5f1] text-[#006d5a]'
+                    : 'border-[#ebe6df] text-[#a39e97]'
+                }`}
+              >
+                Normal
+              </button>
+              <button
+                onClick={() => setReportUrgency('urgente')}
+                className={`flex-1 rounded-xl border py-2 text-sm font-medium transition-all ${
+                  reportUrgency === 'urgente'
+                    ? 'border-[#ea504c] bg-[#fef2f2] text-[#ea504c]'
+                    : 'border-[#ebe6df] text-[#a39e97]'
+                }`}
+              >
+                Urgente
+              </button>
+            </div>
+
+            <button
+              onClick={sendReport}
+              disabled={reportSending || !reportMsg.trim()}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white shadow-md transition-all hover:bg-[#005a4a] disabled:opacity-50 active:scale-[0.98]"
+            >
+              {reportSending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Send className="size-4" />
+              )}
+              Enviar reporte
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

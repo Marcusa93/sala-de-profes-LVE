@@ -3,20 +3,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Megaphone,
   Loader2,
   ShieldAlert,
   ArrowLeft,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -34,7 +25,7 @@ import {
   PRIORITY_OPTIONS,
   ROLE_OPTIONS,
 } from '@/lib/constants'
-import type { AppRole, AnnouncementInsert } from '@/types/database'
+import type { AppRole, AnnouncementInsert, AnnouncementTypeValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
 // Scope options
@@ -42,7 +33,7 @@ import type { AppRole, AnnouncementInsert } from '@/types/database'
 
 const SCOPE_OPTIONS = [
   { value: 'todos', label: 'Todos' },
-  { value: 'por_rol', label: 'Por rol' },
+  { value: 'por_rol', label: 'Por Rol' },
   { value: 'usuario', label: 'Usuario especifico' },
 ] as const
 
@@ -66,7 +57,7 @@ type EmployeeOption = {
 export default function NuevaNotificacionPage() {
   const { profile, loading: profileLoading } = useProfileContext()
   const router = useRouter()
-  const supabase = createClient()
+  const [supabase] = useState(() => createClient())
 
   const canCreate =
     profile?.role === 'encargado' || profile?.role === 'chef'
@@ -74,8 +65,8 @@ export default function NuevaNotificacionPage() {
   // Form state
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
-  const [type, setType] = useState('general')
-  const [priority, setPriority] = useState('low')
+  const [type, setType] = useState<AnnouncementTypeValue>('general')
+  const [priority, setPriority] = useState<PriorityValue>('baja')
   const [scope, setScope] = useState<Scope>('todos')
   const [targetRole, setTargetRole] = useState<AppRole | ''>('')
   const [targetUserId, setTargetUserId] = useState('')
@@ -120,6 +111,14 @@ export default function NuevaNotificacionPage() {
       toast.error('El titulo y el contenido son obligatorios')
       return
     }
+    if (scope === 'por_rol' && !targetRole) {
+      toast.error('Selecciona un rol destinatario')
+      return
+    }
+    if (scope === 'usuario' && !targetUserId) {
+      toast.error('Selecciona un usuario destinatario')
+      return
+    }
 
     setSaving(true)
     try {
@@ -128,10 +127,10 @@ export default function NuevaNotificacionPage() {
       let dbTargetRole: AppRole | null = null
       let dbTargetUserId: string | null = null
 
-      if (scope === 'por_rol' && targetRole) {
+      if (scope === 'por_rol') {
         dbScope = 'role'
         dbTargetRole = targetRole as AppRole
-      } else if (scope === 'usuario' && targetUserId) {
+      } else if (scope === 'usuario') {
         dbScope = 'user'
         dbTargetUserId = targetUserId
       }
@@ -169,8 +168,8 @@ export default function NuevaNotificacionPage() {
   if (profileLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="size-8 animate-spin" />
+        <div className="flex flex-col items-center gap-4 text-[#a39e97]">
+          <Loader2 className="size-8 animate-spin text-[#006d5a]" />
           <p className="text-sm">Cargando...</p>
         </div>
       </div>
@@ -180,12 +179,12 @@ export default function NuevaNotificacionPage() {
   if (!profile || !canCreate) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="flex items-center justify-center rounded-xl bg-muted p-3">
-            <ShieldAlert className="size-6 text-muted-foreground" />
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="flex size-14 items-center justify-center rounded-2xl bg-[#e8f5f1]">
+            <ShieldAlert className="size-7 text-[#006d5a]" />
           </div>
-          <h3 className="text-sm font-medium text-foreground">Sin permisos</h3>
-          <p className="max-w-xs text-sm text-muted-foreground">
+          <h3 className="font-display text-base font-semibold text-[#3d2c24]">Sin permisos</h3>
+          <p className="max-w-xs text-sm text-[#a39e97]">
             Solo los encargados y chefs pueden crear notificaciones.
           </p>
         </div>
@@ -197,109 +196,67 @@ export default function NuevaNotificacionPage() {
   // Render
   // ------------------------------------------
   return (
-    <div className="mx-auto max-w-lg space-y-6">
+    <div className="mx-auto max-w-lg space-y-6 pb-12">
       {/* Back button */}
-      <Button
-        variant="ghost"
-        size="sm"
+      <button
+        type="button"
         onClick={() => router.push('/notificaciones')}
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-[#a39e97] transition-colors hover:text-[#3d2c24]"
       >
         <ArrowLeft className="size-4" />
         Volver
-      </Button>
+      </button>
 
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          <Megaphone className="mb-1 mr-1.5 inline-block size-6 text-primary" />
-          Nueva Notificacion
+        <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">
+          Nuevo Aviso
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="section-label mt-2">
           Crea un aviso o comunicado para el equipo
         </p>
       </div>
 
-      {/* Form */}
-      <Card>
-        <CardContent className="pt-6">
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Title */}
+      {/* Form card */}
+      <div className="card-elevated-lg p-6 md:p-8">
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Title */}
+          <div className="space-y-2">
+            <Label htmlFor="notif-title" className="text-sm font-medium text-[#3d2c24]">Titulo <span className="text-[#ea504c]">*</span></Label>
+            <Input
+              id="notif-title"
+              placeholder="Titulo del aviso"
+              className="rounded-xl border-[#ebe6df] bg-[#faf8f5]"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              required
+            />
+          </div>
+
+          {/* Body */}
+          <div className="space-y-2">
+            <Label htmlFor="notif-body" className="text-sm font-medium text-[#3d2c24]">Contenido <span className="text-[#ea504c]">*</span></Label>
+            <Textarea
+              id="notif-body"
+              placeholder="Escribe el contenido del aviso..."
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={4}
+              className="min-h-[5rem] rounded-xl border-[#ebe6df] bg-[#faf8f5]"
+              required
+            />
+          </div>
+
+          {/* Type + Priority row */}
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label htmlFor="notif-title">Titulo</Label>
-              <Input
-                id="notif-title"
-                placeholder="Titulo del aviso"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                required
-              />
-            </div>
-
-            {/* Body */}
-            <div className="space-y-2">
-              <Label htmlFor="notif-body">Contenido</Label>
-              <Textarea
-                id="notif-body"
-                placeholder="Escribe el contenido del aviso..."
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={4}
-                required
-              />
-            </div>
-
-            {/* Type + Priority row */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="notif-type">Tipo</Label>
-                <Select value={type} onValueChange={(v) => v && setType(v)}>
-                  <SelectTrigger className="w-full" id="notif-type">
-                    <SelectValue placeholder="Tipo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ANNOUNCEMENT_TYPE_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="notif-priority">Prioridad</Label>
-                <Select value={priority} onValueChange={(v) => v && setPriority(v)}>
-                  <SelectTrigger className="w-full" id="notif-priority">
-                    <SelectValue placeholder="Prioridad" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PRIORITY_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* Scope */}
-            <div className="space-y-2">
-              <Label htmlFor="notif-scope">Alcance</Label>
-              <Select
-                value={scope}
-                onValueChange={(v) => {
-                  if (!v) return
-                  setScope(v as Scope)
-                  setTargetRole('')
-                  setTargetUserId('')
-                }}
-              >
-                <SelectTrigger className="w-full" id="notif-scope">
-                  <SelectValue placeholder="Alcance" />
+              <Label htmlFor="notif-type" className="text-sm font-medium text-[#3d2c24]">Tipo</Label>
+              <Select value={type} onValueChange={(v) => v && setType(v as AnnouncementTypeValue)}>
+                <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5]" id="notif-type">
+                  <SelectValue placeholder="Tipo" />
                 </SelectTrigger>
-                <SelectContent>
-                  {SCOPE_OPTIONS.map((opt) => (
+                <SelectContent className="rounded-xl border-[#ebe6df]">
+                  {ANNOUNCEMENT_TYPE_OPTIONS.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>
@@ -308,84 +265,130 @@ export default function NuevaNotificacionPage() {
               </Select>
             </div>
 
-            {/* Conditional: role select */}
-            {scope === 'por_rol' && (
-              <div className="space-y-2">
-                <Label htmlFor="notif-target-role">Rol destinatario</Label>
-                <Select
-                  value={targetRole}
-                  onValueChange={(v) => v && setTargetRole(v as AppRole)}
-                >
-                  <SelectTrigger className="w-full" id="notif-target-role">
-                    <SelectValue placeholder="Seleccionar rol" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ROLE_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Conditional: user select */}
-            {scope === 'usuario' && (
-              <div className="space-y-2">
-                <Label htmlFor="notif-target-user">
-                  Usuario destinatario
-                </Label>
-                <Select
-                  value={targetUserId}
-                  onValueChange={(v) => v && setTargetUserId(v)}
-                >
-                  <SelectTrigger className="w-full" id="notif-target-user">
-                    <SelectValue placeholder="Seleccionar usuario" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {employees.map((emp) => (
-                      <SelectItem key={emp.id} value={emp.id}>
-                        {emp.first_name} {emp.last_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            {/* Expiration date */}
             <div className="space-y-2">
-              <Label htmlFor="notif-expires">
-                Fecha de expiracion (opcional)
-              </Label>
-              <Input
-                id="notif-expires"
-                type="datetime-local"
-                value={expiresAt}
-                onChange={(e) => setExpiresAt(e.target.value)}
-              />
+              <Label htmlFor="notif-priority" className="text-sm font-medium text-[#3d2c24]">Prioridad</Label>
+              <Select value={priority} onValueChange={(v) => v && setPriority(v as PriorityValue)}>
+                <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5]" id="notif-priority">
+                  <SelectValue placeholder="Prioridad" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl border-[#ebe6df]">
+                  {PRIORITY_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+          </div>
 
-            {/* Submit */}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.push('/notificaciones')}
+          {/* Scope */}
+          <div className="space-y-2">
+            <Label htmlFor="notif-scope" className="text-sm font-medium text-[#3d2c24]">Alcance</Label>
+            <Select
+              value={scope}
+              onValueChange={(v) => {
+                if (!v) return
+                setScope(v as Scope)
+                setTargetRole('')
+                setTargetUserId('')
+              }}
+            >
+              <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5]" id="notif-scope">
+                <SelectValue placeholder="Alcance" />
+              </SelectTrigger>
+              <SelectContent className="rounded-xl border-[#ebe6df]">
+                {SCOPE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Conditional: role select */}
+          {scope === 'por_rol' && (
+            <div className="space-y-2">
+              <Label htmlFor="notif-target-role" className="text-sm font-medium text-[#3d2c24]">Rol destinatario</Label>
+              <Select
+                value={targetRole}
+                onValueChange={(v) => v && setTargetRole(v as AppRole)}
               >
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={saving}>
-                {saving && (
-                  <Loader2 className="mr-1.5 size-4 animate-spin" />
-                )}
-                Publicar
-              </Button>
+                <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5]" id="notif-target-role">
+                  <SelectValue placeholder="Seleccionar rol" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl border-[#ebe6df]">
+                  {ROLE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          </form>
-        </CardContent>
-      </Card>
+          )}
+
+          {/* Conditional: user select */}
+          {scope === 'usuario' && (
+            <div className="space-y-2">
+              <Label htmlFor="notif-target-user" className="text-sm font-medium text-[#3d2c24]">
+                Usuario destinatario
+              </Label>
+              <Select
+                value={targetUserId}
+                onValueChange={(v) => v && setTargetUserId(v)}
+              >
+                <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5]" id="notif-target-user">
+                  <SelectValue placeholder="Seleccionar usuario" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl border-[#ebe6df]">
+                  {employees.map((emp) => (
+                    <SelectItem key={emp.id} value={emp.id}>
+                      {emp.first_name} {emp.last_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Expiration date */}
+          <div className="space-y-2">
+            <Label htmlFor="notif-expires" className="text-sm font-medium text-[#3d2c24]">
+              Fecha de expiracion (opcional)
+            </Label>
+            <Input
+              id="notif-expires"
+              type="datetime-local"
+              className="rounded-xl border-[#ebe6df] bg-[#faf8f5]"
+              value={expiresAt}
+              onChange={(e) => setExpiresAt(e.target.value)}
+            />
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-col gap-3 pt-3">
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#005a4a] disabled:opacity-50"
+            >
+              {saving && (
+                <Loader2 className="size-4 animate-spin" />
+              )}
+              Publicar
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/notificaciones')}
+              className="inline-flex w-full items-center justify-center rounded-xl border border-[#ebe6df] bg-[#fefcf9] px-4 py-3.5 text-sm font-medium text-[#3d2c24] transition-colors hover:bg-[#f3efe9]"
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }

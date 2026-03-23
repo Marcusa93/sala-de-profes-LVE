@@ -1,20 +1,16 @@
 import { ROLES } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
 
-type RoleBadgeProps = {
-  role: AppRole
-}
-
-export function RoleBadge({ role }: RoleBadgeProps) {
+export function RoleBadge({ role, size = 'sm' }: { role: AppRole; size?: 'sm' | 'md' }) {
   const config = ROLES[role]
+  if (!config) return null
 
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
-      style={{
-        backgroundColor: `${config.color}18`,
-        color: config.color,
-      }}
+      className={`inline-flex items-center gap-1 rounded-full font-semibold ${
+        size === 'md' ? 'px-3 py-1 text-xs' : 'px-2 py-0.5 text-[10px]'
+      }`}
+      style={{ backgroundColor: config.bg, color: config.color }}
     >
       <span>{config.emoji}</span>
       {config.label}
