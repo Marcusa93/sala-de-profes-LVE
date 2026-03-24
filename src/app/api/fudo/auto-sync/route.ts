@@ -24,14 +24,30 @@ export async function GET() {
     const argDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }))
     const today = argDate.toISOString().slice(0, 10)
 
-    // Fetch sales with items, products, and tables in a single request
-    const response = await fudo.fetch<{
-      data: IncludedResource[]
-      included?: IncludedResource[]
-    }>('/sales?include=items.product,table&sort=-createdAt&page[size]=200&page[number]=1')
+    // Fetch sales with items, products, and tables — paginate to get all of today
+    let salesData: IncludedResource[] = []
+    let included: IncludedResource[] = []
+    let page = 1
 
-    const salesData = Array.isArray(response.data) ? response.data : []
-    const included = response.included ?? []
+    while (page <= 5) { // safety limit: max 5 pages (500 sales)
+      const response = await fudo.fetch<{
+        data: IncludedResource[]
+        included?: IncludedResource[]
+      }>(`/sales?include=items.product,table&sort=-createdAt&page[size]=100&page[number]=${page}`)
+
+      const pageData = Array.isArray(response.data) ? response.data : []
+      salesData.push(...pageData)
+      included.push(...(response.included ?? []))
+
+      if (pageData.length < 100) break // last page
+
+      // Check if oldest sale on this page is before today — if so, we have all of today
+      const oldest = pageData[pageData.length - 1]
+      const oldestDate = String(oldest?.attributes?.createdAt ?? '').slice(0, 10)
+      if (oldestDate < today) break
+
+      page++
+    }
 
     // Build lookup maps
     const itemMap = new Map<string, IncludedResource>()
@@ -121,9 +137,10 @@ export async function GET() {
     const closedTickets = tickets.filter((t) => t.state === 'CLOSED')
 
     // KPIs — use sale.total (Fudo's real total)
+    const payingTickets = tickets.filter((t) => t.state === 'PAYMENT-PROCESS')
     const totalFacturado = closedTickets.reduce((s, t) => s + t.total, 0)
     const totalEnCurso = openTickets.reduce((s, t) => s + t.total, 0)
-    const totalGeneral = tickets.reduce((s, t) => s + t.total, 0)
+    const totalGeneral = totalFacturado + totalEnCurso
     const totalTickets = tickets.length
     const totalItems = tickets.reduce((s, t) => s + t.items.reduce((is, i) => is + i.qty, 0), 0)
 
@@ -188,8 +205,9 @@ export async function GET() {
         totalGeneral,
         totalTickets,
         totalItems,
-        avgTicket: totalTickets > 0 ? Math.round(totalGeneral / totalTickets) : 0,
+        avgTicket: closedTickets.length > 0 ? Math.round(totalFacturado / closedTickets.length) : 0,
         mesasAbiertas: openTickets.length,
+        mesasPagando: payingTickets.length,
         mesasCerradas: closedTickets.length,
         topProducts,
         bySaleType,
