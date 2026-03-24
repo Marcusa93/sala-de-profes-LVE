@@ -25,7 +25,7 @@ type MenuCategory = {
   id: number
   name: string
   fudo_category_id: string | null
-  sort_order: number
+  sort_order: number | null
 }
 
 type MenuItem = {
