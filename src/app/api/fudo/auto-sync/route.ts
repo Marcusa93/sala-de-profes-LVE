@@ -4,26 +4,55 @@ import { fudo } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
 // GET /api/fudo/auto-sync — Lightweight sync for dashboard polling
-// Syncs sales + products, returns today's sales data for the dashboard
+// Uses include=items.product to fetch sales + items + product names in ONE request
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+type IncludedResource = {
+  type: string
+  id: string
+  attributes: Record<string, unknown>
+  relationships?: Record<string, { data: unknown }>
+}
+
 export async function GET() {
   try {
     const admin = createAdminClient()
-    const today = new Date().toISOString().slice(0, 10)
+    // Use Argentina timezone for "today"
+    const now = new Date()
+    const argDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }))
+    const today = argDate.toISOString().slice(0, 10)
 
-    // 1) Try to sync sales from Fudo (graceful if rate-limited)
+    // 1) Fetch sales with items.product included (single request!)
     let newSalesCount = 0
     let syncError: string | null = null
+
     try {
-      const fudoSales = await fudo.getSales()
-      const todaySales = fudoSales.filter((s) => {
-        const d = (s.createdAt || s.closedAt || '').slice(0, 10)
+      const response = await fudo.fetch<{
+        data: IncludedResource[]
+        included?: IncludedResource[]
+      }>('/sales?include=items.product&sort=-closedAt&page[size]=100&page[number]=1')
+
+      const salesData = Array.isArray(response.data) ? response.data : []
+      const included = response.included ?? []
+
+
+      // Build lookup maps for included resources
+      const itemMap = new Map<string, IncludedResource>()
+      const productMap = new Map<string, IncludedResource>()
+      for (const r of included) {
+        if (r.type === 'Item') itemMap.set(r.id, r)
+        if (r.type === 'Product') productMap.set(r.id, r)
+      }
+
+      // Filter today's sales
+      const todaySales = salesData.filter((s) => {
+        const d = (String(s.attributes.createdAt ?? s.attributes.closedAt ?? '')).slice(0, 10)
         return d === today
       })
+
 
       if (todaySales.length > 0) {
         const flatRows: {
@@ -34,44 +63,50 @@ export async function GET() {
           raw_payload: Record<string, unknown>
         }[] = []
 
-        for (const sale of todaySales.slice(0, 100)) {
-          try {
-            const items = await fudo.getSaleItems(sale.id)
-            if (items.length > 0) {
-              for (const item of items) {
-                const prodRel = (item._relationships?.product?.data ?? {}) as { id?: string }
-                flatRows.push({
-                  fudo_ticket_id: sale.id,
-                  fudo_product_id: String(prodRel?.id ?? item.id),
-                  quantity: Number(item.quantity) || 1,
-                  sold_at: String(sale.createdAt ?? sale.closedAt ?? new Date().toISOString()),
-                  raw_payload: {
-                    sale_id: sale.id,
-                    item_name: item.name,
-                    price: item.price,
-                    sale_type: sale.saleType,
-                    total: sale.total,
-                  },
-                })
-              }
-            } else {
-              // No item detail — register the ticket itself with total
+        for (const sale of todaySales) {
+          const saleItemRefs = ((sale.relationships?.items?.data ?? []) as { type: string; id: string }[])
+
+          if (saleItemRefs.length > 0) {
+            for (const ref of saleItemRefs) {
+              const item = itemMap.get(ref.id)
+              if (!item) continue
+
+              // Get product from item relationship
+              const productRef = (item.relationships?.product?.data ?? {}) as { id?: string }
+              const product = productRef?.id ? productMap.get(productRef.id) : null
+
               flatRows.push({
                 fudo_ticket_id: sale.id,
-                fudo_product_id: 'ticket_total',
-                quantity: 1,
-                sold_at: String(sale.createdAt ?? sale.closedAt ?? new Date().toISOString()),
+                fudo_product_id: String(productRef?.id ?? item.id),
+                quantity: Number(item.attributes.quantity) || 1,
+                sold_at: String(sale.attributes.createdAt ?? sale.attributes.closedAt ?? new Date().toISOString()),
                 raw_payload: {
                   sale_id: sale.id,
-                  item_name: `Ticket #${sale.id}`,
-                  price: sale.total,
-                  sale_type: sale.saleType,
-                  total: sale.total,
-                  sale_state: sale.saleState,
+                  item_name: String(product?.attributes?.name ?? `Item #${item.id}`),
+                  price: Number(item.attributes.price ?? 0),
+                  sale_type: String(sale.attributes.saleType ?? ''),
+                  total: Number(sale.attributes.total ?? 0),
+                  sale_state: String(sale.attributes.saleState ?? ''),
                 },
               })
             }
-          } catch { /* skip failed sale */ }
+          } else {
+            // No items — register ticket total
+            flatRows.push({
+              fudo_ticket_id: sale.id,
+              fudo_product_id: 'ticket_total',
+              quantity: 1,
+              sold_at: String(sale.attributes.createdAt ?? sale.attributes.closedAt ?? new Date().toISOString()),
+              raw_payload: {
+                sale_id: sale.id,
+                item_name: `Ticket #${sale.id}`,
+                price: Number(sale.attributes.total ?? 0),
+                sale_type: String(sale.attributes.saleType ?? ''),
+                total: Number(sale.attributes.total ?? 0),
+                sale_state: String(sale.attributes.saleState ?? ''),
+              },
+            })
+          }
         }
 
         if (flatRows.length > 0) {
@@ -88,10 +123,30 @@ export async function GET() {
             (r) => !existingSet.has(`${r.fudo_ticket_id}__${r.fudo_product_id}`),
           )
 
-          for (let i = 0; i < newRows.length; i += 50) {
-            const batch = newRows.slice(i, i + 50)
-            const { error } = await admin.from('fudo_sales').insert(batch)
-            if (!error) newSalesCount += batch.length
+
+          // Deduplicate within batch (same ticket can have same product multiple times — merge quantities)
+          const deduped = new Map<string, typeof newRows[0]>()
+          for (const row of newRows) {
+            const key = `${row.fudo_ticket_id}__${row.fudo_product_id}`
+            const existing = deduped.get(key)
+            if (existing) {
+              existing.quantity += row.quantity
+            } else {
+              deduped.set(key, { ...row })
+            }
+          }
+          const dedupedRows = [...deduped.values()]
+
+          for (let i = 0; i < dedupedRows.length; i += 50) {
+            const batch = dedupedRows.slice(i, i + 50)
+            const { error } = await admin.from('fudo_sales').upsert(batch, {
+              onConflict: 'fudo_ticket_id,fudo_product_id',
+            })
+            if (error) {
+              console.error('[auto-sync] Upsert error:', error.message)
+            } else {
+              newSalesCount += batch.length
+            }
           }
         }
       }
@@ -99,52 +154,24 @@ export async function GET() {
       syncError = e instanceof Error ? e.message : 'Error de sync'
     }
 
-    // 2) Read today's sales from DB for dashboard
+    // 2) Read today's sales from DB
     const { data: todayDbSales } = await admin
       .from('fudo_sales')
       .select('fudo_ticket_id, fudo_product_id, quantity, sold_at, raw_payload')
       .gte('sold_at', today + 'T00:00:00')
       .order('sold_at', { ascending: false })
 
-    // 3) Get product names from menu_items
-    const productIds = [...new Set((todayDbSales ?? []).map((s) => s.fudo_product_id))]
-    const { data: menuItems } = productIds.length > 0
-      ? await admin
-          .from('menu_items')
-          .select('fudo_product_id, name, price, category_id')
-          .in('fudo_product_id', productIds)
-      : { data: [] }
-
-    const productMap = new Map(
-      (menuItems ?? []).map((m) => [m.fudo_product_id, m]),
-    )
-
-    // 4) Get category names
-    const categoryIds = [...new Set((menuItems ?? []).map((m) => m.category_id).filter(Boolean))]
-    const { data: categories } = categoryIds.length > 0
-      ? await admin
-          .from('menu_categories')
-          .select('id, name')
-          .in('id', categoryIds)
-      : { data: [] }
-
-    const categoryMap = new Map(
-      (categories ?? []).map((c) => [c.id, c.name]),
-    )
-
-    // 5) Build dashboard data
+    // 3) Build dashboard data directly from raw_payload (no extra DB lookups needed)
     const sales = (todayDbSales ?? []).map((s) => {
-      const product = productMap.get(s.fudo_product_id)
-      const rawName = (s.raw_payload as Record<string, unknown>)?.item_name
-      const rawPrice = (s.raw_payload as Record<string, unknown>)?.price
+      const raw = (s.raw_payload ?? {}) as Record<string, unknown>
       return {
         ticketId: s.fudo_ticket_id,
         productId: s.fudo_product_id,
-        productName: product?.name ?? String(rawName ?? `Producto #${s.fudo_product_id}`),
-        category: product?.category_id ? categoryMap.get(product.category_id) ?? 'Sin categoría' : 'Sin categoría',
+        productName: String(raw.item_name ?? `Producto #${s.fudo_product_id}`),
+        saleType: String(raw.sale_type ?? ''),
         quantity: s.quantity,
-        price: product?.price ?? Number(rawPrice ?? 0),
-        total: s.quantity * (product?.price ?? Number(rawPrice ?? 0)),
+        price: Number(raw.price ?? 0),
+        total: s.quantity * Number(raw.price ?? 0),
         soldAt: s.sold_at,
       }
     })
@@ -157,6 +184,7 @@ export async function GET() {
     // Top products
     const productAgg = new Map<string, { name: string; qty: number; revenue: number }>()
     for (const s of sales) {
+      if (s.productId === 'ticket_total') continue
       const existing = productAgg.get(s.productId)
       if (existing) {
         existing.qty += s.quantity
@@ -169,19 +197,29 @@ export async function GET() {
       .sort((a, b) => b.qty - a.qty)
       .slice(0, 15)
 
-    // By category
-    const categoryAgg = new Map<string, { qty: number; revenue: number }>()
+    // By sale type (EAT-IN, TAKEAWAY, DELIVERY)
+    const typeAgg = new Map<string, { tickets: Set<string>; revenue: number }>()
     for (const s of sales) {
-      const existing = categoryAgg.get(s.category)
+      const t = s.saleType || 'Otro'
+      const existing = typeAgg.get(t)
       if (existing) {
-        existing.qty += s.quantity
+        existing.tickets.add(s.ticketId)
         existing.revenue += s.total
       } else {
-        categoryAgg.set(s.category, { qty: s.quantity, revenue: s.total })
+        typeAgg.set(t, { tickets: new Set([s.ticketId]), revenue: s.total })
       }
     }
-    const byCategory = [...categoryAgg.entries()]
-      .map(([name, data]) => ({ name, ...data }))
+    const typeLabels: Record<string, string> = {
+      'EAT-IN': 'En local',
+      'TAKEAWAY': 'Para llevar',
+      'DELIVERY': 'Delivery',
+    }
+    const bySaleType = [...typeAgg.entries()]
+      .map(([type, data]) => ({
+        name: typeLabels[type] ?? type,
+        tickets: data.tickets.size,
+        revenue: data.revenue,
+      }))
       .sort((a, b) => b.revenue - a.revenue)
 
     // By hour
@@ -207,15 +245,17 @@ export async function GET() {
       }
     }).filter((h) => h.tickets > 0 || (h.hour >= '08:00' && h.hour <= '23:00'))
 
-    // Recent sales (last 10 unique tickets)
-    const recentTickets = [...new Set(sales.map((s) => s.ticketId))].slice(0, 10)
-    const recentSales = recentTickets.map((tid) => {
-      const ticketItems = sales.filter((s) => s.ticketId === tid)
+    // Recent tickets (last 10)
+    const recentTicketIds = [...new Set(sales.map((s) => s.ticketId))].slice(0, 10)
+    const recentSales = recentTicketIds.map((tid) => {
+      const ticketItems = sales.filter((s) => s.ticketId === tid && s.productId !== 'ticket_total')
+      const ticketTotal = sales.filter((s) => s.ticketId === tid)
       return {
         ticketId: tid,
-        time: ticketItems[0]?.soldAt ?? '',
-        items: ticketItems.map((i) => ({ name: i.productName, qty: i.quantity, total: i.total })),
-        total: ticketItems.reduce((s, i) => s + i.total, 0),
+        time: ticketItems[0]?.soldAt ?? ticketTotal[0]?.soldAt ?? '',
+        saleType: ticketItems[0]?.saleType ?? ticketTotal[0]?.saleType ?? '',
+        items: ticketItems.map((i) => ({ name: i.productName, qty: i.quantity, price: i.price })),
+        total: ticketTotal.reduce((s, i) => s + i.total, 0),
       }
     })
 
@@ -227,8 +267,9 @@ export async function GET() {
         totalRevenue,
         totalItems,
         uniqueTickets,
+        avgTicket: uniqueTickets > 0 ? Math.round(totalRevenue / uniqueTickets) : 0,
         topProducts,
-        byCategory,
+        bySaleType,
         byHour,
         recentSales,
       },
