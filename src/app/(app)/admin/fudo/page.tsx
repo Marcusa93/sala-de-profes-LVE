@@ -31,7 +31,7 @@ type MenuCategory = {
 type MenuItem = {
   id: number
   name: string
-  sale_price: number
+  sale_price: number | null
   fudo_product_id: string | null
   menu_category_id: string | null
   is_active: boolean
