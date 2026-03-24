@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import {
   RefreshCw,
   Store,
-  Search,
+  Search
   ChevronDown,
   ChevronRight,
   DollarSign,
@@ -22,14 +22,14 @@ import { cn } from '@/lib/utils'
 // ---------------------------------------------------------------------------
 
 type MenuCategory = {
-  id: string
+  id: number
   name: string
   fudo_category_id: string | null
   sort_order: number
 }
 
 type MenuItem = {
-  id: string
+  id: number
   name: string
   sale_price: number
   fudo_product_id: string | null
