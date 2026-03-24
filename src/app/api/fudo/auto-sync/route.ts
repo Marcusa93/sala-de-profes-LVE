@@ -41,10 +41,11 @@ export async function GET() {
 
       if (pageData.length < 100) break // last page
 
-      // Check if oldest sale on this page is before today — if so, we have all of today
+      // Check if oldest sale on this page is before today (Argentina time)
       const oldest = pageData[pageData.length - 1]
-      const oldestDate = String(oldest?.attributes?.createdAt ?? '').slice(0, 10)
-      if (oldestDate < today) break
+      const oldestUtc = new Date(String(oldest?.attributes?.createdAt ?? ''))
+      const oldestArgDate = oldestUtc.toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+      if (oldestArgDate < today) break
 
       page++
     }
@@ -60,11 +61,14 @@ export async function GET() {
       if (r.type === 'Table' && !tableMap.has(r.id)) tableMap.set(r.id, r)
     }
 
-    // Filter today's sales
+    // Filter today's sales using Argentina timezone (Fudo uses local AR time)
     const todaySales = salesData.filter((s) => {
-      const d = String(s.attributes.createdAt ?? '').slice(0, 10)
-      return d === today
+      const utc = new Date(String(s.attributes.createdAt ?? ''))
+      const argDate2 = utc.toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+      return argDate2 === today
     })
+    // Exclude $0 sales (empty/voided tickets)
+    .filter((s) => Number(s.attributes.total ?? 0) > 0 || s.attributes.saleState !== 'CLOSED')
 
     // Build structured data per ticket/mesa
     type TicketItem = { name: string; qty: number; price: number }
