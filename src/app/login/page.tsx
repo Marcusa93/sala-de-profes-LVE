@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
-import { Coffee, Lock, Mail, Loader2 } from 'lucide-react'
+import { Coffee, Lock, Mail, Loader2, ArrowLeft } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
@@ -17,12 +17,41 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [showSplash, setShowSplash] = useState(true)
+  const [showReset, setShowReset] = useState(false)
+  const [resetEmail, setResetEmail] = useState('')
+  const [resetLoading, setResetLoading] = useState(false)
+  const [resetSent, setResetSent] = useState(false)
 
   // Splash screen → login form transition
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 1200)
     return () => clearTimeout(timer)
   }, [])
+
+  async function handleResetPassword(e: React.FormEvent) {
+    e.preventDefault()
+    if (!resetEmail) {
+      toast.error('Ingresa tu correo electrónico')
+      return
+    }
+    setResetLoading(true)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+        redirectTo: `${window.location.origin}/auth/callback?type=recovery`,
+      })
+      if (error) {
+        toast.error(error.message)
+        return
+      }
+      setResetSent(true)
+      toast.success('Te enviamos un email para restablecer tu contraseña')
+    } catch {
+      toast.error('Error inesperado. Intenta de nuevo.')
+    } finally {
+      setResetLoading(false)
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -218,8 +247,110 @@ export default function LoginPage() {
                     </>
                   )}
                 </Button>
+
+                {/* Forgot password link */}
+                <button
+                  type="button"
+                  onClick={() => { setShowReset(true); setResetEmail(email) }}
+                  className="text-center text-xs font-medium text-[#006d5a] hover:underline"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
               </form>
             </motion.div>
+
+            {/* Reset password modal */}
+            <AnimatePresence>
+              {showReset && (
+                <motion.div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-5"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => { setShowReset(false); setResetSent(false) }}
+                >
+                  <motion.div
+                    className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.95, opacity: 0 }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {resetSent ? (
+                      <div className="flex flex-col items-center gap-4 py-4 text-center">
+                        <div className="flex size-14 items-center justify-center rounded-full bg-[#e8f5f1] text-2xl">
+                          ✉️
+                        </div>
+                        <h3 className="font-display text-lg font-semibold text-[#3d2c24]">
+                          Revisa tu correo
+                        </h3>
+                        <p className="text-sm text-[#a39e97]">
+                          Te enviamos un link a <strong className="text-[#3d2c24]">{resetEmail}</strong> para restablecer tu contraseña.
+                        </p>
+                        <Button
+                          onClick={() => { setShowReset(false); setResetSent(false) }}
+                          className="mt-2 w-full rounded-xl bg-[#006d5a] text-white hover:bg-[#004d3f]"
+                        >
+                          Volver al login
+                        </Button>
+                      </div>
+                    ) : (
+                      <form onSubmit={handleResetPassword} className="flex flex-col gap-5">
+                        <button
+                          type="button"
+                          onClick={() => setShowReset(false)}
+                          className="flex items-center gap-1.5 text-xs font-medium text-[#a39e97] hover:text-[#3d2c24]"
+                        >
+                          <ArrowLeft className="size-3.5" />
+                          Volver
+                        </button>
+
+                        <div className="text-center">
+                          <h3 className="font-display text-lg font-semibold text-[#3d2c24]">
+                            Restablecer contraseña
+                          </h3>
+                          <p className="mt-1 text-xs text-[#a39e97]">
+                            Te enviaremos un email con un link para crear una nueva contraseña
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <Label htmlFor="reset-email" className="text-sm font-medium text-[#3d2c24]">
+                            <Mail className="size-3.5 text-[#a39e97]" />
+                            Correo electrónico
+                          </Label>
+                          <Input
+                            id="reset-email"
+                            type="email"
+                            placeholder="tu@correo.com"
+                            value={resetEmail}
+                            onChange={(e) => setResetEmail(e.target.value)}
+                            autoComplete="email"
+                            disabled={resetLoading}
+                            className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
+                          />
+                        </div>
+
+                        <Button
+                          type="submit"
+                          disabled={resetLoading}
+                          className="h-12 w-full rounded-xl bg-[#006d5a] text-sm font-semibold text-white hover:bg-[#004d3f]"
+                        >
+                          {resetLoading ? (
+                            <>
+                              <Loader2 className="size-4 animate-spin" />
+                              Enviando...
+                            </>
+                          ) : (
+                            'Enviar link de recuperación'
+                          )}
+                        </Button>
+                      </form>
+                    )}
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Footer */}
             <motion.p
