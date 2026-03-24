@@ -33,8 +33,8 @@ type MenuItem = {
   name: string
   sale_price: number | null
   fudo_product_id: string | null
-  menu_category_id: string | null
-  is_active: boolean
+  menu_category_id: number | null
+  is_active: boolean | null
 }
 
 type SyncResult = {
