@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import {
   RefreshCw,
   Store,
-  Search
+  Search,
   ChevronDown,
   ChevronRight,
   DollarSign,
