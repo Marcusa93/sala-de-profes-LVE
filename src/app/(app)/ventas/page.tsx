@@ -6,6 +6,7 @@ import { es } from 'date-fns/locale/es'
 import {
   DollarSign, ShoppingBag, Receipt, TrendingUp, Clock,
   RefreshCw, Loader2, BarChart3, PieChart as PieChartIcon,
+  FileText, Trophy, Flame, Star,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -180,6 +181,143 @@ export default function VentasPage() {
                 {formatPrice(data.avgTicket || (data.totalRevenue / data.uniqueTickets))}
               </p>
             </div>
+          </div>
+        </FadeIn>
+      )}
+
+      {/* ============================================================= */}
+      {/* INFORME DEL DÍA                                               */}
+      {/* ============================================================= */}
+      {data.topProducts.length > 0 && (
+        <FadeIn delay={0.12}>
+          <div className="rounded-2xl border border-[#ebe6df] bg-gradient-to-br from-[#f8f5f0] to-white p-5 space-y-4">
+            {/* Report header */}
+            <div className="flex items-center gap-2.5">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-[#006d5a]">
+                <FileText className="size-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-[15px] font-bold text-[#3d2c24]">Informe del Día</h2>
+                <p className="text-[11px] text-[#a39e97]">
+                  Actualizado {lastSync ? format(new Date(lastSync), 'HH:mm') : 'ahora'}
+                </p>
+              </div>
+            </div>
+
+            {/* Resumen texto */}
+            <div className="rounded-xl bg-white/80 p-4 text-[13px] leading-relaxed text-[#3d2c24]">
+              <p>
+                Hoy se facturó <strong className="text-[#006d5a]">{formatPrice(data.totalRevenue)}</strong> en{' '}
+                <strong>{data.uniqueTickets} tickets</strong> ({data.totalItems} items).
+                {data.avgTicket > 0 && (
+                  <> El ticket promedio es de <strong>{formatPrice(data.avgTicket)}</strong>.</>
+                )}
+              </p>
+              {(data.bySaleType?.length ?? 0) > 0 && (
+                <p className="mt-2">
+                  {data.bySaleType.map((t, i) => (
+                    <span key={t.name}>
+                      {i > 0 && ', '}
+                      <strong>{t.tickets}</strong> {t.name.toLowerCase()} ({formatPrice(t.revenue)})
+                    </span>
+                  ))}.
+                </p>
+              )}
+              {(() => {
+                const peakHour = data.byHour.reduce((max, h) => h.revenue > max.revenue ? h : max, data.byHour[0])
+                return peakHour && peakHour.revenue > 0 ? (
+                  <p className="mt-2">
+                    La hora pico fue a las <strong>{peakHour.hour}</strong> con{' '}
+                    <strong>{formatPrice(peakHour.revenue)}</strong> en {peakHour.tickets} tickets.
+                  </p>
+                ) : null
+              })()}
+            </div>
+
+            {/* Top 3 destacados */}
+            <div>
+              <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#a39e97]">
+                <Trophy className="size-3.5 text-[#d4943a]" />
+                Lo más vendido hoy
+              </p>
+              <div className="space-y-1.5">
+                {data.topProducts.slice(0, 5).map((p, i) => {
+                  const medals = ['🥇', '🥈', '🥉']
+                  const pct = data.totalItems > 0 ? Math.round((p.qty / data.totalItems) * 100) : 0
+                  return (
+                    <div key={p.name} className="flex items-center gap-3 rounded-xl bg-white/80 px-3.5 py-2.5">
+                      <span className="text-lg">{medals[i] ?? `${i + 1}.`}</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-semibold text-[#3d2c24]">{p.name}</p>
+                        <div className="mt-1 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 rounded-full bg-[#ebe6df]">
+                            <div
+                              className="h-1.5 rounded-full bg-[#006d5a] transition-all"
+                              style={{ width: `${Math.min(pct * 2, 100)}%` }}
+                            />
+                          </div>
+                          <span className="shrink-0 text-[10px] font-bold tabular-nums text-[#a39e97]">
+                            {p.qty} uds · {pct}%
+                          </span>
+                        </div>
+                      </div>
+                      <span className="shrink-0 text-[13px] font-bold tabular-nums text-[#006d5a]">
+                        {formatPrice(p.revenue)}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Insights rápidos */}
+            {(() => {
+              const insights: { icon: typeof Flame; text: string; color: string }[] = []
+
+              // Producto estrella
+              if (data.topProducts[0]) {
+                insights.push({
+                  icon: Star,
+                  text: `${data.topProducts[0].name} lidera con ${data.topProducts[0].qty} vendidos`,
+                  color: '#d4943a',
+                })
+              }
+
+              // Hora caliente
+              const peak = data.byHour.reduce((max, h) => h.tickets > max.tickets ? h : max, data.byHour[0])
+              if (peak && peak.tickets > 2) {
+                insights.push({
+                  icon: Flame,
+                  text: `Hora más activa: ${peak.hour} con ${peak.tickets} tickets`,
+                  color: '#ea504c',
+                })
+              }
+
+              // Items por ticket
+              if (data.uniqueTickets > 0) {
+                const ipp = (data.totalItems / data.uniqueTickets).toFixed(1)
+                insights.push({
+                  icon: ShoppingBag,
+                  text: `Promedio ${ipp} items por ticket`,
+                  color: '#006d5a',
+                })
+              }
+
+              return insights.length > 0 ? (
+                <div className="space-y-1.5">
+                  <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#a39e97]">
+                    <Flame className="size-3.5 text-[#ea504c]" />
+                    Insights
+                  </p>
+                  {insights.map((ins, i) => (
+                    <div key={i} className="flex items-center gap-2.5 rounded-lg bg-white/80 px-3 py-2">
+                      <ins.icon className="size-3.5 shrink-0" style={{ color: ins.color }} />
+                      <p className="text-[12px] text-[#3d2c24]">{ins.text}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null
+            })()}
           </div>
         </FadeIn>
       )}
