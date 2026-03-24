@@ -25,13 +25,15 @@ type DashboardData = {
   totalRevenue: number
   totalItems: number
   uniqueTickets: number
+  avgTicket: number
   topProducts: { name: string; qty: number; revenue: number }[]
-  byCategory: { name: string; qty: number; revenue: number }[]
+  bySaleType: { name: string; tickets: number; revenue: number }[]
   byHour: { hour: string; tickets: number; revenue: number; items: number }[]
   recentSales: {
     ticketId: string
     time: string
-    items: { name: string; qty: number; total: number }[]
+    saleType: string
+    items: { name: string; qty: number; price: number }[]
     total: number
   }[]
 }
@@ -175,7 +177,7 @@ export default function VentasPage() {
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-[#a39e97]">Ticket promedio</p>
               <p className="font-display text-lg font-bold text-[#3d2c24]">
-                {formatPrice(data.totalRevenue / data.uniqueTickets)}
+                {formatPrice(data.avgTicket || (data.totalRevenue / data.uniqueTickets))}
               </p>
             </div>
           </div>
@@ -234,14 +236,14 @@ export default function VentasPage() {
         </FadeIn>
       )}
 
-      {/* Por categoría — pie chart */}
-      {data.byCategory.length > 1 && (
+      {/* Por tipo de venta — pie chart */}
+      {(data.bySaleType?.length ?? 0) > 0 && (
         <FadeIn delay={0.25}>
-          <ChartCard title="Por categoría" subtitle="Distribución de ventas">
+          <ChartCard title="Tipo de venta" subtitle="En local vs Para llevar vs Delivery">
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
                 <Pie
-                  data={data.byCategory}
+                  data={data.bySaleType}
                   cx="50%"
                   cy="50%"
                   innerRadius={50}
@@ -250,7 +252,7 @@ export default function VentasPage() {
                   dataKey="revenue"
                   nameKey="name"
                 >
-                  {data.byCategory.map((_, i) => (
+                  {data.bySaleType.map((_, i) => (
                     <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                   ))}
                 </Pie>
@@ -281,10 +283,21 @@ export default function VentasPage() {
               {data.recentSales.map((ticket) => (
                 <div key={ticket.ticketId} className="card-elevated rounded-xl px-4 py-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-medium text-[#a39e97]">
-                      <Clock className="mr-1 inline size-3" />
-                      {ticket.time ? format(new Date(ticket.time), 'HH:mm') : '--'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-medium text-[#a39e97]">
+                        <Clock className="mr-1 inline size-3" />
+                        {ticket.time ? format(new Date(ticket.time), 'HH:mm') : '--'}
+                      </span>
+                      {ticket.saleType && (
+                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
+                          ticket.saleType === 'EAT-IN' ? 'bg-[#e8f5f1] text-[#006d5a]' :
+                          ticket.saleType === 'TAKEAWAY' ? 'bg-[#fdf6ec] text-[#d4943a]' :
+                          'bg-[#eef4fc] text-[#4a90d9]'
+                        }`}>
+                          {ticket.saleType === 'EAT-IN' ? 'Local' : ticket.saleType === 'TAKEAWAY' ? 'Llevar' : ticket.saleType}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-sm font-bold tabular-nums text-[#006d5a]">
                       {formatPrice(ticket.total)}
                     </span>
@@ -293,7 +306,7 @@ export default function VentasPage() {
                     {ticket.items.map((item, j) => (
                       <p key={j} className="text-xs text-[#3d2c24]">
                         <span className="font-medium">{item.qty}x</span> {item.name}
-                        <span className="ml-1 text-[#a39e97]">{formatPrice(item.total)}</span>
+                        <span className="ml-1 text-[#a39e97]">{formatPrice(item.price * item.qty)}</span>
                       </p>
                     ))}
                   </div>
