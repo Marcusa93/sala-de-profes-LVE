@@ -49,14 +49,15 @@ export async function GET() {
       page++
     }
 
-    // Build lookup maps
+    // Build lookup maps (deduplicate included across pages)
     const itemMap = new Map<string, IncludedResource>()
     const productMap = new Map<string, IncludedResource>()
     const tableMap = new Map<string, IncludedResource>()
     for (const r of included) {
-      if (r.type === 'Item') itemMap.set(r.id, r)
-      if (r.type === 'Product') productMap.set(r.id, r)
-      if (r.type === 'Table') tableMap.set(r.id, r)
+      const key = `${r.type}_${r.id}`
+      if (r.type === 'Item' && !itemMap.has(r.id)) itemMap.set(r.id, r)
+      if (r.type === 'Product' && !productMap.has(r.id)) productMap.set(r.id, r)
+      if (r.type === 'Table' && !tableMap.has(r.id)) tableMap.set(r.id, r)
     }
 
     // Filter today's sales
@@ -100,6 +101,9 @@ export async function GET() {
         const item = itemMap.get(ref.id)
         if (!item) continue
 
+        // Skip cancelled/voided items
+        if (item.attributes.canceled || item.attributes.status === 'CANCELLED') continue
+
         const productRef = (item.relationships?.product?.data ?? {}) as { id?: string }
         const product = productRef?.id ? productMap.get(productRef.id) : null
         const name = String(product?.attributes?.name ?? `Item #${item.id}`)
@@ -113,9 +117,9 @@ export async function GET() {
         const existing = productSales.get(prodKey)
         if (existing) {
           existing.qty += qty
-          existing.revenue += price * qty
+          existing.revenue += price
         } else {
-          productSales.set(prodKey, { name, qty, revenue: price * qty })
+          productSales.set(prodKey, { name, qty, revenue: price })
         }
       }
 
