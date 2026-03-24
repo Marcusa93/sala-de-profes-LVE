@@ -326,7 +326,8 @@ export default function VentasPage() {
                     <YAxis tick={{ fontSize: 10, fill: '#a39e97' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                     <Tooltip
                       contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
-                      formatter={(v: number) => [formatPrice(v), 'Facturación']}
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    formatter={(v: any) => [formatPrice(v), 'Facturación']}
                     />
                     <Bar dataKey="revenue" fill="#006d5a" radius={[6, 6, 0, 0]} />
                   </BarChart>
@@ -345,7 +346,8 @@ export default function VentasPage() {
                       {data.bySaleType.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
                     </Pie>
                     <Legend formatter={(value) => <span className="text-xs text-[#3d2c24]">{value}</span>} iconType="circle" iconSize={8} />
-                    <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }} formatter={(v: number) => [formatPrice(v), '']} />
+                    <Tooltip contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }} // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    formatter={(v: any) => [formatPrice(v), '']} />
                   </PieChart>
                 </ResponsiveContainer>
               </ChartCard>
