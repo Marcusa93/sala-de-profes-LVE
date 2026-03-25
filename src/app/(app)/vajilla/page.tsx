@@ -64,6 +64,66 @@ export default function VajillaPage() {
   // Delete confirm
   const [deletingId, setDeletingId] = useState<number | null>(null)
 
+  // Recuento (audit) mode
+  const [recuentoMode, setRecuentoMode] = useState(false)
+  const [recuentoQtys, setRecuentoQtys] = useState<Record<number, number>>({})
+  const [savingRecuento, setSavingRecuento] = useState(false)
+
+  const startRecuento = () => {
+    // Pre-fill with current quantities
+    const qtys: Record<number, number> = {}
+    items.forEach((i) => { qtys[i.id] = i.quantity })
+    setRecuentoQtys(qtys)
+    setRecuentoMode(true)
+  }
+
+  const updateRecuentoQty = (id: number, val: number) => {
+    setRecuentoQtys((prev) => ({ ...prev, [id]: Math.max(0, val) }))
+  }
+
+  const cancelRecuento = () => {
+    setRecuentoMode(false)
+    setRecuentoQtys({})
+  }
+
+  const saveRecuento = async () => {
+    setSavingRecuento(true)
+    try {
+      const supabase = createClient()
+
+      // Update all quantities that changed
+      const updates = items.filter((i) => recuentoQtys[i.id] !== i.quantity)
+      for (const item of updates) {
+        await supabase
+          .from('vajilla_stock')
+          .update({ quantity: recuentoQtys[item.id] ?? item.quantity })
+          .eq('id', item.id)
+      }
+
+      // Save snapshot (audit)
+      const res = await fetch('/api/stock/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'vajilla',
+          type: 'audit',
+          label: `Recuento ${new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
+        }),
+      })
+
+      if (!res.ok) throw new Error('Error al guardar auditoría')
+
+      toast.success(`Auditoría guardada — ${updates.length} cambio${updates.length !== 1 ? 's' : ''} registrado${updates.length !== 1 ? 's' : ''}`)
+      setRecuentoMode(false)
+      setRecuentoQtys({})
+      await fetchItems()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al guardar')
+    } finally {
+      setSavingRecuento(false)
+    }
+  }
+
   const canEdit = isManagerOrAbove(profile?.role)
 
   const fetchItems = useCallback(async () => {
@@ -192,6 +252,38 @@ export default function VajillaPage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-5 pb-28">
+      {/* Recuento banner */}
+      {recuentoMode && (
+        <div className="rounded-2xl border-2 border-[#006d5a] bg-[#e8f5f1] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-[#006d5a]">
+                <ClipboardCheck className="size-5 text-white" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-[#006d5a]">Recuento en curso</p>
+                <p className="text-[11px] text-[#006d5a]/70">Contá cada item y ajustá la cantidad</p>
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={cancelRecuento}
+              className="flex-1 rounded-xl border border-[#006d5a]/30 py-2.5 text-sm font-semibold text-[#006d5a] transition-colors hover:bg-white"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={saveRecuento}
+              disabled={savingRecuento}
+              className="flex-1 rounded-xl bg-[#006d5a] py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#005a4a] disabled:opacity-50"
+            >
+              {savingRecuento ? 'Guardando...' : '✓ Guardar auditoría'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <FadeIn>
         <div className="flex items-center justify-between">
@@ -199,13 +291,24 @@ export default function VajillaPage() {
             <h1 className="font-display text-2xl tracking-tight text-[#3d2c24]">Vajilla</h1>
             <p className="section-label mt-0.5">Inventario de vajilla y accesorios</p>
           </div>
-          <Link
-            href="/stock/historial"
-            className="flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1.5 text-[11px] font-bold text-[#006d5a] transition-colors hover:bg-[#c0e4da]"
-          >
-            <ClipboardCheck className="size-3.5" />
-            Historial
-          </Link>
+          <div className="flex gap-2">
+            {canEdit && !recuentoMode && (
+              <button
+                onClick={startRecuento}
+                className="flex items-center gap-1.5 rounded-full bg-[#006d5a] px-3 py-1.5 text-[11px] font-bold text-white transition-colors hover:bg-[#005a4a]"
+              >
+                <ClipboardCheck className="size-3.5" />
+                Iniciar recuento
+              </button>
+            )}
+            <Link
+              href="/stock/historial"
+              className="flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1.5 text-[11px] font-bold text-[#006d5a] transition-colors hover:bg-[#c0e4da]"
+            >
+              <ClipboardCheck className="size-3.5" />
+              Historial
+            </Link>
+          </div>
         </div>
       </FadeIn>
 
@@ -410,6 +513,41 @@ export default function VajillaPage() {
                             </button>
                           </div>
                         </div>
+                      ) : recuentoMode ? (
+                        /* Recuento mode — inline qty edit */
+                        <>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-[#3d2c24]">{item.item_name}</p>
+                            {item.notes && (
+                              <p className="mt-0.5 text-[11px] text-[#d4943a]">⚠ {item.notes}</p>
+                            )}
+                            {(recuentoQtys[item.id] ?? item.quantity) !== item.quantity && (
+                              <p className="mt-0.5 text-[11px] text-[#006d5a]">
+                                Antes: {item.quantity} → Ahora: {recuentoQtys[item.id]}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => updateRecuentoQty(item.id, (recuentoQtys[item.id] ?? item.quantity) - 1)}
+                              className="flex size-9 items-center justify-center rounded-lg bg-[#f3efe9] text-[#3d2c24] active:scale-95"
+                            >
+                              <Minus className="size-4" />
+                            </button>
+                            <input
+                              type="number"
+                              value={recuentoQtys[item.id] ?? item.quantity}
+                              onChange={(e) => updateRecuentoQty(item.id, parseInt(e.target.value) || 0)}
+                              className="h-9 w-14 rounded-lg border border-[#006d5a]/30 bg-[#e8f5f1] text-center text-sm font-bold tabular-nums text-[#006d5a] outline-none"
+                            />
+                            <button
+                              onClick={() => updateRecuentoQty(item.id, (recuentoQtys[item.id] ?? item.quantity) + 1)}
+                              className="flex size-9 items-center justify-center rounded-lg bg-[#f3efe9] text-[#3d2c24] active:scale-95"
+                            >
+                              <Plus className="size-4" />
+                            </button>
+                          </div>
+                        </>
                       ) : (
                         /* Display mode */
                         <>
