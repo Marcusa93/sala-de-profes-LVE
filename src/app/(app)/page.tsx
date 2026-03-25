@@ -74,6 +74,10 @@ export default function DashboardPage() {
   const [announcementCount, setAnnouncementCount] = useState(0)
   const [teamToday, setTeamToday] = useState<TeamMember[]>([])
   const [criticalStockCount, setCriticalStockCount] = useState(0)
+  const [pendingOrders, setPendingOrders] = useState(0)
+  const [expedientesActivos, setExpedientesActivos] = useState(0)
+  const [ventasHoy, setVentasHoy] = useState<{ total: number; tickets: number } | null>(null)
+  const [barUrgent, setBarUrgent] = useState(0)
   const [loading, setLoading] = useState(true)
 
   // Report dialog state
@@ -161,13 +165,40 @@ export default function DashboardPage() {
               .eq('is_active', true)
           : null
 
-        const [attendanceRes, shiftRes, announcementsRes, teamRes, stockRes] =
+        // Pedidos pendientes (cocina + barra) — for encargado/socio
+        const ordersPromise = isEncargado
+          ? Promise.all([
+              supabase.from('kitchen_orders').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+              supabase.from('bar_orders').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+            ])
+          : null
+
+        // Expedientes activos — for socio
+        const expedientesPromise = profile!.role === 'socio'
+          ? supabase.from('expedientes').select('id', { count: 'exact', head: true }).not('status', 'in', '("cumplido","cerrado","archivado")')
+          : null
+
+        // Ventas hoy — for socio
+        const ventasPromise = profile!.role === 'socio'
+          ? fetch('/api/fudo/auto-sync').then(r => r.json()).catch(() => null)
+          : null
+
+        // Bar stock urgente — for barista
+        const barUrgentPromise = profile!.role === 'barista'
+          ? supabase.from('bar_stock_items').select('id', { count: 'exact', head: true }).eq('is_urgent', true).eq('is_active', true)
+          : null
+
+        const [attendanceRes, shiftRes, announcementsRes, teamRes, stockRes, ordersRes, expedientesRes, ventasRes, barUrgentRes] =
           await Promise.all([
             attendancePromise,
             shiftPromise,
             announcementsPromise,
             teamPromise,
             stockPromise,
+            ordersPromise,
+            expedientesPromise,
+            ventasPromise,
+            barUrgentPromise,
           ])
 
         setTodayAttendance(attendanceRes.data)
@@ -183,6 +214,19 @@ export default function DashboardPage() {
               (item) => item.current_qty <= item.min_qty,
             ) ?? []
           setCriticalStockCount(critical.length)
+        }
+        if (ordersRes) {
+          const [kitchenRes, barRes] = ordersRes
+          setPendingOrders((kitchenRes.count ?? 0) + (barRes.count ?? 0))
+        }
+        if (expedientesRes) {
+          setExpedientesActivos(expedientesRes.count ?? 0)
+        }
+        if (ventasRes?.today) {
+          setVentasHoy({ total: ventasRes.today.totalFacturado ?? 0, tickets: ventasRes.today.totalTickets ?? 0 })
+        }
+        if (barUrgentRes) {
+          setBarUrgent(barUrgentRes.count ?? 0)
         }
       } catch (err) {
         console.error('Error al cargar datos del dashboard:', err)
@@ -370,6 +414,102 @@ export default function DashboardPage() {
             </Link>
           </ScalePress>
         </StaggerItem>
+
+        {/* Socio: Ventas Hoy */}
+        {profile?.role === 'socio' && ventasHoy && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/ventas">
+                <div className="kpi-card rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <BarChart3 className="size-3.5 text-[#006d5a]" />
+                    <span className="section-label">Ventas Hoy</span>
+                  </div>
+                  <div className="mt-3">
+                    <span className="font-display text-2xl font-bold tabular-nums text-[#006d5a]">
+                      ${(ventasHoy.total / 1000).toFixed(0)}k
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#a39e97]">
+                    {ventasHoy.tickets} tickets cerrados
+                  </p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Socio: Expedientes Activos */}
+        {profile?.role === 'socio' && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/expedientes">
+                <div className="kpi-card rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <FolderOpen className="size-3.5 text-[#8b5e34]" />
+                    <span className="section-label">Expedientes</span>
+                  </div>
+                  <div className="mt-3">
+                    <span className="font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
+                      <AnimatedNumber value={expedientesActivos} />
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#a39e97]">
+                    {expedientesActivos === 0 ? 'Sin expedientes activos' : 'activos'}
+                  </p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Encargado/Socio: Pedidos Pendientes */}
+        {isEncargado && pendingOrders > 0 && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/pedidos">
+                <div className="kpi-card rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart className="size-3.5 text-[#d4943a]" />
+                    <span className="section-label">Pedidos</span>
+                  </div>
+                  <div className="mt-3">
+                    <span className="font-display text-3xl font-bold tabular-nums text-[#d4943a]">
+                      <AnimatedNumber value={pendingOrders} />
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#a39e97]">
+                    pendientes de compra
+                  </p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Barista: Stock Barra Urgente */}
+        {profile?.role === 'barista' && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/cocina/barra">
+                <div className="kpi-card rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <Coffee className="size-3.5 text-[#ea504c]" />
+                    <span className="section-label">Barra Urgente</span>
+                  </div>
+                  <div className="mt-3">
+                    <span className={`font-display text-3xl font-bold tabular-nums ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}>
+                      <AnimatedNumber value={barUrgent} />
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#a39e97]">
+                    {barUrgent === 0 ? 'Todo en orden' : 'items urgentes'}
+                  </p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
 
         {/* Encargado: Equipo Hoy */}
         {isEncargado && (

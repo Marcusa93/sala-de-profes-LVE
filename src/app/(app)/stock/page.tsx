@@ -72,6 +72,37 @@ type StockFormData = {
   notes: string
 }
 
+// ---------------------------------------------------------------------------
+// Fuzzy duplicate detection helpers
+// ---------------------------------------------------------------------------
+
+/** Normalize a string: lowercase, trim, remove accents */
+function normalizeName(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+/** Check if two names are "similar enough" to warn about duplicates */
+function isSimilarName(a: string, b: string): boolean {
+  const na = normalizeName(a)
+  const nb = normalizeName(b)
+  if (!na || !nb) return false
+
+  // One contains the other
+  if (na.includes(nb) || nb.includes(na)) return true
+
+  // 80%+ shared words
+  const wordsA = na.split(/\s+/).filter(Boolean)
+  const wordsB = nb.split(/\s+/).filter(Boolean)
+  const maxLen = Math.max(wordsA.length, wordsB.length)
+  if (maxLen === 0) return false
+  const shared = wordsA.filter((w) => wordsB.includes(w)).length
+  return shared / maxLen >= 0.8
+}
+
 const EMPTY_FORM: StockFormData = {
   name: '',
   category: 'otros',
@@ -242,6 +273,25 @@ export default function StockPage() {
   }, [items])
 
   // -------------------------------------------------------------------------
+  // Duplicate detection for add dialog
+  // -------------------------------------------------------------------------
+
+  const duplicateWarning = useMemo(() => {
+    // Only warn when creating, not editing
+    if (editingItem) return null
+    const name = formData.name.trim()
+    if (name.length < 2) return null
+
+    for (const item of items) {
+      if (isSimilarName(name, item.name)) {
+        const source = item.fudo_ingredient_id ? ' (Fudo)' : ''
+        return `Ya existe un item similar: ${item.name}${source}`
+      }
+    }
+    return null
+  }, [formData.name, items, editingItem])
+
+  // -------------------------------------------------------------------------
   // Form handlers
   // -------------------------------------------------------------------------
 
@@ -298,30 +348,6 @@ export default function StockPage() {
         if (error) throw error
         toast.success('Item actualizado')
       } else {
-        // Dedup check: search for similar names in existing stock (including Fudo-linked)
-        const searchName = payload.name!.toLowerCase().trim()
-        const { data: similar } = await supabase
-          .from('stock_items')
-          .select('id, name, fudo_ingredient_id, current_qty')
-          .ilike('name', `%${searchName.split(' ')[0]}%`)
-
-        const match = similar?.find(
-          (s) => s.name.toLowerCase().trim() === searchName ||
-                 s.name.toLowerCase().includes(searchName) ||
-                 searchName.includes(s.name.toLowerCase())
-        )
-
-        if (match) {
-          const source = match.fudo_ingredient_id ? ' (sincronizado con Fudo)' : ''
-          const confirmed = window.confirm(
-            `⚠️ Ya existe un item similar:\n\n"${match.name}"${source}\nStock actual: ${match.current_qty}\n\n¿Querés crear uno nuevo de todas formas?\nSi es el mismo producto, mejor editá el existente.`
-          )
-          if (!confirmed) {
-            setSaving(false)
-            return
-          }
-        }
-
         const { error } = await supabase.from('stock_items').insert(payload)
 
         if (error) throw error
@@ -581,6 +607,12 @@ export default function StockPage() {
                 placeholder="Nombre del item"
                 className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
               />
+              {duplicateWarning && (
+                <div className="flex items-start gap-2 rounded-lg border border-[#d4943a]/30 bg-[#fdf6ec] px-3 py-2 text-xs text-[#92650a]">
+                  <span className="shrink-0 mt-px">{'\u26A0\uFE0F'}</span>
+                  <span>{duplicateWarning}</span>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
