@@ -31,12 +31,14 @@ export async function GET(request: NextRequest) {
     const urgency = params.get('urgency')
     const search = params.get('search')
 
+    // Lighter query — only select needed fields for list view
     let query = admin
       .from('expedientes')
       .select(`
-        *,
-        author:profiles!expedientes_author_id_fkey(first_name, last_name, role),
-        responsible:profiles!expedientes_responsible_id_fkey(first_name, last_name, role)
+        id, code, title, type, areas, urgency, priority, status,
+        target_date, created_at, updated_at, author_id, responsible_id,
+        author:profiles!expedientes_author_id_fkey(first_name, last_name),
+        responsible:profiles!expedientes_responsible_id_fkey(first_name, last_name)
       `)
       .order('created_at', { ascending: false })
 
