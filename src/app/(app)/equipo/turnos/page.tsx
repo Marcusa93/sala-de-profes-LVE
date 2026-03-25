@@ -113,6 +113,7 @@ export default function EquipoTurnosPage() {
     try {
       const formData = new FormData()
       formData.append('file', file)
+      formData.append('weekStart', format(currentWeekStart, 'yyyy-MM-dd'))
       const res = await fetch('/api/shifts/upload', { method: 'POST', body: formData })
       const data = await res.json()
 
