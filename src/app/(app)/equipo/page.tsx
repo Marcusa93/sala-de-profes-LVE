@@ -163,7 +163,7 @@ export default function EquipoPage() {
     const r = ROLES[role]
     return (
       <span
-        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold"
         style={{ color: r.color, backgroundColor: r.bg }}
       >
         {r.emoji} {r.label}
@@ -240,7 +240,7 @@ export default function EquipoPage() {
           <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-[#ebe6df]">
             <button
               onClick={() => goDay(-1)}
-              className="rounded-lg p-1.5 text-[#a39e97] transition hover:bg-[#f3efe9] hover:text-[#3d2c24]"
+              className="icon-btn"
             >
               <ChevronLeft className="size-5" />
             </button>
@@ -259,7 +259,7 @@ export default function EquipoPage() {
             <button
               onClick={() => goDay(1)}
               disabled={isToday}
-              className="rounded-lg p-1.5 text-[#a39e97] transition hover:bg-[#f3efe9] hover:text-[#3d2c24] disabled:opacity-30"
+              className="icon-btn disabled:opacity-30"
             >
               <ChevronRight className="size-5" />
             </button>
@@ -348,7 +348,7 @@ export default function EquipoPage() {
 
                     {/* Status badge */}
                     <span
-                      className="inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold"
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold"
                       style={{ color: status.color, backgroundColor: status.bg }}
                     >
                       <StatusIcon className="size-3" />

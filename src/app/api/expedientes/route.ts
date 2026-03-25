@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyExpedienteToSocios } from '@/lib/email/send'
 
 // ---------------------------------------------------------------------------
 // GET  /api/expedientes  — listar con filtros
@@ -112,6 +113,17 @@ export async function POST(request: NextRequest) {
       body: 'Expediente creado',
       metadata: { to_status: 'borrador' },
     })
+
+    // Get author name and email socios
+    const { data: profile } = await admin.from('profiles').select('first_name, last_name').eq('id', user.id).single()
+    const authorName = profile ? `${profile.first_name} ${profile.last_name}`.trim() : 'Alguien'
+    notifyExpedienteToSocios({
+      code: data.code,
+      title: title.trim(),
+      action: 'Expediente creado',
+      authorName,
+      detail: description?.trim() || undefined,
+    }).catch(() => {})
 
     return NextResponse.json({ success: true, data })
   } catch (error) {

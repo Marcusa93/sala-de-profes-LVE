@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyExpedienteToSocios } from '@/lib/email/send'
 
 // ---------------------------------------------------------------------------
 // GET /api/expedientes/[id]/tasks — list tasks
@@ -111,6 +112,16 @@ export async function POST(
       })
     }
 
+    // Email to socios
+    const authorNameFull = `${profile.first_name} ${profile.last_name}`.trim()
+    notifyExpedienteToSocios({
+      code: exp?.code ?? id,
+      title: exp?.title ?? '',
+      action: 'Tarea creada',
+      authorName: authorNameFull,
+      detail: `"${title.trim()}"${assigned_to ? ` → asignada a ${await getProfileName(admin, assigned_to)}` : ''}`,
+    }).catch(() => {})
+
     return NextResponse.json({ data: task })
   } catch (err) {
     console.error('[POST /api/expedientes/[id]/tasks]', err)
@@ -215,6 +226,15 @@ export async function PATCH(
           is_active: true,
         })
       }
+
+      // Email to socios
+      notifyExpedienteToSocios({
+        code: exp.code,
+        title: task.title,
+        action: 'Tarea completada',
+        authorName: updaterName,
+        detail: `"${task.title}" marcada como completada`,
+      }).catch(() => {})
     }
 
     return NextResponse.json({ success: true })

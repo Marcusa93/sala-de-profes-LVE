@@ -206,11 +206,7 @@ export default function NotificacionesPage() {
             key={tab.value}
             type="button"
             onClick={() => setActiveTab(tab.value)}
-            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
-              activeTab === tab.value
-                ? 'bg-[#006d5a] text-white shadow-sm'
-                : 'border border-[#ebe6df] bg-[#fefcf9] text-[#a39e97] hover:border-[#006d5a]/30 hover:text-[#3d2c24]'
-            }`}
+            className={`pill ${activeTab === tab.value ? 'pill-active' : 'pill-inactive'}`}
           >
             {tab.label}
           </button>
@@ -244,7 +240,7 @@ export default function NotificacionesPage() {
       {canCreate && (
         <Link
           href="/notificaciones/nueva"
-          className="fixed bottom-24 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
+          className="fab"
           aria-label="Nueva notificación"
         >
           <Plus className="size-6" />

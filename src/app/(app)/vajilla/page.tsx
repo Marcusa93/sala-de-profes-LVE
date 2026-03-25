@@ -212,7 +212,7 @@ export default function VajillaPage() {
       {/* KPIs */}
       <StaggerList className="grid grid-cols-3 gap-2.5" staggerDelay={0.04}>
         <StaggerItem>
-          <div className="card-elevated rounded-xl p-3 text-center">
+          <div className="kpi-card card-elevated rounded-xl p-4 text-center">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Piezas</p>
             <p className="mt-1 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
               <AnimatedNumber value={totalItems} />
@@ -220,7 +220,7 @@ export default function VajillaPage() {
           </div>
         </StaggerItem>
         <StaggerItem>
-          <div className="card-elevated rounded-xl p-3 text-center">
+          <div className="kpi-card card-elevated rounded-xl p-4 text-center">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Items</p>
             <p className="mt-1 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
               <AnimatedNumber value={totalTypes} />
@@ -228,7 +228,7 @@ export default function VajillaPage() {
           </div>
         </StaggerItem>
         <StaggerItem>
-          <div className="card-elevated rounded-xl p-3 text-center">
+          <div className="kpi-card card-elevated rounded-xl p-4 text-center">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Observ.</p>
             <p className={`mt-1 font-display text-2xl font-bold tabular-nums ${withNotes > 0 ? 'text-[#d4943a]' : 'text-[#006d5a]'}`}>
               <AnimatedNumber value={withNotes} />
@@ -276,7 +276,7 @@ export default function VajillaPage() {
               <button
                 onClick={addItem}
                 disabled={saving || !newName.trim()}
-                className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-4 py-2 text-xs font-semibold text-white active:scale-95 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-4 py-2 text-xs font-semibold text-white active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Check className="size-3.5" /> Agregar
               </button>
@@ -356,7 +356,7 @@ export default function VajillaPage() {
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => adjustQty(-1)}
-                              className="flex size-8 items-center justify-center rounded-lg bg-[#f3efe9] text-[#3d2c24] active:scale-95"
+                              className="flex size-10 items-center justify-center rounded-lg bg-[#f3efe9] text-[#3d2c24] active:scale-95"
                             >
                               <Minus className="size-4" />
                             </button>
@@ -364,11 +364,11 @@ export default function VajillaPage() {
                               type="number"
                               value={editQty}
                               onChange={(e) => setEditQty(e.target.value)}
-                              className="h-8 w-16 rounded-lg border-[#ebe6df] bg-[#faf8f5] text-center text-sm font-bold tabular-nums text-[#3d2c24]"
+                              className="h-10 w-16 rounded-lg border-[#ebe6df] bg-[#faf8f5] text-center text-sm font-bold tabular-nums text-[#3d2c24]"
                             />
                             <button
                               onClick={() => adjustQty(1)}
-                              className="flex size-8 items-center justify-center rounded-lg bg-[#f3efe9] text-[#3d2c24] active:scale-95"
+                              className="flex size-10 items-center justify-center rounded-lg bg-[#f3efe9] text-[#3d2c24] active:scale-95"
                             >
                               <Plus className="size-4" />
                             </button>
@@ -392,7 +392,7 @@ export default function VajillaPage() {
                             <button
                               onClick={() => saveEdit(item.id)}
                               disabled={saving}
-                              className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-3 py-1.5 text-xs font-semibold text-white active:scale-95 disabled:opacity-50"
+                              className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-3 py-1.5 text-xs font-semibold text-white active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               <Check className="size-3" /> Guardar
                             </button>
@@ -426,9 +426,9 @@ export default function VajillaPage() {
                             {canEdit && (
                               <button
                                 onClick={() => startEdit(item)}
-                                className="flex size-8 items-center justify-center rounded-lg text-[#a39e97] transition-colors hover:bg-[#f3efe9] hover:text-[#3d2c24]"
+                                className="icon-btn flex size-10 items-center justify-center rounded-lg text-[#a39e97] transition-colors hover:bg-[#f3efe9] hover:text-[#3d2c24]"
                               >
-                                <Pencil className="size-3.5" />
+                                <Pencil className="size-4" />
                               </button>
                             )}
                           </div>
@@ -447,7 +447,7 @@ export default function VajillaPage() {
       {canEdit && !showAdd && (
         <button
           onClick={() => setShowAdd(true)}
-          className="fixed bottom-24 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:shadow-xl"
+          className="fab fixed bottom-24 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:shadow-xl"
         >
           <PlusCircle className="size-6" />
         </button>

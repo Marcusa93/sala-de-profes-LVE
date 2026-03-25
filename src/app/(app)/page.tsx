@@ -238,7 +238,7 @@ export default function DashboardPage() {
                 <div className="w-1.5 shrink-0" style={{ backgroundColor: statusColor }} />
                 <div className="flex-1 p-4 sm:p-5">
                   <div className="flex items-center gap-2">
-                    <div className="flex size-8 items-center justify-center rounded-lg bg-[#f0f7f5]">
+                    <div className="flex size-10 items-center justify-center rounded-lg bg-[#f0f7f5]">
                       <Clock className="size-4 text-[#006d5a]" />
                     </div>
                     <span className="section-label">Mi Estado Hoy</span>
@@ -306,7 +306,7 @@ export default function DashboardPage() {
         <StaggerItem>
           <ScalePress>
             <Link href="/mis-horarios">
-              <div className="card-interactive rounded-xl p-4">
+              <div className="kpi-card rounded-xl p-4">
                 <div className="flex items-center gap-2">
                   <CalendarDays className="size-3.5 text-[#b8906e]" />
                   <span className="section-label">Proximo Turno</span>
@@ -350,7 +350,7 @@ export default function DashboardPage() {
         <StaggerItem>
           <ScalePress>
             <Link href="/notificaciones">
-              <div className="card-interactive rounded-xl p-4">
+              <div className="kpi-card rounded-xl p-4">
                 <div className="flex items-center gap-2">
                   <Bell className="size-3.5 text-[#d4943a]" />
                   <span className="section-label">Avisos</span>
@@ -373,7 +373,7 @@ export default function DashboardPage() {
           <StaggerItem>
             <ScalePress>
               <Link href="/equipo">
-                <div className="card-interactive rounded-xl p-4">
+                <div className="kpi-card rounded-xl p-4">
                   <div className="flex items-center gap-2">
                     <Users className="size-3.5 text-[#006d5a]" />
                     <span className="section-label">Equipo Hoy</span>
@@ -415,7 +415,7 @@ export default function DashboardPage() {
           <StaggerItem>
             <ScalePress>
               <Link href="/stock">
-                <div className="card-interactive rounded-xl p-4">
+                <div className="kpi-card rounded-xl p-4">
                   <div className="flex items-center gap-2">
                     <AlertTriangle className="size-3.5 text-[#ea504c]" />
                     <span className="section-label">Stock Critico</span>
@@ -473,7 +473,7 @@ export default function DashboardPage() {
                     <div className="w-1 self-stretch bg-[#006d5a]" />
                     <div className="flex flex-1 items-center justify-between px-4 py-3.5">
                       <span className="flex items-center gap-3">
-                        <div className="flex size-9 items-center justify-center rounded-xl bg-[#f0f7f5]">
+                        <div className="icon-btn flex items-center justify-center rounded-xl bg-[#f0f7f5]">
                           <action.icon className="size-4 text-[#006d5a]" />
                         </div>
                         <span className="text-sm font-medium text-[#3d2c24]">
@@ -497,7 +497,7 @@ export default function DashboardPage() {
                 <div className="w-1 self-stretch bg-[#ea504c]" />
                 <div className="flex flex-1 items-center justify-between px-4 py-3.5">
                   <span className="flex items-center gap-3">
-                    <div className="flex size-9 items-center justify-center rounded-xl bg-[#fef2f2]">
+                    <div className="icon-btn flex items-center justify-center rounded-xl bg-[#fef2f2]">
                       <AlertTriangle className="size-4 text-[#ea504c]" />
                     </div>
                     <span className="text-sm font-medium text-[#3d2c24]">
@@ -526,9 +526,9 @@ export default function DashboardPage() {
               <h3 className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
               <button
                 onClick={() => setReportOpen(false)}
-                className="rounded-full p-1.5 text-[#a39e97] hover:bg-[#f3efe9]"
+                className="flex size-10 items-center justify-center rounded-full p-2 text-[#a39e97] hover:bg-[#f3efe9]"
               >
-                <X className="size-4" />
+                <X className="size-5" />
               </button>
             </div>
 

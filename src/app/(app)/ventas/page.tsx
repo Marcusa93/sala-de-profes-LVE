@@ -137,7 +137,7 @@ export default function VentasPage() {
       {/* KPIs — 2x2 grid */}
       <StaggerList className="grid grid-cols-2 gap-2.5" staggerDelay={0.04}>
         <StaggerItem>
-          <div className="card-elevated rounded-xl p-3.5">
+          <div className="kpi-card card-elevated rounded-xl p-4">
             <div className="flex items-center gap-1.5">
               <div className="flex size-6 items-center justify-center rounded-md bg-[#e8f5f1]">
                 <CheckCircle className="size-3 text-[#006d5a]" />
@@ -151,7 +151,7 @@ export default function VentasPage() {
           </div>
         </StaggerItem>
         <StaggerItem>
-          <div className="card-elevated rounded-xl p-3.5">
+          <div className="kpi-card card-elevated rounded-xl p-4">
             <div className="flex items-center gap-1.5">
               <div className="flex size-6 items-center justify-center rounded-md bg-[#fdf6ec]">
                 <CircleDot className="size-3 text-[#d4943a]" />
@@ -165,7 +165,7 @@ export default function VentasPage() {
           </div>
         </StaggerItem>
         <StaggerItem>
-          <div className="card-elevated rounded-xl p-3.5">
+          <div className="kpi-card card-elevated rounded-xl p-4">
             <div className="flex items-center gap-1.5">
               <div className="flex size-6 items-center justify-center rounded-md bg-[#faf0e4]">
                 <Receipt className="size-3 text-[#8b5e34]" />
@@ -179,7 +179,7 @@ export default function VentasPage() {
           </div>
         </StaggerItem>
         <StaggerItem>
-          <div className="card-elevated rounded-xl p-3.5">
+          <div className="kpi-card card-elevated rounded-xl p-4">
             <div className="flex items-center gap-1.5">
               <div className="flex size-6 items-center justify-center rounded-md bg-[#f0f7f5]">
                 <TrendingUp className="size-3 text-[#006d5a]" />
@@ -208,7 +208,7 @@ export default function VentasPage() {
               tab === t.key ? 'bg-[#006d5a] text-white' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            <t.icon className="size-3" />
+            <t.icon className="size-4" />
             {t.label}
           </button>
         ))}
@@ -261,7 +261,7 @@ export default function VentasPage() {
                       const pct = data.totalItems > 0 ? Math.round((p.qty / data.totalItems) * 100) : 0
                       return (
                         <div key={p.name} className="flex items-center gap-3 rounded-xl bg-white/80 px-3.5 py-2.5">
-                          <span className="text-lg">{medals[i] ?? `${i + 1}.`}</span>
+                          <span className="text-xl">{medals[i] ?? `${i + 1}.`}</span>
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-[13px] font-semibold text-[#3d2c24]">{p.name}</p>
                             <div className="mt-1 flex items-center gap-2">

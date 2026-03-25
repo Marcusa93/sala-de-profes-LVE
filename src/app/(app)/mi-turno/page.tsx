@@ -358,7 +358,7 @@ export default function MiTurnoPage() {
             <Button
               onClick={handleClockIn}
               disabled={actionLoading || geoLoading}
-              className="h-14 sm:h-16 w-full rounded-2xl bg-[#006d5a] text-base font-semibold text-white shadow-md hover:bg-[#005a4a] active:scale-[0.98]"
+              className="h-16 w-full rounded-2xl bg-[#006d5a] text-base font-semibold text-white shadow-md hover:bg-[#005a4a] active:scale-[0.98]"
             >
               {actionLoading || geoLoading ? (
                 <Loader2 className="mr-2.5 size-5 animate-spin" />

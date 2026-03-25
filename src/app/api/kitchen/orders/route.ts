@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyOrderToEncargados } from '@/lib/email/send'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,15 @@ export async function POST(request: NextRequest) {
         target_role: 'encargado',
         is_active: true,
       })
+
+      // Email to encargados + socios
+      notifyOrderToEncargados({
+        type: 'cocina',
+        authorName,
+        items: items.map((i) => ({ name: i.product_name, quantity: i.quantity })),
+        urgency: orderUrgency,
+        note,
+      }).catch(() => {})
 
       return NextResponse.json({ success: true, count: items.length })
     }

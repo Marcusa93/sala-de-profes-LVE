@@ -16,6 +16,9 @@ import {
   X,
   Truck,
   MessageCircle,
+  Clock,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -74,6 +77,8 @@ export default function BarraPage() {
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<BarItem[]>([])
   const [orders, setOrders] = useState<BarOrderRow[]>([])
+  const [historyOrders, setHistoryOrders] = useState<BarOrderRow[]>([])
+  const [showHistory, setShowHistory] = useState(false)
   const [suppliers, setSuppliers] = useState<Map<string, BarSupplier>>(new Map())
 
   // Edit dialog
@@ -82,26 +87,38 @@ export default function BarraPage() {
   const [editDetail, setEditDetail] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // Order dialog
+  // Order dialog (single item — kept for backward compat)
   const [orderItem, setOrderItem] = useState<BarItem | null>(null)
   const [orderQty, setOrderQty] = useState('')
   const [orderUrgency, setOrderUrgency] = useState<BarOrderUrgencyValue>('normal')
   const [orderNote, setOrderNote] = useState('')
   const [ordering, setOrdering] = useState(false)
 
+  // Cart-based order (multiple items)
+  type CartItem = { name: string; quantity: string; fromStockId?: number; category?: string }
+  const [cartOpen, setCartOpen] = useState(false)
+  const [cartItems, setCartItems] = useState<CartItem[]>([])
+  const [cartUrgency, setCartUrgency] = useState<BarOrderUrgencyValue>('normal')
+  const [cartNote, setCartNote] = useState('')
+  const [newCartName, setNewCartName] = useState('')
+  const [newCartQty, setNewCartQty] = useState('')
+  const [submittingCart, setSubmittingCart] = useState(false)
+
   const isEncargado = isManagerOrAbove(profile?.role)
-  const canEdit = ['encargado', 'barista'].includes(profile?.role ?? '')
+  const canEdit = ['socio', 'encargado', 'barista'].includes(profile?.role ?? '')
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
     try {
-      const [itemsRes, ordersRes, suppRes] = await Promise.all([
+      const [itemsRes, ordersRes, historyRes, suppRes] = await Promise.all([
         supabase.from('bar_stock_items').select('*').eq('is_active', true).order('sort_order'),
         supabase.from('bar_orders').select('*').in('status', ['pending', 'ordered']).order('created_at', { ascending: false }),
+        supabase.from('bar_orders').select('*').in('status', ['received', 'cancelled']).order('created_at', { ascending: false }).limit(50),
         supabase.from('suppliers').select('id, name, phone').eq('is_active', true),
       ])
       if (itemsRes.data) setItems(itemsRes.data as BarItem[])
       if (ordersRes.data) setOrders(ordersRes.data as BarOrderRow[])
+      if (historyRes.data) setHistoryOrders(historyRes.data as BarOrderRow[])
       if (suppRes.data) {
         const map = new Map<string, BarSupplier>()
         for (const s of suppRes.data) map.set(s.id, s as BarSupplier)
@@ -239,6 +256,67 @@ export default function BarraPage() {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Cart operations
+  // -------------------------------------------------------------------------
+
+  function addToCart(name: string, qty: string, stockId?: number, category?: string) {
+    if (!name.trim() || !qty.trim()) return
+    setCartItems((prev) => [...prev, { name: name.trim(), quantity: qty.trim(), fromStockId: stockId, category }])
+    setNewCartName('')
+    setNewCartQty('')
+  }
+
+  function removeFromCart(index: number) {
+    setCartItems((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function addStockItemToCart(item: BarItem) {
+    const needed = Math.max(0, item.min_level - item.current_qty)
+    const qty = needed > 0 ? `${needed} ${item.unit}` : ''
+    setCartItems((prev) => [...prev, { name: item.name, quantity: qty, fromStockId: item.id, category: item.category }])
+    setCartOpen(true)
+  }
+
+  async function submitCart() {
+    if (cartItems.length === 0 || !profile) return
+    // Validate all have qty
+    const incomplete = cartItems.some((c) => !c.quantity.trim())
+    if (incomplete) {
+      toast.error('Completá la cantidad de todos los items')
+      return
+    }
+    setSubmittingCart(true)
+    try {
+      // Create each order
+      for (const item of cartItems) {
+        await fetch('/api/kitchen/bar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'create_order',
+            barStockItemId: item.fromStockId ?? null,
+            productName: item.name,
+            category: item.category ?? 'general',
+            quantity: item.quantity,
+            urgency: cartUrgency,
+            note: cartNote.trim() || null,
+          }),
+        })
+      }
+      toast.success(`Pedido con ${cartItems.length} item${cartItems.length > 1 ? 's' : ''} enviado al encargado`)
+      setCartItems([])
+      setCartNote('')
+      setCartUrgency('normal')
+      setCartOpen(false)
+      fetchData()
+    } catch {
+      toast.error('Error al enviar pedido')
+    } finally {
+      setSubmittingCart(false)
+    }
+  }
+
   // Derived
   const urgent = items.filter((i) => i.is_urgent || i.current_qty <= 0)
   const lowStock = items.filter((i) => !i.is_urgent && i.current_qty > 0 && i.current_qty <= i.min_level)
@@ -330,6 +408,153 @@ export default function BarraPage() {
         </div>
       </FadeIn>
 
+      {/* Nuevo Pedido button + Cart */}
+      {canEdit && (
+        <FadeIn delay={0.08}>
+          {!cartOpen ? (
+            <button
+              onClick={() => setCartOpen(true)}
+              className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white transition-all active:scale-[0.98] hover:bg-[#005a4a]"
+            >
+              <ShoppingCart className="size-4" />
+              Nuevo Pedido
+            </button>
+          ) : (
+            <div className="mb-4 rounded-2xl bg-white p-4 ring-1 ring-[#ebe6df] space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-[#3d2c24] flex items-center gap-2">
+                  <ShoppingCart className="size-4 text-[#006d5a]" />
+                  Armar pedido
+                </h3>
+                <button onClick={() => { setCartOpen(false); setCartItems([]) }} className="rounded-lg p-1 text-[#a39e97] hover:text-[#3d2c24]">
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              {/* Add from stock - quick buttons */}
+              {items.filter((i) => i.is_urgent || i.current_qty <= 0 || i.current_qty <= i.min_level).length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97] mb-1.5">Agregar item bajo/urgente</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {items
+                      .filter((i) => i.is_urgent || i.current_qty <= 0 || i.current_qty <= i.min_level)
+                      .filter((i) => !cartItems.some((c) => c.fromStockId === i.id))
+                      .slice(0, 12)
+                      .map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => addStockItemToCart(item)}
+                          className={cn(
+                            'rounded-lg px-2 py-1 text-[10px] font-semibold transition-all active:scale-95',
+                            item.current_qty <= 0 || item.is_urgent
+                              ? 'bg-[#fef2f2] text-[#ea504c]'
+                              : 'bg-[#fdf6ec] text-[#d4943a]',
+                          )}
+                        >
+                          + {item.name}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Add custom item */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97] mb-1.5">Agregar item libre</p>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Producto"
+                    value={newCartName}
+                    onChange={(e) => setNewCartName(e.target.value)}
+                    className="flex-1 text-sm"
+                  />
+                  <Input
+                    placeholder="Cant."
+                    value={newCartQty}
+                    onChange={(e) => setNewCartQty(e.target.value)}
+                    className="w-24 text-sm"
+                  />
+                  <button
+                    onClick={() => addToCart(newCartName, newCartQty)}
+                    disabled={!newCartName.trim() || !newCartQty.trim()}
+                    className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#006d5a] text-white disabled:opacity-30 active:scale-90"
+                  >
+                    <Plus className="size-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Cart items list */}
+              {cartItems.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
+                    Pedido ({cartItems.length} item{cartItems.length > 1 ? 's' : ''})
+                  </p>
+                  {cartItems.map((item, i) => (
+                    <div key={i} className="flex items-center gap-2 rounded-lg bg-[#f8f5f0] px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-[#3d2c24] truncate">{item.name}</p>
+                      </div>
+                      <Input
+                        value={item.quantity}
+                        onChange={(e) => setCartItems((prev) => prev.map((c, j) => j === i ? { ...c, quantity: e.target.value } : c))}
+                        placeholder="Cant."
+                        className="w-24 text-xs h-8"
+                      />
+                      <button onClick={() => removeFromCart(i)} className="text-[#ea504c] active:scale-90">
+                        <X className="size-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Urgency + note + submit */}
+              {cartItems.length > 0 && (
+                <>
+                  <div className="flex gap-1.5">
+                    {(Object.entries(BAR_ORDER_URGENCY) as [BarOrderUrgencyValue, { label: string; color: string; bg: string }][]).map(([key, cfg]) => (
+                      <button
+                        key={key}
+                        onClick={() => setCartUrgency(key)}
+                        className={cn(
+                          'flex-1 rounded-lg py-1.5 text-xs font-semibold transition-all',
+                          cartUrgency === key
+                            ? 'ring-2 ring-offset-1'
+                            : 'opacity-60',
+                        )}
+                        style={{
+                          backgroundColor: cfg.bg,
+                          color: cfg.color,
+                          ...(cartUrgency === key ? { ringColor: cfg.color } : {}),
+                        }}
+                      >
+                        {cfg.label}
+                      </button>
+                    ))}
+                  </div>
+                  <Textarea
+                    placeholder="Nota general (opcional)"
+                    value={cartNote}
+                    onChange={(e) => setCartNote(e.target.value)}
+                    rows={2}
+                    className="text-sm"
+                  />
+                  <button
+                    onClick={submitCart}
+                    disabled={submittingCart}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {submittingCart ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                    Enviar pedido al encargado
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </FadeIn>
+      )}
+
       {/* Pedidos pendientes */}
       {orders.length > 0 && (
         <FadeIn delay={0.1}>
@@ -407,6 +632,74 @@ export default function BarraPage() {
         </FadeIn>
       )}
 
+      {/* Order history */}
+      {historyOrders.length > 0 && (
+        <FadeIn delay={0.1}>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="flex w-full items-center justify-between rounded-xl bg-white px-4 py-3 ring-1 ring-[#ebe6df] transition-all active:scale-[0.99]"
+          >
+            <div className="flex items-center gap-2">
+              <Clock className="size-4 text-[#a39e97]" />
+              <span className="text-sm font-medium text-[#3d2c24]">
+                Historial de pedidos
+              </span>
+              <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+                {historyOrders.length}
+              </span>
+            </div>
+            {showHistory ? <ChevronUp className="size-4 text-[#a39e97]" /> : <ChevronDown className="size-4 text-[#a39e97]" />}
+          </button>
+
+          {showHistory && (
+            <div className="mt-2 space-y-1.5">
+              {historyOrders.map((order) => {
+                const isReceived = order.status === 'received'
+                const urgCfg = BAR_ORDER_URGENCY[DB_TO_FRONTEND_URGENCY[order.urgency] ?? 'normal'] ?? FALLBACK_URGENCY_CFG
+                const date = new Date(order.created_at)
+                const dateStr = date.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' })
+                const timeStr = date.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+
+                return (
+                  <div
+                    key={order.id}
+                    className={cn(
+                      'rounded-xl px-3.5 py-2.5 ring-1 ring-[#ebe6df]/50',
+                      isReceived ? 'bg-[#f8faf8]' : 'bg-[#fef8f8]',
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-[#3d2c24]">
+                          {order.product_name}
+                          <span className="ml-1.5 text-[#a39e97]">× {order.quantity}</span>
+                        </p>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-[#a39e97]">
+                          <span>{dateStr} {timeStr}</span>
+                          <span
+                            className="rounded-full px-1.5 py-0.5 font-semibold"
+                            style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}
+                          >
+                            {urgCfg.label}
+                          </span>
+                          {order.note && <span className="italic truncate max-w-[120px]">{order.note}</span>}
+                        </div>
+                      </div>
+                      <span className={cn(
+                        'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold',
+                        isReceived ? 'bg-[#e8f5f1] text-[#006d5a]' : 'bg-[#fef2f2] text-[#ea504c]',
+                      )}>
+                        {isReceived ? 'Recibido' : 'Cancelado'}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </FadeIn>
+      )}
+
       {/* Stock by category */}
       <StaggerList className="space-y-4" staggerDelay={0.04}>
         {grouped.map((group) => (
@@ -453,16 +746,19 @@ export default function BarraPage() {
                             </button>
                             {needsOrder && (
                               <button
-                                onClick={() => openOrderDialog(item)}
+                                onClick={() => addStockItemToCart(item)}
                                 className={cn(
                                   'flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold transition-all active:scale-95',
-                                  isZero
-                                    ? 'bg-[#ea504c] text-white'
-                                    : 'bg-[#fef7ed] text-[#d4943a] hover:bg-[#d4943a] hover:text-white',
+                                  cartItems.some((c) => c.fromStockId === item.id)
+                                    ? 'bg-[#e8f5f1] text-[#006d5a]'
+                                    : isZero
+                                      ? 'bg-[#ea504c] text-white'
+                                      : 'bg-[#fef7ed] text-[#d4943a] hover:bg-[#d4943a] hover:text-white',
                                 )}
+                                disabled={cartItems.some((c) => c.fromStockId === item.id)}
                               >
-                                <Send className="size-3" />
-                                Pedir
+                                <ShoppingCart className="size-3" />
+                                {cartItems.some((c) => c.fromStockId === item.id) ? 'En pedido' : 'Pedir'}
                               </button>
                             )}
                           </>

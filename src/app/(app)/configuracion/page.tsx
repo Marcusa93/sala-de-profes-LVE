@@ -151,7 +151,7 @@ export default function ConfiguracionPage() {
       <div className="card-elevated-lg p-4 sm:p-6">
         <form onSubmit={handleSave} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="config-first-name" className="text-sm font-medium text-[#3d2c24]">
+            <Label htmlFor="config-first-name" className="form-label">
               Nombre
             </Label>
             <Input
@@ -160,12 +160,12 @@ export default function ConfiguracionPage() {
               onChange={(e) => setFirstName(e.target.value)}
               placeholder="Tu nombre"
               autoComplete="given-name"
-              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] focus-visible:ring-[#006d5a]/20"
+              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] h-12 focus-visible:ring-2 focus-visible:ring-[#006d5a]"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="config-last-name" className="text-sm font-medium text-[#3d2c24]">
+            <Label htmlFor="config-last-name" className="form-label">
               Apellido
             </Label>
             <Input
@@ -174,12 +174,12 @@ export default function ConfiguracionPage() {
               onChange={(e) => setLastName(e.target.value)}
               placeholder="Tu apellido"
               autoComplete="family-name"
-              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] focus-visible:ring-[#006d5a]/20"
+              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] h-12 focus-visible:ring-2 focus-visible:ring-[#006d5a]"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="config-phone" className="text-sm font-medium text-[#3d2c24]">
+            <Label htmlFor="config-phone" className="form-label">
               Telefono
             </Label>
             <Input
@@ -190,13 +190,13 @@ export default function ConfiguracionPage() {
               placeholder="+54 11 1234-5678"
               autoComplete="tel"
               inputMode="tel"
-              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] focus-visible:ring-[#006d5a]/20"
+              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] h-12 focus-visible:ring-2 focus-visible:ring-[#006d5a]"
             />
           </div>
 
           {/* Role display (read-only) */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium text-[#3d2c24]">Rol</Label>
+            <Label className="form-label">Rol</Label>
             <div className="flex items-center rounded-xl border border-[#ebe6df] bg-[#faf8f5] px-4 py-3">
               <RoleBadge role={profile.role} size="md" />
             </div>
@@ -220,10 +220,9 @@ export default function ConfiguracionPage() {
       {/* Logout */}
       <div className="card-elevated-lg p-4 sm:p-6">
         <Button
-          variant="outline"
           onClick={handleLogout}
           disabled={loggingOut}
-          className="w-full rounded-xl border-[#ea504c]/40 bg-[#ea504c] py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#d43d39]"
+          className="w-full rounded-xl bg-[#ea504c] py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#d43d39] focus-visible:ring-2 focus-visible:ring-[#006d5a]"
         >
           {loggingOut ? (
             <Loader2 className="mr-2 size-4 animate-spin" />

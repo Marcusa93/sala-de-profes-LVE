@@ -265,7 +265,7 @@ export default function PedidosCocinaPage() {
       {/* Header */}
       <div className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-[#e8e0d8]">
         <div className="max-w-lg mx-auto flex items-center gap-3 px-4 py-3">
-          <Link href="/cocina" className="p-2 -ml-2 rounded-xl hover:bg-[#f3efe9] transition-colors">
+          <Link href="/cocina" className="size-10 -ml-2 rounded-xl hover:bg-[#f3efe9] transition-colors flex items-center justify-center">
             <ArrowLeft size={20} className="text-[#5a4a3a]" />
           </Link>
           <div>
@@ -282,7 +282,7 @@ export default function PedidosCocinaPage() {
           <button
             onClick={() => setTab('nuevo')}
             className={cn(
-              'flex-1 py-2.5 rounded-xl text-sm font-medium transition-all',
+              'flex-1 h-12 rounded-xl text-sm font-medium transition-all',
               tab === 'nuevo'
                 ? 'bg-[#006d5a] text-white shadow-sm'
                 : 'bg-white text-[#5a4a3a] border border-[#e8e0d8]',
@@ -293,7 +293,7 @@ export default function PedidosCocinaPage() {
           <button
             onClick={() => setTab('historial')}
             className={cn(
-              'flex-1 py-2.5 rounded-xl text-sm font-medium transition-all relative',
+              'flex-1 h-12 rounded-xl text-sm font-medium transition-all relative',
               tab === 'historial'
                 ? 'bg-[#006d5a] text-white shadow-sm'
                 : 'bg-white text-[#5a4a3a] border border-[#e8e0d8]',
@@ -352,11 +352,11 @@ export default function PedidosCocinaPage() {
                       placeholder="Producto (ej: Menta, Limón...)"
                       value={item.product_name}
                       onChange={(e) => updateItem(item.id, 'product_name', e.target.value)}
-                      className="flex-1 border-[#e8e0d8] text-sm"
+                      className="flex-1 h-10 border border-[#e8e0d8] rounded-lg text-sm"
                     />
                     <button
                       onClick={() => removeItem(item.id)}
-                      className="p-1.5 rounded-lg hover:bg-red-50 text-[#ea504c] transition-colors"
+                      className="size-10 flex items-center justify-center rounded-lg hover:bg-red-50 text-[#ea504c] transition-colors"
                     >
                       <Trash2 size={16} />
                     </button>
@@ -366,7 +366,7 @@ export default function PedidosCocinaPage() {
                       placeholder="Cantidad (ej: 2 atados, 1 bolsa...)"
                       value={item.quantity}
                       onChange={(e) => updateItem(item.id, 'quantity', e.target.value)}
-                      className="flex-1 border-[#e8e0d8] text-sm"
+                      className="flex-1 h-10 border border-[#e8e0d8] rounded-lg text-sm"
                     />
                     <select
                       value={item.category}
@@ -389,7 +389,7 @@ export default function PedidosCocinaPage() {
             {/* Add item button */}
             <button
               onClick={addItem}
-              className="w-full py-3 rounded-2xl border-2 border-dashed border-[#d4cdc4] text-[#8a7a6a] text-sm font-medium hover:border-[#006d5a] hover:text-[#006d5a] transition-colors flex items-center justify-center gap-2"
+              className="w-full py-3 min-h-[48px] rounded-2xl border-2 border-dashed border-[#d4cdc4] text-[#8a7a6a] text-sm font-medium hover:border-[#006d5a] hover:text-[#006d5a] transition-colors flex items-center justify-center gap-2"
             >
               <Plus size={18} />
               Agregar producto

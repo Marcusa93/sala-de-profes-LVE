@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyOrderToEncargados, notifyOrderStatusChange } from '@/lib/email/send'
 
 // ---------------------------------------------------------------------------
 // POST /api/kitchen/bar
@@ -104,6 +105,15 @@ export async function POST(request: NextRequest) {
         is_active: true,
       })
 
+      // Email to encargados + socios
+      notifyOrderToEncargados({
+        type: 'barra',
+        authorName,
+        items: [{ name: productName, quantity }],
+        urgency: urgency || 'normal',
+        note,
+      }).catch(() => {})
+
       return NextResponse.json({ success: true })
     }
 
@@ -148,6 +158,14 @@ export async function POST(request: NextRequest) {
             target_user_id: order.requested_by,
             is_active: true,
           })
+
+          // Email to order creator
+          notifyOrderStatusChange({
+            userId: order.requested_by,
+            productName: order.product_name,
+            quantity: order.quantity,
+            newStatus: status as 'ordered' | 'received' | 'cancelled',
+          }).catch(() => {})
         }
       }
 

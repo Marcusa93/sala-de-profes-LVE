@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyExpedienteToSocios } from '@/lib/email/send'
 import { STATUS_TRANSITIONS, EXPEDIENTE_STATUSES } from '@/lib/constants/expedientes'
 import type { ExpedienteStatus } from '@/types/expedientes'
 
@@ -123,6 +124,15 @@ export async function PATCH(
         is_active: true,
       })
     }
+
+    // Email to socios
+    notifyExpedienteToSocios({
+      code: expediente.code,
+      title: expediente.title,
+      action: `Cambio de estado: ${fromLabel} → ${toLabel}`,
+      authorName,
+      detail: closeReason || undefined,
+    }).catch(() => {})
 
     return NextResponse.json({ success: true })
   } catch (error) {

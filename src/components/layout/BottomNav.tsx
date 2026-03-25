@@ -142,6 +142,7 @@ const CHEF_MORE: ExpandableNavItem = {
     {
       label: 'Operaciones',
       items: [
+        { label: 'Compras', href: '/pedidos', icon: Truck },
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
       ],

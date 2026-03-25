@@ -195,7 +195,7 @@ export default function LoginPage() {
                 {/* Email */}
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="email" className="text-sm font-medium text-[#3d2c24]">
-                    <Mail className="size-3.5 text-[#a39e97]" />
+                    <Mail className="size-4 text-[#a39e97]" />
                     Correo electronico
                   </Label>
                   <Input
@@ -206,14 +206,14 @@ export default function LoginPage() {
                     onChange={(e) => setEmail(e.target.value)}
                     autoComplete="email"
                     disabled={loading}
-                    className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
+                    className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-2 focus-visible:ring-[#006d5a]"
                   />
                 </div>
 
                 {/* Password */}
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="password" className="text-sm font-medium text-[#3d2c24]">
-                    <Lock className="size-3.5 text-[#a39e97]" />
+                    <Lock className="size-4 text-[#a39e97]" />
                     Contrasena
                   </Label>
                   <Input
@@ -224,7 +224,7 @@ export default function LoginPage() {
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete="current-password"
                     disabled={loading}
-                    className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
+                    className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-2 focus-visible:ring-[#006d5a]"
                   />
                 </div>
 
@@ -233,7 +233,7 @@ export default function LoginPage() {
                   type="submit"
                   size="lg"
                   disabled={loading}
-                  className="mt-2 h-13 w-full rounded-xl bg-[#006d5a] text-sm font-semibold text-white shadow-md transition-all hover:bg-[#004d3f] hover:shadow-lg active:scale-[0.98]"
+                  className="mt-2 h-12 w-full rounded-xl bg-[#006d5a] text-sm font-semibold text-white shadow-md transition-all hover:bg-[#004d3f] hover:shadow-lg active:scale-[0.98]"
                 >
                   {loading ? (
                     <>
@@ -316,7 +316,7 @@ export default function LoginPage() {
 
                         <div className="flex flex-col gap-2">
                           <Label htmlFor="reset-email" className="text-sm font-medium text-[#3d2c24]">
-                            <Mail className="size-3.5 text-[#a39e97]" />
+                            <Mail className="size-4 text-[#a39e97]" />
                             Correo electrónico
                           </Label>
                           <Input
@@ -327,7 +327,7 @@ export default function LoginPage() {
                             onChange={(e) => setResetEmail(e.target.value)}
                             autoComplete="email"
                             disabled={resetLoading}
-                            className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
+                            className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-2 focus-visible:ring-[#006d5a]"
                           />
                         </div>
 

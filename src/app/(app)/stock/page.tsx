@@ -524,7 +524,7 @@ export default function StockPage() {
       {isEncargado && (
         <button
           onClick={openCreateDialog}
-          className="fixed bottom-24 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:shadow-xl hover:shadow-[#006d5a]/30 sm:bottom-6 sm:right-6"
+          className="fab"
           aria-label="Agregar item de stock"
         >
           <Plus className="size-6" />
@@ -776,9 +776,9 @@ function StockCard({
           {isEncargado && (
             <button
               onClick={onEdit}
-              className="flex size-8 items-center justify-center rounded-lg text-[#a39e97] transition-colors hover:bg-[#faf8f5] hover:text-[#3d2c24]"
+              className="icon-btn"
             >
-              <Pencil className="size-3.5" />
+              <Pencil className="size-4" />
             </button>
           )}
         </div>
@@ -797,7 +797,7 @@ function StockCard({
                   if (e.key === 'Enter') onQtySubmit()
                   if (e.key === 'Escape') onQtyCancel()
                 }}
-                className="h-8 w-20 rounded-lg border-[#ebe6df] bg-[#faf8f5] text-sm text-[#3d2c24] focus-visible:ring-[#006d5a]"
+                className="h-10 w-20 rounded-lg border-[#ebe6df] bg-[#faf8f5] text-sm text-[#3d2c24] focus-visible:ring-2 focus-visible:ring-[#006d5a]"
                 autoFocus
               />
               <span className="text-xs text-[#a39e97]">
@@ -805,7 +805,7 @@ function StockCard({
               </span>
               <button
                 onClick={onQtySubmit}
-                className="flex size-7 items-center justify-center rounded-full bg-[#f0f7f5] text-[#006d5a] transition-colors hover:bg-[#006d5a] hover:text-white"
+                className="icon-btn bg-[#f0f7f5] text-[#006d5a] hover:bg-[#006d5a] hover:text-white"
               >
                 <CheckCircle2 className="size-3.5" />
               </button>
