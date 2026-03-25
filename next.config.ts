@@ -2,9 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   typescript: {
-    // Type errors are non-critical (mostly Supabase/recharts generic mismatches)
-    // We fix them incrementally without blocking deploys
     ignoreBuildErrors: true,
+  },
+  // Force Argentina timezone on serverless functions (Vercel runs in us-east)
+  env: {
+    TZ: 'America/Argentina/Tucuman',
   },
 };
 

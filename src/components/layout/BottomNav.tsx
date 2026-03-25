@@ -124,7 +124,6 @@ const ENCARGADO_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
-        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
