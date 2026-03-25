@@ -20,12 +20,11 @@ const NAV_ITEMS = [
   { label: 'Control', href: '/admin', icon: LayoutDashboard },
   { label: 'Ventas', href: '/ventas', icon: BarChart3 },
   { label: 'Horas', href: '/admin/reportes/liquidacion', icon: Calculator },
-  { label: 'Fudo', href: '/admin/fudo', icon: Store },
   { label: 'Asistencia', href: '/admin/reportes/asistencia', icon: Users },
   { label: 'Turnos', href: '/admin/reportes/turnos', icon: Calendar },
   { label: 'Stock', href: '/admin/reportes/stock', icon: Package },
   { label: 'Vajilla', href: '/vajilla', icon: Wine },
-  { label: 'Auditoría', href: '/stock/historial', icon: Camera },
+  { label: 'Fudo', href: '/admin/fudo', icon: Store },
   { label: 'Avisos', href: '/admin/reportes/notificaciones', icon: Bell },
 ]
 

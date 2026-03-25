@@ -75,9 +75,9 @@ const SOCIO_MORE: ExpandableNavItem = {
       label: 'Gestión',
       items: [
         { label: 'Control', href: '/admin', icon: LayoutDashboard },
+        { label: 'Compras', href: '/pedidos', icon: Truck },
         { label: 'Equipo', href: '/equipo', icon: Users },
         { label: 'Turnos', href: '/equipo/turnos', icon: Calendar },
-        { label: 'Alertas', href: '/alertas', icon: AlertTriangle },
       ],
     },
     {
@@ -85,15 +85,13 @@ const SOCIO_MORE: ExpandableNavItem = {
       items: [
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
-        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
         { label: 'Stock', href: '/stock', icon: Package },
+        { label: 'Proveed.', href: '/proveedores', icon: Truck },
       ],
     },
     {
-      label: 'Más',
+      label: 'Herramientas',
       items: [
-        { label: 'Proveed.', href: '/proveedores', icon: Truck },
-        { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
@@ -106,29 +104,27 @@ const ENCARGADO_MORE: ExpandableNavItem = {
   icon: MoreHorizontal,
   groups: [
     {
+      label: 'Gestión',
+      items: [
+        { label: 'Control', href: '/admin', icon: LayoutDashboard },
+        { label: 'Compras', href: '/pedidos', icon: Truck },
+        { label: 'Equipo', href: '/equipo', icon: Users },
+        { label: 'Proveed.', href: '/proveedores', icon: Truck },
+      ],
+    },
+    {
       label: 'Operaciones',
       items: [
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
-        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
         { label: 'Stock', href: '/stock', icon: Package },
-      ],
-    },
-    {
-      label: 'Gestión',
-      items: [
-        { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
-        { label: 'Control', href: '/admin', icon: LayoutDashboard },
-        { label: 'Equipo', href: '/equipo', icon: Users },
-        { label: 'Alertas', href: '/alertas', icon: AlertTriangle },
-        { label: 'Proveed.', href: '/proveedores', icon: Truck },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
       ],
     },
     {
       label: 'Herramientas',
       items: [
-        { label: 'Vajilla', href: '/vajilla', icon: Wine },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
@@ -140,18 +136,17 @@ const CHEF_MORE: ExpandableNavItem = {
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Operaciones',
+      label: 'Cocina',
       items: [
-        { label: 'Compras', href: '/pedidos', icon: Truck },
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
       ],
     },
     {
       label: 'Herramientas',
       items: [
         { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
@@ -163,17 +158,17 @@ const COCINA_MORE: ExpandableNavItem = {
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Operaciones',
+      label: 'Cocina',
       items: [
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
       ],
     },
     {
       label: 'Herramientas',
       items: [
         { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
@@ -185,7 +180,7 @@ const BARISTA_MORE: ExpandableNavItem = {
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Operaciones',
+      label: 'Mi sector',
       items: [
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
       ],

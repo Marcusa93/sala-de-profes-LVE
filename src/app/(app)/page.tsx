@@ -21,6 +21,9 @@ import {
   Send,
   Loader2,
   X,
+  BarChart3,
+  FolderOpen,
+  Package,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -451,16 +454,21 @@ export default function DashboardPage() {
         <StaggerList className="flex flex-col gap-2.5" staggerDelay={0.06}>
           {[
             { href: '/mi-turno', icon: LogIn, label: 'Marcar Ingreso/Egreso' },
-            ...(isEncargado ? [
+            ...(profile?.role === 'socio' ? [
+              { href: '/ventas', icon: BarChart3, label: 'Ventas del día' },
               { href: '/admin', icon: CalendarDays, label: 'Centro de Control' },
+              { href: '/pedidos', icon: ShoppingCart, label: 'Gestión de Compras' },
+              { href: '/expedientes', icon: FolderOpen, label: 'Expedientes' },
+            ] : isEncargado ? [
+              { href: '/admin', icon: CalendarDays, label: 'Centro de Control' },
+              { href: '/pedidos', icon: ShoppingCart, label: 'Gestión de Compras' },
               { href: '/cocina', icon: UtensilsCrossed, label: 'Cocina' },
-              { href: '/cocina/pedidos', icon: ShoppingCart, label: 'Pedidos de Cocina' },
+              { href: '/stock', icon: Package, label: 'Stock' },
             ] : profile?.role === 'chef' || profile?.role === 'cocina' ? [
               { href: '/cocina', icon: UtensilsCrossed, label: 'Cocina' },
               { href: '/cocina/pedidos', icon: ShoppingCart, label: 'Pedir mercadería' },
             ] : profile?.role === 'barista' ? [
-              { href: '/cocina/barra', icon: Coffee, label: 'Barra' },
-              { href: '/mis-horarios', icon: CalendarDays, label: 'Ver Horarios' },
+              { href: '/cocina/barra', icon: Coffee, label: 'Barra — Stock y Pedidos' },
             ] : [
               { href: '/mis-horarios', icon: CalendarDays, label: 'Ver Horarios' },
             ]),
