@@ -87,6 +87,7 @@ const SOCIO_MORE: ExpandableNavItem = {
       label: 'Inventario y compras',
       items: [
         { label: 'Stock general', href: '/stock', icon: Package },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
         { label: 'Proveedores', href: '/proveedores', icon: Truck },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
@@ -114,6 +115,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
       label: 'Inventario y compras',
       items: [
         { label: 'Stock general', href: '/stock', icon: Package },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
         { label: 'Proveedores', href: '/proveedores', icon: Truck },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
