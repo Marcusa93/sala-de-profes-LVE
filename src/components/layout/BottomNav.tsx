@@ -67,69 +67,62 @@ const BASE_NAV: NavItem[] = [
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
+// SOCIO — todo accesible, 2 grupos limpios
 const SOCIO_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Gestión',
+      label: 'El local',
       items: [
         { label: 'Control', href: '/admin', icon: LayoutDashboard },
-        { label: 'Compras', href: '/pedidos', icon: Truck },
         { label: 'Equipo', href: '/equipo', icon: Users },
         { label: 'Turnos', href: '/equipo/turnos', icon: Calendar },
-      ],
-    },
-    {
-      label: 'Operaciones',
-      items: [
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
-        { label: 'Stock', href: '/stock', icon: Package },
-        { label: 'Proveed.', href: '/proveedores', icon: Truck },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
       ],
     },
     {
-      label: 'Herramientas',
+      label: 'Inventario y compras',
       items: [
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'Stock general', href: '/stock', icon: Package },
+        { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
+        { label: 'Proveedores', href: '/proveedores', icon: Truck },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
   ],
 }
 
+// ENCARGADO — gestiona todo lo operativo
 const ENCARGADO_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Gestión',
+      label: 'El local',
       items: [
         { label: 'Control', href: '/admin', icon: LayoutDashboard },
-        { label: 'Compras', href: '/pedidos', icon: Truck },
         { label: 'Equipo', href: '/equipo', icon: Users },
-        { label: 'Proveed.', href: '/proveedores', icon: Truck },
-      ],
-    },
-    {
-      label: 'Operaciones',
-      items: [
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
-        { label: 'Stock', href: '/stock', icon: Package },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
       ],
     },
     {
-      label: 'Herramientas',
+      label: 'Inventario y compras',
       items: [
+        { label: 'Stock general', href: '/stock', icon: Package },
+        { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
+        { label: 'Proveedores', href: '/proveedores', icon: Truck },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
   ],
 }
 
+// CHEF — cocina y pedidos
 const CHEF_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
@@ -137,21 +130,16 @@ const CHEF_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
+        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Pedir mercadería', href: '/cocina/pedidos', icon: ShoppingCart },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
-      ],
-    },
-    {
-      label: 'Herramientas',
-      items: [
-        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
   ],
 }
 
+// COCINA — igual que chef
 const COCINA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
@@ -159,49 +147,38 @@ const COCINA_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
+        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Pedir mercadería', href: '/cocina/pedidos', icon: ShoppingCart },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
-      ],
-    },
-    {
-      label: 'Herramientas',
-      items: [
-        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
   ],
 }
 
+// BARISTA — barra y stock de barra
 const BARISTA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Mi sector',
+      label: 'Barra',
       items: [
-        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
-      ],
-    },
-    {
-      label: 'Herramientas',
-      items: [
-        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
+        { label: 'Stock de barra', href: '/cocina/barra', icon: Coffee },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
   ],
 }
 
+// RUNNER — mínimo
 const RUNNER_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Herramientas',
+      label: '',
       items: [
-        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
@@ -339,10 +316,12 @@ export function BottomNav() {
               </div>
               <StaggerList className="space-y-3" staggerDelay={0.03}>
                 {more.groups.map((group) => (
-                  <StaggerItem key={group.label}>
-                    <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                      {group.label}
-                    </p>
+                  <StaggerItem key={group.label || 'default'}>
+                    {group.label && (
+                      <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                        {group.label}
+                      </p>
+                    )}
                     <div className="grid grid-cols-3 gap-1.5">
                       {group.items.map((child) => {
                         const Icon = child.icon
