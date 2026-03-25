@@ -135,9 +135,33 @@ export async function POST(request: NextRequest) {
       if (status === 'ordered' || status === 'received') {
         const { data: order } = await admin
           .from('bar_orders')
-          .select('requested_by, product_name, quantity')
+          .select('requested_by, product_name, quantity, bar_stock_item_id')
           .eq('id', orderId)
           .single()
+
+        // When received, update bar_stock_items quantity
+        if (status === 'received' && order?.bar_stock_item_id) {
+          // Parse quantity — try to extract number from string like "5 kg", "2 cajas", "10"
+          const qtyNum = parseFloat(String(order.quantity).replace(/[^\d.,]/g, '')) || 0
+          if (qtyNum > 0) {
+            // Get current qty and add received amount
+            const { data: currentItem } = await admin
+              .from('bar_stock_items')
+              .select('current_qty')
+              .eq('id', order.bar_stock_item_id)
+              .single()
+
+            if (currentItem) {
+              await admin
+                .from('bar_stock_items')
+                .update({
+                  current_qty: (currentItem.current_qty || 0) + qtyNum,
+                  is_urgent: false,
+                })
+                .eq('id', order.bar_stock_item_id)
+            }
+          }
+        }
 
         if (order?.requested_by) {
           const titleMap: Record<string, string> = {

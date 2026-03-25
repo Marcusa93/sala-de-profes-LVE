@@ -178,6 +178,29 @@ export async function POST(request: NextRequest) {
             is_active: true,
           })
         }
+
+        // When received: try to update stock_items by matching product name
+        if (status === 'received' && order) {
+          const qtyNum = parseFloat(String(order.quantity).replace(/[^\d.,]/g, '')) || 0
+          if (qtyNum > 0) {
+            // Find matching stock_item by name (fuzzy match on first word)
+            const searchWord = order.product_name.trim().split(/\s+/)[0]
+            const { data: matches } = await admin
+              .from('stock_items')
+              .select('id, name, current_qty')
+              .ilike('name', `%${searchWord}%`)
+
+            const exactMatch = matches?.find(
+              (m) => m.name.toLowerCase().trim() === order.product_name.toLowerCase().trim()
+            )
+            if (exactMatch) {
+              await admin
+                .from('stock_items')
+                .update({ current_qty: (exactMatch.current_qty || 0) + qtyNum })
+                .eq('id', exactMatch.id)
+            }
+          }
+        }
       }
 
       return NextResponse.json({ success: true })

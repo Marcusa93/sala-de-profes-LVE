@@ -298,6 +298,30 @@ export default function StockPage() {
         if (error) throw error
         toast.success('Item actualizado')
       } else {
+        // Dedup check: search for similar names in existing stock (including Fudo-linked)
+        const searchName = payload.name!.toLowerCase().trim()
+        const { data: similar } = await supabase
+          .from('stock_items')
+          .select('id, name, fudo_ingredient_id, current_qty')
+          .ilike('name', `%${searchName.split(' ')[0]}%`)
+
+        const match = similar?.find(
+          (s) => s.name.toLowerCase().trim() === searchName ||
+                 s.name.toLowerCase().includes(searchName) ||
+                 searchName.includes(s.name.toLowerCase())
+        )
+
+        if (match) {
+          const source = match.fudo_ingredient_id ? ' (sincronizado con Fudo)' : ''
+          const confirmed = window.confirm(
+            `⚠️ Ya existe un item similar:\n\n"${match.name}"${source}\nStock actual: ${match.current_qty}\n\n¿Querés crear uno nuevo de todas formas?\nSi es el mismo producto, mejor editá el existente.`
+          )
+          if (!confirmed) {
+            setSaving(false)
+            return
+          }
+        }
+
         const { error } = await supabase.from('stock_items').insert(payload)
 
         if (error) throw error
@@ -763,8 +787,11 @@ function StockCard({
         {/* Header row */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 space-y-1">
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2">
               <h3 className="truncate font-semibold text-[#3d2c24]">{item.name}</h3>
+              {item.fudo_ingredient_id && (
+                <span className="shrink-0 rounded bg-[#eef4fc] px-1.5 py-0.5 text-[9px] font-bold text-[#4a90d9]">FUDO</span>
+              )}
               <StockSemaphoreBadge semaphore={semaphore} />
             </div>
             <p className="text-xs text-[#a39e97]">
