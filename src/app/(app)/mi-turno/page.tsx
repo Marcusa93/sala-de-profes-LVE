@@ -148,14 +148,23 @@ export default function MiTurnoPage() {
   const status = getStatus()
 
   // ------------------------------------------
-  // Geolocation verification helper
+  // Manual confirmation when GPS fails
   // ------------------------------------------
-  const verifyLocation = (): Promise<boolean> => {
+  const [showGeoConfirm, setShowGeoConfirm] = useState(false)
+  const [pendingAction, setPendingAction] = useState<'clock_in' | 'clock_out' | null>(null)
+
+  // ------------------------------------------
+  // Geolocation verification helper
+  // Returns: 'ok' (in range), 'manual' (needs manual confirm), 'skip' (socio bypass)
+  // ------------------------------------------
+  const verifyLocation = (): Promise<'ok' | 'manual' | 'skip'> => {
+    // Socios skip geolocation entirely
+    if (profile?.role === 'socio') return Promise.resolve('skip')
+
     return new Promise((resolve) => {
       if (!navigator.geolocation) {
-        toast.error('Necesitás activar la ubicación para fichar')
         setGeoStatus('error')
-        resolve(false)
+        resolve('manual')
         return
       }
 
@@ -171,28 +180,49 @@ export default function MiTurnoPage() {
             RESTAURANT_LOCATION.lng,
           )
 
+          setGeoLoading(false)
           if (distance <= MAX_DISTANCE_METERS) {
             setGeoStatus('in_range')
-            setGeoLoading(false)
-            resolve(true)
+            resolve('ok')
           } else {
             setGeoStatus('out_of_range')
-            setGeoLoading(false)
-            toast.error(
-              'Estás fuera del rango del local. Acercate a La Vieja Escuela para fichar.',
-            )
-            resolve(false)
+            resolve('manual')
           }
         },
         () => {
           setGeoStatus('error')
           setGeoLoading(false)
-          toast.error('Necesitás activar la ubicación para fichar')
-          resolve(false)
+          resolve('manual')
         },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
       )
     })
+  }
+
+  // ------------------------------------------
+  // Execute clock action (after verification)
+  // ------------------------------------------
+  const executeClockAction = async (action: 'clock_in' | 'clock_out', withGps: boolean) => {
+    setActionLoading(true)
+    try {
+      const rpcName = action === 'clock_in' ? 'clock_in' : 'clock_out'
+      const notes = withGps ? undefined : 'Sin verificación GPS'
+      const { error } = await supabase.rpc(rpcName, { p_notes: notes })
+
+      if (error) throw error
+
+      playSchoolBell()
+      setShowSuccess(true)
+      toast.success(action === 'clock_in' ? 'Ingreso registrado' : 'Egreso registrado')
+      await fetchAttendance()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error al fichar'
+      toast.error('Error', { description: message })
+    } finally {
+      setActionLoading(false)
+      setShowGeoConfirm(false)
+      setPendingAction(null)
+    }
   }
 
   // ------------------------------------------
@@ -203,25 +233,16 @@ export default function MiTurnoPage() {
     setActionLoading(true)
 
     try {
-      const locationOk = await verifyLocation()
-      if (!locationOk) {
+      const result = await verifyLocation()
+      if (result === 'ok' || result === 'skip') {
+        await executeClockAction('clock_in', result === 'ok')
+      } else {
+        // GPS failed or out of range — show manual confirm
         setActionLoading(false)
-        return
+        setPendingAction('clock_in')
+        setShowGeoConfirm(true)
       }
-
-      const { error } = await supabase.rpc('clock_in')
-
-      if (error) throw error
-
-      playSchoolBell()
-      setShowSuccess(true)
-      toast.success('Ingreso registrado correctamente')
-      await fetchAttendance()
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Error al marcar ingreso'
-      toast.error('Error al registrar ingreso', { description: message })
-    } finally {
+    } catch {
       setActionLoading(false)
     }
   }
@@ -234,19 +255,15 @@ export default function MiTurnoPage() {
     setActionLoading(true)
 
     try {
-      const { error } = await supabase.rpc('clock_out')
-
-      if (error) throw error
-
-      playSchoolBell()
-      setShowSuccess(true)
-      toast.success('Egreso registrado correctamente')
-      await fetchAttendance()
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Error al marcar egreso'
-      toast.error('Error al registrar egreso', { description: message })
-    } finally {
+      const result = await verifyLocation()
+      if (result === 'ok' || result === 'skip') {
+        await executeClockAction('clock_out', result === 'ok')
+      } else {
+        setActionLoading(false)
+        setPendingAction('clock_out')
+        setShowGeoConfirm(true)
+      }
+    } catch {
       setActionLoading(false)
     }
   }
@@ -528,6 +545,56 @@ export default function MiTurnoPage() {
           </StaggerList>
         )}
       </FadeIn>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* GPS Manual Confirmation Dialog                                   */}
+      {/* ---------------------------------------------------------------- */}
+      {showGeoConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+          <div
+            className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
+            onClick={() => { setShowGeoConfirm(false); setPendingAction(null) }}
+          />
+          <div className="relative z-10 mx-3 mb-[calc(0.75rem+env(safe-area-inset-bottom))] w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl sm:mb-0">
+            <div className="flex flex-col items-center text-center">
+              <div className="flex size-14 items-center justify-center rounded-2xl bg-[#fdf6ec]">
+                <MapPin className="size-7 text-[#d4943a]" />
+              </div>
+              <h3 className="mt-4 text-lg font-semibold text-[#3d2c24]">
+                No se pudo verificar ubicación
+              </h3>
+              <p className="mt-2 text-sm leading-relaxed text-[#a39e97]">
+                {geoStatus === 'out_of_range'
+                  ? 'El GPS indica que estás fuera del rango del local.'
+                  : 'No se pudo acceder al GPS del dispositivo.'}
+              </p>
+              <p className="mt-1 text-sm font-medium text-[#3d2c24]">
+                ¿Estás en La Vieja Escuela?
+              </p>
+            </div>
+
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => { setShowGeoConfirm(false); setPendingAction(null) }}
+                className="flex-1 rounded-xl border border-[#ebe6df] py-3 text-sm font-semibold text-[#a39e97] transition-colors hover:bg-[#f5f0e8]"
+              >
+                No, cancelar
+              </button>
+              <button
+                onClick={() => pendingAction && executeClockAction(pendingAction, false)}
+                disabled={actionLoading}
+                className="flex-1 rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white transition-colors hover:bg-[#005a4a] disabled:opacity-50"
+              >
+                {actionLoading ? 'Registrando...' : 'Sí, estoy ahí'}
+              </button>
+            </div>
+
+            <p className="mt-3 text-center text-[10px] text-[#a39e97]">
+              Se registrará sin verificación GPS
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
