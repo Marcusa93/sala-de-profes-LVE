@@ -14,6 +14,7 @@ import { createClient } from '@/lib/supabase/client'
 import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn, StaggerList, StaggerItem, AnimatedNumber } from '@/components/ui/motion'
+import { PurchaseOrderCopilot } from '@/components/ai/PurchaseOrderCopilot'
 import {
   Dialog,
   DialogContent,
@@ -231,8 +232,15 @@ export default function PedidosPage() {
         </div>
       </FadeIn>
 
+      {/* AI Purchase Order Copilot */}
+      {canManage && (
+        <FadeIn delay={0.08}>
+          <PurchaseOrderCopilot />
+        </FadeIn>
+      )}
+
       {/* Filter */}
-      <FadeIn delay={0.08}>
+      <FadeIn delay={0.10}>
         <div className="flex gap-1.5">
           {(['all', 'barra', 'cocina'] as const).map((f) => (
             <button
