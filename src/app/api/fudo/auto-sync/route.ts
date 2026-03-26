@@ -152,6 +152,10 @@ export async function GET() {
     const totalTickets = tickets.length
     const totalItems = tickets.reduce((s, t) => s + t.items.reduce((is, i) => is + i.qty, 0), 0)
 
+    // Separate mesas (EAT-IN) from takeaway/delivery
+    const openMesas = openTickets.filter((t) => t.saleType === 'EAT-IN')
+    const openTakeaway = openTickets.filter((t) => t.saleType !== 'EAT-IN')
+
     // Top products
     const topProducts = [...productSales.values()]
       .sort((a, b) => b.qty - a.qty)
@@ -214,14 +218,19 @@ export async function GET() {
         totalTickets,
         totalItems,
         avgTicket: closedTickets.length > 0 ? Math.round(totalFacturado / closedTickets.length) : 0,
-        mesasAbiertas: openTickets.length,
-        mesasPagando: payingTickets.length,
-        mesasCerradas: closedTickets.length,
+        mesasAbiertas: openMesas.length,
+        takeawayAbiertos: openTakeaway.length,
+        mesasPagando: payingTickets.filter(t => t.saleType === 'EAT-IN').length,
+        mesasCerradas: closedTickets.filter(t => t.saleType === 'EAT-IN').length,
+        totalAbiertas: openTickets.length, // mesas + takeaway combined
         topProducts,
         bySaleType,
         byHour,
-        openTables: openTickets
-          .sort((a, b) => (b.tableNumber ?? 0) - (a.tableNumber ?? 0))
+        openTables: openMesas
+          .sort((a, b) => (a.tableNumber ?? 999) - (b.tableNumber ?? 999))
+          .map(formatTicket),
+        openTakeaway: openTakeaway
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
           .map(formatTicket),
         recentSales: closedTickets
           .sort((a, b) => (b.closedAt ?? b.createdAt).localeCompare(a.closedAt ?? a.createdAt))

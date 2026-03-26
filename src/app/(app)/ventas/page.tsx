@@ -42,11 +42,14 @@ type DashboardData = {
   totalItems: number
   avgTicket: number
   mesasAbiertas: number
+  takeawayAbiertos: number
+  totalAbiertas: number
   mesasCerradas: number
   topProducts: { name: string; qty: number; revenue: number }[]
   bySaleType: { name: string; tickets: number; revenue: number }[]
   byHour: { hour: string; tickets: number; revenue: number; items: number }[]
   openTables: Ticket[]
+  openTakeaway: Ticket[]
   recentSales: Ticket[]
 }
 
@@ -161,7 +164,10 @@ export default function VentasPage() {
             <p className="mt-1.5 font-display text-xl font-bold tabular-nums text-[#d4943a]">
               {formatPrice(data.totalEnCurso)}
             </p>
-            <p className="text-[10px] text-[#a39e97]">{data.mesasAbiertas} mesas abiertas</p>
+            <p className="text-[10px] text-[#a39e97]">
+              {data.mesasAbiertas} mesa{data.mesasAbiertas !== 1 ? 's' : ''}
+              {data.takeawayAbiertos > 0 && ` · ${data.takeawayAbiertos} takeaway`}
+            </p>
           </div>
         </StaggerItem>
         <StaggerItem>
@@ -198,7 +204,7 @@ export default function VentasPage() {
       <div className="flex rounded-full bg-secondary p-0.5">
         {([
           { key: 'resumen', label: 'Resumen', icon: FileText },
-          { key: 'mesas', label: `Mesas (${data.mesasAbiertas})`, icon: UtensilsCrossed },
+          { key: 'mesas', label: `En curso (${data.totalAbiertas})`, icon: UtensilsCrossed },
           { key: 'cerradas', label: `Cerradas (${data.mesasCerradas})`, icon: CheckCircle },
         ] as const).map((t) => (
           <button
@@ -381,10 +387,57 @@ export default function VentasPage() {
       {tab === 'mesas' && (
         <FadeIn>
           <div className="space-y-2">
-            {data.openTables.length === 0 ? (
-              <EmptyState icon={UtensilsCrossed} title="Sin mesas abiertas" description="No hay mesas en curso en este momento." />
+            {data.openTables.length === 0 && data.openTakeaway.length === 0 ? (
+              <EmptyState icon={UtensilsCrossed} title="Sin pedidos en curso" description="No hay mesas ni pedidos abiertos en este momento." />
             ) : (
-              data.openTables
+              <>
+              {/* Takeaway section */}
+              {data.openTakeaway.length > 0 && (
+                <>
+                  <p className="section-label px-1">Para llevar / Delivery ({data.openTakeaway.length})</p>
+                  {data.openTakeaway.map((ticket) => {
+                    const stateInfo = STATE_LABELS[ticket.state] ?? STATE_LABELS['IN-COURSE']
+                    return (
+                      <div key={ticket.ticketId} className="card-elevated rounded-xl overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-3" style={{ borderLeftWidth: 4, borderLeftColor: '#8b5e34' }}>
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex size-9 items-center justify-center rounded-lg bg-[#faf0e4]">
+                              <ShoppingBag className="size-4 text-[#8b5e34]" />
+                            </div>
+                            <div>
+                              <p className="text-[13px] font-semibold text-[#3d2c24]">
+                                {ticket.saleType === 'TAKEAWAY' ? 'Para llevar' : 'Delivery'} #{ticket.ticketId}
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <span className="rounded-full px-2 py-0.5 text-[9px] font-bold" style={{ backgroundColor: stateInfo.bg, color: stateInfo.color }}>
+                                  {stateInfo.label}
+                                </span>
+                                <span className="text-[10px] text-[#a39e97]">{format(new Date(ticket.time), 'HH:mm')}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <p className="text-base font-bold tabular-nums text-[#3d2c24]">{formatPrice(ticket.total)}</p>
+                        </div>
+                        {ticket.items.length > 0 && (
+                          <div className="border-t border-border/30 px-4 py-2.5 space-y-1">
+                            {ticket.items.map((item, j) => (
+                              <div key={j} className="flex items-center justify-between text-[12px]">
+                                <span className="text-[#3d2c24]"><span className="font-semibold text-[#006d5a]">{item.qty}x</span> {item.name}</span>
+                                <span className="tabular-nums text-[#a39e97]">{formatPrice(item.price)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </>
+              )}
+              {/* Mesas section */}
+              {data.openTables.length > 0 && (
+                <>
+                  <p className="section-label px-1">Mesas en local ({data.openTables.length})</p>
+              {data.openTables
                 .sort((a, b) => (a.tableNumber ?? 999) - (b.tableNumber ?? 999))
                 .map((ticket) => {
                   const stateInfo = STATE_LABELS[ticket.state] ?? STATE_LABELS['IN-COURSE']
@@ -432,6 +485,10 @@ export default function VentasPage() {
                     </div>
                   )
                 })
+              }
+                </>
+              )}
+              </>
             )}
           </div>
         </FadeIn>
