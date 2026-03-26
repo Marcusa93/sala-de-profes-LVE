@@ -571,15 +571,15 @@ export default function DashboardPage() {
       {reportOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
           <div
-            className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
+            className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
             onClick={() => setReportOpen(false)}
           />
-          <div className="relative z-10 mx-3 mb-[calc(0.75rem+env(safe-area-inset-bottom))] w-full max-w-md rounded-2xl bg-white p-4 sm:p-5 shadow-xl sm:mb-0">
+          <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-4 sm:p-5 shadow-xl sm:mx-auto sm:mb-0">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
               <button
                 onClick={() => setReportOpen(false)}
-                className="flex size-10 items-center justify-center rounded-full p-2 text-[#a39e97] hover:bg-[#f3efe9]"
+                className="icon-btn flex items-center justify-center rounded-full text-[#a39e97] hover:bg-[#f3efe9]"
               >
                 <X className="size-5" />
               </button>
@@ -619,7 +619,7 @@ export default function DashboardPage() {
             <button
               onClick={sendReport}
               disabled={reportSending || !reportMsg.trim()}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white shadow-md transition-all hover:bg-[#005a4a] disabled:opacity-50 active:scale-[0.98]"
+              className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] text-sm font-semibold text-white shadow-md transition-all hover:bg-[#005a4a] disabled:opacity-50 active:scale-[0.98]"
             >
               {reportSending ? (
                 <Loader2 className="size-4 animate-spin" />

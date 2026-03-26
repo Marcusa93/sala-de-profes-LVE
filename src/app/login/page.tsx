@@ -263,14 +263,17 @@ export default function LoginPage() {
             <AnimatePresence>
               {showReset && (
                 <motion.div
-                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-5"
+                  className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  onClick={() => { setShowReset(false); setResetSent(false) }}
                 >
+                  <div
+                    className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
+                    onClick={() => { setShowReset(false); setResetSent(false) }}
+                  />
                   <motion.div
-                    className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+                    className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-sm max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl sm:mx-auto sm:mb-0"
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.95, opacity: 0 }}
@@ -289,7 +292,7 @@ export default function LoginPage() {
                         </p>
                         <Button
                           onClick={() => { setShowReset(false); setResetSent(false) }}
-                          className="mt-2 w-full rounded-xl bg-[#006d5a] text-white hover:bg-[#004d3f]"
+                          className="mt-2 h-12 w-full rounded-xl bg-[#006d5a] text-white hover:bg-[#004d3f]"
                         >
                           Volver al login
                         </Button>
@@ -299,10 +302,10 @@ export default function LoginPage() {
                         <button
                           type="button"
                           onClick={() => setShowReset(false)}
-                          className="flex items-center gap-1.5 text-xs font-medium text-[#a39e97] hover:text-[#3d2c24]"
+                          className="icon-btn flex items-center justify-center rounded-full text-[#a39e97] hover:bg-[#f3efe9] hover:text-[#3d2c24]"
+                          aria-label="Volver"
                         >
-                          <ArrowLeft className="size-3.5" />
-                          Volver
+                          <ArrowLeft className="size-5" />
                         </button>
 
                         <div className="text-center">

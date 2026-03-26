@@ -59,12 +59,12 @@ function AssignDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md max-h-[70vh] rounded-t-2xl sm:rounded-2xl bg-card shadow-xl flex flex-col">
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-md max-h-[85vh] rounded-2xl bg-card shadow-xl flex flex-col sm:mx-auto sm:mb-0">
         <div className="flex items-center justify-between p-5 pb-3">
           <h3 className="text-base font-semibold">Asignar Responsable</h3>
-          <button onClick={onClose} className="rounded-full p-1 hover:bg-muted" aria-label="Cerrar">
-            <X className="size-4" />
+          <button onClick={onClose} className="icon-btn flex items-center justify-center rounded-full hover:bg-muted" aria-label="Cerrar">
+            <X className="size-5" />
           </button>
         </div>
 

@@ -552,10 +552,10 @@ export default function MiTurnoPage() {
       {showGeoConfirm && (
         <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
           <div
-            className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
+            className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
             onClick={() => { setShowGeoConfirm(false); setPendingAction(null) }}
           />
-          <div className="relative z-10 mx-3 mb-[calc(0.75rem+env(safe-area-inset-bottom))] w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl sm:mb-0">
+          <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-sm max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-5 shadow-xl sm:mx-auto sm:mb-0">
             <div className="flex flex-col items-center text-center">
               <div className="flex size-14 items-center justify-center rounded-2xl bg-[#fdf6ec]">
                 <MapPin className="size-7 text-[#d4943a]" />
@@ -576,14 +576,14 @@ export default function MiTurnoPage() {
             <div className="mt-5 flex gap-3">
               <button
                 onClick={() => { setShowGeoConfirm(false); setPendingAction(null) }}
-                className="flex-1 rounded-xl border border-[#ebe6df] py-3 text-sm font-semibold text-[#a39e97] transition-colors hover:bg-[#f5f0e8]"
+                className="flex-1 rounded-xl border border-[#ebe6df] h-12 text-sm font-semibold text-[#a39e97] transition-colors hover:bg-[#f5f0e8]"
               >
                 No, cancelar
               </button>
               <button
                 onClick={() => pendingAction && executeClockAction(pendingAction, false)}
                 disabled={actionLoading}
-                className="flex-1 rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white transition-colors hover:bg-[#005a4a] disabled:opacity-50"
+                className="flex-1 rounded-xl bg-[#006d5a] h-12 text-sm font-semibold text-white transition-colors hover:bg-[#005a4a] disabled:opacity-50"
               >
                 {actionLoading ? 'Registrando...' : 'Sí, estoy ahí'}
               </button>

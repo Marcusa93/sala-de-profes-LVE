@@ -95,12 +95,12 @@ export function StatusTransitionDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
 
-      <div className="relative z-10 w-full max-w-md rounded-t-2xl sm:rounded-2xl bg-card p-5 shadow-xl">
+      <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl bg-card p-5 shadow-xl sm:mx-auto sm:mb-0">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold">Cambiar Estado</h3>
-          <button onClick={onClose} className="rounded-full p-1 hover:bg-muted" aria-label="Cerrar">
+          <button onClick={onClose} className="icon-btn flex items-center justify-center rounded-full hover:bg-muted" aria-label="Cerrar">
             <X className="size-4" />
           </button>
         </div>
@@ -169,7 +169,7 @@ export function StatusTransitionDialog({
             <button
               disabled={!selectedStatus || loading}
               onClick={handleSubmit}
-              className={`mt-3 w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:opacity-50 ${
+              className={`mt-3 w-full rounded-xl h-12 text-sm font-semibold text-white transition-colors disabled:opacity-50 active:scale-[0.98] ${
                 isDestructive
                   ? 'bg-[#ea504c] hover:bg-[#d43f3f]'
                   : 'bg-[#006d5a] hover:bg-[#005a4a]'
