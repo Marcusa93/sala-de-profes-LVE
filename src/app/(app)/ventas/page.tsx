@@ -112,13 +112,14 @@ export default function VentasPage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-4 pb-28">
-      {/* Header */}
+      {/* Header — compact with total */}
       <FadeIn>
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="font-display text-2xl tracking-tight text-[#3d2c24]">Ventas del Día</h1>
+            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Ventas del Día</h1>
             <p className="section-label mt-0.5 capitalize">
               {format(new Date(), "EEEE d 'de' MMMM", { locale: es })}
+              {lastSync && ` · ${format(new Date(lastSync), 'HH:mm')}`}
             </p>
           </div>
           <button
@@ -127,78 +128,46 @@ export default function VentasPage() {
             className="flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1.5 text-[11px] font-bold text-[#006d5a] transition-all hover:bg-[#c0e4da] active:scale-95 disabled:opacity-50"
           >
             {syncing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-            Sync
           </button>
         </div>
-        {lastSync && (
-          <p className="mt-1 text-[10px] text-[#a39e97]">
-            Datos en vivo de Fudo · {format(new Date(lastSync), 'HH:mm')} · Auto-refresh 5 min
-          </p>
-        )}
       </FadeIn>
 
-      {/* KPIs — 2x2 grid */}
-      <StaggerList className="grid grid-cols-2 gap-2.5" staggerDelay={0.04}>
-        <StaggerItem>
-          <div className="kpi-card card-elevated rounded-xl p-4">
-            <div className="flex items-center gap-1.5">
-              <div className="flex size-6 items-center justify-center rounded-md bg-[#e8f5f1]">
-                <CheckCircle className="size-3 text-[#006d5a]" />
-              </div>
+      {/* KPIs — 2 primary + secondary row */}
+      <div className="space-y-2.5">
+        <StaggerList className="grid grid-cols-2 gap-2.5" staggerDelay={0.04}>
+          <StaggerItem>
+            <div className="card-elevated rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#006d5a' }}>
               <span className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Facturado</span>
+              <p className="mt-1 font-display text-2xl font-bold tabular-nums text-[#006d5a]">
+                {formatPrice(data.totalFacturado)}
+              </p>
+              <p className="text-[10px] text-[#a39e97]">{data.mesasCerradas} cerradas</p>
             </div>
-            <p className="mt-1.5 font-display text-xl font-bold tabular-nums text-[#006d5a]">
-              {formatPrice(data.totalFacturado)}
-            </p>
-            <p className="text-[10px] text-[#a39e97]">{data.mesasCerradas} mesas cerradas</p>
-          </div>
-        </StaggerItem>
-        <StaggerItem>
-          <div className="kpi-card card-elevated rounded-xl p-4">
-            <div className="flex items-center gap-1.5">
-              <div className="flex size-6 items-center justify-center rounded-md bg-[#fdf6ec]">
-                <CircleDot className="size-3 text-[#d4943a]" />
-              </div>
+          </StaggerItem>
+          <StaggerItem>
+            <div className="card-elevated rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#d4943a' }}>
               <span className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">En curso</span>
+              <p className="mt-1 font-display text-2xl font-bold tabular-nums text-[#d4943a]">
+                {formatPrice(data.totalEnCurso)}
+              </p>
+              <p className="text-[10px] text-[#a39e97]">
+                {data.mesasAbiertas} mesa{data.mesasAbiertas !== 1 ? 's' : ''}
+                {(data.takeawayAbiertos ?? 0) > 0 && ` · ${data.takeawayAbiertos} takeaway`}
+              </p>
             </div>
-            <p className="mt-1.5 font-display text-xl font-bold tabular-nums text-[#d4943a]">
-              {formatPrice(data.totalEnCurso)}
-            </p>
-            <p className="text-[10px] text-[#a39e97]">
-              {data.mesasAbiertas} mesa{data.mesasAbiertas !== 1 ? 's' : ''}
-              {data.takeawayAbiertos > 0 && ` · ${data.takeawayAbiertos} takeaway`}
-            </p>
+          </StaggerItem>
+        </StaggerList>
+        {/* Secondary metrics — inline */}
+        <div className="flex items-center justify-between rounded-xl bg-[#f8f5f0] px-4 py-2.5">
+          <div className="flex items-center gap-4 text-xs text-[#3d2c24]">
+            <span>Total <strong className="tabular-nums">{formatPrice(data.totalGeneral)}</strong></span>
+            <span className="text-[#ebe6df]">|</span>
+            <span>{data.totalTickets} tickets</span>
+            <span className="text-[#ebe6df]">|</span>
+            <span>Prom. <strong className="tabular-nums">{formatPrice(data.avgTicket)}</strong></span>
           </div>
-        </StaggerItem>
-        <StaggerItem>
-          <div className="kpi-card card-elevated rounded-xl p-4">
-            <div className="flex items-center gap-1.5">
-              <div className="flex size-6 items-center justify-center rounded-md bg-[#faf0e4]">
-                <Receipt className="size-3 text-[#8b5e34]" />
-              </div>
-              <span className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Total día</span>
-            </div>
-            <p className="mt-1.5 font-display text-xl font-bold tabular-nums text-[#3d2c24]">
-              {formatPrice(data.totalGeneral)}
-            </p>
-            <p className="text-[10px] text-[#a39e97]">{data.totalTickets} tickets · {data.totalItems} items</p>
-          </div>
-        </StaggerItem>
-        <StaggerItem>
-          <div className="kpi-card card-elevated rounded-xl p-4">
-            <div className="flex items-center gap-1.5">
-              <div className="flex size-6 items-center justify-center rounded-md bg-[#f0f7f5]">
-                <TrendingUp className="size-3 text-[#006d5a]" />
-              </div>
-              <span className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Ticket prom.</span>
-            </div>
-            <p className="mt-1.5 font-display text-xl font-bold tabular-nums text-[#3d2c24]">
-              {formatPrice(data.avgTicket)}
-            </p>
-            <p className="text-[10px] text-[#a39e97]">{(data.totalItems / Math.max(data.totalTickets, 1)).toFixed(1)} items/ticket</p>
-          </div>
-        </StaggerItem>
-      </StaggerList>
+        </div>
+      </div>
 
       {/* Tab navigation */}
       <div className="flex rounded-full bg-secondary p-0.5">

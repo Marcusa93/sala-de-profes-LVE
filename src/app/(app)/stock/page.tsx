@@ -494,49 +494,32 @@ export default function StockPage() {
         ))}
       </div>
 
-      {/* Semaphore filter row */}
-      <div className="card-elevated flex items-center justify-between rounded-xl px-4 py-3">
-        <span className="section-label">Estado</span>
-        <div className="flex items-center gap-4">
-          {(['red', 'yellow', 'green'] as const).map((color) => {
-            const isActive = semaphoreFilter === color
-            const dotColors: Record<SemaphoreColor, string> = {
-              red: 'bg-[#ea504c]',
-              yellow: 'bg-[#d4943a]',
-              green: 'bg-[#006d5a]',
-            }
-            const labels: Record<SemaphoreColor, string> = {
-              red: 'Critico',
-              yellow: 'Atencion',
-              green: 'Normal',
-            }
-            return (
-              <button
-                key={color}
-                onClick={() =>
-                  setSemaphoreFilter(isActive ? null : color)
-                }
-                className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-all ${
-                  isActive
-                    ? 'bg-[#faf8f5] ring-2 ring-[#3d2c24]/10 shadow-sm'
-                    : 'hover:bg-[#faf8f5]'
-                }`}
-                aria-label={`Filtrar por ${color}`}
-              >
-                <span
-                  className={`size-2.5 rounded-full ${dotColors[color]}`}
-                  style={isActive ? { boxShadow: `0 0 0 2px #fefcf9, 0 0 0 4px currentColor` } : undefined}
-                />
-                <span className={`tabular-nums ${isActive ? 'text-[#3d2c24] font-semibold' : 'text-[#a39e97]'}`}>
-                  {counts[color]}
-                </span>
-                <span className={`hidden sm:inline ${isActive ? 'text-[#3d2c24]' : 'text-[#a39e97]'}`}>
-                  {labels[color]}
-                </span>
-              </button>
-            )
-          })}
-        </div>
+      {/* Semaphore filter — 3 buttons */}
+      <div className="flex gap-2">
+        {(['red', 'yellow', 'green'] as const).map((color) => {
+          const isActive = semaphoreFilter === color
+          const configs: Record<SemaphoreColor, { label: string; dot: string; activeBg: string; activeBorder: string }> = {
+            red:    { label: 'Crítico',   dot: 'bg-[#ea504c]', activeBg: 'bg-[#fef2f2]', activeBorder: 'border-[#ea504c]' },
+            yellow: { label: 'Atención',  dot: 'bg-[#d4943a]', activeBg: 'bg-[#fdf6ec]', activeBorder: 'border-[#d4943a]' },
+            green:  { label: 'Normal',    dot: 'bg-[#006d5a]', activeBg: 'bg-[#e8f5f1]', activeBorder: 'border-[#006d5a]' },
+          }
+          const c = configs[color]
+          return (
+            <button
+              key={color}
+              onClick={() => setSemaphoreFilter(isActive ? null : color)}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl border py-2 text-xs font-semibold transition-all ${
+                isActive
+                  ? `${c.activeBg} ${c.activeBorder}`
+                  : 'border-[#ebe6df] bg-white text-[#a39e97] hover:bg-[#faf8f5]'
+              }`}
+            >
+              <span className={`size-2 rounded-full ${c.dot}`} />
+              <span className={isActive ? 'text-[#3d2c24]' : ''}>{counts[color]}</span>
+              <span className={isActive ? 'text-[#3d2c24]' : ''}>{c.label}</span>
+            </button>
+          )
+        })}
       </div>
 
       {/* Stock cards */}
