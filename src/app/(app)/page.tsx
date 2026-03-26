@@ -259,205 +259,57 @@ export default function DashboardPage() {
   // Attendance status helpers
   const isCompleted = !!todayAttendance?.clock_out_at
   const isInProgress = !!todayAttendance && !todayAttendance.clock_out_at
-  const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : 'transparent'
+  const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : '#ebe6df'
+  const isSocio = profile?.role === 'socio'
 
   return (
-    <div className="mx-auto max-w-2xl space-y-7 pb-8">
+    <div className="mx-auto max-w-2xl space-y-5 pb-8">
       {/* ---------------------------------------------------------------- */}
-      {/* Header / Welcome                                                 */}
+      {/* Header / Welcome — compact                                       */}
       {/* ---------------------------------------------------------------- */}
       <FadeIn className="pt-1">
-        <h1 className="font-display text-3xl tracking-tight text-[#3d2c24]">
-          Hola, <span className="text-[#006d5a]">{firstName}</span>
-        </h1>
-        <p className="section-label mt-2 capitalize">
-          {format(today, "EEEE d 'de' MMMM, yyyy", { locale: es })}
-        </p>
-      </FadeIn>
-
-      {/* ---------------------------------------------------------------- */}
-      {/* Hero KPI — Mi Estado Hoy                                         */}
-      {/* ---------------------------------------------------------------- */}
-      <FadeIn delay={0.05}>
-        <ScalePress>
-          <Link href="/mi-turno">
-            <div className="card-elevated-lg overflow-hidden rounded-2xl">
-              <div className="flex items-stretch">
-                <div className="w-1.5 shrink-0" style={{ backgroundColor: statusColor }} />
-                <div className="flex-1 p-4 sm:p-5">
-                  <div className="flex items-center gap-2">
-                    <div className="flex size-10 items-center justify-center rounded-lg bg-[#f0f7f5]">
-                      <Clock className="size-4 text-[#006d5a]" />
-                    </div>
-                    <span className="section-label">Mi Estado Hoy</span>
-                    {isInProgress && <PulseRing color="#d4943a" />}
-                  </div>
-
-                  <div className="mt-4">
-                    {isCompleted ? (
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="size-5 text-[#006d5a]" />
-                        <span className="font-display text-2xl font-bold text-[#006d5a]">
-                          Turno completado
-                        </span>
-                      </div>
-                    ) : isInProgress ? (
-                      <span className="font-display text-2xl font-bold text-[#d4943a]">
-                        En turno
-                      </span>
-                    ) : (
-                      <span className="text-lg font-semibold text-[#3d2c24]">
-                        Sin registrar
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="mt-3">
-                    {todayAttendance ? (
-                      <div className="flex items-center gap-4 text-sm text-[#a39e97]">
-                        <p>
-                          Ingreso:{' '}
-                          <span className="font-semibold tabular-nums text-[#3d2c24]">
-                            {format(new Date(todayAttendance.clock_in_at), 'HH:mm')}
-                          </span>
-                        </p>
-                        {todayAttendance.clock_out_at && (
-                          <p>
-                            Egreso:{' '}
-                            <span className="font-semibold tabular-nums text-[#3d2c24]">
-                              {format(new Date(todayAttendance.clock_out_at), 'HH:mm')}
-                            </span>
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-[#a39e97]">
-                        Tocá para marcar ingreso
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center pr-4">
-                  <ArrowRight className="size-4 text-[#d1cdc7]" />
-                </div>
-              </div>
-            </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="font-display text-2xl tracking-tight text-[#3d2c24]">
+              Hola, <span className="text-[#006d5a]">{firstName}</span>
+            </h1>
+            <p className="section-label mt-1 capitalize">
+              {format(today, "EEEE d 'de' MMMM", { locale: es })}
+            </p>
+          </div>
+          {/* Compact attendance status — right aligned */}
+          <Link href="/mi-turno" className="flex items-center gap-2 rounded-xl px-3 py-2 transition-colors hover:bg-[#f3efe9]">
+            <div className="size-2.5 rounded-full" style={{ backgroundColor: statusColor }} />
+            <span className="text-xs font-semibold text-[#3d2c24]">
+              {isCompleted ? 'Turno OK' : isInProgress ? 'En turno' : 'Sin fichar'}
+            </span>
+            {todayAttendance && (
+              <span className="text-[10px] tabular-nums text-[#a39e97]">
+                {format(new Date(todayAttendance.clock_in_at), 'HH:mm')}
+              </span>
+            )}
           </Link>
-        </ScalePress>
+        </div>
       </FadeIn>
 
       {/* ---------------------------------------------------------------- */}
-      {/* KPI Grid — Turno + Avisos (+ Equipo + Stock for encargado)       */}
+      {/* KPI Grid — role-aware, most important first                      */}
       {/* ---------------------------------------------------------------- */}
-      <StaggerList className="grid grid-cols-2 gap-3" staggerDelay={0.06}>
-        {/* Proximo Turno */}
-        <StaggerItem>
-          <ScalePress>
-            <Link href="/mis-horarios">
-              <div className="kpi-card rounded-xl p-4">
-                <div className="flex items-center gap-2">
-                  <CalendarDays className="size-3.5 text-[#b8906e]" />
-                  <span className="section-label">Proximo Turno</span>
-                </div>
-                <div className="mt-3">
-                  {nextShift ? (
-                    <>
-                      <p className="text-xs font-semibold capitalize text-[#3d2c24]">
-                        {format(
-                          new Date(nextShift.shift_date + 'T12:00:00'),
-                          "EEE d MMM",
-                          { locale: es },
-                        )}
-                      </p>
-                      <p className="mt-1 font-display text-lg font-bold tabular-nums text-[#3d2c24]">
-                        {nextShift.start_time.slice(0, 5)} – {nextShift.end_time.slice(0, 5)}
-                      </p>
-                      <span
-                        className="mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                        style={{
-                          backgroundColor: ROLES[nextShift.shift_role].bg,
-                          color: ROLES[nextShift.shift_role].color,
-                        }}
-                      >
-                        {ROLES[nextShift.shift_role].emoji} {ROLES[nextShift.shift_role].label}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm font-medium text-[#3d2c24]">Sin turnos</p>
-                      <p className="mt-1.5 text-[11px] leading-relaxed text-[#a39e97]">Tocá para ver horarios</p>
-                    </>
-                  )}
-                </div>
-              </div>
-            </Link>
-          </ScalePress>
-        </StaggerItem>
-
-        {/* Avisos */}
-        <StaggerItem>
-          <ScalePress>
-            <Link href="/notificaciones">
-              <div className="kpi-card rounded-xl p-4">
-                <div className="flex items-center gap-2">
-                  <Bell className="size-3.5 text-[#d4943a]" />
-                  <span className="section-label">Avisos</span>
-                </div>
-                <div className="mt-3">
-                  <span className="font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
-                    <AnimatedNumber value={announcementCount} />
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-[#a39e97]">
-                  {announcementCount === 1 ? 'aviso pendiente' : 'avisos pendientes'}
-                </p>
-              </div>
-            </Link>
-          </ScalePress>
-        </StaggerItem>
-
-        {/* Socio: Ventas Hoy */}
-        {profile?.role === 'socio' && ventasHoy && (
+      <StaggerList className="grid grid-cols-2 gap-3" staggerDelay={0.04}>
+        {/* Socio: Ventas Hoy — FIRST for socios */}
+        {isSocio && ventasHoy && (
           <StaggerItem>
             <ScalePress>
               <Link href="/ventas">
-                <div className="kpi-card rounded-xl p-4">
+                <div className="kpi-card rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#006d5a' }}>
                   <div className="flex items-center gap-2">
                     <BarChart3 className="size-3.5 text-[#006d5a]" />
-                    <span className="section-label">Ventas Hoy</span>
+                    <span className="section-label">Facturado hoy</span>
                   </div>
-                  <div className="mt-3">
-                    <span className="font-display text-2xl font-bold tabular-nums text-[#006d5a]">
-                      ${(ventasHoy.total / 1000).toFixed(0)}k
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-[#a39e97]">
-                    {ventasHoy.tickets} tickets cerrados
+                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#006d5a]">
+                    ${(ventasHoy.total / 1000).toFixed(0)}k
                   </p>
-                </div>
-              </Link>
-            </ScalePress>
-          </StaggerItem>
-        )}
-
-        {/* Socio: Expedientes Activos */}
-        {profile?.role === 'socio' && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/expedientes">
-                <div className="kpi-card rounded-xl p-4">
-                  <div className="flex items-center gap-2">
-                    <FolderOpen className="size-3.5 text-[#8b5e34]" />
-                    <span className="section-label">Expedientes</span>
-                  </div>
-                  <div className="mt-3">
-                    <span className="font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
-                      <AnimatedNumber value={expedientesActivos} />
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-[#a39e97]">
-                    {expedientesActivos === 0 ? 'Sin expedientes activos' : 'activos'}
-                  </p>
+                  <p className="text-[10px] text-[#a39e97]">{ventasHoy.tickets} tickets</p>
                 </div>
               </Link>
             </ScalePress>
@@ -469,18 +321,100 @@ export default function DashboardPage() {
           <StaggerItem>
             <ScalePress>
               <Link href="/pedidos">
-                <div className="kpi-card rounded-xl p-4">
+                <div className="kpi-card rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#d4943a' }}>
                   <div className="flex items-center gap-2">
                     <ShoppingCart className="size-3.5 text-[#d4943a]" />
                     <span className="section-label">Pedidos</span>
                   </div>
-                  <div className="mt-3">
-                    <span className="font-display text-3xl font-bold tabular-nums text-[#d4943a]">
-                      <AnimatedNumber value={pendingOrders} />
-                    </span>
+                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#d4943a]">
+                    <AnimatedNumber value={pendingOrders} />
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">pendientes</p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Avisos — always visible */}
+        <StaggerItem>
+          <ScalePress>
+            <Link href="/notificaciones">
+              <div className="kpi-card rounded-xl p-4">
+                <div className="flex items-center gap-2">
+                  <Bell className={`size-3.5 ${announcementCount > 5 ? 'text-[#d4943a]' : 'text-[#a39e97]'}`} />
+                  <span className="section-label">Avisos</span>
+                </div>
+                <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
+                  <AnimatedNumber value={announcementCount} />
+                </p>
+                <p className="text-[10px] text-[#a39e97]">pendientes</p>
+              </div>
+            </Link>
+          </ScalePress>
+        </StaggerItem>
+
+        {/* Proximo Turno — compact */}
+        <StaggerItem>
+          <ScalePress>
+            <Link href="/mis-horarios">
+              <div className="kpi-card rounded-xl p-4">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="size-3.5 text-[#8b5e34]" />
+                  <span className="section-label">Próximo turno</span>
+                </div>
+                {nextShift ? (
+                  <>
+                    <p className="mt-2 font-display text-lg font-bold tabular-nums text-[#3d2c24]">
+                      {nextShift.start_time.slice(0, 5)} – {nextShift.end_time.slice(0, 5)}
+                    </p>
+                    <p className="text-[10px] capitalize text-[#a39e97]">
+                      {format(new Date(nextShift.shift_date + 'T12:00:00'), 'EEE d MMM', { locale: es })}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-2 text-sm text-[#a39e97]">Sin turnos</p>
+                )}
+              </div>
+            </Link>
+          </ScalePress>
+        </StaggerItem>
+
+        {/* Socio: Expedientes */}
+        {isSocio && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/expedientes">
+                <div className="kpi-card rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <FolderOpen className="size-3.5 text-[#8b5e34]" />
+                    <span className="section-label">Expedientes</span>
                   </div>
-                  <p className="mt-1 text-xs text-[#a39e97]">
-                    pendientes de compra
+                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
+                    <AnimatedNumber value={expedientesActivos} />
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">activos</p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Encargado/Socio: Stock Crítico */}
+        {isEncargado && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/stock">
+                <div className="kpi-card rounded-xl p-4" style={criticalStockCount > 0 ? { borderLeftWidth: 3, borderLeftColor: '#ea504c' } : {}}>
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className={`size-3.5 ${criticalStockCount > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`} />
+                    <span className="section-label">Stock</span>
+                  </div>
+                  <p className={`mt-2 font-display text-2xl font-bold tabular-nums ${criticalStockCount > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}>
+                    {criticalStockCount > 0 ? <AnimatedNumber value={criticalStockCount} /> : '✓'}
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {criticalStockCount === 0 ? 'Todo en orden' : 'críticos'}
                   </p>
                 </div>
               </Link>
@@ -488,23 +422,21 @@ export default function DashboardPage() {
           </StaggerItem>
         )}
 
-        {/* Barista: Stock Barra Urgente */}
+        {/* Barista: Stock Barra */}
         {profile?.role === 'barista' && (
           <StaggerItem>
             <ScalePress>
               <Link href="/cocina/barra">
-                <div className="kpi-card rounded-xl p-4">
+                <div className="kpi-card rounded-xl p-4" style={barUrgent > 0 ? { borderLeftWidth: 3, borderLeftColor: '#ea504c' } : {}}>
                   <div className="flex items-center gap-2">
-                    <Coffee className="size-3.5 text-[#ea504c]" />
-                    <span className="section-label">Barra Urgente</span>
+                    <Coffee className={`size-3.5 ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`} />
+                    <span className="section-label">Barra</span>
                   </div>
-                  <div className="mt-3">
-                    <span className={`font-display text-3xl font-bold tabular-nums ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}>
-                      <AnimatedNumber value={barUrgent} />
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-[#a39e97]">
-                    {barUrgent === 0 ? 'Todo en orden' : 'items urgentes'}
+                  <p className={`mt-2 font-display text-2xl font-bold tabular-nums ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}>
+                    {barUrgent > 0 ? <AnimatedNumber value={barUrgent} /> : '✓'}
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {barUrgent === 0 ? 'Todo OK' : 'urgentes'}
                   </p>
                 </div>
               </Link>
@@ -520,71 +452,21 @@ export default function DashboardPage() {
                 <div className="kpi-card rounded-xl p-4">
                   <div className="flex items-center gap-2">
                     <Users className="size-3.5 text-[#006d5a]" />
-                    <span className="section-label">Equipo Hoy</span>
+                    <span className="section-label">Equipo</span>
                   </div>
-                  <div className="mt-3">
-                    <span className="font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
-                      <AnimatedNumber value={teamToday.length} />
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    {teamToday.length > 0 ? (
-                      <div className="space-y-0.5">
-                        {teamToday.slice(0, 3).map((member, i) => (
-                          <p key={i} className="truncate text-[11px] text-[#a39e97]">
-                            <span className="font-medium text-[#3d2c24]">
-                              {member.profiles?.first_name}
-                            </span>{' '}
-                            {ROLES[member.profiles?.role ?? 'runner'].emoji}
-                          </p>
-                        ))}
-                        {teamToday.length > 3 && (
-                          <p className="text-[11px] text-[#a39e97]">
-                            +{teamToday.length - 3} más
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-[#a39e97]">Nadie aún</p>
-                    )}
-                  </div>
-                </div>
-              </Link>
-            </ScalePress>
-          </StaggerItem>
-        )}
-
-        {/* Encargado: Stock Crítico */}
-        {isEncargado && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/stock">
-                <div className="kpi-card rounded-xl p-4">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="size-3.5 text-[#ea504c]" />
-                    <span className="section-label">Stock Critico</span>
-                  </div>
-                  <div className="mt-3">
-                    <span
-                      className={`font-display text-4xl font-bold tabular-nums ${
-                        criticalStockCount > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'
-                      }`}
-                    >
-                      <AnimatedNumber value={criticalStockCount} />
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-[#a39e97]">
-                    {criticalStockCount === 0
-                      ? 'Todo en orden'
-                      : criticalStockCount === 1
-                        ? 'producto bajo mínimo'
-                        : 'productos bajo mínimo'}
+                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
+                    <AnimatedNumber value={teamToday.length} />
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {teamToday.length === 0 ? 'Nadie fichó' : 'presentes'}
                   </p>
                 </div>
               </Link>
             </ScalePress>
           </StaggerItem>
         )}
+
+        {/* Stock Critico — already in grid above for encargado/socio */}
       </StaggerList>
 
       {/* ---------------------------------------------------------------- */}
