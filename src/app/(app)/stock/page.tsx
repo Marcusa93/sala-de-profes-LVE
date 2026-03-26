@@ -41,6 +41,7 @@ import {
 } from '@/components/ui/select'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ActionBanner } from '@/components/ui/ActionBanner'
+import { StockPriorities } from '@/components/ai/StockPriorities'
 import { deriveStockActions, sortActions } from '@/lib/actions/operational'
 import {
   Dialog,
@@ -540,6 +541,11 @@ export default function StockPage() {
       {/* Operational actions — items that need attention */}
       {isEncargado && stockActions.length > 0 && !semaphoreFilter && (
         <ActionBanner actions={stockActions} max={3} compact />
+      )}
+
+      {/* AI Stock Priorities — only for encargado/socio, when not filtering */}
+      {isEncargado && !semaphoreFilter && categoryFilter === 'all' && (
+        <StockPriorities />
       )}
 
       {/* Stock cards */}
