@@ -56,11 +56,11 @@ import type {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getCurrentShiftType(): KitchenShiftTypeValue | null {
+function getCurrentShiftType(): KitchenShiftTypeValue {
   const h = new Date().getHours()
   if (h >= 7 && h < 16) return 'morning'
-  if (h >= 16 && h < 23) return 'night'
-  return null
+  if (h < 7) return 'morning'
+  return 'night'
 }
 
 type ChecklistRow = {
