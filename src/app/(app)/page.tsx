@@ -5,6 +5,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { isStockCritical } from '@/lib/contracts/stock'
 import { deriveStockActions, deriveExpedienteActions, sortActions, deduplicateActions } from '@/lib/actions/operational'
 import { ActionBanner } from '@/components/ui/ActionBanner'
+import { DailyBriefing } from '@/components/ai/DailyBriefing'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -305,6 +306,15 @@ export default function DashboardPage() {
           </Link>
         </div>
       </FadeIn>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* AI Daily Briefing — socio/encargado only                         */}
+      {/* ---------------------------------------------------------------- */}
+      {isEncargado && (
+        <FadeIn delay={0.08}>
+          <DailyBriefing />
+        </FadeIn>
+      )}
 
       {/* ---------------------------------------------------------------- */}
       {/* KPI Grid — role-aware, most important first                      */}
