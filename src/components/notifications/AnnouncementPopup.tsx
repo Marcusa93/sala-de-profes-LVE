@@ -11,6 +11,7 @@ type Announcement = {
   id: string
   title: string
   body: string
+  type: string
   priority: PriorityValue
   author_id: string
   created_at: string
@@ -28,12 +29,15 @@ export function AnnouncementPopup() {
     async function fetchUnread() {
       const supabase = createClient()
 
-      // Get all active general announcements
+      // Get all active announcements that should popup:
+      // - general (avisos para todos)
+      // - urgente (reportes de problema)
+      // - any with priority alta/critica
       const { data: allAnnouncements } = await supabase
         .from('announcements')
-        .select('id, title, body, priority, author_id, created_at, profiles!announcements_author_id_fkey(first_name, last_name)')
+        .select('id, title, body, type, priority, scope, target_role, target_user_id, author_id, created_at, profiles!announcements_author_id_fkey(first_name, last_name)')
         .eq('is_active', true)
-        .eq('type', 'general')
+        .or('type.eq.general,type.eq.urgente,priority.eq.alta,priority.eq.critica')
         .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
         .order('created_at', { ascending: false })
         .limit(10)
@@ -48,13 +52,25 @@ export function AnnouncementPopup() {
 
       const readIds = new Set((reads ?? []).map(r => r.announcement_id))
 
-      // Filter unread
-      const unread = allAnnouncements
+      // Filter: unread + visible to this user (scope check)
+      const userRole = profile!.role
+      const userId = profile!.id
+      const unread = (allAnnouncements as any[])
         .filter(a => !readIds.has(a.id))
+        .filter(a => {
+          // Scope filtering (announcements table has scope/target_role/target_user_id)
+          if (a.scope === 'all') return true
+          if (a.scope === 'role' && a.target_role === userRole) return true
+          if (a.scope === 'user' && a.target_user_id === userId) return true
+          // If no scope field (older records), show to all
+          if (!a.scope) return true
+          return false
+        })
         .map(a => ({
           id: a.id,
           title: a.title,
           body: a.body,
+          type: a.type ?? 'general',
           priority: a.priority as PriorityValue,
           author_id: a.author_id,
           created_at: a.created_at,
@@ -93,7 +109,11 @@ export function AnnouncementPopup() {
 
   const priorityConfig = PRIORITIES[current.priority]
   const borderColor = priorityConfig?.color ?? '#006d5a'
-  const isUrgent = current.priority === 'critica' || current.priority === 'alta'
+  const popupLabel = current.priority === 'critica' || current.priority === 'alta'
+    ? 'Aviso urgente'
+    : current.type === 'urgente'
+      ? 'Reporte de problema'
+      : 'Aviso general'
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center">
@@ -112,7 +132,7 @@ export function AnnouncementPopup() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: borderColor }}>
-              {isUrgent ? 'Aviso importante' : 'Aviso general'}
+              {popupLabel}
             </p>
             {announcements.length > 1 && (
               <p className="text-[10px] text-[#a39e97]">
