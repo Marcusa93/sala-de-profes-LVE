@@ -40,12 +40,20 @@ export function StatusTransitionDialog({
 
   // Filter transitions by what THIS user can actually perform
   const allowedStatuses = useMemo(() => {
+    const isSocio = userRole === 'socio'
+    const isSocioOrEnc = isSocio || userRole === 'encargado'
+
+    // Socio can go to ANY status (superadmin) — skip the strict flow
+    if (isSocio) {
+      const allStatuses = Object.keys(EXPEDIENTE_STATUSES) as ExpedienteStatus[]
+      return allStatuses.filter(s => s !== currentStatus && s !== 'archivado')
+    }
+
+    // Encargado follows the flow but can access all flow-defined transitions
     const allNext = STATUS_TRANSITIONS[currentStatus] ?? []
-    const isSocioOrEnc = userRole === 'socio' || userRole === 'encargado'
+    if (userRole === 'encargado') return allNext
 
     return allNext.filter((status) => {
-      // Socio/encargado can do everything
-      if (isSocioOrEnc) return true
       // Author can present own borrador
       if (currentStatus === 'borrador' && status === 'presentado' && isAuthor) return true
       // Responsible can do execution transitions
