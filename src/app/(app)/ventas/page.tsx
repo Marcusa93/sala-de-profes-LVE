@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { format } from 'date-fns'
+import { format, subDays, addDays, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isToday } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   DollarSign, ShoppingBag, Receipt, TrendingUp, Clock,
   RefreshCw, Loader2, BarChart3, FileText, Trophy, Flame, Star,
   UtensilsCrossed, CircleDot, CheckCircle, Timer,
+  ChevronLeft, ChevronRight, CalendarDays,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -73,11 +74,19 @@ export default function VentasPage() {
   const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState<string | null>(null)
   const [tab, setTab] = useState<'resumen' | 'mesas' | 'cerradas'>('resumen')
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date())
+  const [viewMode, setViewMode] = useState<'dia' | 'mes'>('dia')
+  const [monthData, setMonthData] = useState<{ date: string; total: number; tickets: number }[]>([])
+  const [loadingMonth, setLoadingMonth] = useState(false)
+
+  const isLive = isToday(selectedDate)
+  const dateStr = format(selectedDate, 'yyyy-MM-dd')
 
   const fetchData = useCallback(async (showSpinner = false) => {
     if (showSpinner) setSyncing(true)
     try {
-      const res = await fetch('/api/fudo/auto-sync')
+      const url = isLive ? '/api/fudo/auto-sync' : `/api/fudo/auto-sync?date=${dateStr}`
+      const res = await fetch(url)
       const json = await res.json()
       if (json.today) {
         setData(json.today)
@@ -86,14 +95,47 @@ export default function VentasPage() {
     } catch { /* ignore */ }
     setLoading(false)
     setSyncing(false)
-  }, [])
+  }, [dateStr, isLive])
+
+  // Fetch month summary (one request per day in the month — cached approach)
+  const fetchMonth = useCallback(async () => {
+    setLoadingMonth(true)
+    const start = startOfMonth(selectedDate)
+    const end = new Date() < endOfMonth(selectedDate) ? new Date() : endOfMonth(selectedDate)
+    const days = eachDayOfInterval({ start, end })
+
+    // Fetch in batches of 5 to avoid rate limiting
+    const results: { date: string; total: number; tickets: number }[] = []
+    for (let i = 0; i < days.length; i += 5) {
+      const batch = days.slice(i, i + 5)
+      const promises = batch.map(async (d) => {
+        const ds = format(d, 'yyyy-MM-dd')
+        try {
+          const res = await fetch(`/api/fudo/auto-sync?date=${ds}`)
+          const json = await res.json()
+          return { date: ds, total: json.today?.totalFacturado ?? 0, tickets: json.today?.totalTickets ?? 0 }
+        } catch {
+          return { date: ds, total: 0, tickets: 0 }
+        }
+      })
+      results.push(...(await Promise.all(promises)))
+    }
+    setMonthData(results)
+    setLoadingMonth(false)
+  }, [selectedDate])
 
   useEffect(() => {
     if (profileLoading) return
     fetchData()
-    const interval = setInterval(() => fetchData(), REFRESH_INTERVAL)
-    return () => clearInterval(interval)
-  }, [profileLoading, fetchData])
+    if (isLive) {
+      const interval = setInterval(() => fetchData(), REFRESH_INTERVAL)
+      return () => clearInterval(interval)
+    }
+  }, [profileLoading, fetchData, isLive])
+
+  useEffect(() => {
+    if (viewMode === 'mes') fetchMonth()
+  }, [viewMode, fetchMonth])
 
   if (profileLoading || loading) return <LoadingState />
 
@@ -112,26 +154,156 @@ export default function VentasPage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-4 pb-28">
-      {/* Header — compact with total */}
+      {/* Header + Date Nav + View Toggle */}
       <FadeIn>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Ventas del Día</h1>
-            <p className="section-label mt-0.5 capitalize">
-              {format(new Date(), "EEEE d 'de' MMMM", { locale: es })}
-              {lastSync && ` · ${format(new Date(lastSync), 'HH:mm')}`}
-            </p>
+        {/* View mode toggle */}
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Ventas</h1>
+          <div className="flex rounded-full bg-secondary p-0.5">
+            <button
+              onClick={() => setViewMode('dia')}
+              className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${viewMode === 'dia' ? 'bg-[#006d5a] text-white' : 'text-muted-foreground'}`}
+            >
+              Día
+            </button>
+            <button
+              onClick={() => setViewMode('mes')}
+              className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${viewMode === 'mes' ? 'bg-[#006d5a] text-white' : 'text-muted-foreground'}`}
+            >
+              Mes
+            </button>
           </div>
+        </div>
+
+        {/* Date navigator */}
+        <div className="flex items-center justify-between">
           <button
-            onClick={() => fetchData(true)}
-            disabled={syncing}
-            className="flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1.5 text-[11px] font-bold text-[#006d5a] transition-all hover:bg-[#c0e4da] active:scale-95 disabled:opacity-50"
+            onClick={() => { setSelectedDate(prev => viewMode === 'mes' ? new Date(prev.getFullYear(), prev.getMonth() - 1, 1) : subDays(prev, 1)); setLoading(true) }}
+            className="icon-btn flex items-center justify-center rounded-xl bg-secondary"
           >
-            {syncing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+            <ChevronLeft className="size-4" />
           </button>
+          <div className="text-center">
+            <p className="text-sm font-semibold capitalize text-[#3d2c24]">
+              {viewMode === 'dia'
+                ? format(selectedDate, "EEEE d 'de' MMMM", { locale: es })
+                : format(selectedDate, "MMMM yyyy", { locale: es })
+              }
+            </p>
+            {isLive && viewMode === 'dia' && (
+              <p className="text-[10px] text-[#006d5a] font-semibold">
+                En vivo {lastSync && `· ${format(new Date(lastSync), 'HH:mm')}`}
+              </p>
+            )}
+          </div>
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => { setSelectedDate(prev => viewMode === 'mes' ? new Date(prev.getFullYear(), prev.getMonth() + 1, 1) : addDays(prev, 1)); setLoading(true) }}
+              disabled={isLive && viewMode === 'dia'}
+              className="icon-btn flex items-center justify-center rounded-xl bg-secondary disabled:opacity-30"
+            >
+              <ChevronRight className="size-4" />
+            </button>
+            {!isLive && viewMode === 'dia' && (
+              <button
+                onClick={() => { setSelectedDate(new Date()); setLoading(true) }}
+                className="flex items-center gap-1 rounded-full bg-[#006d5a] px-2.5 py-1.5 text-[10px] font-bold text-white"
+              >
+                Hoy
+              </button>
+            )}
+            {isLive && (
+              <button
+                onClick={() => fetchData(true)}
+                disabled={syncing}
+                className="icon-btn flex items-center justify-center rounded-xl bg-[#e8f5f1] disabled:opacity-50"
+              >
+                {syncing ? <Loader2 className="size-3.5 animate-spin text-[#006d5a]" /> : <RefreshCw className="size-3.5 text-[#006d5a]" />}
+              </button>
+            )}
+          </div>
         </div>
       </FadeIn>
 
+      {/* MONTHLY VIEW */}
+      {viewMode === 'mes' && (
+        <FadeIn>
+          {loadingMonth ? (
+            <div className="space-y-2">
+              <div className="h-8 animate-pulse rounded-lg bg-[#f3efe9]" />
+              <div className="h-48 animate-pulse rounded-xl bg-[#f3efe9]" />
+            </div>
+          ) : monthData.length > 0 ? (
+            <div className="space-y-4">
+              {/* Monthly summary */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-xl bg-[#e8f5f1] p-3 text-center">
+                  <p className="font-display text-lg font-bold text-[#006d5a]">
+                    {formatPrice(monthData.reduce((s, d) => s + d.total, 0))}
+                  </p>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-[#006d5a]">Total mes</p>
+                </div>
+                <div className="rounded-xl bg-[#faf0e4] p-3 text-center">
+                  <p className="font-display text-lg font-bold text-[#8b5e34]">
+                    {monthData.reduce((s, d) => s + d.tickets, 0)}
+                  </p>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-[#8b5e34]">Tickets</p>
+                </div>
+                <div className="rounded-xl bg-[#f3efe9] p-3 text-center">
+                  <p className="font-display text-lg font-bold text-[#3d2c24]">
+                    {formatPrice(monthData.filter(d => d.total > 0).length > 0
+                      ? monthData.reduce((s, d) => s + d.total, 0) / monthData.filter(d => d.total > 0).length
+                      : 0
+                    )}
+                  </p>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Prom/día</p>
+                </div>
+              </div>
+
+              {/* Daily chart */}
+              <ChartCard title="Facturado por día" subtitle={format(selectedDate, "MMMM yyyy", { locale: es })}>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={monthData.map(d => ({ ...d, label: format(new Date(d.date + 'T12:00:00'), 'd', { locale: es }) }))}>
+                    <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#a39e97' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 9, fill: '#a39e97' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip
+                      contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 11 }}
+                      formatter={(v: number) => [formatPrice(v), 'Facturado']}
+                      labelFormatter={(l) => `Día ${l}`}
+                    />
+                    <Bar dataKey="total" fill="#006d5a" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              {/* Daily list */}
+              <div className="space-y-1">
+                <span className="section-label">Detalle por día</span>
+                {[...monthData].reverse().filter(d => d.total > 0).map(d => (
+                  <button
+                    key={d.date}
+                    onClick={() => { setSelectedDate(new Date(d.date + 'T12:00:00')); setViewMode('dia'); setLoading(true) }}
+                    className="flex w-full items-center justify-between rounded-xl bg-card border px-4 py-2.5 text-left hover:bg-[#faf8f5] transition-colors"
+                  >
+                    <div>
+                      <p className="text-xs font-semibold capitalize text-[#3d2c24]">
+                        {format(new Date(d.date + 'T12:00:00'), "EEE d 'de' MMM", { locale: es })}
+                      </p>
+                      <p className="text-[10px] text-[#a39e97]">{d.tickets} tickets</p>
+                    </div>
+                    <p className="font-display text-sm font-bold tabular-nums text-[#006d5a]">{formatPrice(d.total)}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <EmptyState icon={CalendarDays} title="Sin datos del mes" description="No hay ventas registradas para este período." />
+          )}
+        </FadeIn>
+      )}
+
+      {/* DAILY VIEW */}
+      {viewMode === 'dia' && <>
       {/* KPIs — 2 primary + secondary row */}
       <div className="space-y-2.5">
         <StaggerList className="grid grid-cols-2 gap-2.5" staggerDelay={0.04}>
@@ -522,10 +694,11 @@ export default function VentasPage() {
       {data.totalTickets === 0 && tab === 'resumen' && (
         <EmptyState
           icon={Receipt}
-          title="Sin ventas hoy"
-          description="Cuando se abran mesas en Fudo, aparecerán acá en tiempo real."
+          title={isLive ? 'Sin ventas hoy' : `Sin ventas el ${format(selectedDate, "d 'de' MMMM", { locale: es })}`}
+          description={isLive ? 'Cuando se abran mesas en Fudo, aparecerán acá en tiempo real.' : 'No se registraron ventas este día.'}
         />
       )}
+      </>}
     </div>
   )
 }

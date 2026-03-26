@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { fudo } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
@@ -17,12 +17,13 @@ type IncludedResource = {
   relationships?: Record<string, { data: unknown }>
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    // Use Argentina timezone for "today"
+    // Accept ?date=YYYY-MM-DD for historical data, default to today
+    const dateParam = request.nextUrl.searchParams.get('date')
     const now = new Date()
     const argDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }))
-    const today = argDate.toISOString().slice(0, 10)
+    const today = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : argDate.toISOString().slice(0, 10)
 
     // Fetch sales with items, products, and tables — paginate to get all of today
     let salesData: IncludedResource[] = []
