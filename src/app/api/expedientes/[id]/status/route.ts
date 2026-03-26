@@ -45,17 +45,19 @@ export async function PATCH(
     const currentStatus = expediente.status as ExpedienteStatus
     const role = profile.role as string
 
-    // Validate transition
-    const validNext = STATUS_TRANSITIONS[currentStatus] ?? []
-    if (!validNext.includes(newStatus)) {
-      return NextResponse.json({
-        error: `Transición ${currentStatus} → ${newStatus} no permitida`,
-      }, { status: 400 })
-    }
-
     // Permission checks
     const isSocio = role === 'socio'
     const isEncargado = role === 'encargado'
+
+    // Validate transition — socio can skip to any status
+    if (!isSocio) {
+      const validNext = STATUS_TRANSITIONS[currentStatus] ?? []
+      if (!validNext.includes(newStatus)) {
+        return NextResponse.json({
+          error: `Transición ${currentStatus} → ${newStatus} no permitida`,
+        }, { status: 400 })
+      }
+    }
     const isAuthor = expediente.author_id === user.id
     const isResponsible = expediente.responsible_id === user.id
 
