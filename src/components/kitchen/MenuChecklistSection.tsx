@@ -7,16 +7,16 @@ import type { MenuItemCategoryValue } from '@/types/database'
 import type { KitchenDailyItem, MenuItem, StockItem } from '@/types/database'
 import { groupBy } from '@/lib/utils/group-by'
 
+import { getStockSemaphore, type SemaphoreValue } from '@/lib/contracts/stock'
+
 // ---------------------------------------------------------------------------
-// Stock semaphore helpers
+// Stock semaphore — imported from central contract
 // ---------------------------------------------------------------------------
 
-type Semaphore = 'green' | 'yellow' | 'red'
+type Semaphore = SemaphoreValue
 
 function getSemaphore(stock: StockItem): Semaphore {
-  if (stock.current_qty <= 0 || stock.current_qty <= stock.min_qty) return 'red'
-  if (stock.current_qty <= stock.min_qty * 1.5) return 'yellow'
-  return 'green'
+  return getStockSemaphore(stock.current_qty, stock.min_qty)
 }
 
 const SEMAPHORE_STYLES: Record<Semaphore, string> = {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
+import { countBySemaphore } from '@/lib/contracts/stock'
 
 // ---------------------------------------------------------------------------
 // POST /api/stock/snapshot — Create a stock snapshot
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest) {
 
     const stockItems = items ?? []
     const totalQty = stockItems.reduce((s, i) => s + (i.current_qty ?? 0), 0)
-    const criticalCount = stockItems.filter((i) => (i.current_qty ?? 0) <= (i.min_qty ?? 0)).length
+    const criticalCount = countBySemaphore(stockItems).red
 
     const { error } = await admin.from('stock_snapshots').insert({
       snapshot_date: new Date().toISOString().slice(0, 10),

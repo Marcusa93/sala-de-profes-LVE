@@ -1,6 +1,8 @@
 import { cn } from '@/lib/utils'
+import { getStockSemaphore, type SemaphoreValue } from '@/lib/contracts/stock'
 
-type SemaphoreValue = 'green' | 'yellow' | 'red'
+// Re-export for backward compatibility
+export { getStockSemaphore as getSemaphore, type SemaphoreValue }
 
 const CONFIG: Record<SemaphoreValue, { label: string; dot: string; text: string; bg: string }> = {
   green:  { label: 'Normal',   dot: 'bg-[#006d5a]', text: 'text-[#006d5a]', bg: 'bg-[#f0f7f5]' },
@@ -30,11 +32,4 @@ export function StockSemaphoreBadge({
       {c.label}
     </span>
   )
-}
-
-export function getSemaphore(currentQty: number, minQty: number): SemaphoreValue {
-  if (currentQty <= 0) return 'red'
-  if (currentQty <= minQty) return 'red'
-  if (currentQty <= minQty * 1.5) return 'yellow'
-  return 'green'
 }

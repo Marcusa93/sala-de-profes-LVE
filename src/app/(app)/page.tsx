@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { isManagerOrAbove } from '@/lib/roles'
+import { isStockCritical } from '@/lib/contracts/stock'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -211,7 +212,7 @@ export default function DashboardPage() {
         if (stockRes) {
           const critical =
             stockRes.data?.filter(
-              (item) => item.current_qty <= item.min_qty,
+              (item) => isStockCritical(item.current_qty ?? 0, item.min_qty ?? 0),
             ) ?? []
           setCriticalStockCount(critical.length)
         }
