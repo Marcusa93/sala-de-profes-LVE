@@ -1,11 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { isManagerOrAbove } from '@/lib/roles'
 import { isStockCritical } from '@/lib/contracts/stock'
-import { deriveStockActions, deriveExpedienteActions, sortActions, deduplicateActions } from '@/lib/actions/operational'
-import { ActionBanner } from '@/components/ui/ActionBanner'
 import { DailyBriefing } from '@/components/ai/DailyBriefing'
+import { ActionCenter } from '@/components/ai/ActionCenter'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -246,16 +245,6 @@ export default function DashboardPage() {
 
   const firstName = profile?.first_name ?? ''
 
-  // Dashboard operational actions — combine stock + expedientes
-  // MUST be before early returns to respect Rules of Hooks
-  const dashboardActions = useMemo(() => {
-    const all = [
-      ...deriveStockActions(stockItems),
-      ...deriveExpedienteActions(expedientesData),
-    ]
-    return sortActions(deduplicateActions(all)).filter((a) => a.priority !== 'baja')
-  }, [stockItems, expedientesData])
-
   // ------------------------------------------
   // Skeleton while loading
   // ------------------------------------------
@@ -494,12 +483,11 @@ export default function DashboardPage() {
       </StaggerList>
 
       {/* ---------------------------------------------------------------- */}
-      {/* Operational Actions — "Requiere atención"                        */}
+      {/* Unified Action Center                                            */}
       {/* ---------------------------------------------------------------- */}
-      {isEncargado && dashboardActions.length > 0 && (
+      {isEncargado && (
         <FadeIn delay={0.2}>
-          <h2 className="section-label mb-2">Requiere atención</h2>
-          <ActionBanner actions={dashboardActions} max={4} compact />
+          <ActionCenter compact maxItems={4} />
         </FadeIn>
       )}
 
