@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { isManagerOrAbove } from '@/lib/roles'
 import { isStockCritical } from '@/lib/contracts/stock'
+import { deriveStockActions, deriveExpedienteActions, sortActions, deduplicateActions } from '@/lib/actions/operational'
+import { ActionBanner } from '@/components/ui/ActionBanner'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -75,8 +77,10 @@ export default function DashboardPage() {
   const [announcementCount, setAnnouncementCount] = useState(0)
   const [teamToday, setTeamToday] = useState<TeamMember[]>([])
   const [criticalStockCount, setCriticalStockCount] = useState(0)
+  const [stockItems, setStockItems] = useState<{ id: string; name: string; current_qty: number; min_qty: number; supplier_id: string | null; category: string }[]>([])
   const [pendingOrders, setPendingOrders] = useState(0)
   const [expedientesActivos, setExpedientesActivos] = useState(0)
+  const [expedientesData, setExpedientesData] = useState<{ id: string; code: string; title: string; status: string; urgency: string; target_date: string | null; updated_at: string; responsible_id: string | null }[]>([])
   const [ventasHoy, setVentasHoy] = useState<{ total: number; tickets: number } | null>(null)
   const [barUrgent, setBarUrgent] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -162,7 +166,7 @@ export default function DashboardPage() {
         const stockPromise = isEncargado
           ? supabase
               .from('stock_items')
-              .select('id, current_qty, min_qty')
+              .select('id, name, current_qty, min_qty, supplier_id, category')
               .eq('is_active', true)
           : null
 
@@ -174,9 +178,9 @@ export default function DashboardPage() {
             ])
           : null
 
-        // Expedientes activos — for socio
+        // Expedientes activos — for socio (fetch full data for actions)
         const expedientesPromise = profile!.role === 'socio'
-          ? supabase.from('expedientes').select('id', { count: 'exact', head: true }).not('status', 'in', '("cumplido","cerrado","archivado")')
+          ? supabase.from('expedientes').select('id, code, title, status, urgency, target_date, updated_at, responsible_id').not('status', 'in', '("cumplido","cerrado_sin_implementacion","archivado")')
           : null
 
         // Ventas hoy — for socio
@@ -209,19 +213,19 @@ export default function DashboardPage() {
         if (teamRes) {
           setTeamToday((teamRes.data as unknown as TeamMember[]) ?? [])
         }
-        if (stockRes) {
-          const critical =
-            stockRes.data?.filter(
-              (item) => isStockCritical(item.current_qty ?? 0, item.min_qty ?? 0),
-            ) ?? []
+        if (stockRes?.data) {
+          const items = stockRes.data ?? []
+          setStockItems(items)
+          const critical = items.filter((item) => isStockCritical(item.current_qty ?? 0, item.min_qty ?? 0))
           setCriticalStockCount(critical.length)
         }
         if (ordersRes) {
           const [kitchenRes, barRes] = ordersRes
           setPendingOrders((kitchenRes.count ?? 0) + (barRes.count ?? 0))
         }
-        if (expedientesRes) {
-          setExpedientesActivos(expedientesRes.count ?? 0)
+        if (expedientesRes?.data) {
+          setExpedientesData(expedientesRes.data ?? [])
+          setExpedientesActivos(expedientesRes.data?.length ?? 0)
         }
         if (ventasRes?.today) {
           setVentasHoy({ total: ventasRes.today.totalFacturado ?? 0, tickets: ventasRes.today.totalTickets ?? 0 })
@@ -261,6 +265,15 @@ export default function DashboardPage() {
   const isInProgress = !!todayAttendance && !todayAttendance.clock_out_at
   const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : '#ebe6df'
   const isSocio = profile?.role === 'socio'
+
+  // Dashboard operational actions — combine stock + expedientes
+  const dashboardActions = useMemo(() => {
+    const all = [
+      ...deriveStockActions(stockItems),
+      ...deriveExpedienteActions(expedientesData),
+    ]
+    return sortActions(deduplicateActions(all)).filter((a) => a.priority !== 'baja')
+  }, [stockItems, expedientesData])
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-8">
@@ -468,6 +481,16 @@ export default function DashboardPage() {
 
         {/* Stock Critico — already in grid above for encargado/socio */}
       </StaggerList>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Operational Actions — "Requiere atención"                        */}
+      {/* ---------------------------------------------------------------- */}
+      {isEncargado && dashboardActions.length > 0 && (
+        <FadeIn delay={0.2}>
+          <h2 className="section-label mb-2">Requiere atención</h2>
+          <ActionBanner actions={dashboardActions} max={4} compact />
+        </FadeIn>
+      )}
 
       {/* ---------------------------------------------------------------- */}
       {/* Quick Actions                                                    */}

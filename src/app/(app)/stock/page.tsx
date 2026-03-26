@@ -40,6 +40,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ActionBanner } from '@/components/ui/ActionBanner'
+import { deriveStockActions, sortActions } from '@/lib/actions/operational'
 import {
   Dialog,
   DialogContent,
@@ -270,6 +272,19 @@ export default function StockPage() {
       c[s]++
     })
     return c
+  }, [items])
+
+  // Operational actions — derived from stock data
+  const stockActions = useMemo(() => {
+    const mapped = items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      current_qty: item.current_qty,
+      min_qty: item.min_qty,
+      supplier_id: item.supplier_id,
+      category: item.category,
+    }))
+    return sortActions(deriveStockActions(mapped))
   }, [items])
 
   // -------------------------------------------------------------------------
@@ -521,6 +536,11 @@ export default function StockPage() {
           )
         })}
       </div>
+
+      {/* Operational actions — items that need attention */}
+      {isEncargado && stockActions.length > 0 && !semaphoreFilter && (
+        <ActionBanner actions={stockActions} max={3} compact />
+      )}
 
       {/* Stock cards */}
       {filtered.length === 0 ? (

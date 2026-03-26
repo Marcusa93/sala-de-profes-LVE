@@ -1,12 +1,14 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import Link from 'next/link'
 import { Plus, Search, FolderOpen, X } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { ExpedienteCard } from '@/components/expedientes/ExpedienteCard'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ActionBanner } from '@/components/ui/ActionBanner'
+import { deriveExpedienteActions, sortActions } from '@/lib/actions/operational'
 import { EXPEDIENTE_TYPES } from '@/lib/constants/expedientes'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import type { ExpedienteWithPeople } from '@/types/expedientes'
@@ -55,6 +57,21 @@ export default function ExpedientesPage() {
 
   const isSocioOrEncargado = profile?.role === 'socio' || profile?.role === 'encargado'
   const hasActiveFilters = typeFilter || debouncedSearch
+
+  // Derive operational actions from expedientes
+  const expActions = useMemo(() => {
+    const mapped = expedientes.map((exp) => ({
+      id: exp.id,
+      code: exp.code,
+      title: exp.title,
+      status: exp.status,
+      urgency: exp.urgency,
+      target_date: exp.target_date,
+      updated_at: exp.updated_at,
+      responsible_id: exp.responsible_id,
+    }))
+    return sortActions(deriveExpedienteActions(mapped))
+  }, [expedientes])
 
   const clearFilters = () => {
     setSearch('')
@@ -161,6 +178,13 @@ export default function ExpedientesPage() {
           actionHref={hasActiveFilters ? undefined : '/expedientes/nuevo'}
         />
       ) : (
+        <>
+        {/* Operational actions — overdue, stale, no responsible */}
+        {statusTab === 'activos' && expActions.length > 0 && (
+          <div className="mb-3">
+            <ActionBanner actions={expActions} max={3} compact />
+          </div>
+        )}
         <StaggerList className="mt-2 space-y-3">
           {expedientes.map((exp) => (
             <StaggerItem key={exp.id}>
@@ -168,6 +192,7 @@ export default function ExpedientesPage() {
             </StaggerItem>
           ))}
         </StaggerList>
+        </>
       )}
 
       {/* FAB */}
