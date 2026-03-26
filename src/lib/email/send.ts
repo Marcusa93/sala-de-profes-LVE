@@ -156,6 +156,35 @@ export async function notifyExpedienteToSocios(opts: {
   await sendEmail(emails, `📋 ${opts.code} — ${opts.action}`, html)
 }
 
+/** Notify a specific user about expediente assignment */
+export async function notifyExpedienteAssignment(opts: {
+  userId: string
+  code: string
+  title: string
+  assignedBy: string
+}) {
+  const email = await getUserEmail(opts.userId)
+  if (!email) return
+
+  const html = wrapTemplate(
+    `📋 Te asignaron un expediente`,
+    `
+      <p style="color: #6b6560; margin: 0 0 8px; font-size: 14px;">
+        <strong>${opts.assignedBy}</strong> te asignó como responsable:
+      </p>
+      <div style="background: white; border-radius: 10px; padding: 12px 16px; border-left: 3px solid #d4943a;">
+        <p style="margin: 0; font-size: 11px; color: #a39e97; font-family: monospace;">${opts.code}</p>
+        <p style="margin: 4px 0 0; font-size: 15px; font-weight: 600; color: #3d2c24;">${opts.title}</p>
+      </div>
+      <p style="color: #6b6560; margin: 12px 0 0; font-size: 13px;">
+        Revisá el expediente y tomá las acciones necesarias.
+      </p>
+    `,
+  )
+
+  await sendEmail([email], `📋 ${opts.code} — Asignado a vos`, html)
+}
+
 /** Notify a specific user about order status change */
 export async function notifyOrderStatusChange(opts: {
   userId: string
