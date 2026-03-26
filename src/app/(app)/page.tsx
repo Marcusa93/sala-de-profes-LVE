@@ -245,6 +245,16 @@ export default function DashboardPage() {
 
   const firstName = profile?.first_name ?? ''
 
+  // Dashboard operational actions — combine stock + expedientes
+  // MUST be before early returns to respect Rules of Hooks
+  const dashboardActions = useMemo(() => {
+    const all = [
+      ...deriveStockActions(stockItems),
+      ...deriveExpedienteActions(expedientesData),
+    ]
+    return sortActions(deduplicateActions(all)).filter((a) => a.priority !== 'baja')
+  }, [stockItems, expedientesData])
+
   // ------------------------------------------
   // Skeleton while loading
   // ------------------------------------------
@@ -265,15 +275,6 @@ export default function DashboardPage() {
   const isInProgress = !!todayAttendance && !todayAttendance.clock_out_at
   const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : '#ebe6df'
   const isSocio = profile?.role === 'socio'
-
-  // Dashboard operational actions — combine stock + expedientes
-  const dashboardActions = useMemo(() => {
-    const all = [
-      ...deriveStockActions(stockItems),
-      ...deriveExpedienteActions(expedientesData),
-    ]
-    return sortActions(deduplicateActions(all)).filter((a) => a.priority !== 'baja')
-  }, [stockItems, expedientesData])
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-8">
