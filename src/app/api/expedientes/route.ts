@@ -120,6 +120,7 @@ export async function POST(request: NextRequest) {
     const { data: profile } = await admin.from('profiles').select('first_name, last_name').eq('id', user.id).single()
     const authorName = profile ? `${profile.first_name} ${profile.last_name}`.trim() : 'Alguien'
     notifyExpedienteToSocios({
+      responsibleId: responsible_id || null,
       code: data.code,
       title: title.trim(),
       action: 'Expediente creado',

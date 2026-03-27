@@ -127,8 +127,9 @@ export async function PATCH(
       })
     }
 
-    // Email to socios
+    // Email only to the responsible person
     notifyExpedienteToSocios({
+      responsibleId: expediente.responsible_id,
       code: expediente.code,
       title: expediente.title,
       action: `Cambio de estado: ${fromLabel} → ${toLabel}`,

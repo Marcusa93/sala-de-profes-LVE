@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { notifyExpedienteAssignment, notifyExpedienteToSocios } from '@/lib/email/send'
+import { notifyExpedienteAssignment } from '@/lib/email/send'
 
 // ---------------------------------------------------------------------------
 // GET    /api/expedientes/[id] — detalle
@@ -153,20 +153,12 @@ export async function PATCH(
         metadata: { responsible_id: body.responsible_id },
       })
 
-      // Email to assigned person + socios
+      // Email only to the assigned person
       notifyExpedienteAssignment({
         userId: body.responsible_id,
         code: existing.code,
         title: existing.title ?? existing.code,
         assignedBy: authorName,
-      }).catch(() => {})
-
-      notifyExpedienteToSocios({
-        code: existing.code,
-        title: existing.title ?? existing.code,
-        action: 'responsable asignado',
-        authorName,
-        detail: `Nuevo responsable asignado`,
       }).catch(() => {})
     }
 

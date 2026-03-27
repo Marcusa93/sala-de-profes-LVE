@@ -91,7 +91,7 @@ function wrapTemplate(title: string, body: string): string {
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Notify encargados about a new bar/kitchen order */
+/** Notify encargados about a new bar/kitchen order (only encargados, not socios) */
 export async function notifyOrderToEncargados(opts: {
   type: 'barra' | 'cocina'
   authorName: string
@@ -99,7 +99,7 @@ export async function notifyOrderToEncargados(opts: {
   urgency: string
   note?: string | null
 }) {
-  const emails = await getEmailsByRoles(['encargado', 'socio'])
+  const emails = await getEmailsByRole('encargado')
   const icon = opts.type === 'barra' ? '☕' : '🍳'
   const label = opts.type === 'barra' ? 'Barra' : 'Cocina'
 
@@ -130,15 +130,20 @@ export async function notifyOrderToEncargados(opts: {
   await sendEmail(emails, `${icon} Pedido de ${label} — ${opts.authorName}`, html)
 }
 
-/** Notify socios about expediente movements */
-export async function notifyExpedienteToSocios(opts: {
+/** Notify the responsible person (only) about expediente movements */
+export async function notifyExpedienteToResponsible(opts: {
+  responsibleId?: string | null
   code: string
   title: string
   action: string // 'creado' | 'tarea asignada' | 'tarea completada' | 'cambio de estado' | 'comentario'
   authorName: string
   detail?: string
 }) {
-  const emails = await getEmailsByRole('socio')
+  // Only email the responsible person — not all socios
+  if (!opts.responsibleId) return
+
+  const email = await getUserEmail(opts.responsibleId)
+  if (!email) return
 
   const html = wrapTemplate(
     `📋 Expediente ${opts.code}`,
@@ -153,8 +158,11 @@ export async function notifyExpedienteToSocios(opts: {
     `,
   )
 
-  await sendEmail(emails, `📋 ${opts.code} — ${opts.action}`, html)
+  await sendEmail([email], `📋 ${opts.code} — ${opts.action}`, html)
 }
+
+/** @deprecated Use notifyExpedienteToResponsible instead */
+export const notifyExpedienteToSocios = notifyExpedienteToResponsible
 
 /** Notify a specific user about expediente assignment */
 export async function notifyExpedienteAssignment(opts: {

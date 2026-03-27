@@ -112,15 +112,18 @@ export async function POST(
       })
     }
 
-    // Email to socios
+    // Email only to the assigned person (not all socios)
     const authorNameFull = `${profile.first_name} ${profile.last_name}`.trim()
-    notifyExpedienteToSocios({
-      code: exp?.code ?? id,
-      title: exp?.title ?? '',
-      action: 'Tarea creada',
-      authorName: authorNameFull,
-      detail: `"${title.trim()}"${assigned_to ? ` → asignada a ${await getProfileName(admin, assigned_to)}` : ''}`,
-    }).catch(() => {})
+    if (assigned_to) {
+      notifyExpedienteToSocios({
+        responsibleId: assigned_to,
+        code: exp?.code ?? id,
+        title: exp?.title ?? '',
+        action: 'Tarea asignada',
+        authorName: authorNameFull,
+        detail: `"${title.trim()}"`,
+      }).catch(() => {})
+    }
 
     return NextResponse.json({ data: task })
   } catch (err) {
@@ -227,8 +230,9 @@ export async function PATCH(
         })
       }
 
-      // Email to socios
+      // Email only to the expediente responsible
       notifyExpedienteToSocios({
+        responsibleId: exp.responsible_id,
         code: exp.code,
         title: task.title,
         action: 'Tarea completada',
