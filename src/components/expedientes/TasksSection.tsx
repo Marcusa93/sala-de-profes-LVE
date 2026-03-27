@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Plus, CheckCircle, Circle, Clock, X, User, Calendar,
-  Loader2, Ban,
+  Loader2, Ban, ArrowRightLeft,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ROLES } from '@/lib/constants'
@@ -116,6 +116,9 @@ export function TasksSection({ expedienteId, currentUserId, isSocio, canManage, 
     }
   }
 
+  // Reassignment state
+  const [reassigningTaskId, setReassigningTaskId] = useState<string | null>(null)
+
   // Update task status
   const handleStatusChange = async (taskId: string, newStatus: string) => {
     try {
@@ -124,10 +127,33 @@ export function TasksSection({ expedienteId, currentUserId, isSocio, canManage, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ task_id: taskId, status: newStatus }),
       })
-      if (!res.ok) throw new Error('Error')
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Error')
+      }
       fetchTasks()
-    } catch {
-      toast.error('Error al actualizar tarea')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al actualizar tarea')
+    }
+  }
+
+  // Reassign task
+  const handleReassign = async (taskId: string, newAssignedTo: string) => {
+    try {
+      const res = await fetch(`/api/expedientes/${expedienteId}/tasks`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: taskId, assigned_to: newAssignedTo || null }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Error')
+      }
+      toast.success('Tarea reasignada')
+      setReassigningTaskId(null)
+      fetchTasks()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al reasignar')
     }
   }
 
@@ -312,10 +338,23 @@ export function TasksSection({ expedienteId, currentUserId, isSocio, canManage, 
                     </div>
                   </div>
 
-                  {/* Quick actions — only assigned person */}
-                  {canActOnTask && !isClosed && isActive && (
+                  {/* Quick actions */}
+                  {!isClosed && isActive && (
                     <div className="flex shrink-0 gap-1">
-                      {task.status !== 'done' && (
+                      {/* Reassign button — socios or assigned person */}
+                      {(isSocio || canActOnTask) && (
+                        <button
+                          onClick={() => {
+                            loadSocios()
+                            setReassigningTaskId(reassigningTaskId === task.id ? null : task.id)
+                          }}
+                          className="rounded-lg p-1.5 text-[#8b5e34] hover:bg-[#faf0e4] active:scale-90"
+                          title="Reasignar"
+                        >
+                          <ArrowRightLeft className="size-4" />
+                        </button>
+                      )}
+                      {canActOnTask && task.status !== 'done' && (
                         <button
                           onClick={() => handleStatusChange(task.id, 'done')}
                           className="rounded-lg p-1.5 text-[#006d5a] hover:bg-[#e8f5f1] active:scale-90"
@@ -324,16 +363,43 @@ export function TasksSection({ expedienteId, currentUserId, isSocio, canManage, 
                           <CheckCircle className="size-4" />
                         </button>
                       )}
-                      <button
-                        onClick={() => handleStatusChange(task.id, 'cancelled')}
-                        className="rounded-lg p-1.5 text-[#ea504c] hover:bg-[#fef2f2] active:scale-90"
-                        title="Cancelar"
-                      >
-                        <Ban className="size-4" />
-                      </button>
+                      {canActOnTask && (
+                        <button
+                          onClick={() => handleStatusChange(task.id, 'cancelled')}
+                          className="rounded-lg p-1.5 text-[#ea504c] hover:bg-[#fef2f2] active:scale-90"
+                          title="Cancelar"
+                        >
+                          <Ban className="size-4" />
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
+
+                {/* Inline reassignment selector */}
+                {reassigningTaskId === task.id && (
+                  <div className="mt-2 flex items-center gap-2 rounded-lg bg-[#faf0e4] p-2.5">
+                    <ArrowRightLeft className="size-3.5 shrink-0 text-[#8b5e34]" />
+                    <select
+                      defaultValue={task.assigned_to ?? ''}
+                      onChange={(e) => handleReassign(task.id, e.target.value)}
+                      className="flex-1 rounded-lg border border-[#ebe6df] bg-white px-2.5 py-2 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                    >
+                      <option value="">Sin asignar</option>
+                      {socios.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.first_name} {m.last_name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => setReassigningTaskId(null)}
+                      className="rounded-lg p-1.5 text-[#a39e97] hover:bg-white"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })}

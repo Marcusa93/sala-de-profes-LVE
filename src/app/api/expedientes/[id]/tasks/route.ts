@@ -147,15 +147,22 @@ export async function PATCH(
 
     const admin = createAdminClient()
     const body = await request.json()
-    const { task_id, status } = body
+    const { task_id, status, assigned_to } = body
 
-    if (!task_id || !status) {
-      return NextResponse.json({ error: 'task_id y status requeridos' }, { status: 400 })
+    if (!task_id) {
+      return NextResponse.json({ error: 'task_id requerido' }, { status: 400 })
     }
 
-    const validStatuses = ['pending', 'in_progress', 'done', 'cancelled']
-    if (!validStatuses.includes(status)) {
-      return NextResponse.json({ error: 'Estado inválido' }, { status: 400 })
+    // Must provide either status or assigned_to (or both)
+    if (!status && assigned_to === undefined) {
+      return NextResponse.json({ error: 'status o assigned_to requerido' }, { status: 400 })
+    }
+
+    if (status) {
+      const validStatuses = ['pending', 'in_progress', 'done', 'cancelled']
+      if (!validStatuses.includes(status)) {
+        return NextResponse.json({ error: 'Estado inválido' }, { status: 400 })
+      }
     }
 
     // Get current task
@@ -167,17 +174,71 @@ export async function PATCH(
 
     if (!task) return NextResponse.json({ error: 'Tarea no encontrada' }, { status: 404 })
 
-    // Only the assigned person can change status (it's a "pase")
-    // If no one assigned, the creator can manage it
-    const canAct = task.assigned_to
-      ? task.assigned_to === user.id
-      : task.created_by === user.id
+    // Get user profile + role
+    const { data: userProfile } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
+    const isSocio = userProfile?.role === 'socio'
 
+    // Reassignment — socios can always reassign, assigned person can also reassign
+    if (assigned_to !== undefined) {
+      const canReassign = isSocio || task.assigned_to === user.id || task.created_by === user.id
+      if (!canReassign) {
+        return NextResponse.json({ error: 'No tenés permiso para reasignar esta tarea' }, { status: 403 })
+      }
+
+      const updateFields: Record<string, unknown> = { assigned_to: assigned_to || null }
+      if (status) updateFields.status = status
+
+      const { error } = await admin.from('expediente_tasks').update(updateFields).eq('id', task_id)
+      if (error) throw error
+
+      // Log reassignment
+      const reassignerName = userProfile ? `${userProfile.first_name} ${userProfile.last_name}`.trim() : 'Alguien'
+      const newAssigneeName = assigned_to ? await getProfileName(admin, assigned_to) : 'nadie'
+
+      await admin.from('expediente_comments').insert({
+        expediente_id: id,
+        author_id: user.id,
+        type: 'edit',
+        body: `${reassignerName} reasignó tarea "${task.title}" a ${newAssigneeName}`,
+        metadata: { action: 'task_reassignment', task_id, from: task.assigned_to, to: assigned_to },
+      })
+
+      // Email to new assignee
+      if (assigned_to) {
+        const { data: exp } = await admin.from('expedientes').select('code, title').eq('id', id).single()
+        notifyExpedienteToSocios({
+          responsibleId: assigned_to,
+          code: exp?.code ?? id,
+          title: exp?.title ?? '',
+          action: 'Tarea reasignada',
+          authorName: reassignerName,
+          detail: `"${task.title}" te fue asignada`,
+        }).catch(() => {})
+      }
+
+      // Notify previous assignee that they were unassigned
+      if (task.assigned_to && task.assigned_to !== assigned_to) {
+        const { data: exp } = await admin.from('expedientes').select('code, title').eq('id', id).single()
+        notifyExpedienteToSocios({
+          responsibleId: task.assigned_to,
+          code: exp?.code ?? id,
+          title: exp?.title ?? '',
+          action: 'Tarea reasignada',
+          authorName: reassignerName,
+          detail: `"${task.title}" fue reasignada a ${newAssigneeName}`,
+        }).catch(() => {})
+      }
+
+      return NextResponse.json({ success: true })
+    }
+
+    // Status change only — only assigned person or socio can do it
+    const canAct = isSocio || (task.assigned_to ? task.assigned_to === user.id : task.created_by === user.id)
     if (!canAct) {
       return NextResponse.json({ error: 'Solo la persona asignada puede gestionar esta tarea' }, { status: 403 })
     }
 
-    // Update
+    // Update status
     const { error } = await admin
       .from('expediente_tasks')
       .update({ status })
