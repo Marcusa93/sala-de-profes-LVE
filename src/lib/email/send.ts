@@ -9,7 +9,7 @@ import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null
-const FROM_EMAIL = process.env.EMAIL_FROM ?? 'Sala de Profes <onboarding@resend.dev>'
+const FROM_EMAIL = process.env.EMAIL_FROM ?? 'Sala de Profes <info@laviejaescuelabar.com.ar>'
 
 // ---------------------------------------------------------------------------
 // Helpers
