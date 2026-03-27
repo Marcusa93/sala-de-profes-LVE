@@ -75,9 +75,14 @@ export default function VentasPage() {
   const [lastSync, setLastSync] = useState<string | null>(null)
   const [tab, setTab] = useState<'resumen' | 'mesas' | 'cerradas'>('resumen')
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
-  const [viewMode, setViewMode] = useState<'dia' | 'mes'>('dia')
+  const [viewMode, setViewMode] = useState<'dia' | 'mes' | 'comparar'>('dia')
   const [monthData, setMonthData] = useState<{ date: string; total: number; tickets: number }[]>([])
   const [loadingMonth, setLoadingMonth] = useState(false)
+
+  // Compare mode
+  const [compareDate, setCompareDate] = useState<Date>(subDays(new Date(), 1))
+  const [compareData, setCompareData] = useState<DashboardData | null>(null)
+  const [loadingCompare, setLoadingCompare] = useState(false)
 
   const isLive = isToday(selectedDate)
   const dateStr = format(selectedDate, 'yyyy-MM-dd')
@@ -137,6 +142,25 @@ export default function VentasPage() {
     if (viewMode === 'mes') fetchMonth()
   }, [viewMode, fetchMonth])
 
+  // Fetch compare data
+  const fetchCompare = useCallback(async () => {
+    setLoadingCompare(true)
+    try {
+      const ds = format(compareDate, 'yyyy-MM-dd')
+      const res = await fetch(`/api/fudo/auto-sync?date=${ds}`)
+      const json = await res.json()
+      setCompareData(json.today ?? null)
+    } catch { setCompareData(null) }
+    setLoadingCompare(false)
+  }, [compareDate])
+
+  useEffect(() => {
+    if (viewMode === 'comparar') {
+      fetchData()
+      fetchCompare()
+    }
+  }, [viewMode, fetchCompare, fetchData])
+
   if (profileLoading || loading) return <LoadingState />
 
   if (!data) {
@@ -160,22 +184,20 @@ export default function VentasPage() {
         <div className="flex items-center justify-between mb-3">
           <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Ventas</h1>
           <div className="flex rounded-full bg-secondary p-0.5">
-            <button
-              onClick={() => setViewMode('dia')}
-              className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${viewMode === 'dia' ? 'bg-[#006d5a] text-white' : 'text-muted-foreground'}`}
-            >
-              Día
-            </button>
-            <button
-              onClick={() => setViewMode('mes')}
-              className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${viewMode === 'mes' ? 'bg-[#006d5a] text-white' : 'text-muted-foreground'}`}
-            >
-              Mes
-            </button>
+            {(['dia', 'comparar', 'mes'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${viewMode === mode ? 'bg-[#006d5a] text-white' : 'text-muted-foreground'}`}
+              >
+                {mode === 'dia' ? 'Día' : mode === 'comparar' ? 'Comparar' : 'Mes'}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Date navigator */}
+        {/* Date navigator — hidden in compare mode */}
+        {viewMode !== 'comparar' && (
         <div className="flex items-center justify-between">
           <button
             onClick={() => { setSelectedDate(prev => viewMode === 'mes' ? new Date(prev.getFullYear(), prev.getMonth() - 1, 1) : subDays(prev, 1)); setLoading(true) }}
@@ -223,7 +245,137 @@ export default function VentasPage() {
             )}
           </div>
         </div>
+        )}
       </FadeIn>
+
+      {/* COMPARE VIEW */}
+      {viewMode === 'comparar' && (
+        <FadeIn>
+          <div className="space-y-4">
+            {/* Date pickers */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Día A</label>
+                <input
+                  type="date"
+                  value={format(selectedDate, 'yyyy-MM-dd')}
+                  onChange={(e) => { setSelectedDate(new Date(e.target.value + 'T12:00:00')); setLoading(true) }}
+                  className="mt-1 w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Día B</label>
+                <input
+                  type="date"
+                  value={format(compareDate, 'yyyy-MM-dd')}
+                  onChange={(e) => { setCompareDate(new Date(e.target.value + 'T12:00:00')); }}
+                  className="mt-1 w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                />
+              </div>
+            </div>
+
+            {/* Fetch compare button */}
+            <button
+              onClick={() => { fetchData(); fetchCompare() }}
+              disabled={loadingCompare}
+              className="w-full rounded-xl bg-[#006d5a] py-2.5 text-sm font-semibold text-white transition-all hover:bg-[#005a4a] active:scale-[0.98] disabled:opacity-50"
+            >
+              {loadingCompare ? 'Cargando...' : 'Comparar'}
+            </button>
+
+            {/* Side by side comparison */}
+            {data && compareData && !loadingCompare && (
+              <div className="space-y-3">
+                {/* Headers */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl bg-[#e8f5f1] px-3 py-2 text-center">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[#006d5a]">
+                      {format(selectedDate, "EEE d MMM", { locale: es })}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-[#faf0e4] px-3 py-2 text-center">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[#8b5e34]">
+                      {format(compareDate, "EEE d MMM", { locale: es })}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Metrics comparison */}
+                {([
+                  { label: 'Facturado', keyA: data.totalFacturado, keyB: compareData.totalFacturado, format: true },
+                  { label: 'Tickets', keyA: data.totalTickets, keyB: compareData.totalTickets, format: false },
+                  { label: 'Ticket promedio', keyA: data.avgTicket, keyB: compareData.avgTicket, format: true },
+                  { label: 'Items vendidos', keyA: data.totalItems, keyB: compareData.totalItems, format: false },
+                  { label: 'Mesas cerradas', keyA: data.mesasCerradas, keyB: compareData.mesasCerradas, format: false },
+                ] as const).map((row) => {
+                  const diff = row.keyA - row.keyB
+                  const pct = row.keyB > 0 ? Math.round((diff / row.keyB) * 100) : 0
+                  const isUp = diff > 0
+                  const isDown = diff < 0
+
+                  return (
+                    <div key={row.label} className="rounded-xl border bg-card p-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97] mb-2">{row.label}</p>
+                      <div className="grid grid-cols-3 items-end gap-2">
+                        <div>
+                          <p className="font-display text-lg font-bold tabular-nums text-[#006d5a]">
+                            {row.format ? formatPrice(row.keyA) : row.keyA}
+                          </p>
+                        </div>
+                        <div className="text-center">
+                          {pct !== 0 ? (
+                            <span className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                              isUp ? 'bg-[#e8f5f1] text-[#006d5a]' : 'bg-[#fef2f2] text-[#ea504c]'
+                            }`}>
+                              {isUp ? '↑' : '↓'} {Math.abs(pct)}%
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-[#a39e97]">=</span>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <p className="font-display text-lg font-bold tabular-nums text-[#8b5e34]">
+                            {row.format ? formatPrice(row.keyB) : row.keyB}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Top products comparison */}
+                <div className="rounded-xl border bg-card p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97] mb-2">Top 5 productos</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      {data.topProducts.slice(0, 5).map((p, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs">
+                          <span className="truncate text-[#3d2c24]">{p.name}</span>
+                          <span className="ml-1 shrink-0 font-bold tabular-nums text-[#006d5a]">{p.qty}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-1">
+                      {compareData.topProducts.slice(0, 5).map((p, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs">
+                          <span className="truncate text-[#3d2c24]">{p.name}</span>
+                          <span className="ml-1 shrink-0 font-bold tabular-nums text-[#8b5e34]">{p.qty}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {loadingCompare && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="size-6 animate-spin text-[#a39e97]" />
+              </div>
+            )}
+          </div>
+        </FadeIn>
+      )}
 
       {/* MONTHLY VIEW */}
       {viewMode === 'mes' && (
