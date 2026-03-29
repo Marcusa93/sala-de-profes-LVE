@@ -19,6 +19,7 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
+  Package,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -30,7 +31,7 @@ import {
   StaggerItem,
   AnimatedNumber,
 } from '@/components/ui/motion'
-import { BAR_CATEGORIES, BAR_ORDER_URGENCY } from '@/lib/constants'
+import { BAR_ORDER_URGENCY } from '@/lib/constants'
 import type { BarCategoryValue, BarOrderUrgencyValue } from '@/types/database'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -70,6 +71,7 @@ type BarOrderRow = {
   id: number; product_name: string; category: string; quantity: string
   urgency: BarOrderUrgencyValue; status: string; note: string | null
   requested_by: string | null; created_at: string
+  bar_stock_item_id?: number | null
 }
 
 export default function BarraPage() {
@@ -80,6 +82,10 @@ export default function BarraPage() {
   const [historyOrders, setHistoryOrders] = useState<BarOrderRow[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const [suppliers, setSuppliers] = useState<Map<string, BarSupplier>>(new Map())
+
+  // Collapsible sections
+  const [okCollapsed, setOkCollapsed] = useState(true)
+  const [recibidosCollapsed, setRecibidosCollapsed] = useState(false)
 
   // Edit dialog
   const [editItem, setEditItem] = useState<BarItem | null>(null)
@@ -251,6 +257,7 @@ export default function BarraPage() {
         )
       }
       toast.success(newStatus === 'ordered' ? 'Marcado como pedido' : newStatus === 'received' ? 'Pedido recibido' : 'Pedido cancelado')
+      fetchData()
     } catch {
       toast.error('Error al actualizar pedido')
     }
@@ -283,7 +290,7 @@ export default function BarraPage() {
     // Validate all have qty
     const incomplete = cartItems.some((c) => !c.quantity.trim())
     if (incomplete) {
-      toast.error('Completá la cantidad de todos los items')
+      toast.error('Completa la cantidad de todos los items')
       return
     }
     setSubmittingCart(true)
@@ -317,24 +324,59 @@ export default function BarraPage() {
     }
   }
 
-  // Derived
+  // -------------------------------------------------------------------------
+  // Derived data
+  // -------------------------------------------------------------------------
+
   const urgent = items.filter((i) => i.is_urgent || i.current_qty <= 0)
   const lowStock = items.filter((i) => !i.is_urgent && i.current_qty > 0 && i.current_qty <= i.min_level)
   const ok = items.filter((i) => !i.is_urgent && i.current_qty > i.min_level)
 
-  const grouped = useMemo(() => {
-    const map = new Map<BarCategoryValue, BarItem[]>()
-    for (const item of items) {
-      const list = map.get(item.category) ?? []
-      list.push(item)
-      map.set(item.category, list)
+  // Combined urgente + bajo for the unified section
+  const urgentAndLow = useMemo(() => [...urgent, ...lowStock], [urgent, lowStock])
+
+  // Received orders from history (for the RECIBIDOS section)
+  const receivedOrders = useMemo(
+    () => historyOrders.filter((o) => o.status === 'received'),
+    [historyOrders],
+  )
+
+  // Map to check if an item has a pending/ordered order
+  const pendingOrderByItem = useMemo(() => {
+    const map = new Map<string, BarOrderRow>()
+    for (const o of orders) {
+      // Match by bar_stock_item_id first, then by product_name
+      if (o.bar_stock_item_id) {
+        map.set(`id:${o.bar_stock_item_id}`, o)
+      }
+      map.set(`name:${o.product_name.toLowerCase()}`, o)
     }
-    return Array.from(map.entries()).map(([cat, catItems]) => ({
-      category: cat,
-      config: BAR_CATEGORIES[cat],
-      items: catItems,
-    }))
-  }, [items])
+    return map
+  }, [orders])
+
+  function getItemPendingOrder(item: BarItem): BarOrderRow | undefined {
+    return pendingOrderByItem.get(`id:${item.id}`) ?? pendingOrderByItem.get(`name:${item.name.toLowerCase()}`)
+  }
+
+  // Find the stock item matching a received order
+  function findStockItemForOrder(order: BarOrderRow): BarItem | undefined {
+    if (order.bar_stock_item_id) {
+      const found = items.find((i) => i.id === order.bar_stock_item_id)
+      if (found) return found
+    }
+    return items.find((i) => i.name.toLowerCase() === order.product_name.toLowerCase())
+  }
+
+
+  // -------------------------------------------------------------------------
+  // Render helpers
+  // -------------------------------------------------------------------------
+
+  const PencilIcon = () => (
+    <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+    </svg>
+  )
 
   if (profileLoading || loading) {
     return <div className="flex min-h-[60vh] items-center justify-center"><Loader2 className="size-6 animate-spin text-[#006d5a]" /></div>
@@ -346,12 +388,12 @@ export default function BarraPage() {
       <div className="mx-auto max-w-lg pb-28 pt-4">
         <div className="flex items-center gap-3 mb-6">
           <Link href="/" className="rounded-lg p-1.5 text-[#a39e97] active:scale-90"><ArrowLeft className="size-5" /></Link>
-          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">☕ Barra</h1>
+          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">&#9749; Barra</h1>
         </div>
         <div className="card-elevated-lg rounded-2xl p-6 text-center">
           <Coffee className="mx-auto size-10 text-[#a39e97]" />
           <p className="mt-4 text-sm font-medium text-[#3d2c24]">Acceso restringido</p>
-          <p className="mt-1 text-xs text-[#a39e97]">Esta sección es solo para baristas y encargados.</p>
+          <p className="mt-1 text-xs text-[#a39e97]">Esta seccion es solo para baristas y encargados.</p>
         </div>
       </div>
     )
@@ -362,12 +404,12 @@ export default function BarraPage() {
       <div className="mx-auto max-w-lg pb-28 pt-4">
         <div className="flex items-center gap-3 mb-6">
           <Link href="/cocina" className="rounded-lg p-1.5 text-[#a39e97] active:scale-90"><ArrowLeft className="size-5" /></Link>
-          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">☕ Barra</h1>
+          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">&#9749; Barra</h1>
         </div>
         <div className="card-elevated-lg rounded-2xl p-6 text-center">
           <Coffee className="mx-auto size-10 text-[#a39e97]" />
           <p className="mt-4 text-sm font-medium text-[#3d2c24]">Sin datos de barra</p>
-          <p className="mt-1 text-xs text-[#a39e97]">Ejecutá la migración SQL para activar el módulo</p>
+          <p className="mt-1 text-xs text-[#a39e97]">Ejecuta la migracion SQL para activar el modulo</p>
         </div>
       </div>
     )
@@ -375,11 +417,15 @@ export default function BarraPage() {
 
   return (
     <div className="mx-auto max-w-lg pb-28">
-      {/* Header */}
+      {/* ================================================================ */}
+      {/* HEADER */}
+      {/* ================================================================ */}
       <FadeIn className="flex items-center gap-3 pt-2 pb-4">
-        <Link href="/cocina" className="rounded-lg p-1.5 text-[#a39e97] active:scale-90"><ArrowLeft className="size-5" /></Link>
+        <Link href="/cocina" className="rounded-lg p-2 text-[#a39e97] active:scale-90 min-h-[44px] min-w-[44px] flex items-center justify-center">
+          <ArrowLeft className="size-5" />
+        </Link>
         <div className="flex-1">
-          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">☕ Barra</h1>
+          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">&#9749; Barra</h1>
           <p className="section-label mt-0.5">Control de insumos y pedidos</p>
         </div>
         {urgent.length > 0 && (
@@ -392,7 +438,7 @@ export default function BarraPage() {
 
       {/* KPI row */}
       <FadeIn delay={0.05}>
-        <div className="grid grid-cols-3 gap-2.5 mb-4">
+        <div className="grid grid-cols-3 gap-2.5 mb-5">
           <div className="rounded-xl bg-[#fef2f2] p-3 text-center">
             <p className="font-display text-xl font-bold tabular-nums text-[#ea504c]"><AnimatedNumber value={urgent.length} /></p>
             <p className="text-[9px] font-semibold uppercase tracking-wider text-[#ea504c]">Urgente</p>
@@ -408,236 +454,286 @@ export default function BarraPage() {
         </div>
       </FadeIn>
 
-      {/* Nuevo Pedido button + Cart */}
-      {canEdit && (
-        <FadeIn delay={0.08}>
-          {!cartOpen ? (
-            <button
-              onClick={() => setCartOpen(true)}
-              className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white transition-all active:scale-[0.98] hover:bg-[#005a4a]"
-            >
-              <ShoppingCart className="size-4" />
-              Nuevo Pedido
-            </button>
-          ) : (
-            <div className="mb-4 rounded-2xl bg-white p-4 ring-1 ring-[#ebe6df] space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-[#3d2c24] flex items-center gap-2">
-                  <ShoppingCart className="size-4 text-[#006d5a]" />
-                  Armar pedido
-                </h3>
-                <button onClick={() => { setCartOpen(false); setCartItems([]) }} className="rounded-lg p-1 text-[#a39e97] hover:text-[#3d2c24]">
-                  <X className="size-4" />
-                </button>
-              </div>
+      {/* ================================================================ */}
+      {/* SECTION 1: RECIBIDOS */}
+      {/* ================================================================ */}
+      {receivedOrders.length > 0 && (
+        <FadeIn delay={0.08} className="mb-5">
+          <button
+            onClick={() => setRecibidosCollapsed(!recibidosCollapsed)}
+            className="flex w-full items-center gap-2 px-1 mb-2 min-h-[44px]"
+          >
+            <Package className="size-4 text-[#006d5a]" />
+            <span className="section-label text-[#006d5a] flex-1 text-left">
+              Recibidos ({receivedOrders.length})
+            </span>
+            {recibidosCollapsed
+              ? <ChevronDown className="size-4 text-[#a39e97]" />
+              : <ChevronUp className="size-4 text-[#a39e97]" />
+            }
+          </button>
 
-              {/* Add from stock - quick buttons */}
-              {items.filter((i) => i.is_urgent || i.current_qty <= 0 || i.current_qty <= i.min_level).length > 0 && (
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97] mb-1.5">Agregar item bajo/urgente</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {items
-                      .filter((i) => i.is_urgent || i.current_qty <= 0 || i.current_qty <= i.min_level)
-                      .filter((i) => !cartItems.some((c) => c.fromStockId === i.id))
-                      .slice(0, 12)
-                      .map((item) => (
-                        <button
-                          key={item.id}
-                          onClick={() => addStockItemToCart(item)}
-                          className={cn(
-                            'rounded-lg px-2 py-1 text-[10px] font-semibold transition-all active:scale-95',
-                            item.current_qty <= 0 || item.is_urgent
-                              ? 'bg-[#fef2f2] text-[#ea504c]'
-                              : 'bg-[#fdf6ec] text-[#d4943a]',
-                          )}
-                        >
-                          + {item.name}
-                        </button>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Add custom item */}
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97] mb-1.5">Agregar item libre</p>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Producto"
-                    value={newCartName}
-                    onChange={(e) => setNewCartName(e.target.value)}
-                    className="flex-1 text-sm"
-                  />
-                  <Input
-                    placeholder="Cant."
-                    value={newCartQty}
-                    onChange={(e) => setNewCartQty(e.target.value)}
-                    className="w-24 text-sm"
-                  />
-                  <button
-                    onClick={() => addToCart(newCartName, newCartQty)}
-                    disabled={!newCartName.trim() || !newCartQty.trim()}
-                    className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#006d5a] text-white disabled:opacity-30 active:scale-90"
+          {!recibidosCollapsed && (
+            <div className="space-y-1.5">
+              {receivedOrders.slice(0, 20).map((order) => {
+                const stockItem = findStockItemForOrder(order)
+                return (
+                  <div
+                    key={order.id}
+                    className="flex items-center gap-3 rounded-xl bg-[#f0f7f5] px-3.5 py-3 ring-1 ring-[#006d5a]/10"
                   >
-                    <Plus className="size-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Cart items list */}
-              {cartItems.length > 0 && (
-                <div className="space-y-1.5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
-                    Pedido ({cartItems.length} item{cartItems.length > 1 ? 's' : ''})
-                  </p>
-                  {cartItems.map((item, i) => (
-                    <div key={i} className="flex items-center gap-2 rounded-lg bg-[#f8f5f0] px-3 py-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-[#3d2c24] truncate">{item.name}</p>
-                      </div>
-                      <Input
-                        value={item.quantity}
-                        onChange={(e) => setCartItems((prev) => prev.map((c, j) => j === i ? { ...c, quantity: e.target.value } : c))}
-                        placeholder="Cant."
-                        className="w-24 text-xs h-8"
-                      />
-                      <button onClick={() => removeFromCart(i)} className="text-[#ea504c] active:scale-90">
-                        <X className="size-4" />
-                      </button>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-[#3d2c24]">{order.product_name}</p>
+                      <p className="mt-0.5 text-[10px] text-[#a39e97]">
+                        Cantidad: {order.quantity}
+                        {order.note && <span className="italic"> &middot; {order.note}</span>}
+                      </p>
                     </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Urgency + note + submit */}
-              {cartItems.length > 0 && (
-                <>
-                  <div className="flex gap-1.5">
-                    {(Object.entries(BAR_ORDER_URGENCY) as [BarOrderUrgencyValue, { label: string; color: string; bg: string }][]).map(([key, cfg]) => (
+                    {canEdit && stockItem && (
                       <button
-                        key={key}
-                        onClick={() => setCartUrgency(key)}
-                        className={cn(
-                          'flex-1 rounded-lg py-1.5 text-xs font-semibold transition-all',
-                          cartUrgency === key
-                            ? 'ring-2 ring-offset-1'
-                            : 'opacity-60',
-                        )}
-                        style={{
-                          backgroundColor: cfg.bg,
-                          color: cfg.color,
-                          ...(cartUrgency === key ? { ringColor: cfg.color } : {}),
-                        }}
+                        onClick={() => openEditDialog(stockItem)}
+                        className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-xs font-bold text-white transition-all active:scale-95 min-h-[44px]"
                       >
-                        {cfg.label}
+                        <Plus className="size-3.5" />
+                        Cargar stock
                       </button>
-                    ))}
+                    )}
+                    {!stockItem && (
+                      <span className="pill text-[10px] bg-[#fdf6ec] text-[#d4943a]">Sin item</span>
+                    )}
                   </div>
-                  <Textarea
-                    placeholder="Nota general (opcional)"
-                    value={cartNote}
-                    onChange={(e) => setCartNote(e.target.value)}
-                    rows={2}
-                    className="text-sm"
-                  />
-                  <button
-                    onClick={submitCart}
-                    disabled={submittingCart}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-50"
-                  >
-                    {submittingCart ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-                    Enviar pedido al encargado
-                  </button>
-                </>
-              )}
+                )
+              })}
             </div>
           )}
         </FadeIn>
       )}
 
-      {/* Pedidos pendientes */}
-      {orders.length > 0 && (
-        <FadeIn delay={0.1}>
-          <div className="mb-5">
-            <div className="flex items-center gap-2 px-1 mb-2">
-              <ShoppingCart className="size-4 text-[#d4943a]" />
-              <span className="section-label text-[#d4943a]">Pedidos pendientes ({orders.length})</span>
-            </div>
-            <div className="space-y-1.5">
-              {orders.map((order) => {
-                const mappedUrgency = DB_TO_FRONTEND_URGENCY[order.urgency] ?? 'normal'
-                const urgCfg = BAR_ORDER_URGENCY[mappedUrgency] ?? FALLBACK_URGENCY_CFG
-                const isOrdered = order.status === 'ordered'
-                return (
-                  <div key={order.id} className={cn(
-                    'rounded-xl px-3.5 py-3 ring-1 ring-[#ebe6df]/50',
-                    isOrdered ? 'bg-[#f0f7f5]' : 'bg-white',
+      {/* ================================================================ */}
+      {/* SECTION 2: URGENTE + BAJO */}
+      {/* ================================================================ */}
+      {urgentAndLow.length > 0 && (
+        <FadeIn delay={0.1} className="mb-5">
+          <div className="flex items-center gap-2 px-1 mb-2 min-h-[44px]">
+            <AlertTriangle className="size-4 text-[#ea504c]" />
+            <span className="section-label text-[#ea504c]">
+              Urgente + Bajo ({urgentAndLow.length})
+            </span>
+          </div>
+
+          <StaggerList className="space-y-1.5" staggerDelay={0.03}>
+            {urgentAndLow.map((item) => {
+              const isZero = item.current_qty <= 0
+              const isLow = !isZero && item.current_qty <= item.min_level
+              const semColor = isZero || item.is_urgent ? '#ea504c' : '#d4943a'
+              const pendingOrder = getItemPendingOrder(item)
+
+              return (
+                <StaggerItem key={item.id}>
+                  <div className={cn(
+                    'rounded-xl px-3.5 py-3 ring-1 ring-[#ebe6df]/50 transition-all',
+                    isZero || item.is_urgent ? 'bg-[#fef2f2]/40' : 'bg-[#fdf6ec]/30',
                   )}>
                     <div className="flex items-center gap-3">
+                      <div className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: semColor }} />
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-[#3d2c24]">{order.product_name}</p>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-[#a39e97]">
-                          <span className="font-medium">{order.quantity}</span>
-                          <span className="rounded-full px-1.5 py-0.5 font-bold" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
-                            {urgCfg.label}
+                        <p className="text-sm font-medium text-[#3d2c24]">{item.name}</p>
+                        <p className="mt-0.5 text-[10px] text-[#a39e97]">
+                          <span className="font-bold tabular-nums" style={{ color: semColor }}>
+                            {item.current_qty}
                           </span>
-                          {isOrdered && (
-                            <span className="rounded-full bg-[#e8f5f1] px-1.5 py-0.5 font-bold text-[#006d5a]">
-                              Pedido
-                            </span>
-                          )}
-                          {order.note && <span className="italic truncate">{order.note}</span>}
-                        </div>
+                          /{item.min_level} {item.unit}
+                        </p>
                       </div>
-                      {isEncargado ? (
-                        <div className="flex gap-1">
-                          {!isOrdered && (
+
+                      <div className="flex items-center gap-1.5">
+                        {/* Edit qty */}
+                        {canEdit && (
+                          <button
+                            onClick={() => openEditDialog(item)}
+                            className="flex size-[44px] items-center justify-center rounded-xl text-[#a39e97] transition-colors hover:bg-[#faf8f5] hover:text-[#3d2c24] active:scale-90"
+                            title="Editar cantidad"
+                          >
+                            <PencilIcon />
+                          </button>
+                        )}
+
+                        {/* Pedir / Pedido badge */}
+                        {canEdit && (
+                          pendingOrder ? (
+                            <span className={cn(
+                              'pill text-[10px] font-bold px-2.5 py-1.5 min-h-[44px] flex items-center',
+                              pendingOrder.status === 'ordered'
+                                ? 'bg-[#e8f5f1] text-[#006d5a]'
+                                : 'bg-[#fdf6ec] text-[#d4943a]',
+                            )}>
+                              {pendingOrder.status === 'ordered' ? 'Enviado \u2713' : 'Pedido \u2713'}
+                            </span>
+                          ) : (
                             <button
-                              onClick={() => updateOrderStatus(order.id, 'ordered')}
-                              className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#d4943a] text-white active:scale-90"
-                              title="Marcar como pedido"
+                              onClick={() => openOrderDialog(item)}
+                              className={cn(
+                                'flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold transition-all active:scale-95 min-h-[44px]',
+                                isZero || item.is_urgent
+                                  ? 'bg-[#ea504c] text-white'
+                                  : 'bg-[#fef7ed] text-[#d4943a] hover:bg-[#d4943a] hover:text-white',
+                              )}
                             >
-                              <Truck className="size-3.5" />
+                              <Send className="size-3" />
+                              Pedir
                             </button>
-                          )}
-                          <button
-                            onClick={() => updateOrderStatus(order.id, 'received')}
-                            className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#006d5a] text-white active:scale-90"
-                            title="Recibido"
-                          >
-                            <Check className="size-4" />
-                          </button>
-                          <button
-                            onClick={() => updateOrderStatus(order.id, 'cancelled')}
-                            className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#fef2f2] text-[#ea504c] active:scale-90"
-                            title="Cancelar"
-                          >
-                            <X className="size-3.5" />
-                          </button>
-                        </div>
-                      ) : (
+                          )
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </StaggerItem>
+              )
+            })}
+          </StaggerList>
+        </FadeIn>
+      )}
+
+      {/* ================================================================ */}
+      {/* SECTION 3: OK (collapsible) */}
+      {/* ================================================================ */}
+      {ok.length > 0 && (
+        <FadeIn delay={0.12} className="mb-5">
+          <button
+            onClick={() => setOkCollapsed(!okCollapsed)}
+            className="flex w-full items-center gap-2 px-1 mb-2 min-h-[44px]"
+          >
+            <Check className="size-4 text-[#006d5a]" />
+            <span className="section-label text-[#006d5a] flex-1 text-left">
+              OK ({ok.length})
+            </span>
+            {okCollapsed
+              ? <ChevronDown className="size-4 text-[#a39e97]" />
+              : <ChevronUp className="size-4 text-[#a39e97]" />
+            }
+          </button>
+
+          {!okCollapsed && (
+            <StaggerList className="space-y-1.5" staggerDelay={0.02}>
+              {ok.map((item) => (
+                <StaggerItem key={item.id}>
+                  <div className="rounded-xl bg-white px-3.5 py-3 ring-1 ring-[#ebe6df]/50 transition-all">
+                    <div className="flex items-center gap-3">
+                      <div className="size-2.5 shrink-0 rounded-full bg-[#006d5a]" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-[#3d2c24]">{item.name}</p>
+                        <p className="mt-0.5 text-[10px] text-[#a39e97]">
+                          {item.current_detail ?? `${item.current_qty} ${item.unit}`}
+                          {item.min_level > 0 && <span> &middot; min: {item.min_level} {item.unit}</span>}
+                        </p>
+                      </div>
+                      <p className="text-sm font-bold tabular-nums text-[#3d2c24] mr-1">{item.current_qty}</p>
+                      {canEdit && (
                         <button
-                          onClick={() => updateOrderStatus(order.id, 'received')}
-                          className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#006d5a] text-white active:scale-90"
+                          onClick={() => openEditDialog(item)}
+                          className="flex size-[44px] items-center justify-center rounded-xl text-[#a39e97] transition-colors hover:bg-[#faf8f5] hover:text-[#3d2c24] active:scale-90"
+                          title="Editar cantidad"
                         >
-                          <Check className="size-4" />
+                          <PencilIcon />
                         </button>
                       )}
                     </div>
                   </div>
-                )
-              })}
-            </div>
+                </StaggerItem>
+              ))}
+            </StaggerList>
+          )}
+        </FadeIn>
+      )}
+
+      {/* ================================================================ */}
+      {/* SECTION 4: PEDIDOS EN CURSO */}
+      {/* ================================================================ */}
+      {orders.length > 0 && (
+        <FadeIn delay={0.14} className="mb-5">
+          <div className="flex items-center gap-2 px-1 mb-2 min-h-[44px]">
+            <ShoppingCart className="size-4 text-[#d4943a]" />
+            <span className="section-label text-[#d4943a]">
+              Pedidos en curso ({orders.length})
+            </span>
+          </div>
+
+          <div className="space-y-1.5">
+            {orders.map((order) => {
+              const mappedUrgency = DB_TO_FRONTEND_URGENCY[order.urgency] ?? 'normal'
+              const urgCfg = BAR_ORDER_URGENCY[mappedUrgency] ?? FALLBACK_URGENCY_CFG
+              const isOrdered = order.status === 'ordered'
+              return (
+                <div key={order.id} className={cn(
+                  'rounded-xl px-3.5 py-3 ring-1 ring-[#ebe6df]/50',
+                  isOrdered ? 'bg-[#f0f7f5]' : 'bg-white',
+                )}>
+                  <div className="flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-[#3d2c24]">{order.product_name}</p>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-[#a39e97]">
+                        <span className="font-medium">{order.quantity}</span>
+                        <span className="rounded-full px-1.5 py-0.5 font-bold" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
+                          {urgCfg.label}
+                        </span>
+                        {isOrdered && (
+                          <span className="rounded-full bg-[#e8f5f1] px-1.5 py-0.5 font-bold text-[#006d5a]">
+                            Pedido
+                          </span>
+                        )}
+                        {order.note && <span className="italic truncate">{order.note}</span>}
+                      </div>
+                    </div>
+                    {isEncargado ? (
+                      <div className="flex gap-1">
+                        {!isOrdered && (
+                          <button
+                            onClick={() => updateOrderStatus(order.id, 'ordered')}
+                            className="flex size-[44px] shrink-0 items-center justify-center rounded-xl bg-[#d4943a] text-white active:scale-90"
+                            title="Marcar como pedido"
+                          >
+                            <Truck className="size-4" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => updateOrderStatus(order.id, 'received')}
+                          className="flex size-[44px] shrink-0 items-center justify-center rounded-xl bg-[#006d5a] text-white active:scale-90"
+                          title="Recibido"
+                        >
+                          <Check className="size-4" />
+                        </button>
+                        <button
+                          onClick={() => updateOrderStatus(order.id, 'cancelled')}
+                          className="flex size-[44px] shrink-0 items-center justify-center rounded-xl bg-[#fef2f2] text-[#ea504c] active:scale-90"
+                          title="Cancelar"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => updateOrderStatus(order.id, 'received')}
+                        className="flex size-[44px] shrink-0 items-center justify-center rounded-xl bg-[#006d5a] text-white active:scale-90"
+                      >
+                        <Check className="size-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </FadeIn>
       )}
 
-      {/* Order history */}
+      {/* ================================================================ */}
+      {/* SECTION 5: HISTORIAL (toggle) */}
+      {/* ================================================================ */}
       {historyOrders.length > 0 && (
-        <FadeIn delay={0.1}>
+        <FadeIn delay={0.16} className="mb-5">
           <button
             onClick={() => setShowHistory(!showHistory)}
-            className="flex w-full items-center justify-between rounded-xl bg-white px-4 py-3 ring-1 ring-[#ebe6df] transition-all active:scale-[0.99]"
+            className="flex w-full items-center justify-between rounded-xl bg-white px-4 py-3 ring-1 ring-[#ebe6df] transition-all active:scale-[0.99] min-h-[44px]"
           >
             <div className="flex items-center gap-2">
               <Clock className="size-4 text-[#a39e97]" />
@@ -672,7 +768,7 @@ export default function BarraPage() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-[#3d2c24]">
                           {order.product_name}
-                          <span className="ml-1.5 text-[#a39e97]">× {order.quantity}</span>
+                          <span className="ml-1.5 text-[#a39e97]">&times; {order.quantity}</span>
                         </p>
                         <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-[#a39e97]">
                           <span>{dateStr} {timeStr}</span>
@@ -700,80 +796,161 @@ export default function BarraPage() {
         </FadeIn>
       )}
 
-      {/* Stock by category */}
-      <StaggerList className="space-y-4" staggerDelay={0.04}>
-        {grouped.map((group) => (
-          <StaggerItem key={group.category}>
-            <div className="mb-2 flex items-center gap-2 px-1">
-              <span className="text-base">{group.config.icon}</span>
-              <span className="section-label" style={{ color: group.config.color }}>{group.config.label}</span>
-            </div>
-            <div className="space-y-1.5">
-              {group.items.map((item) => {
-                const isZero = item.current_qty <= 0
-                const isLow = !isZero && item.current_qty <= item.min_level
-                const semColor = isZero || item.is_urgent ? '#ea504c' : isLow ? '#d4943a' : '#006d5a'
-                const needsOrder = isZero || isLow || item.is_urgent
+      {/* ================================================================ */}
+      {/* FAB: NUEVO PEDIDO */}
+      {/* ================================================================ */}
+      {canEdit && (
+        <button
+          onClick={() => setCartOpen(true)}
+          className="fab fixed bottom-24 right-4 z-40 flex items-center gap-2 rounded-2xl bg-[#006d5a] px-5 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:bg-[#005a4a] min-h-[44px]"
+        >
+          <ShoppingCart className="size-4" />
+          Nuevo Pedido
+        </button>
+      )}
 
-                return (
-                  <div key={item.id} className={cn(
-                    'rounded-xl px-3.5 py-3 ring-1 ring-[#ebe6df]/50 transition-all',
-                    isZero ? 'bg-[#fef2f2]/40' : isLow ? 'bg-[#fdf6ec]/30' : 'bg-white',
-                  )}>
-                    <div className="flex items-center gap-3">
-                      <div className="size-2 shrink-0 rounded-full" style={{ backgroundColor: semColor }} />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-[#3d2c24]">{item.name}</p>
-                        <p className="mt-0.5 text-[10px] text-[#a39e97]">
-                          {item.current_detail ?? `${item.current_qty} ${item.unit}`}
-                          {item.min_level > 0 && <span> · mín: {item.min_level} {item.unit}</span>}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <p className={cn('text-sm font-bold tabular-nums', isZero ? 'text-[#ea504c]' : isLow ? 'text-[#d4943a]' : 'text-[#3d2c24]')}>
-                          {item.current_qty}
-                        </p>
-                        {canEdit && (
-                          <>
-                            <button
-                              onClick={() => openEditDialog(item)}
-                              className="flex size-7 items-center justify-center rounded-lg text-[#a39e97] transition-colors hover:bg-[#faf8f5] hover:text-[#3d2c24] active:scale-90"
-                              title="Editar cantidad"
-                            >
-                              <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-                              </svg>
-                            </button>
-                            {needsOrder && (
-                              <button
-                                onClick={() => addStockItemToCart(item)}
-                                className={cn(
-                                  'flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold transition-all active:scale-95',
-                                  cartItems.some((c) => c.fromStockId === item.id)
-                                    ? 'bg-[#e8f5f1] text-[#006d5a]'
-                                    : isZero
-                                      ? 'bg-[#ea504c] text-white'
-                                      : 'bg-[#fef7ed] text-[#d4943a] hover:bg-[#d4943a] hover:text-white',
-                                )}
-                                disabled={cartItems.some((c) => c.fromStockId === item.id)}
-                              >
-                                <ShoppingCart className="size-3" />
-                                {cartItems.some((c) => c.fromStockId === item.id) ? 'En pedido' : 'Pedir'}
-                              </button>
-                            )}
-                          </>
+      {/* ================================================================ */}
+      {/* CART DIALOG */}
+      {/* ================================================================ */}
+      <Dialog open={cartOpen} onOpenChange={(open) => { if (!open) { setCartOpen(false); setCartItems([]) } }}>
+        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-md max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg text-[#3d2c24] flex items-center gap-2">
+              <ShoppingCart className="size-5 text-[#006d5a]" />
+              Armar pedido
+            </DialogTitle>
+            <DialogDescription className="text-[#a39e97]">
+              Agrega items y envia al encargado
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Add from stock - quick buttons */}
+            {items.filter((i) => i.is_urgent || i.current_qty <= 0 || i.current_qty <= i.min_level).length > 0 && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97] mb-1.5">Agregar item bajo/urgente</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {items
+                    .filter((i) => i.is_urgent || i.current_qty <= 0 || i.current_qty <= i.min_level)
+                    .filter((i) => !cartItems.some((c) => c.fromStockId === i.id))
+                    .slice(0, 12)
+                    .map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => addStockItemToCart(item)}
+                        className={cn(
+                          'rounded-lg px-2.5 py-1.5 text-[10px] font-semibold transition-all active:scale-95 min-h-[36px]',
+                          item.current_qty <= 0 || item.is_urgent
+                            ? 'bg-[#fef2f2] text-[#ea504c]'
+                            : 'bg-[#fdf6ec] text-[#d4943a]',
                         )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </StaggerItem>
-        ))}
-      </StaggerList>
+                      >
+                        + {item.name}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
 
+            {/* Add custom item */}
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97] mb-1.5">Agregar item libre</p>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Producto"
+                  value={newCartName}
+                  onChange={(e) => setNewCartName(e.target.value)}
+                  className="flex-1 text-sm"
+                />
+                <Input
+                  placeholder="Cant."
+                  value={newCartQty}
+                  onChange={(e) => setNewCartQty(e.target.value)}
+                  className="w-24 text-sm"
+                />
+                <button
+                  onClick={() => addToCart(newCartName, newCartQty)}
+                  disabled={!newCartName.trim() || !newCartQty.trim()}
+                  className="flex size-[44px] shrink-0 items-center justify-center rounded-xl bg-[#006d5a] text-white disabled:opacity-30 active:scale-90"
+                >
+                  <Plus className="size-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Cart items list */}
+            {cartItems.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
+                  Pedido ({cartItems.length} item{cartItems.length > 1 ? 's' : ''})
+                </p>
+                {cartItems.map((item, i) => (
+                  <div key={i} className="flex items-center gap-2 rounded-lg bg-[#f8f5f0] px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-[#3d2c24] truncate">{item.name}</p>
+                    </div>
+                    <Input
+                      value={item.quantity}
+                      onChange={(e) => setCartItems((prev) => prev.map((c, j) => j === i ? { ...c, quantity: e.target.value } : c))}
+                      placeholder="Cant."
+                      className="w-24 text-xs h-8"
+                    />
+                    <button onClick={() => removeFromCart(i)} className="text-[#ea504c] active:scale-90 min-h-[44px] min-w-[44px] flex items-center justify-center">
+                      <X className="size-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Urgency + note + submit */}
+            {cartItems.length > 0 && (
+              <>
+                <div className="flex gap-1.5">
+                  {(Object.entries(BAR_ORDER_URGENCY) as [BarOrderUrgencyValue, { label: string; color: string; bg: string }][]).map(([key, cfg]) => (
+                    <button
+                      key={key}
+                      onClick={() => setCartUrgency(key)}
+                      className={cn(
+                        'flex-1 rounded-lg py-2 text-xs font-semibold transition-all min-h-[44px]',
+                        cartUrgency === key
+                          ? 'ring-2 ring-offset-1'
+                          : 'opacity-60',
+                      )}
+                      style={{
+                        backgroundColor: cfg.bg,
+                        color: cfg.color,
+                        ...(cartUrgency === key ? { ringColor: cfg.color } : {}),
+                      }}
+                    >
+                      {cfg.label}
+                    </button>
+                  ))}
+                </div>
+                <Textarea
+                  placeholder="Nota general (opcional)"
+                  value={cartNote}
+                  onChange={(e) => setCartNote(e.target.value)}
+                  rows={2}
+                  className="text-sm"
+                />
+                <button
+                  onClick={submitCart}
+                  disabled={submittingCart}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3.5 text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-50 min-h-[44px]"
+                >
+                  {submittingCart ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                  Enviar pedido al encargado
+                </button>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ================================================================ */}
       {/* Edit Qty Dialog */}
+      {/* ================================================================ */}
       <Dialog open={!!editItem} onOpenChange={(open) => !open && setEditItem(null)}>
         <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-sm">
           <DialogHeader>
@@ -789,7 +966,7 @@ export default function BarraPage() {
             <div className="flex items-center justify-center gap-4">
               <button
                 onClick={() => setEditQty(String(Math.max(0, (parseFloat(editQty) || 0) - 1)))}
-                className="flex size-10 items-center justify-center rounded-xl bg-[#faf8f5] text-[#3d2c24] ring-1 ring-[#ebe6df] active:scale-90"
+                className="flex size-[44px] items-center justify-center rounded-xl bg-[#faf8f5] text-[#3d2c24] ring-1 ring-[#ebe6df] active:scale-90"
               >
                 <Minus className="size-4" />
               </button>
@@ -800,11 +977,11 @@ export default function BarraPage() {
                   onChange={(e) => setEditQty(e.target.value)}
                   className="w-24 text-center text-2xl font-bold rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] focus-visible:ring-[#006d5a] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
-                <p className="mt-1 text-[10px] text-[#a39e97]">{editItem?.unit} · mín: {editItem?.min_level}</p>
+                <p className="mt-1 text-[10px] text-[#a39e97]">{editItem?.unit} &middot; min: {editItem?.min_level}</p>
               </div>
               <button
                 onClick={() => setEditQty(String((parseFloat(editQty) || 0) + 1))}
-                className="flex size-10 items-center justify-center rounded-xl bg-[#faf8f5] text-[#3d2c24] ring-1 ring-[#ebe6df] active:scale-90"
+                className="flex size-[44px] items-center justify-center rounded-xl bg-[#faf8f5] text-[#3d2c24] ring-1 ring-[#ebe6df] active:scale-90"
               >
                 <Plus className="size-4" />
               </button>
@@ -833,7 +1010,9 @@ export default function BarraPage() {
         </DialogContent>
       </Dialog>
 
+      {/* ================================================================ */}
       {/* Order Dialog */}
+      {/* ================================================================ */}
       <Dialog open={!!orderItem} onOpenChange={(open) => !open && setOrderItem(null)}>
         <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-sm">
           <DialogHeader>
@@ -841,7 +1020,7 @@ export default function BarraPage() {
               Solicitar pedido
             </DialogTitle>
             <DialogDescription className="text-[#a39e97]">
-              {orderItem?.name} — stock actual: {orderItem?.current_qty} {orderItem?.unit}
+              {orderItem?.name} &mdash; stock actual: {orderItem?.current_qty} {orderItem?.unit}
             </DialogDescription>
           </DialogHeader>
 
@@ -864,7 +1043,7 @@ export default function BarraPage() {
                     key={key}
                     onClick={() => setOrderUrgency(key)}
                     className={cn(
-                      'flex-1 rounded-xl py-2.5 text-xs font-bold transition-all active:scale-95',
+                      'flex-1 rounded-xl py-2.5 text-xs font-bold transition-all active:scale-95 min-h-[44px]',
                       orderUrgency === key
                         ? 'ring-2 shadow-sm'
                         : 'ring-1 ring-[#ebe6df]',
@@ -906,7 +1085,7 @@ export default function BarraPage() {
                       )}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1 rounded-lg bg-[#25d366] px-2 py-1 text-[10px] font-bold text-white active:scale-95"
+                      className="flex items-center gap-1 rounded-lg bg-[#25d366] px-2 py-1 text-[10px] font-bold text-white active:scale-95 min-h-[44px]"
                     >
                       <MessageCircle className="size-3" />
                       WhatsApp
@@ -916,7 +1095,7 @@ export default function BarraPage() {
               )
             })()}
             {orderItem && !orderItem.supplier_id && (
-              <p className="text-[10px] text-[#a39e97] italic">Sin proveedor vinculado — asigná uno desde Proveedores</p>
+              <p className="text-[10px] text-[#a39e97] italic">Sin proveedor vinculado &mdash; asigna uno desde Proveedores</p>
             )}
           </div>
 
