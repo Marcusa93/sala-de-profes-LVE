@@ -139,7 +139,7 @@ export default function PedidosCocinaPage() {
       .select('id, name, phone, category')
       .eq('is_active', true)
       .then(({ data }) => {
-        if (data) setSuppliers(data as SupplierInfo[])
+        if (data) setSuppliers(data as unknown as SupplierInfo[])
       })
   }, [isEncargado])
 
@@ -166,7 +166,7 @@ export default function PedidosCocinaPage() {
         .map((o) => o.note)
         .filter((v, i, a) => a.indexOf(v) === i) // unique notes
       const text = [
-        `Hola ${supplier.contact_name || supplier.name}, soy de La Vieja Escuela.`,
+        `Hola ${supplier.name}, soy de La Vieja Escuela.`,
         `Necesitamos:`,
         ...lines,
         ...(noteLines.length > 0 ? [`\nNota: ${noteLines.join(', ')}`] : []),

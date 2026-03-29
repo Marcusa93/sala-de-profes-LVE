@@ -97,12 +97,12 @@ export default function PedidosPage() {
       supabase.from('profiles').select('id, first_name, last_name').eq('is_active', true),
     ])
 
-    const bar: Order[] = (barRes.data ?? []).map((o) => ({ ...o, source: 'barra' as const }))
-    const kitchen: Order[] = (kitchenRes.data ?? []).map((o) => ({ ...o, source: 'cocina' as const }))
+    const bar = (barRes.data ?? []).map((o) => ({ ...o, source: 'barra' as const, supplier_id: null })) as unknown as Order[]
+    const kitchen = (kitchenRes.data ?? []).map((o) => ({ ...o, source: 'cocina' as const })) as unknown as Order[]
     setBarOrders(bar)
     setKitchenOrders(kitchen)
-    setSuppliers(suppRes.data ?? [])
-    setProfiles(profRes.data ?? [])
+    setSuppliers((suppRes.data ?? []) as unknown as Supplier[])
+    setProfiles((profRes.data ?? []) as unknown as Profile[])
     setLoading(false)
   }, [])
 
@@ -159,7 +159,7 @@ export default function PedidosPage() {
         })
       } else {
         const supabase = createClient()
-        await supabase.from(table).update({ status: newStatus }).eq('id', order.id)
+        await supabase.from(table).update({ status: newStatus as 'pending' | 'ordered' | 'received' | 'cancelled' }).eq('id', order.id)
       }
       toast.success(newStatus === 'ordered' ? 'Marcado como pedido' : newStatus === 'received' ? 'Recibido' : 'Cancelado')
       fetchData()
@@ -171,7 +171,8 @@ export default function PedidosPage() {
   async function assignSupplier(order: Order, supplierId: string) {
     const table = order.source === 'barra' ? 'bar_orders' : 'kitchen_orders'
     const supabase = createClient()
-    await supabase.from(table).update({ supplier_id: supplierId }).eq('id', order.id)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from(table) as any).update({ supplier_id: supplierId }).eq('id', order.id)
     setAssignDialog(null)
     toast.success('Proveedor asignado')
     fetchData()

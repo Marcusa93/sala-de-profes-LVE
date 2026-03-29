@@ -180,7 +180,8 @@ export default function DashboardPage() {
 
         // Expedientes activos — for socio (fetch full data for actions)
         const expedientesPromise = profile!.role === 'socio'
-          ? supabase.from('expedientes').select('id, code, title, status, urgency, target_date, updated_at, responsible_id').not('status', 'in', '("cumplido","cerrado_sin_implementacion","archivado")')
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ? (supabase as any).from('expedientes').select('id, code, title, status, urgency, target_date, updated_at, responsible_id').neq('status', 'cumplido').neq('status', 'cerrado_sin_implementacion').neq('status', 'archivado')
           : null
 
         // Ventas hoy — for socio
@@ -215,7 +216,7 @@ export default function DashboardPage() {
         }
         if (stockRes?.data) {
           const items = stockRes.data ?? []
-          setStockItems(items)
+          setStockItems(items as unknown as typeof stockItems)
           const critical = items.filter((item) => isStockCritical(item.current_qty ?? 0, item.min_qty ?? 0))
           setCriticalStockCount(critical.length)
         }

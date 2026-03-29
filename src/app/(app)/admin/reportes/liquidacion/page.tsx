@@ -324,7 +324,8 @@ export default function LiquidacionPage() {
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#3d2c24' }} axisLine={false} tickLine={false} width={100} />
                 <Tooltip
                   contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
-                  formatter={(v: number) => [`${v}h`, 'Horas trabajadas']}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  formatter={(v: any) => [`${v}h`, 'Horas trabajadas']}
                 />
                 <Bar dataKey="hours" radius={[0, 6, 6, 0]} barSize={20}>
                   {chartData.map((entry, i) => (
@@ -436,7 +437,8 @@ export default function LiquidacionPage() {
                                 <YAxis tick={{ fontSize: 9, fill: '#a39e97' }} axisLine={false} tickLine={false} />
                                 <Tooltip
                                   contentStyle={{ borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', fontSize: 11 }}
-                                  formatter={(v: number) => [formatMinutes(v), 'Trabajado']}
+                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                  formatter={(v: any) => [formatMinutes(v), 'Trabajado']}
                                 />
                                 <Bar dataKey="minutes" radius={[4, 4, 0, 0]} barSize={16}>
                                   {emp.dailyBreakdown.map((entry, i) => (

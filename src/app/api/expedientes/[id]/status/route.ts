@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { notifyExpedienteToSocios } from '@/lib/email/send'
+import { notifyExpedienteToResponsible } from '@/lib/email/send'
 import { STATUS_TRANSITIONS, EXPEDIENTE_STATUSES } from '@/lib/constants/expedientes'
 import type { ExpedienteStatus } from '@/types/expedientes'
 
@@ -128,7 +128,7 @@ export async function PATCH(
     }
 
     // Email only to the responsible person
-    notifyExpedienteToSocios({
+    notifyExpedienteToResponsible({
       responsibleId: expediente.responsible_id,
       code: expediente.code,
       title: expediente.title,

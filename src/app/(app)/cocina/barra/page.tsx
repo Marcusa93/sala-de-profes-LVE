@@ -116,12 +116,12 @@ export default function BarraPage() {
         supabase.from('bar_orders').select('*').in('status', ['received', 'cancelled']).order('created_at', { ascending: false }).limit(50),
         supabase.from('suppliers').select('id, name, phone').eq('is_active', true),
       ])
-      if (itemsRes.data) setItems(itemsRes.data as BarItem[])
-      if (ordersRes.data) setOrders(ordersRes.data as BarOrderRow[])
-      if (historyRes.data) setHistoryOrders(historyRes.data as BarOrderRow[])
+      if (itemsRes.data) setItems(itemsRes.data as unknown as BarItem[])
+      if (ordersRes.data) setOrders(ordersRes.data as unknown as BarOrderRow[])
+      if (historyRes.data) setHistoryOrders(historyRes.data as unknown as BarOrderRow[])
       if (suppRes.data) {
         const map = new Map<string, BarSupplier>()
-        for (const s of suppRes.data) map.set(s.id, s as BarSupplier)
+        for (const s of suppRes.data) map.set(String(s.id), s as unknown as BarSupplier)
         setSuppliers(map)
       }
     } catch {
@@ -871,8 +871,8 @@ export default function BarraPage() {
                     )}
                     style={
                       orderUrgency === key
-                        ? { backgroundColor: cfg.bg, color: cfg.color, ringColor: cfg.color }
-                        : {}
+                        ? { backgroundColor: cfg.bg, color: cfg.color } as React.CSSProperties
+                        : undefined
                     }
                   >
                     {cfg.label}

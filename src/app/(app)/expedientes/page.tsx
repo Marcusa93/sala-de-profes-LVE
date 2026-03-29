@@ -27,7 +27,7 @@ export default function ExpedientesPage() {
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   // Debounce search — 350ms
   useEffect(() => {

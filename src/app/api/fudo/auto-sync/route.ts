@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
 import { fudo } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
 // GET /api/fudo/auto-sync — Real-time sales from Fudo
 // Fetches directly from Fudo API with include=items.product,table
 // Returns live data: mesas en curso, cerradas, productos vendidos
+// Requires authentication — only socio/encargado can access
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
@@ -19,6 +21,16 @@ type IncludedResource = {
 
 export async function GET(request: NextRequest) {
   try {
+    // Auth check — internal calls pass x-internal header to skip
+    const isInternal = request.headers.get('x-internal-call') === 'true'
+    if (!isInternal) {
+      const supabase = await createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+      }
+    }
+
     // Accept ?date=YYYY-MM-DD for historical data, default to today
     const dateParam = request.nextUrl.searchParams.get('date')
     const now = new Date()

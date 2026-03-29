@@ -34,8 +34,9 @@ export async function GET() {
 
     // Try to get FUDO ventas
     try {
-      const ventasRes = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL ? '' : 'http://localhost:3007'}/api/fudo/auto-sync`, {
-        headers: { 'Cookie': '' },
+      const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3007'
+      const ventasRes = await fetch(`${baseUrl}/api/fudo/auto-sync`, {
+        headers: { 'x-internal-call': 'true' },
       })
       if (ventasRes.ok) {
         const ventasJson = await ventasRes.json()

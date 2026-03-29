@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { notifyExpedienteToSocios } from '@/lib/email/send'
+import { notifyExpedienteToResponsible } from '@/lib/email/send'
 
 // ---------------------------------------------------------------------------
 // GET /api/expedientes/[id]/tasks — list tasks
@@ -115,7 +115,7 @@ export async function POST(
     // Email only to the assigned person (not all socios)
     const authorNameFull = `${profile.first_name} ${profile.last_name}`.trim()
     if (assigned_to) {
-      notifyExpedienteToSocios({
+      notifyExpedienteToResponsible({
         responsibleId: assigned_to,
         code: exp?.code ?? id,
         title: exp?.title ?? '',
@@ -206,7 +206,7 @@ export async function PATCH(
       // Email to new assignee
       if (assigned_to) {
         const { data: exp } = await admin.from('expedientes').select('code, title').eq('id', id).single()
-        notifyExpedienteToSocios({
+        notifyExpedienteToResponsible({
           responsibleId: assigned_to,
           code: exp?.code ?? id,
           title: exp?.title ?? '',
@@ -219,7 +219,7 @@ export async function PATCH(
       // Notify previous assignee that they were unassigned
       if (task.assigned_to && task.assigned_to !== assigned_to) {
         const { data: exp } = await admin.from('expedientes').select('code, title').eq('id', id).single()
-        notifyExpedienteToSocios({
+        notifyExpedienteToResponsible({
           responsibleId: task.assigned_to,
           code: exp?.code ?? id,
           title: exp?.title ?? '',
@@ -292,7 +292,7 @@ export async function PATCH(
       }
 
       // Email only to the expediente responsible
-      notifyExpedienteToSocios({
+      notifyExpedienteToResponsible({
         responsibleId: exp.responsible_id,
         code: exp.code,
         title: task.title,
