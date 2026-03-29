@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
       if (error) throw error
 
       // Notify the order creator about status change
-      if (status === 'ordered' || status === 'received') {
+      if (status === 'ordered' || status === 'received' || status === 'cancelled') {
         const { data: order } = await admin
           .from('kitchen_orders')
           .select('created_by, product_name, quantity')
@@ -162,42 +162,70 @@ export async function POST(request: NextRequest) {
           const titleMap: Record<string, string> = {
             ordered: '✅ Pedido enviado al proveedor',
             received: '📦 Pedido recibido',
+            cancelled: '❌ Pedido cancelado',
           }
           const bodyMap: Record<string, string> = {
             ordered: `${order.product_name} (${order.quantity}) — tu pedido fue enviado al proveedor`,
-            received: `${order.product_name} (${order.quantity}) — ya llegó`,
+            received: `${order.product_name} (${order.quantity}) — ya llegó, stock actualizado`,
+            cancelled: `${order.product_name} (${order.quantity}) — fue cancelado`,
           }
           await admin.from('announcements').insert({
             author_id: user.id,
             type: 'operativo',
             priority: 'baja',
-            title: titleMap[status],
-            body: bodyMap[status],
+            title: titleMap[status] ?? `Pedido ${status}`,
+            body: bodyMap[status] ?? `${order.product_name} — ${status}`,
             scope: 'user',
             target_user_id: order.created_by,
             is_active: true,
           })
+
+          // Email to order creator
+          try {
+            const { notifyOrderStatusChange } = await import('@/lib/email/send')
+            notifyOrderStatusChange({
+              userId: order.created_by,
+              productName: order.product_name,
+              quantity: order.quantity,
+              newStatus: status as 'ordered' | 'received' | 'cancelled',
+            }).catch(() => {})
+          } catch { /* email optional */ }
         }
 
-        // When received: try to update stock_items by matching product name
+        // When received: update stock_items — multi-strategy match
         if (status === 'received' && order) {
           const qtyNum = parseFloat(String(order.quantity).replace(/[^\d.,]/g, '')) || 0
           if (qtyNum > 0) {
-            // Find matching stock_item by name (fuzzy match on first word)
-            const searchWord = order.product_name.trim().split(/\s+/)[0]
-            const { data: matches } = await admin
+            const productName = order.product_name.toLowerCase().trim()
+
+            // Strategy 1: Exact match by name
+            const { data: exactMatches } = await admin
               .from('stock_items')
               .select('id, name, current_qty')
-              .ilike('name', `%${searchWord}%`)
+              .ilike('name', productName)
 
-            const exactMatch = matches?.find(
-              (m) => m.name.toLowerCase().trim() === order.product_name.toLowerCase().trim()
+            let matched = exactMatches?.find(
+              (m) => m.name.toLowerCase().trim() === productName
             )
-            if (exactMatch) {
+
+            // Strategy 2: Contains match (product name contains stock name or vice versa)
+            if (!matched) {
+              const { data: allItems } = await admin
+                .from('stock_items')
+                .select('id, name, current_qty')
+                .eq('is_active', true)
+
+              matched = allItems?.find((m) => {
+                const stockName = m.name.toLowerCase().trim()
+                return stockName.includes(productName) || productName.includes(stockName)
+              })
+            }
+
+            if (matched) {
               await admin
                 .from('stock_items')
-                .update({ current_qty: (exactMatch.current_qty || 0) + qtyNum })
-                .eq('id', exactMatch.id)
+                .update({ current_qty: (matched.current_qty || 0) + qtyNum })
+                .eq('id', matched.id)
             }
           }
         }

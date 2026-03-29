@@ -148,20 +148,24 @@ export default function PedidosPage() {
   // ---- Actions ----
 
   async function updateStatus(order: Order, newStatus: string) {
-    const table = order.source === 'barra' ? 'bar_orders' : 'kitchen_orders'
     try {
-      // Also call the API for bar orders (handles notifications)
       if (order.source === 'barra') {
-        await fetch('/api/kitchen/bar', {
+        const res = await fetch('/api/kitchen/bar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'update_order_status', orderId: order.id, status: newStatus }),
         })
+        if (!res.ok) throw new Error('Error')
       } else {
-        const supabase = createClient()
-        await supabase.from(table).update({ status: newStatus as 'pending' | 'ordered' | 'received' | 'cancelled' }).eq('id', order.id)
+        // Use the API endpoint — handles notifications + stock update
+        const res = await fetch('/api/kitchen/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update_status', orderId: order.id, status: newStatus }),
+        })
+        if (!res.ok) throw new Error('Error')
       }
-      toast.success(newStatus === 'ordered' ? 'Marcado como pedido' : newStatus === 'received' ? 'Recibido' : 'Cancelado')
+      toast.success(newStatus === 'ordered' ? 'Marcado como pedido' : newStatus === 'received' ? 'Recibido ✓' : 'Cancelado')
       fetchData()
     } catch {
       toast.error('Error al actualizar')

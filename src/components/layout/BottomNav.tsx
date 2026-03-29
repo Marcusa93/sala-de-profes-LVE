@@ -158,15 +158,21 @@ const COCINA_MORE: ExpandableNavItem = {
   ],
 }
 
-// BARISTA — barra y stock de barra
+// BARISTA — barra, vajilla y herramientas
 const BARISTA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Barra',
+      label: 'Mi sector',
       items: [
-        { label: 'Stock de barra', href: '/cocina/barra', icon: Coffee },
+        { label: 'Stock barra', href: '/cocina/barra', icon: Coffee },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
