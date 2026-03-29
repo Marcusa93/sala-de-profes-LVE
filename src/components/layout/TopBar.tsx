@@ -41,15 +41,14 @@ export function TopBar() {
     ? `${profile.first_name?.[0] ?? ''}${profile.last_name?.[0] ?? ''}`.toUpperCase()
     : '?'
 
-  async function handleLogout() {
+  function handleLogout() {
+    // Sign out and redirect — don't wait for async
     const supabase = createClient()
-    const { error } = await supabase.auth.signOut()
-    if (error) {
-      toast.error('Error al cerrar sesión')
-      return
-    }
-    // Force full page reload to clear all client state
-    window.location.href = '/login'
+    supabase.auth.signOut().finally(() => {
+      window.location.href = '/login'
+    })
+    // Also redirect immediately in case signOut hangs
+    setTimeout(() => { window.location.href = '/login' }, 1500)
   }
 
   const roleConfig = profile?.role ? ROLES[profile.role] : null
@@ -101,14 +100,18 @@ export function TopBar() {
                 )}
               </div>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => { window.location.href = '/configuracion' }}>
-                <Settings className="size-4" />
-                Configuración
+              <DropdownMenuItem asChild>
+                <a href="/configuracion" className="flex items-center gap-2">
+                  <Settings className="size-4" />
+                  Configuración
+                </a>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => { handleLogout() }}>
-                <LogOut className="size-4" />
-                Cerrar Sesión
+              <DropdownMenuItem asChild>
+                <button onClick={handleLogout} className="flex w-full items-center gap-2 text-[#ea504c]">
+                  <LogOut className="size-4" />
+                  Cerrar Sesión
+                </button>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

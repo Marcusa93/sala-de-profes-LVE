@@ -167,17 +167,13 @@ export default function ConfiguracionPage() {
   // Logout
   // -------------------------------------------------------------------------
 
-  async function handleLogout() {
+  function handleLogout() {
     setLoggingOut(true)
-    try {
-      const supabase = createClient()
-      await supabase.auth.signOut()
+    const supabase = createClient()
+    supabase.auth.signOut().finally(() => {
       window.location.href = '/login'
-    } catch (err) {
-      console.error(err)
-      toast.error('Error al cerrar sesión')
-      setLoggingOut(false)
-    }
+    })
+    setTimeout(() => { window.location.href = '/login' }, 1500)
   }
 
   // -------------------------------------------------------------------------
