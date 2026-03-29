@@ -192,43 +192,8 @@ export async function POST(request: NextRequest) {
           } catch { /* email optional */ }
         }
 
-        // When received: update stock_items — multi-strategy match
-        if (status === 'received' && order) {
-          const qtyNum = parseFloat(String(order.quantity).replace(/[^\d.,]/g, '')) || 0
-          if (qtyNum > 0) {
-            const productName = order.product_name.toLowerCase().trim()
-
-            // Strategy 1: Exact match by name
-            const { data: exactMatches } = await admin
-              .from('stock_items')
-              .select('id, name, current_qty')
-              .ilike('name', productName)
-
-            let matched = exactMatches?.find(
-              (m) => m.name.toLowerCase().trim() === productName
-            )
-
-            // Strategy 2: Contains match (product name contains stock name or vice versa)
-            if (!matched) {
-              const { data: allItems } = await admin
-                .from('stock_items')
-                .select('id, name, current_qty')
-                .eq('is_active', true)
-
-              matched = allItems?.find((m) => {
-                const stockName = m.name.toLowerCase().trim()
-                return stockName.includes(productName) || productName.includes(stockName)
-              })
-            }
-
-            if (matched) {
-              await admin
-                .from('stock_items')
-                .update({ current_qty: (matched.current_qty || 0) + qtyNum })
-                .eq('id', matched.id)
-            }
-          }
-        }
+        // NOTE: Stock does NOT auto-update on "received".
+        // Chef/cocina manually updates stock after verifying the delivery.
       }
 
       return NextResponse.json({ success: true })

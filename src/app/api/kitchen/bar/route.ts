@@ -132,52 +132,33 @@ export async function POST(request: NextRequest) {
       if (error) throw error
 
       // Notify the order creator about status change
-      if (status === 'ordered' || status === 'received') {
+      if (status === 'ordered' || status === 'received' || status === 'cancelled') {
         const { data: order } = await admin
           .from('bar_orders')
-          .select('requested_by, product_name, quantity, bar_stock_item_id')
+          .select('requested_by, product_name, quantity')
           .eq('id', orderId)
           .single()
 
-        // When received, update bar_stock_items quantity
-        if (status === 'received' && order?.bar_stock_item_id) {
-          // Parse quantity — try to extract number from string like "5 kg", "2 cajas", "10"
-          const qtyNum = parseFloat(String(order.quantity).replace(/[^\d.,]/g, '')) || 0
-          if (qtyNum > 0) {
-            // Get current qty and add received amount
-            const { data: currentItem } = await admin
-              .from('bar_stock_items')
-              .select('current_qty')
-              .eq('id', order.bar_stock_item_id)
-              .single()
-
-            if (currentItem) {
-              await admin
-                .from('bar_stock_items')
-                .update({
-                  current_qty: (currentItem.current_qty || 0) + qtyNum,
-                  is_urgent: false,
-                })
-                .eq('id', order.bar_stock_item_id)
-            }
-          }
-        }
+        // NOTE: Stock does NOT auto-update on "received".
+        // The barista manually updates stock after verifying the delivery.
 
         if (order?.requested_by) {
           const titleMap: Record<string, string> = {
-            ordered: '✅ Pedido de barra enviado',
-            received: '📦 Pedido de barra recibido',
+            ordered: '✅ Pedido enviado al proveedor',
+            received: '📦 Mercadería recibida — actualizá stock',
+            cancelled: '❌ Pedido cancelado',
           }
           const bodyMap: Record<string, string> = {
-            ordered: `${order.product_name} (${order.quantity}) — tu pedido fue enviado al proveedor`,
-            received: `${order.product_name} (${order.quantity}) — ya llegó`,
+            ordered: `${order.product_name} (${order.quantity}) — el encargado ya lo pidió al proveedor`,
+            received: `${order.product_name} (${order.quantity}) — ya llegó. Revisá y actualizá el stock de barra.`,
+            cancelled: `${order.product_name} (${order.quantity}) — fue cancelado`,
           }
           await admin.from('announcements').insert({
             author_id: user.id,
             type: 'operativo',
-            priority: 'baja',
-            title: titleMap[status],
-            body: bodyMap[status],
+            priority: status === 'received' ? 'alta' : 'baja',
+            title: titleMap[status] ?? `Pedido ${status}`,
+            body: bodyMap[status] ?? `${order.product_name} — ${status}`,
             scope: 'user',
             target_user_id: order.requested_by,
             is_active: true,
