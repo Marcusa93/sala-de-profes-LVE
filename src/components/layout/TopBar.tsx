@@ -101,12 +101,12 @@ export function TopBar() {
                 )}
               </div>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => router.push('/configuracion')}>
+              <DropdownMenuItem onSelect={() => { window.location.href = '/configuracion' }}>
                 <Settings className="size-4" />
                 Configuración
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={handleLogout}>
+              <DropdownMenuItem variant="destructive" onSelect={() => { handleLogout() }}>
                 <LogOut className="size-4" />
                 Cerrar Sesión
               </DropdownMenuItem>
