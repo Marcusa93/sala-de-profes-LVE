@@ -82,10 +82,11 @@ export default function ConfiguracionPage() {
     try {
       const supabase = createClient()
       await supabase.auth.signOut()
-      router.push('/login')
+      // Force full page reload to clear all client state
+      window.location.href = '/login'
     } catch (err) {
       console.error(err)
-      toast.error('Error al cerrar sesion')
+      toast.error('Error al cerrar sesión')
       setLoggingOut(false)
     }
   }

@@ -45,11 +45,11 @@ export function TopBar() {
     const supabase = createClient()
     const { error } = await supabase.auth.signOut()
     if (error) {
-      toast.error('Error al cerrar sesion')
+      toast.error('Error al cerrar sesión')
       return
     }
-    toast.success('Sesion cerrada')
-    router.push('/login')
+    // Force full page reload to clear all client state
+    window.location.href = '/login'
   }
 
   const roleConfig = profile?.role ? ROLES[profile.role] : null
