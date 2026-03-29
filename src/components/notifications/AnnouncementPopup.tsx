@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { Bell, X } from 'lucide-react'
+import { formatDistanceToNow } from 'date-fns'
+import { es } from 'date-fns/locale/es'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { PRIORITIES } from '@/lib/constants'
+import { PriorityBadge } from '@/components/ui/PriorityBadge'
 import type { PriorityValue } from '@/types/database'
 
 type Announcement = {
@@ -32,6 +35,7 @@ export function AnnouncementPopup() {
       // Get all active announcements that should popup:
       // - general (avisos para todos)
       // - urgente (reportes de problema)
+      // - operativo with priority alta/critica
       // - any with priority alta/critica
       const { data: allAnnouncements } = await supabase
         .from('announcements')
@@ -115,6 +119,11 @@ export function AnnouncementPopup() {
       ? 'Reporte de problema'
       : 'Aviso general'
 
+  const timeAgo = formatDistanceToNow(new Date(current.created_at), {
+    addSuffix: true,
+    locale: es,
+  })
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
@@ -126,7 +135,7 @@ export function AnnouncementPopup() {
         <div className="flex items-center gap-3 px-5 pt-5">
           <div
             className="flex size-10 shrink-0 items-center justify-center rounded-xl"
-            style={{ backgroundColor: priorityConfig?.bg ?? '#e8f5f1' }}
+            style={{ backgroundColor: current.priority === 'critica' ? '#fce8e8' : current.priority === 'alta' ? '#fef2f2' : '#e8f5f1' }}
           >
             <Bell className="size-5" style={{ color: borderColor }} />
           </div>
@@ -140,6 +149,7 @@ export function AnnouncementPopup() {
               </p>
             )}
           </div>
+          <PriorityBadge priority={current.priority} />
         </div>
 
         {/* Content */}
@@ -150,11 +160,14 @@ export function AnnouncementPopup() {
           <p className="mt-2 text-sm leading-relaxed text-[#6b6560]">
             {current.body}
           </p>
-          {current.author && (
-            <p className="mt-3 text-[11px] text-[#a39e97]">
-              — {current.author.first_name} {current.author.last_name}
-            </p>
-          )}
+          <div className="mt-3 flex items-center gap-3 text-[11px] text-[#a39e97]">
+            {current.author && (
+              <span>
+                — {current.author.first_name} {current.author.last_name}
+              </span>
+            )}
+            <span>{timeAgo}</span>
+          </div>
         </div>
 
         {/* Action */}

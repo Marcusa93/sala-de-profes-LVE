@@ -34,6 +34,7 @@ import { createClient } from '@/lib/supabase/client'
 import { ROLES } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
 import { DashboardSkeleton } from '@/components/ui/skeleton'
+import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
 import {
   FadeIn,
   StaggerList,
@@ -558,6 +559,11 @@ export default function DashboardPage() {
           </StaggerItem>
         </StaggerList>
       </FadeIn>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Announcement Popup — unread urgent/general on load               */}
+      {/* ---------------------------------------------------------------- */}
+      <AnnouncementPopup />
 
       {/* ---------------------------------------------------------------- */}
       {/* Report Problem Dialog                                            */}
