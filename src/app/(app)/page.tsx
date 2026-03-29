@@ -296,14 +296,7 @@ export default function DashboardPage() {
         </div>
       </FadeIn>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* AI Daily Briefing — socio/encargado only                         */}
-      {/* ---------------------------------------------------------------- */}
-      {isEncargado && (
-        <FadeIn delay={0.08}>
-          <DailyBriefing />
-        </FadeIn>
-      )}
+      {/* AI briefing removed — replaced by Action Center below */}
 
       {/* ---------------------------------------------------------------- */}
       {/* KPI Grid — role-aware, most important first                      */}

@@ -91,8 +91,8 @@ export default function ConfiguracionPage() {
     setFirstName(profile.first_name ?? '')
     setLastName(profile.last_name ?? '')
     setPhone(profile.phone ?? '')
-    const saved = (profile as Record<string, unknown>).settings as UserSettings | undefined
-    setSettings({ ...DEFAULT_SETTINGS, ...saved })
+    const saved = profile.settings as UserSettings | undefined
+    setSettings({ ...DEFAULT_SETTINGS, ...(saved ?? {}) })
     setInitialized(true)
   }
 

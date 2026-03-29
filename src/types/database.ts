@@ -76,6 +76,7 @@ export type Database = {
           avatar_url: string | null
           phone: string | null
           is_active: boolean
+          settings: Record<string, unknown>
           created_at: string
           updated_at: string
         }
@@ -87,6 +88,7 @@ export type Database = {
           avatar_url?: string | null
           phone?: string | null
           is_active?: boolean
+          settings?: Record<string, unknown>
           created_at?: string
           updated_at?: string
         }
@@ -98,6 +100,7 @@ export type Database = {
           avatar_url?: string | null
           phone?: string | null
           is_active?: boolean
+          settings?: Record<string, unknown>
           created_at?: string
           updated_at?: string
         }
