@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     title: 'Sala de Profes',
   },
   other: {
-    'apple-touch-icon': '/icons/icon-192.png',
+    'apple-touch-icon': '/icons/apple-touch-icon.png',
   },
 }
 
