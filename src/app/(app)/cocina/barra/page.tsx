@@ -125,18 +125,45 @@ export default function MiBarraPage() {
     )
   }, [items, search])
 
-  // Group items by semaphore
-  const grouped = useMemo(() => {
-    const red: BarItem[] = []
-    const yellow: BarItem[] = []
-    const green: BarItem[] = []
+  // Semaphore counts (for stats)
+  const semaphoreCounts = useMemo(() => {
+    let red = 0, yellow = 0, green = 0
     for (const item of filteredItems) {
       const s = getSemaphore(item)
-      if (s === 'red') red.push(item)
-      else if (s === 'yellow') yellow.push(item)
-      else green.push(item)
+      if (s === 'red') red++
+      else if (s === 'yellow') yellow++
+      else green++
     }
     return { red, yellow, green }
+  }, [filteredItems])
+
+  // Group by category — urgents first within each category
+  const grouped = useMemo(() => {
+    // Urgents across all categories go in a special section
+    const urgents = filteredItems.filter(i => getSemaphore(i) === 'red')
+
+    // Group rest by category (including urgents in their category too)
+    const byCat = new Map<string, BarItem[]>()
+    const catOrder = ['cafe', 'lacteos', 'insumos_oyambre', 'suministros', 'packaging', 'general']
+    for (const cat of catOrder) byCat.set(cat, [])
+
+    for (const item of filteredItems) {
+      const cat = item.category || 'general'
+      if (!byCat.has(cat)) byCat.set(cat, [])
+      byCat.get(cat)!.push(item)
+    }
+
+    // Sort items within each category: urgents first, then by name
+    for (const [, items] of byCat) {
+      items.sort((a, b) => {
+        const sa = getSemaphore(a) === 'red' ? 0 : getSemaphore(a) === 'yellow' ? 1 : 2
+        const sb = getSemaphore(b) === 'red' ? 0 : getSemaphore(b) === 'yellow' ? 1 : 2
+        if (sa !== sb) return sa - sb
+        return a.name.localeCompare(b.name)
+      })
+    }
+
+    return { urgents, byCat }
   }, [filteredItems])
 
   // Items with received orders (need stock update)
@@ -281,17 +308,17 @@ export default function MiBarraPage() {
         <div className="mt-3 flex gap-2">
           <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#fef2f2] py-2">
             <span className="size-2 rounded-full bg-[#ea504c]" />
-            <span className="text-xs font-bold text-[#ea504c]">{grouped.red.length}</span>
+            <span className="text-xs font-bold text-[#ea504c]">{semaphoreCounts.red}</span>
             <span className="text-[10px] text-[#ea504c]">urgente</span>
           </div>
           <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#fdf6ec] py-2">
             <span className="size-2 rounded-full bg-[#d4943a]" />
-            <span className="text-xs font-bold text-[#d4943a]">{grouped.yellow.length}</span>
+            <span className="text-xs font-bold text-[#d4943a]">{semaphoreCounts.yellow}</span>
             <span className="text-[10px] text-[#d4943a]">atención</span>
           </div>
           <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#e8f5f1] py-2">
             <span className="size-2 rounded-full bg-[#006d5a]" />
-            <span className="text-xs font-bold text-[#006d5a]">{grouped.green.length}</span>
+            <span className="text-xs font-bold text-[#006d5a]">{semaphoreCounts.green}</span>
             <span className="text-[10px] text-[#006d5a]">ok</span>
           </div>
         </div>
@@ -324,95 +351,77 @@ export default function MiBarraPage() {
       )}
 
       {/* ============================================================= */}
-      {/* SECTION: Urgente / Falta */}
+      {/* SECTION: Urgentes — always visible if any */}
       {/* ============================================================= */}
-      {grouped.red.length > 0 && (
-        <Section
-          color="red"
-          label={`Urgente (${grouped.red.length})`}
-          items={grouped.red}
-          orderByItem={orderByItem}
-          editingId={editingId}
-          editQty={editQty}
-          canEdit={canEdit}
-          historyItemId={historyItemId}
-          historyLogs={historyLogs}
-          loadingHistory={loadingHistory}
-          onEditStart={(id, qty) => { setEditingId(id); setEditQty(String(qty)) }}
-          onEditCancel={() => setEditingId(null)}
-          onEditSave={(id) => handleUpdateQty(id, parseFloat(editQty) || 0)}
-          onEditQtyChange={setEditQty}
-          onOrder={(id) => setOrderItemId(id)}
-          onHistory={loadHistory}
-        />
-      )}
-
-      {/* ============================================================= */}
-      {/* SECTION: Atención */}
-      {/* ============================================================= */}
-      {grouped.yellow.length > 0 && (
-        <Section
-          color="yellow"
-          label={`Atención (${grouped.yellow.length})`}
-          items={grouped.yellow}
-          orderByItem={orderByItem}
-          editingId={editingId}
-          editQty={editQty}
-          canEdit={canEdit}
-          historyItemId={historyItemId}
-          historyLogs={historyLogs}
-          loadingHistory={loadingHistory}
-          onEditStart={(id, qty) => { setEditingId(id); setEditQty(String(qty)) }}
-          onEditCancel={() => setEditingId(null)}
-          onEditSave={(id) => handleUpdateQty(id, parseFloat(editQty) || 0)}
-          onEditQtyChange={setEditQty}
-          onOrder={(id) => setOrderItemId(id)}
-          onHistory={loadHistory}
-        />
-      )}
-
-      {/* ============================================================= */}
-      {/* SECTION: OK — collapsible */}
-      {/* ============================================================= */}
-      {grouped.green.length > 0 && (
-        <div>
-          <button
-            onClick={() => setShowOk(!showOk)}
-            className="flex w-full items-center justify-between rounded-xl bg-[#e8f5f1] px-4 py-3"
-          >
-            <span className="flex items-center gap-2">
-              <span className="size-2.5 rounded-full bg-[#006d5a]" />
-              <span className="text-xs font-bold uppercase tracking-wider text-[#006d5a]">
-                OK ({grouped.green.length})
-              </span>
+      {grouped.urgents.length > 0 && (
+        <div className="rounded-2xl border-2 border-[#ea504c]/30 bg-[#fef2f2] p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className="size-4 text-[#ea504c]" />
+            <span className="text-xs font-bold uppercase tracking-wider text-[#ea504c]">
+              Urgente — Reponer ({grouped.urgents.length})
             </span>
-            {showOk ? <ChevronUp className="size-4 text-[#006d5a]" /> : <ChevronDown className="size-4 text-[#006d5a]" />}
-          </button>
-          {showOk && (
-            <div className="mt-2">
-              <Section
-                color="green"
-                label=""
-                items={grouped.green}
-                orderByItem={orderByItem}
-                editingId={editingId}
-                editQty={editQty}
-                canEdit={canEdit}
-                historyItemId={historyItemId}
-                historyLogs={historyLogs}
-                loadingHistory={loadingHistory}
-                onEditStart={(id, qty) => { setEditingId(id); setEditQty(String(qty)) }}
-                onEditCancel={() => setEditingId(null)}
-                onEditSave={(id) => handleUpdateQty(id, parseFloat(editQty) || 0)}
-                onEditQtyChange={setEditQty}
-                onOrder={(id) => setOrderItemId(id)}
-                onHistory={loadHistory}
-                hideHeader
-              />
-            </div>
-          )}
+          </div>
+          <Section
+            color="red"
+            label=""
+            items={grouped.urgents}
+            orderByItem={orderByItem}
+            editingId={editingId}
+            editQty={editQty}
+            canEdit={canEdit}
+            historyItemId={historyItemId}
+            historyLogs={historyLogs}
+            loadingHistory={loadingHistory}
+            onEditStart={(id, qty) => { setEditingId(id); setEditQty(String(qty)) }}
+            onEditCancel={() => setEditingId(null)}
+            onEditSave={(id) => handleUpdateQty(id, parseFloat(editQty) || 0)}
+            onEditQtyChange={setEditQty}
+            onOrder={(id) => setOrderItemId(id)}
+            onHistory={loadHistory}
+            hideHeader
+          />
         </div>
       )}
+
+      {/* ============================================================= */}
+      {/* STOCK BY CATEGORY — all visible */}
+      {/* ============================================================= */}
+      {Array.from(grouped.byCat.entries()).map(([cat, catItems]) => {
+        if (catItems.length === 0) return null
+        const catConfig = BAR_CATEGORIES[cat as keyof typeof BAR_CATEGORIES]
+        const catLabel = catConfig?.label ?? cat
+        const catIcon = catConfig?.icon ?? '📦'
+
+        return (
+          <div key={cat}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm">{catIcon}</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-[#3d2c24]">
+                {catLabel} ({catItems.length})
+              </span>
+            </div>
+            <Section
+              color="green"
+              label=""
+              items={catItems}
+              orderByItem={orderByItem}
+              editingId={editingId}
+              editQty={editQty}
+              canEdit={canEdit}
+              historyItemId={historyItemId}
+              historyLogs={historyLogs}
+              loadingHistory={loadingHistory}
+              onEditStart={(id, qty) => { setEditingId(id); setEditQty(String(qty)) }}
+              onEditCancel={() => setEditingId(null)}
+              onEditSave={(id) => handleUpdateQty(id, parseFloat(editQty) || 0)}
+              onEditQtyChange={setEditQty}
+              onOrder={(id) => setOrderItemId(id)}
+              onHistory={loadHistory}
+              hideHeader
+            />
+          </div>
+        )
+      })}
 
       {/* ============================================================= */}
       {/* SECTION: Mis pedidos */}
@@ -539,8 +548,11 @@ function Section({
           const showingHistory = historyItemId === item.id
           const cat = BAR_CATEGORIES[item.category as keyof typeof BAR_CATEGORIES]
 
+          // Per-item semaphore color when rendering by category
+          const itemSemaphore = hideHeader ? SEMAPHORE[getSemaphore(item)] : s
+
           return (
-            <div key={item.id} className="rounded-xl border bg-card overflow-hidden" style={{ borderLeftWidth: 3, borderLeftColor: s.border }}>
+            <div key={item.id} className="rounded-xl border bg-card overflow-hidden" style={{ borderLeftWidth: 3, borderLeftColor: itemSemaphore.border }}>
               <div className="flex items-center gap-2 px-3 py-2.5">
                 {/* Name + category */}
                 <div className="min-w-0 flex-1">
@@ -579,7 +591,7 @@ function Section({
                     <button
                       onClick={() => canEdit ? onEditStart(item.id, item.current_qty) : undefined}
                       className={`flex items-baseline gap-0.5 rounded-lg px-2.5 py-1 ${canEdit ? 'hover:bg-[#f3efe9] active:scale-95 cursor-pointer' : ''}`}
-                      style={{ color: s.color }}
+                      style={{ color: itemSemaphore.color }}
                     >
                       <span className="text-base font-bold tabular-nums">{item.current_qty}</span>
                       {item.unit && (
