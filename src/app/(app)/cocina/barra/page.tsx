@@ -24,11 +24,16 @@ type BarItem = {
   id: number
   name: string
   category: string
+  unit: string | null
   current_qty: number
   min_level: number
   current_detail: string | null
   is_urgent: boolean
   is_active: boolean
+}
+
+const UNIT_SHORT: Record<string, string> = {
+  unidad: 'u', litro: 'lt', kg: 'kg', gr: 'gr', caja: 'caja', ml: 'ml',
 }
 
 type BarOrder = {
@@ -76,6 +81,7 @@ export default function MiBarraPage() {
   const [orders, setOrders] = useState<BarOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [showOk, setShowOk] = useState(false)
+  const [search, setSearch] = useState('')
 
   // Edit state
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -109,19 +115,29 @@ export default function MiBarraPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // Filter by search
+  const filteredItems = useMemo(() => {
+    if (!search.trim()) return items
+    const q = search.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    return items.filter(i =>
+      i.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q) ||
+      (BAR_CATEGORIES[i.category as keyof typeof BAR_CATEGORIES]?.label ?? i.category).toLowerCase().includes(q)
+    )
+  }, [items, search])
+
   // Group items by semaphore
   const grouped = useMemo(() => {
     const red: BarItem[] = []
     const yellow: BarItem[] = []
     const green: BarItem[] = []
-    for (const item of items) {
+    for (const item of filteredItems) {
       const s = getSemaphore(item)
       if (s === 'red') red.push(item)
       else if (s === 'yellow') yellow.push(item)
       else green.push(item)
     }
     return { red, yellow, green }
-  }, [items])
+  }, [filteredItems])
 
   // Items with received orders (need stock update)
   const receivedOrders = useMemo(() => orders.filter(o => o.status === 'received'), [orders])
@@ -233,16 +249,51 @@ export default function MiBarraPage() {
       {/* Header */}
       <FadeIn>
         <div className="flex items-center gap-3">
-          <Link href="/cocina" className="icon-btn flex items-center justify-center rounded-xl bg-secondary">
+          <Link href="/" className="icon-btn flex items-center justify-center rounded-xl bg-secondary">
             <ArrowLeft className="size-4" />
           </Link>
           <div className="flex-1">
-            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Mi Barra</h1>
+            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Stock Cafetería</h1>
             <p className="text-[11px] text-[#a39e97]">
               Turno {currentShift} · {profile?.first_name} · {format(new Date(), "d MMM HH:mm", { locale: es })}
             </p>
           </div>
           <Coffee className="size-5 text-[#8b5e34]" />
+        </div>
+
+        {/* Search */}
+        <div className="relative mt-3">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar producto..."
+            className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] py-2.5 pl-10 pr-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+          />
+          <Package className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[#a39e97] hover:bg-[#f3efe9]">
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Quick stats */}
+        <div className="mt-3 flex gap-2">
+          <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#fef2f2] py-2">
+            <span className="size-2 rounded-full bg-[#ea504c]" />
+            <span className="text-xs font-bold text-[#ea504c]">{grouped.red.length}</span>
+            <span className="text-[10px] text-[#ea504c]">urgente</span>
+          </div>
+          <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#fdf6ec] py-2">
+            <span className="size-2 rounded-full bg-[#d4943a]" />
+            <span className="text-xs font-bold text-[#d4943a]">{grouped.yellow.length}</span>
+            <span className="text-[10px] text-[#d4943a]">atención</span>
+          </div>
+          <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#e8f5f1] py-2">
+            <span className="size-2 rounded-full bg-[#006d5a]" />
+            <span className="text-xs font-bold text-[#006d5a]">{grouped.green.length}</span>
+            <span className="text-[10px] text-[#006d5a]">ok</span>
+          </div>
         </div>
       </FadeIn>
 
@@ -524,13 +575,18 @@ function Section({
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
-                    {/* Quantity */}
+                    {/* Quantity + unit */}
                     <button
                       onClick={() => canEdit ? onEditStart(item.id, item.current_qty) : undefined}
-                      className={`rounded-lg px-2.5 py-1 text-sm font-bold tabular-nums ${canEdit ? 'hover:bg-[#f3efe9] active:scale-95 cursor-pointer' : ''}`}
+                      className={`flex items-baseline gap-0.5 rounded-lg px-2.5 py-1 ${canEdit ? 'hover:bg-[#f3efe9] active:scale-95 cursor-pointer' : ''}`}
                       style={{ color: s.color }}
                     >
-                      {item.current_qty}
+                      <span className="text-base font-bold tabular-nums">{item.current_qty}</span>
+                      {item.unit && (
+                        <span className="text-[10px] font-medium opacity-60">
+                          {UNIT_SHORT[item.unit] ?? item.unit}
+                        </span>
+                      )}
                     </button>
 
                     {/* Action: Pedir or order status */}
