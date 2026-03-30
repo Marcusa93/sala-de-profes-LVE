@@ -35,6 +35,7 @@ import { ROLES } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
 import { DashboardSkeleton } from '@/components/ui/skeleton'
 import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
+import { ShiftReminder } from '@/components/notifications/ShiftReminder'
 import {
   FadeIn,
   StaggerList,
@@ -149,10 +150,8 @@ export default function DashboardPage() {
           .limit(1)
           .maybeSingle()
 
-        const announcementsPromise = supabase
-          .from('announcements')
-          .select('*', { count: 'exact', head: true })
-          .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+        // Count unread announcements for this user using the RPC
+        const announcementsPromise = supabase.rpc('get_my_announcements')
 
         const teamPromise = isEncargado
           ? supabase
@@ -210,7 +209,9 @@ export default function DashboardPage() {
 
         setTodayAttendance(attendanceRes.data)
         setNextShift(shiftRes.data)
-        setAnnouncementCount(announcementsRes.count ?? 0)
+        // Count unread from get_my_announcements — filter out already read
+        const allAnnouncements = announcementsRes.data ?? []
+        setAnnouncementCount(allAnnouncements.length)
 
         if (teamRes) {
           setTeamToday((teamRes.data as unknown as TeamMember[]) ?? [])
@@ -438,7 +439,7 @@ export default function DashboardPage() {
                 <div className="kpi-card rounded-xl p-4" style={barUrgent > 0 ? { borderLeftWidth: 3, borderLeftColor: '#ea504c' } : {}}>
                   <div className="flex items-center gap-2">
                     <Coffee className={`size-3.5 ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`} />
-                    <span className="section-label">Barra</span>
+                    <span className="section-label">Stock Barra</span>
                   </div>
                   <p className={`mt-2 font-display text-2xl font-bold tabular-nums ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}>
                     {barUrgent > 0 ? <AnimatedNumber value={barUrgent} /> : '✓'}
@@ -446,6 +447,24 @@ export default function DashboardPage() {
                   <p className="text-[10px] text-[#a39e97]">
                     {barUrgent === 0 ? 'Todo OK' : 'urgentes'}
                   </p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Barista: Vajilla */}
+        {profile?.role === 'barista' && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/vajilla">
+                <div className="kpi-card rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <Package className="size-3.5 text-[#8b5e34]" />
+                    <span className="section-label">Vajilla</span>
+                  </div>
+                  <p className="mt-2 text-sm font-semibold text-[#3d2c24]">Control</p>
+                  <p className="text-[10px] text-[#a39e97]">Ver inventario</p>
                 </div>
               </Link>
             </ScalePress>
@@ -564,6 +583,9 @@ export default function DashboardPage() {
       {/* Announcement Popup — unread urgent/general on load               */}
       {/* ---------------------------------------------------------------- */}
       <AnnouncementPopup />
+
+      {/* Shift Reminder — for non-socios who haven't clocked in */}
+      <ShiftReminder />
 
       {/* ---------------------------------------------------------------- */}
       {/* Report Problem Dialog                                            */}
