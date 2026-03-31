@@ -10,7 +10,7 @@ import {
 import { FadeIn, StaggerList, StaggerItem, AnimatedNumber } from '@/components/ui/motion'
 import { ROLES } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
 // ---------------------------------------------------------------------------
 // Types
