@@ -118,3 +118,46 @@ function isStaticAsset(url) {
     url.pathname
   );
 }
+
+// ─── Push Notifications ──────────────────────────────
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+
+  try {
+    const data = event.data.json();
+    const options = {
+      body: data.body || '',
+      icon: data.icon || '/icons/icon-192.png',
+      badge: data.badge || '/icons/icon-192.png',
+      vibrate: [200, 100, 200],
+      data: { url: data.url || '/' },
+      actions: [{ action: 'open', title: 'Ver' }],
+    };
+
+    event.waitUntil(
+      self.registration.showNotification(data.title || 'Sala de Profes', options)
+    );
+  } catch {
+    // Invalid push data
+  }
+});
+
+// ─── Notification Click ──────────────────────────────
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const url = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      // Focus existing tab if available
+      const existing = clients.find((c) => c.url.includes(self.location.origin));
+      if (existing) {
+        existing.navigate(url);
+        return existing.focus();
+      }
+      // Open new tab
+      return self.clients.openWindow(url);
+    })
+  );
+});
