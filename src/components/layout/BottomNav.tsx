@@ -186,8 +186,29 @@ const BARISTA_MORE: ExpandableNavItem = {
   ],
 }
 
-// RUNNER — vajilla + chatbot
+// RUNNER — vajilla + barra (Agustín necesita ver barra) + chatbot
 const RUNNER_MORE: ExpandableNavItem = {
+  label: 'Más',
+  icon: MoreHorizontal,
+  groups: [
+    {
+      label: 'Salón',
+      items: [
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
+        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
+        { label: 'La Vieja', href: '/asistente', icon: Bot },
+      ],
+    },
+  ],
+}
+
+// BACHA — mínimo: vajilla + chatbot
+const BACHA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
@@ -221,7 +242,8 @@ function getNavItems(role?: AppRole): { items: NavItem[]; more?: ExpandableNavIt
   if (role === 'cocina') return { items: BASE_NAV, more: COCINA_MORE }
   if (role === 'barista') return { items: BASE_NAV, more: BARISTA_MORE }
   if (role === 'runner') return { items: BASE_NAV, more: RUNNER_MORE }
-  return { items: BASE_NAV, more: RUNNER_MORE }
+  if (role === 'bacha') return { items: BASE_NAV, more: BACHA_MORE }
+  return { items: BASE_NAV, more: BACHA_MORE }
 }
 
 // ---------------------------------------------------------------------------

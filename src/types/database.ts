@@ -1,4 +1,4 @@
-export type AppRole = 'socio' | 'encargado' | 'chef' | 'barista' | 'runner' | 'cocina'
+export type AppRole = 'socio' | 'encargado' | 'chef' | 'barista' | 'runner' | 'cocina' | 'bacha'
 export type AnnouncementTypeValue = 'general' | 'urgente' | 'recordatorio' | 'operativo'
 export type PriorityValue = 'baja' | 'media' | 'alta' | 'critica'
 export type AlertTypeValue = 'low_stock' | 'upcoming_purchase' | 'critical'
