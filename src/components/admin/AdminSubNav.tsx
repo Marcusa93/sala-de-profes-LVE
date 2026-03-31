@@ -24,7 +24,6 @@ const NAV_ITEMS = [
   { label: 'Turnos', href: '/admin/reportes/turnos', icon: Calendar },
   { label: 'Stock', href: '/stock', icon: Package },
   { label: 'Vajilla', href: '/vajilla', icon: Wine },
-  { label: 'Fudo', href: '/admin/fudo', icon: Store },
   { label: 'Avisos', href: '/admin/reportes/notificaciones', icon: Bell },
 ]
 

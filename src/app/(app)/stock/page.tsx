@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { isManagerOrAbove } from '@/lib/roles'
-import { Package, Loader2, Search, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { Package, Loader2, Search, X, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -56,6 +56,7 @@ export default function StockPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editQty, setEditQty] = useState('')
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
+  const [syncing, setSyncing] = useState(false)
 
   const isEncargado = isManagerOrAbove(profile?.role)
 
@@ -165,8 +166,35 @@ export default function StockPage() {
     <div className="mx-auto max-w-lg space-y-4 pb-28">
       {/* Header */}
       <FadeIn>
-        <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Stock</h1>
-        <p className="section-label mt-0.5">{counts.total} items</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Stock</h1>
+            <p className="section-label mt-0.5">{counts.total} items</p>
+          </div>
+          {isEncargado && (
+            <button
+              onClick={async () => {
+                setSyncing(true)
+                try {
+                  const res = await fetch('/api/fudo/sync/stock', { method: 'POST' })
+                  const json = await res.json()
+                  if (json.success) {
+                    toast.success(`Sincronizado con Fudo — ${json.synced ?? 0} items`)
+                    fetchData()
+                  } else {
+                    toast.error(json.error || 'Error al sincronizar')
+                  }
+                } catch { toast.error('Error de conexión') }
+                setSyncing(false)
+              }}
+              disabled={syncing}
+              className="flex items-center gap-1.5 rounded-xl bg-[#e8f5f1] px-3 py-1.5 text-[11px] font-bold text-[#006d5a] transition-colors hover:bg-[#c0e4da] disabled:opacity-50"
+            >
+              {syncing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+              Sync Fudo
+            </button>
+          )}
+        </div>
       </FadeIn>
 
       {/* Search */}
