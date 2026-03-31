@@ -27,18 +27,26 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch all attendance logs in period
-    const { data: logs } = await admin
-      .from('attendance_logs')
-      .select('user_id, operative_date, clock_in_at, clock_out_at, status')
-      .gte('operative_date', from)
-      .lte('operative_date', to)
-      .order('operative_date')
+    const [logsRes, profilesRes, ratesRes] = await Promise.all([
+      admin.from('attendance_logs')
+        .select('user_id, operative_date, clock_in_at, clock_out_at, status, clock_out_type')
+        .gte('operative_date', from)
+        .lte('operative_date', to)
+        .order('operative_date'),
+      admin.from('profiles')
+        .select('id, first_name, last_name, role')
+        .eq('is_active', true),
+      admin.from('payroll_rates')
+        .select('role, hourly_rate, label'),
+    ])
 
-    // Fetch all profiles
-    const { data: profiles } = await admin
-      .from('profiles')
-      .select('id, first_name, last_name, role')
-      .eq('is_active', true)
+    const logs = logsRes.data
+    const profiles = profilesRes.data
+    const rates = ratesRes.data ?? []
+
+    // Build rate map
+    const rateMap = new Map<string, number>()
+    for (const r of rates) rateMap.set(r.role, Number(r.hourly_rate))
 
     if (!logs || !profiles) {
       return NextResponse.json({ error: 'Error al consultar datos' }, { status: 500 })
@@ -46,7 +54,7 @@ export async function GET(request: NextRequest) {
 
     // Aggregate per employee
     const empMap = new Map<string, {
-      days: Map<string, { hours: number; clockIn: string; clockOut: string | null; status: string }>
+      days: Map<string, { hours: number; clockIn: string; clockOut: string | null; status: string; clockOutType: string }>
       totalHours: number
       totalDays: number
       missingCheckouts: number
@@ -76,6 +84,7 @@ export async function GET(request: NextRequest) {
         clockIn: format(parseISO(log.clock_in_at), 'HH:mm'),
         clockOut: log.clock_out_at ? format(parseISO(log.clock_out_at), 'HH:mm') : null,
         status: log.status,
+        clockOutType: (log as Record<string, unknown>).clock_out_type as string ?? 'manual',
       })
 
       emp.totalHours += hours
@@ -92,15 +101,21 @@ export async function GET(request: NextRequest) {
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([date, data]) => ({ date, ...data }))
 
+        const hourlyRate = rateMap.get(p.role) ?? 0
+        const totalHours = Math.round(emp.totalHours * 100) / 100
+        const totalPay = Math.round(totalHours * hourlyRate)
+
         return {
           id: p.id,
           firstName: p.first_name,
           lastName: p.last_name,
           role: p.role,
-          totalHours: Math.round(emp.totalHours * 100) / 100,
+          hourlyRate,
+          totalHours,
           totalDays: emp.totalDays,
           avgHoursPerDay: emp.totalDays > 0 ? Math.round((emp.totalHours / emp.totalDays) * 10) / 10 : 0,
           missingCheckouts: emp.missingCheckouts,
+          totalPay,
           days: daysArray,
         }
       })
@@ -109,10 +124,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       period: { from, to },
       employees,
+      rates: rates.map(r => ({ role: r.role, hourlyRate: Number(r.hourly_rate), label: r.label })),
       summary: {
         totalEmployees: employees.length,
         totalHours: Math.round(employees.reduce((s, e) => s + e.totalHours, 0) * 100) / 100,
         totalDays: employees.reduce((s, e) => s + e.totalDays, 0),
+        totalPay: employees.reduce((s, e) => s + e.totalPay, 0),
         missingCheckouts: employees.reduce((s, e) => s + e.missingCheckouts, 0),
       },
     })
