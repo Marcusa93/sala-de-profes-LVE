@@ -91,7 +91,7 @@ export default function VentasPage() {
     if (showSpinner) setSyncing(true)
     try {
       const url = isLive ? '/api/fudo/auto-sync' : `/api/fudo/auto-sync?date=${dateStr}`
-      const res = await fetch(url)
+      const res = await fetch(url, { credentials: 'include' })
       const json = await res.json()
       if (json.today) {
         setData(json.today)
@@ -116,7 +116,7 @@ export default function VentasPage() {
       const promises = batch.map(async (d) => {
         const ds = format(d, 'yyyy-MM-dd')
         try {
-          const res = await fetch(`/api/fudo/auto-sync?date=${ds}`)
+          const res = await fetch(`/api/fudo/auto-sync?date=${ds}`, { credentials: 'include' })
           const json = await res.json()
           return { date: ds, total: json.today?.totalFacturado ?? 0, tickets: json.today?.totalTickets ?? 0 }
         } catch {

@@ -186,7 +186,11 @@ export default function DashboardPage() {
 
         // Ventas hoy — for socio
         const ventasPromise = profile!.role === 'socio'
-          ? fetch('/api/fudo/auto-sync').then(r => r.json()).catch(() => null)
+          ? fetch('/api/fudo/auto-sync', { credentials: 'include' }).then(async r => {
+              const json = await r.json()
+              if (json.error) console.error('[Ventas Home]', json.error)
+              return json
+            }).catch((err) => { console.error('[Ventas Home fetch]', err); return null })
           : null
 
         // Bar stock urgente — for barista
