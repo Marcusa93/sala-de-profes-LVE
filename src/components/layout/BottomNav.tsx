@@ -200,10 +200,10 @@ function getAllMoreItems(more?: ExpandableNavItem): NavItem[] {
   return more.groups.flatMap((g) => g.items)
 }
 
-// Socios get Ventas + Expedientes in the main bar
+// Socios: Inicio, Control, Expedientes, Avisos + Más
 const SOCIO_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
-  { label: 'Ventas', href: '/ventas', icon: BarChart3 },
+  { label: 'Control', href: '/admin', icon: LayoutDashboard },
   { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
