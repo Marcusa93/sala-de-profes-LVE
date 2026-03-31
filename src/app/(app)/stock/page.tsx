@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { isManagerOrAbove } from '@/lib/roles'
-import { Package, Loader2, Search, X, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
+import { Package, Loader2, Search, X, ChevronDown, ChevronUp, RefreshCw, History, User, Clock } from 'lucide-react'
+import { format } from 'date-fns'
+import { es } from 'date-fns/locale/es'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -25,6 +27,14 @@ type StockItem = {
   is_active: boolean
   supplier_id: string | null
   suppliers: { name: string } | null
+}
+
+type StockLog = {
+  id: number
+  old_qty: number | null
+  new_qty: number | null
+  created_at: string
+  profiles?: { first_name: string; last_name: string } | null
 }
 
 type SemaphoreColor = 'red' | 'yellow' | 'green'
@@ -57,6 +67,9 @@ export default function StockPage() {
   const [editQty, setEditQty] = useState('')
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
   const [syncing, setSyncing] = useState(false)
+  const [historyItemId, setHistoryItemId] = useState<string | null>(null)
+  const [historyLogs, setHistoryLogs] = useState<StockLog[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
 
   const isEncargado = isManagerOrAbove(profile?.role)
 
@@ -73,6 +86,22 @@ export default function StockPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Load history for an item
+  const loadHistory = async (itemId: string) => {
+    if (historyItemId === itemId) { setHistoryItemId(null); return }
+    setHistoryItemId(itemId)
+    setLoadingHistory(true)
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('stock_logs')
+      .select('id, old_qty, new_qty, created_at, profiles:user_id(first_name, last_name)')
+      .eq('stock_item_id', itemId)
+      .order('created_at', { ascending: false })
+      .limit(15)
+    setHistoryLogs((data as unknown as StockLog[]) ?? [])
+    setLoadingHistory(false)
+  }
 
   // Filter
   const filtered = useMemo(() => {
@@ -297,61 +326,106 @@ export default function StockPage() {
                     const c = COLORS[s]
                     const isEditing = editingId === item.id
 
+                    const showHistory = historyItemId === item.id
+
                     return (
                       <div
                         key={item.id}
-                        className="flex items-center rounded-xl border bg-card px-3 py-2.5"
+                        className="rounded-xl border bg-card overflow-hidden"
                         style={{ borderLeftWidth: 3, borderLeftColor: c.border.replace('border-[', '').replace(']', '') }}
                       >
-                        {/* Name */}
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-[#3d2c24]">{item.name}</p>
-                          {item.suppliers?.name && (
-                            <p className="truncate text-[10px] text-[#a39e97]">{item.suppliers.name}</p>
+                        <div className="flex items-center px-3 py-2.5">
+                          {/* Name */}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-[#3d2c24]">{item.name}</p>
+                            {item.suppliers?.name && (
+                              <p className="truncate text-[10px] text-[#a39e97]">{item.suppliers.name}</p>
+                            )}
+                          </div>
+
+                          {/* Qty — tap to edit */}
+                          {isEditing ? (
+                            <div className="flex items-center gap-1 ml-2">
+                              <input
+                                value={editQty}
+                                onChange={(e) => setEditQty(e.target.value)}
+                                className="w-16 rounded-lg border bg-white px-2 py-1.5 text-center text-sm font-bold tabular-nums focus:border-[#006d5a] focus:outline-none"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSave(item.id)
+                                  if (e.key === 'Escape') setEditingId(null)
+                                }}
+                              />
+                              <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+                              <button
+                                onClick={() => handleSave(item.id)}
+                                className="rounded-lg bg-[#006d5a] px-2 py-1.5 text-[10px] font-bold text-white"
+                              >
+                                OK
+                              </button>
+                              <button
+                                onClick={() => setEditingId(null)}
+                                className="rounded-lg px-1.5 py-1.5 text-[#a39e97]"
+                              >
+                                <X className="size-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 ml-2">
+                              <button
+                                onClick={() => {
+                                  if (!isEncargado) return
+                                  setEditingId(item.id)
+                                  setEditQty(String(item.current_qty))
+                                }}
+                                className={`flex items-baseline gap-0.5 rounded-lg px-2.5 py-1 ${isEncargado ? 'hover:bg-[#f3efe9] cursor-pointer active:scale-95' : ''}`}
+                              >
+                                <span className={`text-base font-bold tabular-nums ${c.text}`}>
+                                  {item.current_qty}
+                                </span>
+                                <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+                              </button>
+                              {/* History button */}
+                              <button
+                                onClick={() => loadHistory(item.id)}
+                                className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9]"
+                                title="Ver historial"
+                              >
+                                <History className="size-3.5" />
+                              </button>
+                            </div>
                           )}
                         </div>
 
-                        {/* Qty — tap to edit */}
-                        {isEditing ? (
-                          <div className="flex items-center gap-1 ml-2">
-                            <input
-                              value={editQty}
-                              onChange={(e) => setEditQty(e.target.value)}
-                              className="w-16 rounded-lg border bg-white px-2 py-1.5 text-center text-sm font-bold tabular-nums focus:border-[#006d5a] focus:outline-none"
-                              autoFocus
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSave(item.id)
-                                if (e.key === 'Escape') setEditingId(null)
-                              }}
-                            />
-                            <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
-                            <button
-                              onClick={() => handleSave(item.id)}
-                              className="rounded-lg bg-[#006d5a] px-2 py-1.5 text-[10px] font-bold text-white"
-                            >
-                              OK
-                            </button>
-                            <button
-                              onClick={() => setEditingId(null)}
-                              className="rounded-lg px-1.5 py-1.5 text-[#a39e97]"
-                            >
-                              <X className="size-3" />
-                            </button>
+                        {/* History panel */}
+                        {showHistory && (
+                          <div className="border-t bg-[#faf8f5] px-3 py-2.5">
+                            {loadingHistory ? (
+                              <Loader2 className="size-4 animate-spin text-[#a39e97] mx-auto" />
+                            ) : historyLogs.length === 0 ? (
+                              <p className="text-[11px] text-[#a39e97] text-center">Sin movimientos registrados</p>
+                            ) : (
+                              <div className="space-y-1.5">
+                                {historyLogs.map(log => (
+                                  <div key={log.id} className="flex items-center justify-between text-[11px]">
+                                    <div className="flex items-center gap-1.5">
+                                      <User className="size-2.5 text-[#a39e97]" />
+                                      <span className="font-medium text-[#3d2c24]">
+                                        {log.profiles?.first_name ?? '?'}
+                                      </span>
+                                      <span className="text-[#a39e97]">
+                                        {log.old_qty} → {log.new_qty}
+                                      </span>
+                                    </div>
+                                    <span className="flex items-center gap-1 text-[#a39e97]">
+                                      <Clock className="size-2.5" />
+                                      {format(new Date(log.created_at), 'd MMM HH:mm', { locale: es })}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              if (!isEncargado) return
-                              setEditingId(item.id)
-                              setEditQty(String(item.current_qty))
-                            }}
-                            className={`ml-2 flex items-baseline gap-0.5 rounded-lg px-2.5 py-1 ${isEncargado ? 'hover:bg-[#f3efe9] cursor-pointer active:scale-95' : ''}`}
-                          >
-                            <span className={`text-base font-bold tabular-nums ${c.text}`}>
-                              {item.current_qty}
-                            </span>
-                            <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
-                          </button>
                         )}
                       </div>
                     )
