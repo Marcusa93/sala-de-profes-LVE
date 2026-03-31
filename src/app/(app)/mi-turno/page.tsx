@@ -194,7 +194,7 @@ export default function MiTurnoPage() {
           setGeoLoading(false)
           resolve('manual')
         },
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 },
       )
     })
   }

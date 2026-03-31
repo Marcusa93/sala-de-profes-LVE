@@ -159,7 +159,10 @@ async function processWeeklyGrid(
   const created: string[] = []
   const errors: string[] = []
   const skipped: string[] = []
-  let currentRole = ''
+
+  // Check if first header cell is also a role (e.g. "RUNNERS")
+  const firstHeaderRole = ROLE_MAP[headers[0].toLowerCase().replace(/[^a-záéíóúñ]/g, '')] ?? ''
+  let currentRole = firstHeaderRole
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i] as unknown[]

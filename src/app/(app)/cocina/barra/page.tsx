@@ -98,18 +98,27 @@ export default function MiBarraPage() {
   const [historyLogs, setHistoryLogs] = useState<LogEntry[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
 
+  // Handover state
+  const [lastHandover, setLastHandover] = useState<{
+    shift_type: string; date: string; notes: string | null
+    items: unknown[]
+  } | null>(null)
+  const [closingShift, setClosingShift] = useState(false)
+
   const isManager = isManagerOrAbove(profile?.role)
   const canEdit = profile?.role === 'barista' || isManager
 
   // Fetch everything
   const fetchData = useCallback(async () => {
     const supabase = createClient()
-    const [itemsRes, ordersRes] = await Promise.all([
+    const [itemsRes, ordersRes, handoverRes] = await Promise.all([
       supabase.from('bar_stock_items').select('*').eq('is_active', true).order('sort_order'),
       supabase.from('bar_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }),
+      supabase.from('bar_shift_handover').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
     ])
     setItems(itemsRes.data ?? [])
     setOrders(ordersRes.data ?? [])
+    if (handoverRes.data) setLastHandover(handoverRes.data as typeof lastHandover)
     setLoading(false)
   }, [])
 
@@ -259,6 +268,42 @@ export default function MiBarraPage() {
       .limit(10)
     setHistoryLogs((data as unknown as LogEntry[]) ?? [])
     setLoadingHistory(false)
+  }
+
+  // Close shift — save current stock as handover
+  const handleCloseShift = async () => {
+    if (closingShift) return
+    setClosingShift(true)
+    try {
+      const supabase = createClient()
+      const shiftType = new Date().getHours() < 15 ? 'morning' : 'night'
+      const today = format(new Date(), 'yyyy-MM-dd')
+
+      const handoverItems = items.map(i => ({
+        id: i.id,
+        name: i.name,
+        qty: i.current_qty,
+        unit: i.unit,
+        category: i.category,
+        detail: i.current_detail,
+      }))
+
+      const { error } = await supabase.from('bar_shift_handover').insert({
+        shift_type: shiftType,
+        date: today,
+        closed_by: profile?.id,
+        items: handoverItems,
+        notes: null,
+      })
+
+      if (error) throw error
+      toast.success('Turno cerrado — stock guardado para el siguiente')
+      fetchData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al cerrar turno')
+    } finally {
+      setClosingShift(false)
+    }
   }
 
   if (profileLoading || loading) {
@@ -453,6 +498,51 @@ export default function MiBarraPage() {
               )
             })}
           </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* HANDOVER — cerrar turno + ver turno anterior */}
+      {/* ============================================================= */}
+      {canEdit && (
+        <div className="space-y-2">
+          {/* Previous handover */}
+          {lastHandover && (
+            <div className="rounded-xl border bg-[#faf8f5] p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="size-3.5 text-[#8b5e34]" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8b5e34]">
+                  Turno anterior dejó
+                </span>
+                <span className="text-[10px] text-[#a39e97]">
+                  {lastHandover.shift_type === 'morning' ? 'Mañana' : 'Noche'} · {lastHandover.date}
+                </span>
+              </div>
+              {lastHandover.notes && (
+                <p className="text-xs text-[#3d2c24] mb-1">📝 {lastHandover.notes}</p>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                {(lastHandover.items as Array<{ name: string; qty: number; unit: string }>).slice(0, 8).map((item, i) => (
+                  <span key={i} className="rounded-lg bg-white px-2 py-1 text-[10px] text-[#3d2c24]">
+                    {item.name} <strong>{item.qty}</strong> {item.unit || ''}
+                  </span>
+                ))}
+                {(lastHandover.items as unknown[]).length > 8 && (
+                  <span className="text-[10px] text-[#a39e97]">+{(lastHandover.items as unknown[]).length - 8} más</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Close shift button */}
+          <button
+            onClick={handleCloseShift}
+            disabled={closingShift}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#8b5e34] py-3 text-sm font-bold text-white transition-all hover:bg-[#7a5230] active:scale-[0.98] disabled:opacity-50"
+          >
+            {closingShift ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+            Cerrar turno — Guardar estado para el siguiente
+          </button>
         </div>
       )}
 
