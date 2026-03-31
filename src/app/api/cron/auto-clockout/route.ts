@@ -23,70 +23,11 @@ export async function GET(request: NextRequest) {
   try {
     const admin = createAdminClient()
 
-    // Get current time in Argentina
-    const now = new Date()
-    const argNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }))
-    const dayOfWeek = argNow.getDay() // 0=Sun, 1=Mon, ...
-    const currentHour = argNow.getHours()
-    const currentMin = argNow.getMinutes()
-    const today = argNow.toISOString().split('T')[0]
+    // This runs once per day at ~00:00 ARG (3:00 UTC)
+    // It closes ALL open attendance logs from yesterday or earlier
+    // using the closing_hours table for each day's closing time
 
-    // Get closing hour for today
-    // First check if there's an override for today
-    const { data: override } = await admin
-      .from('closing_hours')
-      .select('closing_time')
-      .eq('override_date', today)
-      .eq('is_default', false)
-      .limit(1)
-      .maybeSingle()
-
-    let closingTime: string
-    if (override) {
-      closingTime = override.closing_time
-    } else {
-      const { data: defaultHour } = await admin
-        .from('closing_hours')
-        .select('closing_time')
-        .eq('day_of_week', dayOfWeek)
-        .eq('is_default', true)
-        .limit(1)
-        .maybeSingle()
-
-      closingTime = defaultHour?.closing_time ?? '00:00'
-    }
-
-    // Parse closing time
-    const [closeH, closeM] = closingTime.split(':').map(Number)
-
-    // Check if we're within 15 minutes of closing time
-    // For "00:00" or "01:00" closing, this means late night
-    const closeMinutes = closeH * 60 + closeM
-    const nowMinutes = currentHour * 60 + currentMin
-
-    // Handle overnight: if closing is 00:00 or 01:00, and current is around that time
-    let isClosingTime = false
-    if (closeMinutes === 0) {
-      // Midnight closing: trigger between 23:45 and 00:15
-      isClosingTime = nowMinutes >= 23 * 60 + 45 || nowMinutes <= 15
-    } else if (closeMinutes <= 120) {
-      // 01:00 or 02:00 closing
-      isClosingTime = Math.abs(nowMinutes - closeMinutes) <= 15
-    } else {
-      // Daytime closing (e.g., 16:00)
-      isClosingTime = Math.abs(nowMinutes - closeMinutes) <= 15
-    }
-
-    if (!isClosingTime) {
-      return NextResponse.json({
-        message: 'Not closing time',
-        currentTime: `${currentHour}:${String(currentMin).padStart(2, '0')}`,
-        closingTime,
-        dayOfWeek,
-      })
-    }
-
-    // Find all open attendance logs (no clock_out)
+    // Find all open attendance logs
     const { data: openLogs } = await admin
       .from('attendance_logs')
       .select('id, user_id, clock_in_at, operative_date')
@@ -94,28 +35,44 @@ export async function GET(request: NextRequest) {
       .eq('status', 'open')
 
     if (!openLogs?.length) {
-      return NextResponse.json({ message: 'No open shifts to close', closingTime })
+      return NextResponse.json({ message: 'No open shifts to close' })
     }
 
-    // Build the clock_out timestamp
-    // If closing is 00:00, the actual close is midnight of today → start of tomorrow
-    // If closing is 01:00, it's 01:00 of the next day
-    let clockOutDate: Date
-    if (closeH === 0 && closeM === 0) {
-      // Midnight → end of today
-      clockOutDate = new Date(`${today}T23:59:59-03:00`)
-    } else if (closeH <= 6) {
-      // Early morning (01:00, etc) → same calendar day technically next morning
-      clockOutDate = new Date(`${today}T${closingTime}:00-03:00`)
-    } else {
-      clockOutDate = new Date(`${today}T${closingTime}:00-03:00`)
+    // Get all closing hours
+    const { data: closingHours } = await admin
+      .from('closing_hours')
+      .select('day_of_week, closing_time, override_date, is_default')
+
+    const defaultHours = new Map<number, string>()
+    const overrides = new Map<string, string>()
+    for (const ch of (closingHours ?? [])) {
+      if (ch.is_default) defaultHours.set(ch.day_of_week, ch.closing_time)
+      if (ch.override_date) overrides.set(ch.override_date, ch.closing_time)
     }
 
-    const clockOutISO = clockOutDate.toISOString()
-
-    // Close all open logs
     let closed = 0
     for (const log of openLogs) {
+      const logDate = log.operative_date // yyyy-MM-dd
+      const logDayOfWeek = new Date(logDate + 'T12:00:00').getDay()
+
+      // Get closing time for this day
+      const closingTime = overrides.get(logDate) ?? defaultHours.get(logDayOfWeek) ?? '00:00'
+      const [closeH, closeM] = closingTime.split(':').map(Number)
+
+      // Build clock_out timestamp in Argentina timezone
+      let clockOutISO: string
+      if (closeH === 0 && closeM === 0) {
+        clockOutISO = new Date(`${logDate}T23:59:59-03:00`).toISOString()
+      } else if (closeH <= 6) {
+        // After midnight (e.g., 01:00) — next calendar day
+        const nextDay = new Date(logDate + 'T12:00:00')
+        nextDay.setDate(nextDay.getDate() + 1)
+        const nextDayStr = nextDay.toISOString().split('T')[0]
+        clockOutISO = new Date(`${nextDayStr}T${closingTime}:00-03:00`).toISOString()
+      } else {
+        clockOutISO = new Date(`${logDate}T${closingTime}:00-03:00`).toISOString()
+      }
+
       const { error } = await admin
         .from('attendance_logs')
         .update({
@@ -130,11 +87,9 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({
-      message: `Auto clock-out: ${closed} registros cerrados`,
-      closingTime,
-      clockOutTime: clockOutISO,
-      totalOpen: openLogs.length,
+      message: `Auto clock-out: ${closed} de ${openLogs.length} registros cerrados`,
       closed,
+      total: openLogs.length,
     })
   } catch (error) {
     console.error('[auto-clockout]', error)
