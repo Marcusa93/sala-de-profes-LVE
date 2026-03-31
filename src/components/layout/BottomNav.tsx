@@ -181,14 +181,15 @@ const BARISTA_MORE: ExpandableNavItem = {
   ],
 }
 
-// RUNNER — mínimo
+// RUNNER — vajilla + chatbot
 const RUNNER_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: '',
+      label: 'Herramientas',
       items: [
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },

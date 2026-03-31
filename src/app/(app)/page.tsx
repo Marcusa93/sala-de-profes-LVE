@@ -457,8 +457,8 @@ export default function DashboardPage() {
           </StaggerItem>
         )}
 
-        {/* Barista: Vajilla */}
-        {profile?.role === 'barista' && (
+        {/* Barista/Runner: Vajilla */}
+        {(profile?.role === 'barista' || profile?.role === 'runner') && (
           <StaggerItem>
             <ScalePress>
               <Link href="/vajilla">
