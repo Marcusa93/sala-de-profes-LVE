@@ -77,6 +77,11 @@ export default function VentasPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [viewMode, setViewMode] = useState<'dia' | 'mes' | 'comparar'>('dia')
   const [monthData, setMonthData] = useState<{ date: string; total: number; tickets: number }[]>([])
+  const [monthSummary, setMonthSummary] = useState<{
+    totalFacturado: number; totalTickets: number; activeDays: number; avgPerDay: number; avgTicket: number
+    topProducts: { name: string; qty: number; revenue: number }[]
+    topByRevenue: { name: string; qty: number; revenue: number }[]
+  } | null>(null)
   const [loadingMonth, setLoadingMonth] = useState(false)
 
   // Compare mode
@@ -102,30 +107,26 @@ export default function VentasPage() {
     setSyncing(false)
   }, [dateStr, isLive])
 
-  // Fetch month summary (one request per day in the month — cached approach)
+  // Fetch month summary — single API call with top products
   const fetchMonth = useCallback(async () => {
     setLoadingMonth(true)
-    const start = startOfMonth(selectedDate)
-    const end = new Date() < endOfMonth(selectedDate) ? new Date() : endOfMonth(selectedDate)
-    const days = eachDayOfInterval({ start, end })
-
-    // Fetch in batches of 5 to avoid rate limiting
-    const results: { date: string; total: number; tickets: number }[] = []
-    for (let i = 0; i < days.length; i += 5) {
-      const batch = days.slice(i, i + 5)
-      const promises = batch.map(async (d) => {
-        const ds = format(d, 'yyyy-MM-dd')
-        try {
-          const res = await fetch(`/api/fudo/auto-sync?date=${ds}`, { credentials: 'include' })
-          const json = await res.json()
-          return { date: ds, total: json.today?.totalFacturado ?? 0, tickets: json.today?.totalTickets ?? 0 }
-        } catch {
-          return { date: ds, total: 0, tickets: 0 }
-        }
-      })
-      results.push(...(await Promise.all(promises)))
-    }
-    setMonthData(results)
+    try {
+      const monthStr = format(selectedDate, 'yyyy-MM')
+      const res = await fetch(`/api/fudo/monthly-summary?month=${monthStr}`, { credentials: 'include' })
+      const json = await res.json()
+      if (json.dailyData) {
+        setMonthData(json.dailyData)
+        setMonthSummary({
+          totalFacturado: json.totalFacturado ?? 0,
+          totalTickets: json.totalTickets ?? 0,
+          activeDays: json.activeDays ?? 0,
+          avgPerDay: json.avgPerDay ?? 0,
+          avgTicket: json.avgTicket ?? 0,
+          topProducts: json.topProducts ?? [],
+          topByRevenue: json.topByRevenue ?? [],
+        })
+      }
+    } catch { /* ignore */ }
     setLoadingMonth(false)
   }, [selectedDate])
 
@@ -384,31 +385,28 @@ export default function VentasPage() {
             <div className="space-y-2">
               <div className="h-8 animate-pulse rounded-lg bg-[#f3efe9]" />
               <div className="h-48 animate-pulse rounded-xl bg-[#f3efe9]" />
+              <div className="h-32 animate-pulse rounded-xl bg-[#f3efe9]" />
             </div>
-          ) : monthData.length > 0 ? (
+          ) : monthSummary ? (
             <div className="space-y-4">
-              {/* Monthly summary */}
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-xl bg-[#e8f5f1] p-3 text-center">
-                  <p className="font-display text-lg font-bold text-[#006d5a]">
-                    {formatPrice(monthData.reduce((s, d) => s + d.total, 0))}
-                  </p>
+              {/* Monthly KPIs */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl bg-[#e8f5f1] p-3" style={{ borderLeftWidth: 3, borderLeftColor: '#006d5a' }}>
                   <p className="text-[9px] font-semibold uppercase tracking-wider text-[#006d5a]">Total mes</p>
+                  <p className="mt-1 font-display text-xl font-bold text-[#006d5a]">{formatPrice(monthSummary.totalFacturado)}</p>
                 </div>
-                <div className="rounded-xl bg-[#faf0e4] p-3 text-center">
-                  <p className="font-display text-lg font-bold text-[#8b5e34]">
-                    {monthData.reduce((s, d) => s + d.tickets, 0)}
-                  </p>
+                <div className="rounded-xl bg-[#faf0e4] p-3" style={{ borderLeftWidth: 3, borderLeftColor: '#8b5e34' }}>
                   <p className="text-[9px] font-semibold uppercase tracking-wider text-[#8b5e34]">Tickets</p>
+                  <p className="mt-1 font-display text-xl font-bold text-[#8b5e34]">{monthSummary.totalTickets}</p>
                 </div>
-                <div className="rounded-xl bg-[#f3efe9] p-3 text-center">
-                  <p className="font-display text-lg font-bold text-[#3d2c24]">
-                    {formatPrice(monthData.filter(d => d.total > 0).length > 0
-                      ? monthData.reduce((s, d) => s + d.total, 0) / monthData.filter(d => d.total > 0).length
-                      : 0
-                    )}
-                  </p>
-                  <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Prom/día</p>
+              </div>
+              <div className="flex items-center justify-between rounded-xl bg-[#f8f5f0] px-4 py-2.5">
+                <div className="flex items-center gap-4 text-xs text-[#3d2c24]">
+                  <span>Prom/día <strong className="tabular-nums">{formatPrice(monthSummary.avgPerDay)}</strong></span>
+                  <span className="text-[#ebe6df]">|</span>
+                  <span>Ticket prom <strong className="tabular-nums">{formatPrice(monthSummary.avgTicket)}</strong></span>
+                  <span className="text-[#ebe6df]">|</span>
+                  <span>{monthSummary.activeDays} días activos</span>
                 </div>
               </div>
 
@@ -427,6 +425,83 @@ export default function VentasPage() {
                   </BarChart>
                 </ResponsiveContainer>
               </ChartCard>
+
+              {/* TOP PRODUCTS — by quantity */}
+              {monthSummary.topProducts.length > 0 && (
+                <div className="rounded-2xl border bg-card p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Trophy className="size-4 text-[#d4943a]" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#3d2c24]">
+                      Más vendidos del mes
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {monthSummary.topProducts.slice(0, 15).map((p, i) => {
+                      const maxQty = monthSummary.topProducts[0]?.qty ?? 1
+                      const pct = Math.round((p.qty / maxQty) * 100)
+                      return (
+                        <div key={i} className="relative overflow-hidden rounded-lg">
+                          {/* Bar background */}
+                          <div
+                            className="absolute inset-y-0 left-0 rounded-lg bg-[#e8f5f1]"
+                            style={{ width: `${pct}%` }}
+                          />
+                          <div className="relative flex items-center justify-between px-3 py-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs font-bold tabular-nums text-[#a39e97] w-5 text-right shrink-0">
+                                {i + 1}
+                              </span>
+                              <span className="text-sm font-medium text-[#3d2c24] truncate">{p.name}</span>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <span className="text-sm font-bold tabular-nums text-[#006d5a]">{p.qty}</span>
+                              <span className="text-[10px] tabular-nums text-[#a39e97]">{formatPrice(p.revenue)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* TOP BY REVENUE */}
+              {monthSummary.topByRevenue.length > 0 && (
+                <div className="rounded-2xl border bg-card p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <DollarSign className="size-4 text-[#006d5a]" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#3d2c24]">
+                      Mayor facturación del mes
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {monthSummary.topByRevenue.slice(0, 10).map((p, i) => {
+                      const maxRev = monthSummary.topByRevenue[0]?.revenue ?? 1
+                      const pct = Math.round((p.revenue / maxRev) * 100)
+                      return (
+                        <div key={i} className="relative overflow-hidden rounded-lg">
+                          <div
+                            className="absolute inset-y-0 left-0 rounded-lg bg-[#fdf6ec]"
+                            style={{ width: `${pct}%` }}
+                          />
+                          <div className="relative flex items-center justify-between px-3 py-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs font-bold tabular-nums text-[#a39e97] w-5 text-right shrink-0">
+                                {i + 1}
+                              </span>
+                              <span className="text-sm font-medium text-[#3d2c24] truncate">{p.name}</span>
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                              <span className="text-sm font-bold tabular-nums text-[#8b5e34]">{formatPrice(p.revenue)}</span>
+                              <span className="text-[10px] tabular-nums text-[#a39e97]">{p.qty}u</span>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Daily list */}
               <div className="space-y-1">
