@@ -22,7 +22,7 @@ const NAV_ITEMS = [
   { label: 'Horas', href: '/admin/reportes/liquidacion', icon: Calculator },
   { label: 'Asistencia', href: '/admin/reportes/asistencia', icon: Users },
   { label: 'Turnos', href: '/admin/reportes/turnos', icon: Calendar },
-  { label: 'Stock', href: '/admin/reportes/stock', icon: Package },
+  { label: 'Stock', href: '/stock', icon: Package },
   { label: 'Vajilla', href: '/vajilla', icon: Wine },
   { label: 'Fudo', href: '/admin/fudo', icon: Store },
   { label: 'Avisos', href: '/admin/reportes/notificaciones', icon: Bell },
