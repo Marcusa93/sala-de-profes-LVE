@@ -67,7 +67,7 @@ const BASE_NAV: NavItem[] = [
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
-// SOCIO — todo accesible, 2 grupos limpios
+// SOCIO — todo accesible, 3 grupos
 const SOCIO_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
@@ -75,22 +75,27 @@ const SOCIO_MORE: ExpandableNavItem = {
     {
       label: 'El local',
       items: [
-        { label: 'Control', href: '/admin', icon: LayoutDashboard },
+        { label: 'Ventas', href: '/ventas', icon: BarChart3 },
         { label: 'Equipo', href: '/equipo', icon: Users },
         { label: 'Turnos', href: '/equipo/turnos', icon: Calendar },
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Pedidos cocina', href: '/cocina/pedidos', icon: ShoppingCart },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
       ],
     },
     {
-      label: 'Inventario y compras',
+      label: 'Inventario',
       items: [
-        { label: 'Stock general', href: '/stock', icon: Package },
+        { label: 'Stock', href: '/stock', icon: Package },
         { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
-        { label: 'Proveedores', href: '/proveedores', icon: Truck },
+        { label: 'Proveed.', href: '/proveedores', icon: Truck },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
+        { label: 'Auditoría', href: '/auditoria', icon: AlertTriangle },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
