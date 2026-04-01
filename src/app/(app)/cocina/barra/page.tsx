@@ -80,7 +80,9 @@ export default function MiBarraPage() {
   const [items, setItems] = useState<BarItem[]>([])
   const [orders, setOrders] = useState<BarOrder[]>([])
   const [loading, setLoading] = useState(true)
-  const [showOk, setShowOk] = useState(false)
+  const [showOk, setShowOk] = useState(true)
+  // Always show all when searching
+  const effectiveShowOk = showOk || search.trim().length > 0
   const [search, setSearch] = useState('')
 
   // Edit state
