@@ -104,16 +104,48 @@ export default function EquipoTurnosPage() {
   } | null>(null)
   const [showUploadResult, setShowUploadResult] = useState(false)
 
+  // Replace confirmation
+  const [replaceDialogOpen, setReplaceDialogOpen] = useState(false)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [existingCount, setExistingCount] = useState(0)
+
   const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    e.target.value = '' // reset so same file can be re-uploaded
+    e.target.value = ''
 
+    // First check if shifts already exist for this week
+    try {
+      const checkForm = new FormData()
+      checkForm.append('checkOnly', 'true')
+      checkForm.append('weekStart', format(currentWeekStart, 'yyyy-MM-dd'))
+      const checkRes = await fetch('/api/shifts/upload', { method: 'POST', body: checkForm })
+      const checkData = await checkRes.json()
+
+      if (checkData.exists && checkData.count > 0) {
+        // Shifts exist — ask user if they want to replace
+        setPendingFile(file)
+        setExistingCount(checkData.count)
+        setReplaceDialogOpen(true)
+        return
+      }
+    } catch {
+      // If check fails, proceed with upload anyway
+    }
+
+    // No existing shifts — upload directly
+    await doUpload(file, false)
+  }
+
+  const doUpload = async (file: File, replace: boolean) => {
     setUploading(true)
+    setReplaceDialogOpen(false)
     try {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('weekStart', format(currentWeekStart, 'yyyy-MM-dd'))
+      if (replace) formData.append('replace', 'true')
+
       const res = await fetch('/api/shifts/upload', { method: 'POST', body: formData })
       const data = await res.json()
 
@@ -123,8 +155,11 @@ export default function EquipoTurnosPage() {
       setShowUploadResult(true)
 
       if (data.created > 0) {
-        toast.success(`${data.created} turno${data.created > 1 ? 's' : ''} creado${data.created > 1 ? 's' : ''}`)
+        toast.success(`${data.created} turno${data.created > 1 ? 's' : ''} ${replace ? 'reemplazado' : 'creado'}${data.created > 1 ? 's' : ''}`)
         await fetchShifts()
+      }
+      if (data.skipped > 0 && !replace) {
+        toast.info(`${data.skipped} turno${data.skipped > 1 ? 's' : ''} ya existía${data.skipped > 1 ? 'n' : ''}`)
       }
       if (data.errors > 0) {
         toast.error(`${data.errors} fila${data.errors > 1 ? 's' : ''} con error`)
@@ -133,6 +168,7 @@ export default function EquipoTurnosPage() {
       toast.error(err instanceof Error ? err.message : 'Error al procesar archivo')
     } finally {
       setUploading(false)
+      setPendingFile(null)
     }
   }
 
@@ -859,6 +895,45 @@ export default function EquipoTurnosPage() {
               Eliminar
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================================== */}
+      {/* Replace Confirmation Dialog                */}
+      {/* ========================================== */}
+      <Dialog open={replaceDialogOpen} onOpenChange={setReplaceDialogOpen}>
+        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg font-bold text-[#3d2c24]">
+              Ya hay turnos cargados
+            </DialogTitle>
+            <DialogDescription className="text-[#a39e97]">
+              Esta semana ya tiene <strong className="text-[#3d2c24]">{existingCount} turnos</strong> cargados.
+              ¿Qué querés hacer?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 pt-2">
+            <Button
+              className="w-full rounded-xl bg-[#ea504c] text-white hover:bg-[#d4413e]"
+              onClick={() => pendingFile && doUpload(pendingFile, true)}
+            >
+              Reemplazar todos los turnos de la semana
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full rounded-xl border-[#ebe6df] text-[#3d2c24]"
+              onClick={() => pendingFile && doUpload(pendingFile, false)}
+            >
+              Agregar sin borrar los existentes
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full rounded-xl border-[#ebe6df] text-[#a39e97]"
+              onClick={() => { setReplaceDialogOpen(false); setPendingFile(null) }}
+            >
+              Cancelar
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

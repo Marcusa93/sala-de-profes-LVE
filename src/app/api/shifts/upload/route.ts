@@ -84,6 +84,20 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData()
     const file = formData.get('file') as File
     const weekStartParam = formData.get('weekStart') as string | null // yyyy-MM-dd
+    const replaceMode = formData.get('replace') === 'true'
+    const checkOnly = formData.get('checkOnly') === 'true' // Just check if shifts exist
+
+    if (!file && !checkOnly) {
+      return NextResponse.json({ error: 'No se recibió archivo' }, { status: 400 })
+    }
+
+    // Check-only mode: return if shifts exist for the week
+    if (checkOnly && weekStartParam) {
+      const weekEnd = format(addDays(new Date(weekStartParam + 'T12:00:00'), 6), 'yyyy-MM-dd')
+      const { count } = await admin.from('shifts').select('id', { count: 'exact', head: true })
+        .gte('shift_date', weekStartParam).lte('shift_date', weekEnd)
+      return NextResponse.json({ exists: (count ?? 0) > 0, count: count ?? 0 })
+    }
 
     if (!file) {
       return NextResponse.json({ error: 'No se recibió archivo' }, { status: 400 })
@@ -111,6 +125,16 @@ export async function POST(request: NextRequest) {
     const headers = (rows[0] as string[]).map(h => String(h ?? '').trim())
 
     if (isWeeklyGrid(headers)) {
+      // If replace mode, delete existing shifts for the week first
+      if (replaceMode && weekStartParam) {
+        const weekEnd = format(addDays(new Date(weekStartParam + 'T12:00:00'), 6), 'yyyy-MM-dd')
+        const { count } = await admin.from('shifts').select('id', { count: 'exact', head: true })
+          .gte('shift_date', weekStartParam).lte('shift_date', weekEnd)
+        if ((count ?? 0) > 0) {
+          await admin.from('shifts').delete()
+            .gte('shift_date', weekStartParam).lte('shift_date', weekEnd)
+        }
+      }
       return processWeeklyGrid(rows, headers, employees, user.id, weekStartParam, admin)
     } else {
       return processRowPerShift(rows, headers, employees, user.id, admin)
