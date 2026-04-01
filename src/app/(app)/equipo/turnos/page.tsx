@@ -528,173 +528,225 @@ export default function EquipoTurnosPage() {
       ) : (
         <>
           {/* ======================================== */}
-          {/* Desktop: 7-column grid (Mon - Sun)       */}
+          {/* PLANILLA: Filas = empleados, Cols = días  */}
+          {/* Agrupado por rol                         */}
           {/* ======================================== */}
-          <div className="hidden md:grid md:grid-cols-7 md:gap-2.5">
-            {weekDays.map((day) => {
-              const dayShifts = getShiftsForDay(day)
-              const isToday = isSameDay(day, new Date())
+          {(() => {
+            // Group employees by role with their shifts
+            const roleOrder: AppRole[] = ['encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha' as AppRole]
+            const employeesWithShifts = employees.map(emp => {
+              const empShifts = weekDays.map(day => {
+                const dayStr = format(day, 'yyyy-MM-dd')
+                return shifts.find(s => s.user_id === emp.id && s.shift_date === dayStr) ?? null
+              })
+              return { ...emp, weekShifts: empShifts }
+            })
 
-              return (
-                <div key={day.toISOString()} className="min-h-[160px]">
-                  {/* Day header */}
-                  <div
-                    className={`mb-2.5 rounded-xl px-2 py-2.5 text-center transition-colors ${
-                      isToday
-                        ? 'bg-[#006d5a] text-white shadow-sm'
-                        : 'border border-[#ebe6df] bg-[#fefcf9]'
-                    }`}
-                  >
-                    <p className={`text-[11px] font-semibold uppercase tracking-wider ${isToday ? 'opacity-80' : 'text-[#a39e97]'}`}>
-                      {format(day, 'EEE', { locale: es })}
-                    </p>
-                    <p className={`text-lg font-bold tabular-nums ${isToday ? '' : 'text-[#3d2c24]'}`}>
-                      {format(day, 'd')}
-                    </p>
-                  </div>
+            const byRole = new Map<string, typeof employeesWithShifts>()
+            for (const emp of employeesWithShifts) {
+              const role = emp.role
+              if (!byRole.has(role)) byRole.set(role, [])
+              byRole.get(role)!.push(emp)
+            }
 
-                  {/* Shift cards for this day */}
-                  <div className="space-y-2">
-                    {dayShifts.length === 0 ? (
-                      <p className="py-4 text-center text-[11px] text-[#a39e97]">
-                        Sin turnos
-                      </p>
-                    ) : (
-                      dayShifts.map((shift) => (
-                        <div key={shift.id} className="group relative">
+            // Sort roles
+            const sortedRoles = roleOrder.filter(r => byRole.has(r))
+            // Add any roles not in the order
+            for (const r of byRole.keys()) {
+              if (!sortedRoles.includes(r as AppRole)) sortedRoles.push(r as AppRole)
+            }
+
+            return (
+              <div className="space-y-4">
+                {/* Day headers — sticky */}
+                <div className="overflow-x-auto -mx-4 px-4 scrollbar-none">
+                  <div className="min-w-[700px]">
+                    <div className="grid grid-cols-[140px_repeat(7,1fr)] gap-1">
+                      <div /> {/* empty cell for name column */}
+                      {weekDays.map(day => {
+                        const isToday = isSameDay(day, new Date())
+                        return (
                           <div
-                            className="cursor-pointer"
-                            onClick={() => openEditDialog(shift)}
+                            key={day.toISOString()}
+                            className={`rounded-lg px-1 py-2 text-center text-[11px] font-semibold ${
+                              isToday ? 'bg-[#006d5a] text-white' : 'bg-[#f8f5f0] text-[#3d2c24]'
+                            }`}
                           >
-                            <Card className="hover-lift overflow-hidden rounded-xl border border-[#ebe6df] bg-[#fefcf9] shadow-none">
-                              <div className="flex">
-                                {/* Left border with role color */}
-                                <div
-                                  className="w-1 shrink-0 rounded-l-xl"
-                                  style={{
-                                    backgroundColor: ROLES[shift.shift_role].color,
-                                  }}
-                                />
-                                <CardContent className="flex-1 p-2.5">
-                                  {/* Person name */}
-                                  <p className="truncate text-xs font-semibold text-[#3d2c24]">
-                                    {shift.profile
-                                      ? `${shift.profile.first_name} ${shift.profile.last_name}`
-                                      : 'Sin nombre'}
-                                  </p>
-                                  {/* Time */}
-                                  <p className="mt-0.5 text-[11px] tabular-nums text-[#a39e97]">
-                                    {shift.start_time.slice(0, 5)} -{' '}
-                                    {shift.end_time.slice(0, 5)}
-                                  </p>
-                                  {/* Role badge */}
-                                  <span
-                                    className="mt-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-                                    style={{
-                                      backgroundColor: ROLES[shift.shift_role].bg,
-                                      color: ROLES[shift.shift_role].color,
-                                    }}
-                                  >
-                                    {ROLES[shift.shift_role].emoji}{' '}
-                                    {ROLES[shift.shift_role].label}
-                                  </span>
-                                </CardContent>
-                              </div>
-                            </Card>
+                            <span className="uppercase">{format(day, 'EEE', { locale: es })}</span>
+                            <span className="ml-1 tabular-nums">{format(day, 'd')}</span>
                           </div>
-                          {/* Action buttons on hover */}
-                          <div className="absolute right-1.5 top-1.5 hidden gap-1 group-hover:flex">
-                            <button
-                              className="flex size-6 items-center justify-center rounded-lg border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#f3efe9]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openEditDialog(shift)
-                              }}
-                            >
-                              <Pencil className="size-3 text-[#a39e97]" />
-                            </button>
-                            <button
-                              className="flex size-6 items-center justify-center rounded-lg border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#fef2f2]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openDeleteDialog(shift)
-                              }}
-                            >
-                              <Trash2 className="size-3 text-[#ea504c]" />
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* ======================================== */}
-          {/* Mobile: List view grouped by day          */}
-          {/* ======================================== */}
-          <div className="space-y-5 md:hidden">
-            {weekDays.map((day) => {
-              const dayShifts = getShiftsForDay(day)
-              const isToday = isSameDay(day, new Date())
-
-              return (
-                <div key={day.toISOString()}>
-                  {/* Day header */}
-                  <div
-                    className={`mb-3 rounded-xl px-4 py-3 ${
-                      isToday
-                        ? 'bg-[#006d5a] text-white shadow-sm'
-                        : 'border border-[#ebe6df] bg-[#fefcf9]'
-                    }`}
-                  >
-                    <p className={`text-sm font-semibold capitalize ${isToday ? '' : 'text-[#3d2c24]'}`}>
-                      {format(day, "EEEE d 'de' MMMM", { locale: es })}
-                    </p>
-                  </div>
-
-                  {/* Shift cards */}
-                  {dayShifts.length === 0 ? (
-                    <p className="py-4 text-center text-sm text-[#a39e97]">
-                      Sin turnos programados
-                    </p>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {dayShifts.map((shift) => (
-                        <div key={shift.id} className="relative">
-                          <div onClick={() => openEditDialog(shift)}>
-                            <ShiftCard shift={shift} showPerson />
-                          </div>
-                          <div className="absolute right-2.5 top-2.5 flex gap-1.5">
-                            <button
-                              className="flex size-8 items-center justify-center rounded-xl border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#f3efe9]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openEditDialog(shift)
-                              }}
-                            >
-                              <Pencil className="size-3.5 text-[#a39e97]" />
-                            </button>
-                            <button
-                              className="flex size-8 items-center justify-center rounded-xl border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#fef2f2]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openDeleteDialog(shift)
-                              }}
-                            >
-                              <Trash2 className="size-3.5 text-[#ea504c]" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
-                  )}
+
+                    {/* Roles + employees */}
+                    {sortedRoles.map(role => {
+                      const roleEmps = byRole.get(role) ?? []
+                      if (roleEmps.length === 0) return null
+                      const roleConfig = ROLES[role] ?? { label: role, emoji: '👤', color: '#a39e97', bg: '#f3efe9' }
+
+                      return (
+                        <div key={role} className="mt-3">
+                          {/* Role header */}
+                          <div className="mb-1 flex items-center gap-1.5 px-1">
+                            <span className="text-sm">{roleConfig.emoji}</span>
+                            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: roleConfig.color }}>
+                              {roleConfig.label}s
+                            </span>
+                            <span className="text-[10px] text-[#a39e97]">({roleEmps.length})</span>
+                          </div>
+
+                          {/* Employee rows */}
+                          {roleEmps.map(emp => (
+                            <div
+                              key={emp.id}
+                              className="grid grid-cols-[140px_repeat(7,1fr)] gap-1 mb-1"
+                            >
+                              {/* Name cell */}
+                              <div className="flex items-center gap-1.5 rounded-lg bg-white px-2 py-2 ring-1 ring-[#ebe6df]">
+                                <div
+                                  className="flex size-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white"
+                                  style={{ backgroundColor: roleConfig.color }}
+                                >
+                                  {(emp.first_name?.[0] ?? '')}{(emp.last_name?.[0] ?? '')}
+                                </div>
+                                <span className="truncate text-xs font-medium text-[#3d2c24]">
+                                  {emp.first_name}
+                                </span>
+                              </div>
+
+                              {/* Day cells */}
+                              {emp.weekShifts.map((shift, i) => {
+                                const day = weekDays[i]
+                                const isToday = isSameDay(day, new Date())
+
+                                if (!shift) {
+                                  return (
+                                    <div
+                                      key={day.toISOString()}
+                                      className={`flex items-center justify-center rounded-lg text-[10px] ${
+                                        isToday ? 'bg-[#f0f7f5] ring-1 ring-[#006d5a]/20' : 'bg-[#faf8f5]'
+                                      } text-[#d1cdc7] cursor-pointer hover:bg-[#f3efe9]`}
+                                      onClick={() => {
+                                        setEditingShift(null)
+                                        setFormUserId(emp.id)
+                                        setFormDate(format(day, 'yyyy-MM-dd'))
+                                        setFormStartTime('08:00')
+                                        setFormEndTime('16:00')
+                                        setFormRole(emp.role)
+                                        setFormNotes('')
+                                        setDialogOpen(true)
+                                      }}
+                                    >
+                                      —
+                                    </div>
+                                  )
+                                }
+
+                                // Has shift
+                                const time = `${shift.start_time.slice(0, 5)}-${shift.end_time.slice(0, 5)}`
+                                const isDescanso = shift.notes?.toLowerCase().includes('descanso')
+
+                                return (
+                                  <div
+                                    key={day.toISOString()}
+                                    className={`group relative flex flex-col items-center justify-center rounded-lg px-1 py-1.5 cursor-pointer transition-colors ${
+                                      isDescanso
+                                        ? 'bg-[#f3efe9] text-[#a39e97]'
+                                        : isToday
+                                          ? 'bg-[#e8f5f1] ring-1 ring-[#006d5a]/30'
+                                          : 'bg-white ring-1 ring-[#ebe6df]'
+                                    } hover:ring-[#006d5a]/50`}
+                                    onClick={() => openEditDialog(shift)}
+                                  >
+                                    {isDescanso ? (
+                                      <span className="text-[10px] font-medium">Desc.</span>
+                                    ) : (
+                                      <>
+                                        <span className="text-[10px] font-bold tabular-nums text-[#3d2c24]">
+                                          {time}
+                                        </span>
+                                      </>
+                                    )}
+                                    {/* Delete on hover */}
+                                    <button
+                                      className="absolute -right-1 -top-1 hidden size-4 items-center justify-center rounded-full bg-[#ea504c] text-white shadow-sm group-hover:flex"
+                                      onClick={(e) => { e.stopPropagation(); openDeleteDialog(shift) }}
+                                    >
+                                      <Trash2 className="size-2.5" />
+                                    </button>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
-              )
-            })}
-          </div>
+
+                {/* Mobile: compact list by employee */}
+                <div className="md:hidden space-y-3">
+                  {sortedRoles.map(role => {
+                    const roleEmps = byRole.get(role) ?? []
+                    if (roleEmps.length === 0) return null
+                    const roleConfig = ROLES[role] ?? { label: role, emoji: '👤', color: '#a39e97', bg: '#f3efe9' }
+
+                    return (
+                      <div key={role}>
+                        <div className="mb-2 flex items-center gap-1.5">
+                          <span>{roleConfig.emoji}</span>
+                          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: roleConfig.color }}>
+                            {roleConfig.label}s
+                          </span>
+                        </div>
+                        {roleEmps.map(emp => (
+                          <div key={emp.id} className="mb-2 rounded-xl bg-white p-3 ring-1 ring-[#ebe6df]">
+                            <p className="text-sm font-semibold text-[#3d2c24]">{emp.first_name} {emp.last_name}</p>
+                            <div className="mt-2 grid grid-cols-7 gap-1">
+                              {emp.weekShifts.map((shift, i) => {
+                                const day = weekDays[i]
+                                const isToday = isSameDay(day, new Date())
+                                const dayLabel = format(day, 'EEE', { locale: es }).slice(0, 2).toUpperCase()
+
+                                return (
+                                  <div key={day.toISOString()} className="text-center">
+                                    <p className={`text-[9px] font-semibold ${isToday ? 'text-[#006d5a]' : 'text-[#a39e97]'}`}>
+                                      {dayLabel}
+                                    </p>
+                                    {shift ? (
+                                      <button
+                                        onClick={() => openEditDialog(shift)}
+                                        className={`mt-0.5 w-full rounded-md px-0.5 py-1 text-[9px] font-bold tabular-nums ${
+                                          shift.notes?.toLowerCase().includes('descanso')
+                                            ? 'bg-[#f3efe9] text-[#a39e97]'
+                                            : isToday
+                                              ? 'bg-[#e8f5f1] text-[#006d5a]'
+                                              : 'bg-[#faf8f5] text-[#3d2c24]'
+                                        }`}
+                                      >
+                                        {shift.notes?.toLowerCase().includes('descanso')
+                                          ? 'D'
+                                          : `${shift.start_time.slice(0, 2)}-${shift.end_time.slice(0, 2)}`
+                                        }
+                                      </button>
+                                    ) : (
+                                      <div className="mt-0.5 rounded-md bg-[#faf8f5] py-1 text-[9px] text-[#d1cdc7]">—</div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Empty state when no shifts at all */}
           {shifts.length === 0 && !loading && (
