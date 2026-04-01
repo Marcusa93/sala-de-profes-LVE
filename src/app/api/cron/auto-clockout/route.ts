@@ -4,17 +4,16 @@ import { createAdminClient } from '@/lib/supabase/admin'
 // ---------------------------------------------------------------------------
 // GET /api/cron/auto-clockout
 // Called by Vercel Cron every 15 minutes
-// Checks if current time matches any closing hour → clock out open shifts
+// Closes open attendance logs when the employee's INDIVIDUAL shift ends.
+// Only an encargado/socio can authorize staying past the shift end.
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
-  // Verify cron secret or allow internal calls
   const authHeader = request.headers.get('authorization')
   const cronSecret = process.env.CRON_SECRET
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    // Also allow without secret in dev
     if (process.env.NODE_ENV === 'production') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -22,10 +21,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const admin = createAdminClient()
-
-    // This runs once per day at ~00:00 ARG (3:00 UTC)
-    // It closes ALL open attendance logs from yesterday or earlier
-    // using the closing_hours table for each day's closing time
+    const now = new Date()
 
     // Find all open attendance logs
     const { data: openLogs } = await admin
@@ -35,61 +31,102 @@ export async function GET(request: NextRequest) {
       .eq('status', 'open')
 
     if (!openLogs?.length) {
-      return NextResponse.json({ message: 'No open shifts to close' })
+      return NextResponse.json({ message: 'No open shifts to close', closed: 0 })
     }
 
-    // Get all closing hours
+    // Get today's and yesterday's shifts for matching
+    const today = now.toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
+    const yesterday = new Date(now.getTime() - 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
+
+    const { data: shifts } = await admin
+      .from('shifts')
+      .select('user_id, shift_date, start_time, end_time')
+      .in('shift_date', [today, yesterday])
+
+    // Build shift map: user_id+date → end_time
+    const shiftMap = new Map<string, string>()
+    for (const s of (shifts ?? [])) {
+      shiftMap.set(`${s.user_id}|${s.shift_date}`, s.end_time)
+    }
+
+    // Fallback: closing_hours table (for employees without a specific shift)
     const { data: closingHours } = await admin
       .from('closing_hours')
       .select('day_of_week, closing_time, override_date, is_default')
 
-    const defaultHours = new Map<number, string>()
-    const overrides = new Map<string, string>()
+    const defaultClosing = new Map<number, string>()
+    const overrideClosing = new Map<string, string>()
     for (const ch of (closingHours ?? [])) {
-      if (ch.is_default) defaultHours.set(ch.day_of_week, ch.closing_time)
-      if (ch.override_date) overrides.set(ch.override_date, ch.closing_time)
+      if (ch.is_default) defaultClosing.set(ch.day_of_week, ch.closing_time)
+      if (ch.override_date) overrideClosing.set(ch.override_date, ch.closing_time)
     }
 
     let closed = 0
+    const details: string[] = []
+
     for (const log of openLogs) {
-      const logDate = log.operative_date // yyyy-MM-dd
-      const logDayOfWeek = new Date(logDate + 'T12:00:00').getDay()
+      const logDate = log.operative_date
+      const logDow = new Date(logDate + 'T12:00:00').getDay()
 
-      // Get closing time for this day
-      const closingTime = overrides.get(logDate) ?? defaultHours.get(logDayOfWeek) ?? '00:00'
-      const [closeH, closeM] = closingTime.split(':').map(Number)
+      // Priority 1: Individual shift end_time
+      const shiftEnd = shiftMap.get(`${log.user_id}|${logDate}`)
 
-      // Build clock_out timestamp in Argentina timezone
-      let clockOutISO: string
-      if (closeH === 0 && closeM === 0) {
-        clockOutISO = new Date(`${logDate}T23:59:59-03:00`).toISOString()
-      } else if (closeH <= 6) {
-        // After midnight (e.g., 01:00) — next calendar day
+      // Priority 2: Closing hours override for this date
+      // Priority 3: Default closing hours for this day of week
+      const closingTime = shiftEnd
+        ?? overrideClosing.get(logDate)
+        ?? defaultClosing.get(logDow)
+        ?? '00:00'
+
+      // Parse the end time
+      const [endH, endM] = closingTime.split(':').map(Number)
+
+      // Build the clock_out timestamp in Argentina timezone
+      let clockOutDate: Date
+      if (endH <= 6 && endH >= 0) {
+        // After midnight (e.g., 01:00) → next calendar day
         const nextDay = new Date(logDate + 'T12:00:00')
         nextDay.setDate(nextDay.getDate() + 1)
         const nextDayStr = nextDay.toISOString().split('T')[0]
-        clockOutISO = new Date(`${nextDayStr}T${closingTime}:00-03:00`).toISOString()
+        clockOutDate = new Date(`${nextDayStr}T${closingTime.slice(0, 5)}:00-03:00`)
       } else {
-        clockOutISO = new Date(`${logDate}T${closingTime}:00-03:00`).toISOString()
+        clockOutDate = new Date(`${logDate}T${closingTime.slice(0, 5)}:00-03:00`)
       }
+
+      // Only close if the shift end has PASSED
+      if (now < clockOutDate) continue
+
+      // Get employee name for audit
+      const { data: profile } = await admin
+        .from('profiles')
+        .select('first_name, last_name')
+        .eq('id', log.user_id)
+        .single()
+
+      const empName = profile ? `${profile.first_name} ${profile.last_name}` : '?'
+      const source = shiftEnd ? 'turno individual' : 'horario de cierre'
 
       const { error } = await admin
         .from('attendance_logs')
         .update({
-          clock_out_at: clockOutISO,
+          clock_out_at: clockOutDate.toISOString(),
           status: 'closed',
           clock_out_type: 'auto',
-          notes: `Egreso automático — cierre ${closingTime}`,
+          notes: `Egreso automático (${source}) — ${closingTime.slice(0, 5)}`,
         })
         .eq('id', log.id)
 
-      if (!error) closed++
+      if (!error) {
+        closed++
+        details.push(`${empName}: ${closingTime.slice(0, 5)} (${source})`)
+      }
     }
 
     return NextResponse.json({
-      message: `Auto clock-out: ${closed} de ${openLogs.length} registros cerrados`,
+      message: `Auto clock-out: ${closed}/${openLogs.length} cerrados`,
       closed,
       total: openLogs.length,
+      details,
     })
   } catch (error) {
     console.error('[auto-clockout]', error)
