@@ -12,7 +12,7 @@ import {
   MoreHorizontal,
   MessageCircle,
   Users,
-  AlertTriangle,
+  Shield,
   Truck,
   ChefHat,
   UtensilsCrossed,
@@ -93,9 +93,14 @@ const SOCIO_MORE: ExpandableNavItem = {
       ],
     },
     {
+      label: 'Gestión',
+      items: [
+        { label: 'Auditoría', href: '/auditoria', icon: Shield },
+      ],
+    },
+    {
       label: 'Herramientas',
       items: [
-        { label: 'Auditoría', href: '/auditoria', icon: AlertTriangle },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },

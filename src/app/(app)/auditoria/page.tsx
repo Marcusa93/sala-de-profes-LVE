@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   Shield, Clock, User, Package, Coffee, ShoppingCart,
   Bell, FileText, ChevronDown, Loader2, Search,
-  LogIn, LogOut, Pencil, Plus, ArrowRightLeft,
+  LogIn, LogOut, Pencil, Plus, ArrowRightLeft, ArrowLeft,
+  Wine,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
@@ -38,7 +40,7 @@ const MODULE_CONFIG: Record<string, { label: string; icon: typeof Shield; color:
   pedidos: { label: 'Pedidos', icon: ShoppingCart, color: '#d4943a', bg: '#fdf6ec' },
   avisos: { label: 'Avisos', icon: Bell, color: '#4a90d9', bg: '#eef4fc' },
   expedientes: { label: 'Expedientes', icon: FileText, color: '#8b5e34', bg: '#faf0e4' },
-  vajilla: { label: 'Vajilla', icon: Package, color: '#a39e97', bg: '#f3efe9' },
+  vajilla: { label: 'Vajilla', icon: Wine, color: '#a39e97', bg: '#f3efe9' },
   auth: { label: 'Acceso', icon: LogIn, color: '#006d5a', bg: '#e8f5f1' },
 }
 
@@ -152,12 +154,19 @@ export default function AuditoriaPage() {
       {/* Header */}
       <FadeIn>
         <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="flex size-10 items-center justify-center rounded-xl bg-[#f3efe9] transition-colors hover:bg-[#ebe6df]"
+            aria-label="Volver al inicio"
+          >
+            <ArrowLeft className="size-5 text-[#3d2c24]" />
+          </Link>
           <div className="flex size-10 items-center justify-center rounded-xl bg-[#1a1a2e]">
             <Shield className="size-5 text-white" />
           </div>
           <div>
             <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Auditoría</h1>
-            <p className="text-[11px] text-[#a39e97]">Registro de todos los movimientos</p>
+            <p className="text-[11px] text-[#a39e97]">Registro de actividad del sistema</p>
           </div>
         </div>
       </FadeIn>
