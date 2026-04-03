@@ -11,6 +11,8 @@ import {
   X,
   Minimize2,
   Check,
+  Mic,
+  MicOff,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { AnimatePresence, motion } from '@/components/ui/motion'
@@ -151,6 +153,8 @@ export function FloatingChat() {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
   const [isThinking, setIsThinking] = useState(false)
   const [hasUnread, setHasUnread] = useState(false)
 
@@ -294,6 +298,62 @@ export function FloatingChat() {
       handleSend()
     }
   }
+
+  // Voice input via Web Speech API
+  const supportsVoice = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
+
+  const toggleVoice = useCallback(() => {
+    if (isListening) {
+      recognitionRef.current?.stop()
+      setIsListening(false)
+      return
+    }
+
+    const SpeechRecognition = (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition; webkitSpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition
+      ?? (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition
+    if (!SpeechRecognition) return
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'es-AR'
+    recognition.continuous = false
+    recognition.interimResults = true
+    recognition.maxAlternatives = 1
+    recognitionRef.current = recognition
+
+    recognition.onstart = () => setIsListening(true)
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      const transcript = Array.from(event.results)
+        .map(r => r[0].transcript)
+        .join('')
+
+      setInput(transcript)
+
+      // If final result, auto-send
+      if (event.results[event.results.length - 1].isFinal) {
+        setIsListening(false)
+        if (transcript.trim()) {
+          // Small delay so user sees the text before sending
+          setTimeout(() => handleSend(transcript.trim()), 300)
+        }
+      }
+    }
+
+    recognition.onerror = () => {
+      setIsListening(false)
+    }
+
+    recognition.onend = () => {
+      setIsListening(false)
+    }
+
+    recognition.start()
+  }, [isListening, handleSend])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { recognitionRef.current?.stop() }
+  }, [])
 
   if (!profile) return null
 
@@ -488,10 +548,30 @@ export function FloatingChat() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Preguntá algo..."
+                placeholder={isListening ? 'Escuchando...' : 'Preguntá algo...'}
                 disabled={isThinking}
-                className="flex-1 rounded-xl border border-[#ebe6df] bg-[#faf8f5] px-3 py-2 text-sm placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-2 focus:ring-[#006d5a]/20 disabled:opacity-50"
+                className={`flex-1 rounded-xl border bg-[#faf8f5] px-3 py-2 text-sm placeholder:text-[#a39e97] focus:outline-none focus:ring-2 disabled:opacity-50 ${
+                  isListening
+                    ? 'border-[#ea504c] ring-2 ring-[#ea504c]/30 placeholder:text-[#ea504c]'
+                    : 'border-[#ebe6df] focus:border-[#006d5a] focus:ring-[#006d5a]/20'
+                }`}
               />
+              {/* Mic button */}
+              {supportsVoice && (
+                <button
+                  onClick={toggleVoice}
+                  disabled={isThinking}
+                  className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-all disabled:opacity-40 ${
+                    isListening
+                      ? 'bg-[#ea504c] text-white shadow-md animate-pulse'
+                      : 'bg-[#f3efe9] text-[#a39e97] hover:bg-[#ebe6df] hover:text-[#3d2c24]'
+                  }`}
+                  aria-label={isListening ? 'Dejar de escuchar' : 'Hablar'}
+                >
+                  {isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+                </button>
+              )}
+              {/* Send button */}
               <button
                 onClick={() => handleSend()}
                 disabled={!input.trim() || isThinking}
