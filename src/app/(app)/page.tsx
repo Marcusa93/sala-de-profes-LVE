@@ -84,6 +84,7 @@ export default function DashboardPage() {
   const [expedientesActivos, setExpedientesActivos] = useState(0)
   const [expedientesData, setExpedientesData] = useState<{ id: string; code: string; title: string; status: string; urgency: string; target_date: string | null; updated_at: string; responsible_id: string | null }[]>([])
   const [ventasHoy, setVentasHoy] = useState<{ total: number; tickets: number } | null>(null)
+  const [fudoLastSync, setFudoLastSync] = useState<string | null>(null)
   const [barUrgent, setBarUrgent] = useState(0)
   const [loading, setLoading] = useState(true)
 
@@ -236,6 +237,7 @@ export default function DashboardPage() {
         }
         if (ventasRes?.today) {
           setVentasHoy({ total: ventasRes.today.totalFacturado ?? 0, tickets: ventasRes.today.totalTickets ?? 0 })
+          if (ventasRes.lastSync) setFudoLastSync(ventasRes.lastSync)
         }
         if (barUrgentRes) {
           setBarUrgent(barUrgentRes.count ?? 0)
@@ -322,7 +324,10 @@ export default function DashboardPage() {
                   <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#006d5a]">
                     ${(ventasHoy.total / 1000).toFixed(0)}k
                   </p>
-                  <p className="text-[10px] text-[#a39e97]">{ventasHoy.tickets} tickets</p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {ventasHoy.tickets} tickets
+                    {fudoLastSync && ` · Fudo ${format(new Date(fudoLastSync), 'HH:mm')}`}
+                  </p>
                 </div>
               </Link>
             </ScalePress>

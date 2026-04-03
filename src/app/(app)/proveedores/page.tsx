@@ -986,16 +986,16 @@ function SupplierCard({
       {(supplier.phone || supplier.email) && (
         <div className="space-y-1.5 text-xs text-[#a39e97]">
           {supplier.phone && (
-            <p className="flex items-center gap-2">
+            <a href={`tel:${supplier.phone}`} className="flex items-center gap-2 hover:text-[#006d5a] transition-colors">
               <Phone className="size-3 shrink-0" />
-              <span className="text-[#3d2c24]">{supplier.phone}</span>
-            </p>
+              <span className="text-[#3d2c24] underline decoration-dotted">{supplier.phone}</span>
+            </a>
           )}
           {supplier.email && (
-            <p className="flex items-center gap-2">
+            <a href={`mailto:${supplier.email}`} className="flex items-center gap-2 hover:text-[#006d5a] transition-colors">
               <Mail className="size-3 shrink-0" />
-              <span className="text-[#3d2c24]">{supplier.email}</span>
-            </p>
+              <span className="text-[#3d2c24] underline decoration-dotted">{supplier.email}</span>
+            </a>
           )}
         </div>
       )}

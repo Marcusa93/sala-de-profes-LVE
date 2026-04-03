@@ -91,8 +91,8 @@ export default function PedidosPage() {
   const fetchData = useCallback(async () => {
     const supabase = createClient()
     const [barRes, kitchenRes, suppRes, profRes] = await Promise.all([
-      supabase.from('bar_orders').select('*').in('status', ['pending', 'ordered']).order('created_at', { ascending: false }),
-      supabase.from('kitchen_orders').select('*').in('status', ['pending', 'ordered']).order('created_at', { ascending: false }),
+      supabase.from('bar_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }),
+      supabase.from('kitchen_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }),
       supabase.from('suppliers').select('id, name, phone, contact_name').eq('is_active', true).order('name'),
       supabase.from('profiles').select('id, first_name, last_name').eq('is_active', true),
     ])
@@ -206,6 +206,7 @@ export default function PedidosPage() {
 
   const pending = allOrders.filter((o) => o.status === 'pending')
   const ordered = allOrders.filter((o) => o.status === 'ordered')
+  const received = allOrders.filter((o) => o.status === 'received')
 
   return (
     <div className="mx-auto max-w-lg space-y-5 pb-28">
@@ -217,20 +218,24 @@ export default function PedidosPage() {
 
       {/* KPIs */}
       <FadeIn delay={0.05}>
-        <div className="grid grid-cols-3 gap-2.5">
+        <div className="grid grid-cols-4 gap-2">
           <div className="rounded-xl bg-[#fdf6ec] p-3 text-center">
-            <p className="font-display text-xl font-bold tabular-nums text-[#d4943a]"><AnimatedNumber value={pending.length} /></p>
-            <p className="text-[9px] font-semibold uppercase tracking-wider text-[#d4943a]">Pendientes</p>
+            <p className="font-display text-lg font-bold tabular-nums text-[#d4943a]"><AnimatedNumber value={pending.length} /></p>
+            <p className="text-[8px] font-semibold uppercase tracking-wider text-[#d4943a]">Pendientes</p>
           </div>
           <div className="rounded-xl bg-[#eef4fc] p-3 text-center">
-            <p className="font-display text-xl font-bold tabular-nums text-[#4a90d9]"><AnimatedNumber value={ordered.length} /></p>
-            <p className="text-[9px] font-semibold uppercase tracking-wider text-[#4a90d9]">Pedidos</p>
+            <p className="font-display text-lg font-bold tabular-nums text-[#4a90d9]"><AnimatedNumber value={ordered.length} /></p>
+            <p className="text-[8px] font-semibold uppercase tracking-wider text-[#4a90d9]">Pedidos</p>
           </div>
-          <div className={cn('rounded-xl p-3 text-center', grouped.noSupplier.length > 0 ? 'bg-[#fef2f2]' : 'bg-[#e8f5f1]')}>
-            <p className={cn('font-display text-xl font-bold tabular-nums', grouped.noSupplier.length > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]')}>
+          <div className="rounded-xl bg-[#e8f5f1] p-3 text-center">
+            <p className="font-display text-lg font-bold tabular-nums text-[#006d5a]"><AnimatedNumber value={received.length} /></p>
+            <p className="text-[8px] font-semibold uppercase tracking-wider text-[#006d5a]">Recibidos</p>
+          </div>
+          <div className={cn('rounded-xl p-3 text-center', grouped.noSupplier.length > 0 ? 'bg-[#fef2f2]' : 'bg-[#f3efe9]')}>
+            <p className={cn('font-display text-lg font-bold tabular-nums', grouped.noSupplier.length > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]')}>
               <AnimatedNumber value={grouped.noSupplier.length} />
             </p>
-            <p className={cn('text-[9px] font-semibold uppercase tracking-wider', grouped.noSupplier.length > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]')}>
+            <p className={cn('text-[8px] font-semibold uppercase tracking-wider', grouped.noSupplier.length > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]')}>
               Sin asignar
             </p>
           </div>
@@ -431,10 +436,11 @@ function OrderRow({
 }) {
   const urgCfg = URGENCY_CONFIG[order.urgency] ?? URGENCY_CONFIG.normal
   const isOrdered = order.status === 'ordered'
+  const isReceived = order.status === 'received'
   const timeAgo = formatDistanceToNow(new Date(order.created_at), { addSuffix: true, locale: es })
 
   return (
-    <div className={cn('px-4 py-3', isOrdered && 'bg-[#f0f7f5]/50')}>
+    <div className={cn('px-4 py-3', isOrdered && 'bg-[#f0f7f5]/50', isReceived && 'bg-[#e8f5f1]/30 opacity-70')}>
       {/* Product info */}
       <div className="flex items-center gap-2.5">
         <div className={cn(
@@ -462,6 +468,11 @@ function OrderRow({
             🚚 Pedido
           </span>
         )}
+        {isReceived && (
+          <span className="shrink-0 rounded-full bg-[#e8f5f1] px-2 py-0.5 text-[10px] font-bold text-[#006d5a]">
+            ✅ Recibido
+          </span>
+        )}
       </div>
 
       {order.note && (
@@ -469,7 +480,7 @@ function OrderRow({
       )}
 
       {/* Action buttons — labeled for clarity */}
-      {canManage && (
+      {canManage && !isReceived && (
         <div className="mt-2.5 ml-[42px] flex flex-wrap gap-1.5">
           {onAssignSupplier && (
             <button
