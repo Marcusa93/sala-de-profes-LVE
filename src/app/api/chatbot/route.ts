@@ -257,6 +257,11 @@ Si detectás intención de PEDIDO DE MERCADERÍA:
 {"intent":"PEDIDO_MERCADERIA","items":[{"name":"nombre del producto","quantity":"cantidad con unidad"}],"urgency":"normal"}
 \`\`\`
 
+Si detectás intención de ACTUALIZAR STOCK (el usuario quiere CARGAR cantidades, no pedir):
+\`\`\`ACTION_JSON
+{"intent":"ACTUALIZAR_STOCK","items":[{"name":"nombre del producto","quantity":"cantidad con unidad"}]}
+\`\`\`
+
 Si detectás intención de REPORTAR PROBLEMA:
 \`\`\`ACTION_JSON
 {"intent":"REPORTE_PROBLEMA","message":"descripción del problema","urgency":"urgente"}
@@ -276,7 +281,15 @@ REGLAS DE ACCIONES:
 - Si el usuario dice "no", "cancelar", "mejor no", respondé amablemente sin JSON
 - Para pedidos, normalizá los nombres de productos lo mejor posible
 - Extraé cantidad y unidad por separado (ej: "5 kg", "3 cajas", "10 unidades")
-- Si no entendés la cantidad, preguntá antes de proponer`
+- Si no entendés la cantidad, preguntá antes de proponer
+
+DISTINGUIR PEDIDO vs ACTUALIZACIÓN DE STOCK:
+- "necesito", "pedí", "falta", "encargá" → PEDIDO_MERCADERIA (pedir al proveedor)
+- "hay", "quedan", "tenemos", "cargá", "actualizar", "son", "conté" → ACTUALIZAR_STOCK (cargar cantidad actual)
+- "hay 10kg de café" = el usuario está diciendo cuánto HAY → ACTUALIZAR_STOCK
+- "necesito 10kg de café" = el usuario está pidiendo que le compren → PEDIDO_MERCADERIA
+- Si no está claro, preguntá: "¿Querés cargar stock (decirme cuánto hay) o pedir mercadería (que te compren)?"
+- ACTUALIZAR_STOCK escribe en la webapp Y se sincroniza con Fudo automáticamente`
 
 // ---------------------------------------------------------------------------
 // Recopilar contexto de datos — ampliado

@@ -21,6 +21,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 
 export type ActionIntent =
   | 'PEDIDO_MERCADERIA'
+  | 'ACTUALIZAR_STOCK'
   | 'REPORTE_PROBLEMA'
   | 'AVISO_ENCARGADO'
   | 'CONSULTA'
@@ -63,6 +64,9 @@ export function detectIntent(aiAnalysis: {
 }): ActionIntent {
   const intent = (aiAnalysis.intent || '').toUpperCase().replace(/\s+/g, '_')
 
+  if (intent.includes('ACTUALIZAR') || intent.includes('CARGAR') || intent.includes('UPDATE_STOCK') || intent.includes('STOCK_UPDATE')) {
+    return 'ACTUALIZAR_STOCK'
+  }
   if (intent.includes('PEDIDO') || intent.includes('ORDER') || intent.includes('NECESITO') || intent.includes('FALTA')) {
     return 'PEDIDO_MERCADERIA'
   }
@@ -243,6 +247,34 @@ export async function buildProposal(
     }
   }
 
+  if (intent === 'ACTUALIZAR_STOCK') {
+    const source: 'cocina' | 'barra' = userRole === 'barista' ? 'barra' : 'cocina'
+    const matched = await matchItems(admin, rawItems, source)
+
+    const itemLines = matched.map(i => {
+      const name = i.matchedStockName ?? i.rawName
+      const confidence = i.matchConfidence === 'exact' ? '' :
+        i.matchConfidence === 'probable' ? ' (coincidencia probable)' : ' ⚠️ no encontrado en stock'
+      return `• **${name}** → ${i.quantity}${confidence}`
+    })
+
+    const unmatchedCount = matched.filter(i => i.matchConfidence === 'none').length
+
+    let confirmText = `📦 **Actualizar stock:**\n${itemLines.join('\n')}`
+    if (unmatchedCount > 0) {
+      confirmText += `\n\n⚠️ ${unmatchedCount} item${unmatchedCount > 1 ? 's' : ''} no encontrado${unmatchedCount > 1 ? 's' : ''} en el sistema`
+    }
+    confirmText += `\n\nEsto actualiza las cantidades en la webapp y en Fudo. ¿Confirmo?`
+
+    return {
+      intent,
+      items: matched,
+      duplicateWarnings: [],
+      confirmationText: confirmText,
+      readyToExecute: false,
+    }
+  }
+
   if (intent === 'REPORTE_PROBLEMA') {
     return {
       intent,
@@ -356,6 +388,41 @@ export async function executeAction(
         description: `${userName} creó ${result.created} pedido(s) vía chatbot: ${result.details.join(', ')}`,
         metadata: { items: proposal.items, source, channel: 'chatbot' },
       }).catch(() => {}) // Audit is non-blocking
+    }
+
+    if (proposal.intent === 'ACTUALIZAR_STOCK') {
+      const { syncToFudo } = await import('@/lib/fudo/stock-sync')
+
+      for (const item of proposal.items) {
+        if (!item.matchedStockId || item.matchConfidence === 'none') {
+          result.errors.push(`${item.rawName}: no encontrado en stock`)
+          continue
+        }
+
+        const newQty = parseFloat(item.quantity.replace(/[^\d.,]/g, '')) || 0
+        const stockItemId = String(item.matchedStockId)
+
+        const syncResult = await syncToFudo(admin, stockItemId, newQty, userId)
+
+        if (syncResult.success) {
+          result.created++
+          const fudoTag = syncResult.fudoSynced ? ' (+ Fudo ✓)' : ''
+          result.details.push(`${item.matchedStockName ?? item.rawName} → ${item.quantity}${fudoTag}`)
+        } else {
+          result.errors.push(`${item.matchedStockName ?? item.rawName}: ${syncResult.error}`)
+        }
+      }
+
+      // Audit
+      await admin.from('audit_trail').insert({
+        user_id: userId,
+        user_name: userName,
+        action: 'chatbot_stock_update',
+        module: 'stock',
+        entity_type: 'stock_item',
+        description: `${userName} actualizó ${result.created} item(s) de stock vía chatbot: ${result.details.join(', ')}`,
+        metadata: { items: proposal.items, channel: 'chatbot' },
+      }).catch(() => {})
     }
 
     if (proposal.intent === 'REPORTE_PROBLEMA') {
