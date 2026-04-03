@@ -10,6 +10,7 @@ import {
   Loader2,
   X,
   Minimize2,
+  Check,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { AnimatePresence, motion } from '@/components/ui/motion'
@@ -18,11 +19,20 @@ import { AnimatePresence, motion } from '@/components/ui/motion'
 // Types
 // ---------------------------------------------------------------------------
 
+type ActionProposal = {
+  intent: string
+  items?: { name: string; quantity: string }[]
+  message?: string
+  urgency?: string
+}
+
 type ChatMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: Date
+  actionProposal?: ActionProposal
+  actionExecuted?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -97,15 +107,16 @@ const SQ_ENCARGADO: SQ[] = [
 ]
 
 const SQ_BARISTA: SQ[] = [
-  { label: '☕ Stock barra', question: '¿Cómo está el stock de barra hoy? ¿Qué falta?' },
+  { label: '☕ Stock', question: '¿Cómo está el stock de barra hoy? ¿Qué falta?' },
   { label: '📦 Pedidos', question: '¿Hay pedidos de barra pendientes?' },
-  { label: '👥 Equipo', question: '¿Quién está trabajando hoy en barra?' },
+  { label: '🛒 Pedir', question: 'Necesito leche entera 10lt y café 2kg' },
 ]
 
 const SQ_COCINA: SQ[] = [
-  { label: '👨‍🍳 Tareas', question: '¿Qué tareas del checklist de cocina están pendientes?' },
-  { label: '🥩 Stock', question: '¿Qué items de stock están bajos que necesito para cocinar?' },
-  { label: '📖 Recetas', question: '¿Qué recetas tenemos disponibles?' },
+  { label: '🥩 Stock', question: '¿Qué items de stock cocina están bajos?' },
+  { label: '🛒 Pedir', question: 'Necesito 5kg de nalga y 3kg de morrón' },
+  { label: '📖 Recetas', question: '¿Cómo se hace el lomo LVE?' },
+  { label: '⚠️ Reportar', question: 'La freidora no enciende bien' },
 ]
 
 const SQ_RUNNER: SQ[] = [
@@ -196,6 +207,8 @@ export function FloatingChat() {
           role: 'assistant',
           content: data.response ?? 'No pude procesar tu consulta.',
           timestamp: new Date(),
+          actionProposal: data.actionProposal ?? undefined,
+          actionExecuted: data.actionExecuted ?? undefined,
         },
       ])
 
@@ -215,6 +228,65 @@ export function FloatingChat() {
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [input, isThinking, messages, open])
+
+  // Confirm an action proposal
+  const handleConfirmAction = useCallback(async (proposal: ActionProposal) => {
+    if (isThinking) return
+    setIsThinking(true)
+
+    // Add user confirmation message
+    setMessages(prev => [...prev, {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: '✅ Confirmado',
+      timestamp: new Date(),
+    }])
+
+    try {
+      const res = await fetch('/api/chatbot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'confirmar acción',
+          confirmAction: proposal,
+        }),
+      })
+
+      const data = await res.json()
+
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: data.response ?? 'Acción ejecutada.',
+        timestamp: new Date(),
+        actionExecuted: data.actionExecuted ?? true,
+      }])
+    } catch {
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: 'Hubo un error al ejecutar la acción. Intentá de nuevo.',
+        timestamp: new Date(),
+      }])
+    } finally {
+      setIsThinking(false)
+    }
+  }, [isThinking])
+
+  // Cancel an action proposal
+  const handleCancelAction = useCallback(() => {
+    setMessages(prev => [...prev, {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: '❌ Cancelar',
+      timestamp: new Date(),
+    }, {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: 'Dale, no hay drama. Si necesitás algo más, decime nomás.',
+      timestamp: new Date(),
+    }])
+  }, [])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -341,6 +413,35 @@ export function FloatingChat() {
                     ) : (
                       <p className="whitespace-pre-wrap">{msg.content}</p>
                     )}
+
+                    {/* Action confirmation buttons */}
+                    {msg.actionProposal && !msg.actionExecuted && (
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          onClick={() => handleConfirmAction(msg.actionProposal!)}
+                          disabled={isThinking}
+                          className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-3 py-1.5 text-xs font-bold text-white transition-all hover:bg-[#005a4a] active:scale-95 disabled:opacity-50"
+                        >
+                          <Check className="size-3" />
+                          Confirmar
+                        </button>
+                        <button
+                          onClick={handleCancelAction}
+                          className="rounded-lg border border-[#ebe6df] px-3 py-1.5 text-xs font-medium text-[#a39e97] transition-colors hover:bg-[#f3efe9]"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Action executed badge */}
+                    {msg.actionExecuted && (
+                      <div className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-[#006d5a]">
+                        <Check className="size-3" />
+                        Acción ejecutada
+                      </div>
+                    )}
+
                     <p className={`mt-1 text-[9px] ${msg.role === 'user' ? 'text-white/40' : 'text-[#a39e97]'}`}>
                       {msg.timestamp.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
                     </p>

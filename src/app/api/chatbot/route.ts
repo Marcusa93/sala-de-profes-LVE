@@ -37,6 +37,12 @@ const MAX_MESSAGE_LENGTH = 1500
 type ChatRequest = {
   message: string
   history?: { role: 'user' | 'assistant'; content: string }[]
+  confirmAction?: {
+    intent: string
+    items?: { name: string; quantity: string }[]
+    message?: string
+    urgency?: string
+  }
 }
 
 type StockItemRow = {
@@ -241,7 +247,36 @@ Basate SIEMPRE en los datos reales. Podés sugerir acciones basándote en patron
 - Máximo 500 palabras por respuesta
 - Si la respuesta es muy larga, priorizá lo más urgente
 
-IMPORTANTE: La fecha y hora actual están en el contexto. Usala para contextualizar tus respuestas (ej: "Hoy viernes 20 de marzo..." ).`
+IMPORTANTE: La fecha y hora actual están en el contexto. Usala para contextualizar tus respuestas (ej: "Hoy viernes 20 de marzo..." ).
+
+## ACCIONES AUTOMÁTICAS — MODO ACCIÓN
+Cuando el usuario pide algo que requiere CREAR algo en el sistema (pedido, reporte, aviso), respondé con el texto normal de confirmación PERO además incluí al final un bloque JSON entre marcadores especiales:
+
+Si detectás intención de PEDIDO DE MERCADERÍA:
+\`\`\`ACTION_JSON
+{"intent":"PEDIDO_MERCADERIA","items":[{"name":"nombre del producto","quantity":"cantidad con unidad"}],"urgency":"normal"}
+\`\`\`
+
+Si detectás intención de REPORTAR PROBLEMA:
+\`\`\`ACTION_JSON
+{"intent":"REPORTE_PROBLEMA","message":"descripción del problema","urgency":"urgente"}
+\`\`\`
+
+Si detectás intención de AVISAR AL ENCARGADO:
+\`\`\`ACTION_JSON
+{"intent":"AVISO_ENCARGADO","message":"el mensaje","urgency":"normal"}
+\`\`\`
+
+REGLAS DE ACCIONES:
+- SIEMPRE incluí un texto de confirmación ANTES del bloque JSON
+- El texto debe listar claramente qué se va a hacer
+- Terminá pidiendo confirmación: "¿Lo envío?" o "¿Confirmo?"
+- NO ejecutes la acción directamente — el sistema mostrará un botón de confirmación
+- Si el usuario dice "sí", "dale", "mandalo", "confirmo" después de una propuesta, incluí el JSON de nuevo para ejecutar
+- Si el usuario dice "no", "cancelar", "mejor no", respondé amablemente sin JSON
+- Para pedidos, normalizá los nombres de productos lo mejor posible
+- Extraé cantidad y unidad por separado (ej: "5 kg", "3 cajas", "10 unidades")
+- Si no entendés la cantidad, preguntá antes de proponer`
 
 // ---------------------------------------------------------------------------
 // Recopilar contexto de datos — ampliado
@@ -672,6 +707,45 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Demasiadas solicitudes. Esperá un momento.' }, { status: 429 })
     }
 
+    // --- HANDLE ACTION CONFIRMATION ---
+    if (body.confirmAction) {
+      const { buildProposal, executeAction, detectIntent } = await import('@/lib/ai/chatbot-actions')
+      const { createAdminClient } = await import('@/lib/supabase/admin')
+      const admin = createAdminClient()
+
+      const intent = detectIntent(body.confirmAction)
+      const proposal = await buildProposal(
+        admin,
+        intent,
+        body.confirmAction.items ?? [],
+        body.confirmAction.message,
+        body.confirmAction.urgency,
+        userRole,
+      )
+
+      proposal.readyToExecute = true
+      const userName = profile.first_name ?? 'Usuario'
+      const result = await executeAction(admin, proposal, user.id, userName, userRole)
+
+      if (result.success && result.created > 0) {
+        return NextResponse.json({
+          response: `✅ ¡Listo, ${profile.first_name}! ${result.details.join(', ')}. ${
+            proposal.intent === 'PEDIDO_MERCADERIA'
+              ? 'El pedido le llegó al encargado como notificación.'
+              : proposal.intent === 'REPORTE_PROBLEMA'
+                ? 'El reporte le llegó a los encargados.'
+                : 'Aviso enviado a los encargados.'
+          }`,
+          actionExecuted: true,
+        })
+      } else {
+        return NextResponse.json({
+          response: `Qué macana, hubo un error: ${result.errors.join(', ')}. Intentá de nuevo.`,
+          actionExecuted: false,
+        })
+      }
+    }
+
     // Recopilar contexto filtrado por rol
     const context = await gatherContext(supabase, userRole)
 
@@ -724,6 +798,47 @@ export async function POST(request: Request) {
         if (response.ok) {
           const data = await response.json()
           const responseText = data.choices?.[0]?.message?.content ?? 'No pude generar una respuesta.'
+
+          // Check if response contains an action proposal
+          const actionMatch = responseText.match(/```ACTION_JSON\s*([\s\S]*?)\s*```/)
+          if (actionMatch) {
+            try {
+              const actionData = JSON.parse(actionMatch[1].trim())
+              // Remove the JSON block from the visible text
+              const cleanText = responseText.replace(/```ACTION_JSON[\s\S]*?```/, '').trim()
+
+              // Build proposal for validation
+              const { buildProposal, detectIntent } = await import('@/lib/ai/chatbot-actions')
+              const { createAdminClient } = await import('@/lib/supabase/admin')
+              const admin = createAdminClient()
+
+              const intent = detectIntent(actionData)
+              const proposal = await buildProposal(
+                admin,
+                intent,
+                actionData.items ?? [],
+                actionData.message,
+                actionData.urgency,
+                userRole,
+              )
+
+              return NextResponse.json({
+                response: cleanText || proposal.confirmationText,
+                actionProposal: {
+                  intent: actionData.intent,
+                  items: actionData.items,
+                  message: actionData.message,
+                  urgency: actionData.urgency,
+                },
+                duplicateWarnings: proposal.duplicateWarnings,
+              })
+            } catch {
+              // JSON parse failed — return as regular text
+              const cleanText = responseText.replace(/```ACTION_JSON[\s\S]*?```/, '').trim()
+              return NextResponse.json({ response: cleanText })
+            }
+          }
+
           return NextResponse.json({ response: responseText })
         }
 
