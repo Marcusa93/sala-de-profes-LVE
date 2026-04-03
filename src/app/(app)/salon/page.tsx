@@ -14,6 +14,17 @@ import { FadeIn } from '@/components/ui/motion'
 // Types
 // ---------------------------------------------------------------------------
 
+type SaleItem = {
+  itemId: string
+  name: string
+  qty: number
+  price: number
+  createdAt: string
+  served: boolean
+  servedAt?: string
+  minutesPending: number
+}
+
 type TableData = {
   saleId: string
   tableNumber: number | null
@@ -22,8 +33,13 @@ type TableData = {
   total: number
   people: number | null
   createdAt: string
-  minutes: number
+  minutesOpen: number
+  minutesPending: number
   semaphore: 'green' | 'yellow' | 'red' | 'critical'
+  items: SaleItem[]
+  itemsTotal: number
+  itemsServed: number
+  itemsPending: number
 }
 
 type Counts = {
@@ -81,6 +97,8 @@ export default function SalonPage() {
   const [lastUpdate, setLastUpdate] = useState<string | null>(null)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const [alarmsEnabled, setAlarmsEnabled] = useState(true)
+  const [expandedSale, setExpandedSale] = useState<string | null>(null)
+  const [markingServed, setMarkingServed] = useState(false)
   const prevRedCountRef = useRef(0)
 
   const canView = ['runner', 'encargado', 'socio'].includes(profile?.role ?? '')
@@ -121,6 +139,34 @@ export default function SalonPage() {
 
   const handleDismiss = (saleId: string) => {
     setDismissed(prev => new Set(prev).add(saleId))
+  }
+
+  // Mark specific item as served
+  const handleMarkItem = async (saleId: string, itemId: string) => {
+    setMarkingServed(true)
+    try {
+      await fetch('/api/salon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ saleId, itemIds: [itemId] }),
+      })
+      fetchData()
+    } catch { /* silent */ }
+    setMarkingServed(false)
+  }
+
+  // Mark ALL items as served for a sale
+  const handleMarkAllServed = async (saleId: string) => {
+    setMarkingServed(true)
+    try {
+      await fetch('/api/salon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ saleId, allServed: true }),
+      })
+      fetchData()
+    } catch { /* silent */ }
+    setMarkingServed(false)
   }
 
   if (profileLoading || loading) {
@@ -217,24 +263,29 @@ export default function SalonPage() {
             const isDismissed = dismissed.has(table.saleId)
             const isAlert = (table.semaphore === 'red' || table.semaphore === 'critical') && !isDismissed
             const isTakeaway = table.saleType === 'TAKEAWAY'
+            const isExpanded = expandedSale === table.saleId
+            const allServed = table.itemsPending === 0
 
             return (
               <FadeIn key={table.saleId}>
                 <div
                   className={`rounded-xl border overflow-hidden transition-all ${
                     isAlert ? 'ring-2 shadow-md' : ''
-                  } ${isDismissed ? 'opacity-60' : ''}`}
+                  } ${isDismissed || allServed ? 'opacity-60' : ''}`}
                   style={{
                     borderLeftWidth: 4,
-                    borderLeftColor: s.border,
-                    ...(isAlert ? { ringColor: s.color + '40' } : {}),
+                    borderLeftColor: allServed ? '#006d5a' : s.border,
                   }}
                 >
-                  <div className="flex items-center gap-3 bg-card px-4 py-3">
+                  {/* Header — tap to expand */}
+                  <button
+                    onClick={() => setExpandedSale(isExpanded ? null : table.saleId)}
+                    className="flex w-full items-center gap-3 bg-card px-4 py-3 text-left"
+                  >
                     {/* Table number */}
                     <div
                       className="flex size-12 shrink-0 flex-col items-center justify-center rounded-xl text-white"
-                      style={{ backgroundColor: s.color }}
+                      style={{ backgroundColor: allServed ? '#006d5a' : s.color }}
                     >
                       {isTakeaway ? (
                         <>
@@ -254,51 +305,105 @@ export default function SalonPage() {
                     {/* Info */}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-[#3d2c24]">
-                          {table.minutes} min
-                        </span>
-                        <span
-                          className="rounded-full px-2 py-0.5 text-[9px] font-bold"
-                          style={{ color: s.color, backgroundColor: s.bg }}
-                        >
-                          {s.label}
-                        </span>
-                        {table.state === 'PAYMENT-PROCESS' && (
-                          <span className="rounded-full bg-[#eef4fc] px-2 py-0.5 text-[9px] font-bold text-[#4a90d9]">
-                            Por cobrar
+                        {allServed ? (
+                          <span className="text-sm font-bold text-[#006d5a]">✓ Servida</span>
+                        ) : (
+                          <span className="text-sm font-bold text-[#3d2c24]">
+                            {table.minutesPending} min
                           </span>
+                        )}
+                        {!allServed && (
+                          <span className="rounded-full px-2 py-0.5 text-[9px] font-bold" style={{ color: s.color, backgroundColor: s.bg }}>
+                            {s.label}
+                          </span>
+                        )}
+                        {table.state === 'PAYMENT-PROCESS' && (
+                          <span className="rounded-full bg-[#eef4fc] px-2 py-0.5 text-[9px] font-bold text-[#4a90d9]">Por cobrar</span>
                         )}
                       </div>
                       <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[#a39e97]">
                         <span>{formatPrice(table.total)}</span>
-                        {table.people && <span>· {table.people} pers.</span>}
+                        <span>· {table.itemsServed}/{table.itemsTotal} servidos</span>
                         <span>· {format(new Date(table.createdAt), 'HH:mm')}</span>
                       </div>
                     </div>
 
-                    {/* Actions */}
-                    {isAlert && (
+                    {/* Alert action */}
+                    {isAlert && !allServed && (
                       <button
-                        onClick={() => handleDismiss(table.saleId)}
+                        onClick={(e) => { e.stopPropagation(); handleDismiss(table.saleId) }}
                         className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[10px] font-bold text-white active:scale-95"
                       >
                         <CheckCircle className="size-3" />
                         Avisé
                       </button>
                     )}
-                    {isDismissed && (
-                      <span className="flex items-center gap-1 text-[10px] font-semibold text-[#006d5a]">
-                        <CheckCircle className="size-3" />
-                        Avisado
-                      </span>
-                    )}
-                  </div>
+                  </button>
 
-                  {/* Critical warning bar */}
-                  {table.semaphore === 'critical' && !isDismissed && (
+                  {/* Critical warning */}
+                  {table.semaphore === 'critical' && !isDismissed && !allServed && (
                     <div className="flex items-center gap-2 bg-[#b91c1c] px-4 py-1.5 text-[10px] font-bold text-white animate-pulse">
                       <AlertTriangle className="size-3" />
                       Demora crítica — intervención necesaria
+                    </div>
+                  )}
+
+                  {/* Expanded: items list */}
+                  {isExpanded && (
+                    <div className="border-t bg-[#faf8f5]">
+                      <div className="divide-y divide-[#ebe6df]/50">
+                        {table.items.map(item => (
+                          <div
+                            key={item.itemId}
+                            className={`flex items-center gap-2.5 px-4 py-2 ${item.served ? 'opacity-50' : ''}`}
+                          >
+                            {/* Serve toggle */}
+                            <button
+                              onClick={() => !item.served && !markingServed && handleMarkItem(table.saleId, item.itemId)}
+                              disabled={item.served || markingServed}
+                              className={`size-6 shrink-0 rounded-md border-2 flex items-center justify-center transition-colors ${
+                                item.served ? 'border-[#006d5a] bg-[#006d5a] text-white' : 'border-[#ebe6df] bg-white hover:border-[#006d5a]'
+                              }`}
+                            >
+                              {item.served && <CheckCircle className="size-3.5" />}
+                            </button>
+
+                            {/* Item info */}
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-sm ${item.served ? 'line-through text-[#a39e97]' : 'font-medium text-[#3d2c24]'}`}>
+                                {item.name} {item.qty > 1 ? `x${item.qty}` : ''}
+                              </p>
+                            </div>
+
+                            {/* Time */}
+                            <div className="shrink-0 text-right">
+                              {item.served ? (
+                                <span className="text-[10px] text-[#006d5a] font-semibold">Servido</span>
+                              ) : (
+                                <span className={`text-[10px] font-bold tabular-nums ${
+                                  item.minutesPending > 25 ? 'text-[#ea504c]' : item.minutesPending > 15 ? 'text-[#d4943a]' : 'text-[#a39e97]'
+                                }`}>
+                                  {item.minutesPending} min
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Mark all served button */}
+                      {table.itemsPending > 0 && (
+                        <div className="p-3">
+                          <button
+                            onClick={() => handleMarkAllServed(table.saleId)}
+                            disabled={markingServed}
+                            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#006d5a] py-2.5 text-xs font-bold text-white active:scale-[0.98] disabled:opacity-50"
+                          >
+                            <CheckCircle className="size-3.5" />
+                            Todo listo
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
