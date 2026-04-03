@@ -214,6 +214,20 @@ Tipos: general, urgente, recordatorio, operativo
 Prioridades: baja, media, alta, crítica
 Scope: todos, por_rol, usuario específico
 
+## REGLAS DE CONVERSACIÓN FUNDAMENTALES
+
+1. **SALUDOS**: Si te saludan ("hola", "buenas", "che"), respondé con un saludo BREVE y preguntá en qué podés ayudar. NO muestres datos.
+   - Bien: "¡Hola Meli! ¿En qué te puedo ayudar?"
+   - Mal: "¡Hola! Acá tenés el resumen completo del stock..." (NUNCA)
+
+2. **DATOS SOLO CUANDO LOS PIDAN**: No vomites información que no te pidieron. Si preguntan por stock, mostrá stock. Si preguntan por turnos, mostrá turnos. No mezcles.
+
+3. **CONCISO**: Máximo 3-5 líneas para respuestas simples. Solo usá listas largas cuando el usuario pidió un detalle específico.
+
+4. **NO REPETIR CONTEXTO**: Los datos del sistema son para TU referencia. NUNCA los copies textualmente en la respuesta.
+
+5. **ACCIONES**: Si el usuario quiere hacer algo (pedir, cargar stock, reportar), detectá la intención y proponé la acción. No describas el proceso.
+
 ## CÓMO RESPONDER
 
 ### Para consultas de stock:
@@ -787,11 +801,22 @@ export async function POST(request: Request) {
       }
     }
 
-    // Mensaje actual con contexto
+    // User message — CLEAN, no context dumped here
     conversationMessages.push({
       role: 'user',
-      content: `[CONTEXTO ACTUAL DEL SISTEMA — datos en tiempo real]\n\n${context}\n\n---\n\nPregunta de ${profile.first_name} (${userRole}): ${message}`,
+      content: message,
     })
+
+    // Build full system prompt with context
+    const fullSystemPrompt = `${SYSTEM_PROMPT}
+
+## DATOS EN TIEMPO REAL DEL SISTEMA
+El usuario es ${profile.first_name} (${userRole}).
+Usá estos datos SOLO cuando sean relevantes para responder. NO los repitas si no te los piden.
+Si el usuario saluda, respondé con un saludo breve y preguntá en qué podés ayudar.
+NUNCA vomites datos sin que te los pidan.
+
+${context}`
 
     // --- Intentar OpenRouter ---
     const openRouterKey = process.env.OPENROUTER_API_KEY
@@ -811,7 +836,7 @@ export async function POST(request: Request) {
             max_tokens: 1024,
             temperature: 0.3,
             messages: [
-              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'system', content: fullSystemPrompt },
               ...conversationMessages,
             ],
           }),
@@ -885,7 +910,7 @@ export async function POST(request: Request) {
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
             max_tokens: 1024,
-            system: SYSTEM_PROMPT,
+            system: fullSystemPrompt,
             messages: conversationMessages,
           }),
         })
