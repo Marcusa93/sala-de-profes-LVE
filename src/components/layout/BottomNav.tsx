@@ -26,6 +26,7 @@ import {
   Wine,
   BarChart3,
   X,
+  Armchair,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
@@ -67,6 +68,14 @@ const BASE_NAV: NavItem[] = [
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
+// Runners get Salón in main bar instead of Horarios
+const RUNNER_NAV: NavItem[] = [
+  { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Salón', href: '/salon', icon: Armchair },
+  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
+  { label: 'Avisos', href: '/notificaciones', icon: Bell },
+]
+
 // SOCIO — todo accesible, 3 grupos
 const SOCIO_MORE: ExpandableNavItem = {
   label: 'Más',
@@ -75,6 +84,7 @@ const SOCIO_MORE: ExpandableNavItem = {
     {
       label: 'El local',
       items: [
+        { label: 'Salón', href: '/salon', icon: Armchair },
         { label: 'Ventas', href: '/ventas', icon: BarChart3 },
         { label: 'Equipo', href: '/equipo', icon: Users },
         { label: 'Turnos', href: '/equipo/turnos', icon: Calendar },
@@ -115,10 +125,10 @@ const ENCARGADO_MORE: ExpandableNavItem = {
     {
       label: 'El local',
       items: [
+        { label: 'Salón', href: '/salon', icon: Armchair },
         { label: 'Control', href: '/admin', icon: LayoutDashboard },
         { label: 'Equipo', href: '/equipo', icon: Users },
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Pedidos cocina', href: '/cocina/pedidos', icon: ShoppingCart },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
       ],
@@ -246,7 +256,7 @@ function getNavItems(role?: AppRole): { items: NavItem[]; more?: ExpandableNavIt
   if (role === 'chef') return { items: BASE_NAV, more: CHEF_MORE }
   if (role === 'cocina') return { items: BASE_NAV, more: COCINA_MORE }
   if (role === 'barista') return { items: BASE_NAV, more: BARISTA_MORE }
-  if (role === 'runner') return { items: BASE_NAV, more: RUNNER_MORE }
+  if (role === 'runner') return { items: RUNNER_NAV, more: RUNNER_MORE }
   if (role === 'bacha') return { items: BASE_NAV, more: BACHA_MORE }
   return { items: BASE_NAV, more: BACHA_MORE }
 }
