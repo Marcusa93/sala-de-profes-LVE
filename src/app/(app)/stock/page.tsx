@@ -72,20 +72,38 @@ export default function StockPage() {
   const [loadingHistory, setLoadingHistory] = useState(false)
 
   const isEncargado = isManagerOrAbove(profile?.role)
+  const [lastFudoSync, setLastFudoSync] = useState<string | null>(null)
+  const [fudoSyncCount, setFudoSyncCount] = useState(0)
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (doFudoSync = false) => {
+    // If Fudo sync requested, pull from Fudo first
+    if (doFudoSync) {
+      setSyncing(true)
+      try {
+        const syncRes = await fetch('/api/stock/sync')
+        const syncData = await syncRes.json()
+        if (syncData.success) {
+          setLastFudoSync(syncData.timestamp)
+          setFudoSyncCount(syncData.read?.synced ?? 0)
+        }
+      } catch { /* silent */ }
+      setSyncing(false)
+    }
+
+    // Then load from Supabase (now updated with Fudo data)
     const supabase = createClient()
     const { data } = await supabase
       .from('stock_items')
-      .select('id, name, category, unit, current_qty, min_qty, is_active, supplier_id, suppliers(name)')
+      .select('id, name, category, unit, current_qty, min_qty, is_active, supplier_id, fudo_ingredient_id, suppliers(name)')
       .eq('is_active', true)
       .order('category')
       .order('name')
-    setItems((data as unknown as StockItem[]) ?? [])
+    setItems((data as unknown as (StockItem & { fudo_ingredient_id: string | null })[]) ?? [])
     setLoading(false)
   }, [])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  // Sync from Fudo on first load
+  useEffect(() => { fetchData(true) }, [fetchData])
 
   // Load history for an item
   const loadHistory = async (itemId: string) => {
@@ -153,19 +171,28 @@ export default function StockPage() {
     return map
   }, [filtered])
 
-  // Update qty
+  // Update qty — writes to Supabase + Fudo (bidirectional)
   const handleSave = async (itemId: string) => {
     const newQty = parseFloat(editQty)
     if (isNaN(newQty) || newQty < 0) { toast.error('Cantidad inválida'); return }
     try {
-      const supabase = createClient()
-      const { error } = await supabase.from('stock_items').update({ current_qty: newQty }).eq('id', itemId)
-      if (error) throw error
-      toast.success('Stock actualizado')
+      const res = await fetch('/api/stock/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stockItemId: itemId, newQty }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+
+      if (data.fudoSynced) {
+        toast.success('Stock actualizado — sincronizado con Fudo ✓')
+      } else {
+        toast.success('Stock actualizado')
+      }
       setEditingId(null)
       fetchData()
-    } catch {
-      toast.error('Error al guardar')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al guardar')
     }
   }
 
@@ -198,17 +225,26 @@ export default function StockPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Stock</h1>
-            <p className="section-label mt-0.5">{counts.total} items</p>
+            <p className="section-label mt-0.5">
+              {counts.total} items
+              {lastFudoSync && (
+                <span className="ml-1 text-[#006d5a]">
+                  · Fudo {format(new Date(lastFudoSync), 'HH:mm')}
+                </span>
+              )}
+            </p>
           </div>
           {isEncargado && (
             <button
               onClick={async () => {
                 setSyncing(true)
                 try {
-                  const res = await fetch('/api/fudo/sync/stock', { method: 'POST' })
+                  const res = await fetch('/api/stock/sync')
                   const json = await res.json()
                   if (json.success) {
-                    toast.success(`Sincronizado con Fudo — ${json.synced ?? 0} items`)
+                    setLastFudoSync(json.timestamp)
+                    setFudoSyncCount(json.read?.synced ?? 0)
+                    toast.success(`Sincronizado con Fudo — ${json.read?.synced ?? 0} items`)
                     fetchData()
                   } else {
                     toast.error(json.error || 'Error al sincronizar')
