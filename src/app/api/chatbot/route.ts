@@ -722,11 +722,20 @@ export async function POST(request: Request) {
 
     // --- HANDLE ACTION CONFIRMATION ---
     if (body.confirmAction) {
-      const { buildProposal, executeAction, detectIntent } = await import('@/lib/ai/chatbot-actions')
+      const { buildProposal, executeAction, detectIntent, checkPermission } = await import('@/lib/ai/chatbot-actions')
       const { createAdminClient } = await import('@/lib/supabase/admin')
       const admin = createAdminClient()
 
       const intent = detectIntent(body.confirmAction)
+
+      // Permission check
+      const perm = checkPermission(intent, userRole)
+      if (!perm.allowed) {
+        return NextResponse.json({
+          response: `Mirá ${profile.first_name}, ${perm.reason}`,
+          actionExecuted: false,
+        })
+      }
       const proposal = await buildProposal(
         admin,
         intent,

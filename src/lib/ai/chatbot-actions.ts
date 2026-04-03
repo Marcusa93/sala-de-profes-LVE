@@ -205,6 +205,44 @@ export async function checkDuplicates(
 }
 
 // ---------------------------------------------------------------------------
+// 3b. Permission Check — validate role can perform action
+// ---------------------------------------------------------------------------
+
+const ACTION_PERMISSIONS: Record<ActionIntent, string[]> = {
+  PEDIDO_MERCADERIA: ['socio', 'encargado', 'chef', 'cocina', 'barista'], // All operational roles
+  ACTUALIZAR_STOCK: ['socio', 'encargado', 'chef', 'cocina', 'barista'], // Who can count/update stock
+  REPORTE_PROBLEMA: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can report
+  AVISO_ENCARGADO: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can notify
+  CONSULTA: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can ask
+  NONE: [],
+}
+
+// What stock source each role accesses
+const ROLE_STOCK_SOURCE: Record<string, 'cocina' | 'barra'> = {
+  barista: 'barra',
+  chef: 'cocina',
+  cocina: 'cocina',
+  encargado: 'cocina', // Encargado sees general stock (cocina table)
+  socio: 'cocina',
+}
+
+export function checkPermission(intent: ActionIntent, role: string): { allowed: boolean; reason?: string } {
+  const allowed = ACTION_PERMISSIONS[intent]
+  if (!allowed || allowed.length === 0) return { allowed: false, reason: 'Acción no reconocida' }
+  if (!allowed.includes(role)) {
+    return {
+      allowed: false,
+      reason: `Los ${role}s no pueden realizar esta acción. Consultá con tu encargado.`,
+    }
+  }
+  return { allowed: true }
+}
+
+export function getStockSource(role: string): 'cocina' | 'barra' {
+  return ROLE_STOCK_SOURCE[role] ?? 'cocina'
+}
+
+// ---------------------------------------------------------------------------
 // 4. Build Proposal — create the confirmation message
 // ---------------------------------------------------------------------------
 
@@ -216,7 +254,19 @@ export async function buildProposal(
   urgency: string | undefined,
   userRole: string,
 ): Promise<ActionProposal> {
-  const source: 'cocina' | 'barra' = userRole === 'barista' ? 'barra' : 'cocina'
+  // Check permissions
+  const perm = checkPermission(intent, userRole)
+  if (!perm.allowed) {
+    return {
+      intent,
+      items: [],
+      duplicateWarnings: [],
+      confirmationText: `❌ ${perm.reason}`,
+      readyToExecute: false,
+    }
+  }
+
+  const source = getStockSource(userRole)
 
   if (intent === 'PEDIDO_MERCADERIA') {
     const matched = await matchItems(admin, rawItems, source)
@@ -323,7 +373,7 @@ export async function executeAction(
 
   try {
     if (proposal.intent === 'PEDIDO_MERCADERIA') {
-      const source: 'cocina' | 'barra' = userRole === 'barista' ? 'barra' : 'cocina'
+      const source = getStockSource(userRole)
 
       for (const item of proposal.items) {
         const productName = item.matchedStockName ?? item.rawName
