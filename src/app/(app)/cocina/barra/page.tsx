@@ -81,9 +81,11 @@ export default function MiBarraPage() {
   const [orders, setOrders] = useState<BarOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [showOk, setShowOk] = useState(true)
-  // Always show all when searching
-  const effectiveShowOk = showOk || search.trim().length > 0
   const [search, setSearch] = useState('')
+
+  // Consumption data from Fudo
+  const [consumption, setConsumption] = useState<{ id: number; consumed: number; consumedUnit: string; pctUsed: number }[]>([])
+  const [consumptionLoaded, setConsumptionLoaded] = useState(false)
 
   // Edit state
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -125,6 +127,18 @@ export default function MiBarraPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Fetch Fudo consumption (lazy, after main data)
+  useEffect(() => {
+    if (loading || consumptionLoaded) return
+    fetch('/api/bar/consumption')
+      .then(r => r.json())
+      .then(d => {
+        if (d.consumption) setConsumption(d.consumption)
+        setConsumptionLoaded(true)
+      })
+      .catch(() => setConsumptionLoaded(true))
+  }, [loading, consumptionLoaded])
 
   // Filter by search
   const filteredItems = useMemo(() => {
@@ -176,6 +190,17 @@ export default function MiBarraPage() {
 
     return { urgents, byCat }
   }, [filteredItems])
+
+  // Build consumption map for passing to sections
+  const consumptionMap = useMemo(() => {
+    const map = new Map<number, { consumed: number; unit: string; pctUsed: number }>()
+    for (const c of consumption) {
+      if (c.consumed > 0) {
+        map.set(c.id, { consumed: c.consumed, unit: c.consumedUnit, pctUsed: c.pctUsed })
+      }
+    }
+    return map
+  }, [consumption])
 
   // Items with received orders (need stock update)
   const receivedOrders = useMemo(() => orders.filter(o => o.status === 'received'), [orders])
@@ -425,6 +450,7 @@ export default function MiBarraPage() {
             onEditQtyChange={setEditQty}
             onOrder={(id) => setOrderItemId(id)}
             onHistory={loadHistory}
+            consumptionMap={consumptionMap}
             hideHeader
           />
         </div>
@@ -458,6 +484,7 @@ export default function MiBarraPage() {
               historyItemId={historyItemId}
               historyLogs={historyLogs}
               loadingHistory={loadingHistory}
+              consumptionMap={consumptionMap}
               onEditStart={(id, qty) => { setEditingId(id); setEditQty(String(qty)) }}
               onEditCancel={() => setEditingId(null)}
               onEditSave={(id) => handleUpdateQty(id, parseFloat(editQty) || 0)}
@@ -606,6 +633,7 @@ type SectionProps = {
   historyItemId: number | null
   historyLogs: LogEntry[]
   loadingHistory: boolean
+  consumptionMap: Map<number, { consumed: number; unit: string; pctUsed: number }>
   onEditStart: (id: number, qty: number) => void
   onEditCancel: () => void
   onEditSave: (id: number) => void
@@ -617,7 +645,7 @@ type SectionProps = {
 
 function Section({
   color, label, items, orderByItem, editingId, editQty, canEdit,
-  historyItemId, historyLogs, loadingHistory,
+  historyItemId, historyLogs, loadingHistory, consumptionMap,
   onEditStart, onEditCancel, onEditSave, onEditQtyChange, onOrder, onHistory,
   hideHeader,
 }: SectionProps) {
@@ -646,7 +674,7 @@ function Section({
           return (
             <div key={item.id} className="rounded-xl border bg-card overflow-hidden" style={{ borderLeftWidth: 3, borderLeftColor: itemSemaphore.border }}>
               <div className="flex items-center gap-2 px-3 py-2.5">
-                {/* Name + category */}
+                {/* Name + category + consumption */}
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-[#3d2c24] truncate">{item.name}</p>
                   <div className="flex items-center gap-2 mt-0.5">
@@ -654,6 +682,15 @@ function Section({
                     {item.current_detail && (
                       <span className="text-[10px] font-medium text-[#d4943a]">{item.current_detail}</span>
                     )}
+                    {(() => {
+                      const cons = consumptionMap.get(item.id)
+                      if (!cons || cons.consumed === 0) return null
+                      return (
+                        <span className="text-[10px] font-medium text-[#4a90d9]">
+                          ↓{cons.consumed} {cons.unit} hoy
+                        </span>
+                      )
+                    })()}
                   </div>
                 </div>
 
