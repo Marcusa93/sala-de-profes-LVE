@@ -14,6 +14,7 @@ import {
   Camera,
   BarChart3,
   Calculator,
+  Clock,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { label: 'Turnos', href: '/admin/reportes/turnos', icon: Calendar },
   { label: 'Stock', href: '/stock', icon: Package },
   { label: 'Vajilla', href: '/vajilla', icon: Wine },
+  { label: 'Salón', href: '/admin/reportes/salon', icon: Clock },
   { label: 'Avisos', href: '/admin/reportes/notificaciones', icon: Bell },
 ]
 
