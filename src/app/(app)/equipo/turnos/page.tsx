@@ -109,12 +109,69 @@ export default function EquipoTurnosPage() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [existingCount, setExistingCount] = useState(0)
 
+  // Preview
+  const [previewData, setPreviewData] = useState<{ name: string; shifts: { day: string; time: string }[] }[] | null>(null)
+  const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
+
   const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
+    setPendingFile(file)
 
-    // First check if shifts already exist for this week
+    // Quick client-side preview using xlsx
+    try {
+      const XLSX = (await import('xlsx'))
+      const buffer = await file.arrayBuffer()
+      const wb = XLSX.read(buffer, { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const rows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true })
+
+      const dayNames = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado', 'Domingo']
+      const preview: { name: string; shifts: { day: string; time: string }[] }[] = []
+      let currentRole = ''
+
+      for (const row of rows) {
+        if (!row || row.length === 0) continue
+        const first = String(row[0] ?? '').trim()
+        if (!first) continue
+
+        // Role header (all uppercase, no time data)
+        if (first === first.toUpperCase() && first.length > 2 && !String(row[1] ?? '').match(/\d/)) {
+          currentRole = first
+          continue
+        }
+
+        // Employee row
+        const shifts: { day: string; time: string }[] = []
+        for (let i = 1; i <= 7 && i < row.length; i++) {
+          const val = String(row[i] ?? '').trim()
+          if (!val) continue
+          const day = dayNames[i - 1] ?? `Día ${i}`
+          shifts.push({ day, time: val })
+        }
+
+        if (shifts.length > 0) {
+          preview.push({ name: `${first}${currentRole ? ` (${currentRole.toLowerCase()})` : ''}`, shifts })
+        }
+      }
+
+      setPreviewData(preview)
+      setPreviewDialogOpen(true)
+    } catch {
+      // If preview fails, go straight to upload
+      await checkAndUpload(file)
+    }
+  }
+
+  const confirmPreviewUpload = async () => {
+    setPreviewDialogOpen(false)
+    if (!pendingFile) return
+    await checkAndUpload(pendingFile)
+  }
+
+  const checkAndUpload = async (file: File) => {
+    // Check if shifts already exist for this week
     try {
       const checkForm = new FormData()
       checkForm.append('checkOnly', 'true')
@@ -123,17 +180,14 @@ export default function EquipoTurnosPage() {
       const checkData = await checkRes.json()
 
       if (checkData.exists && checkData.count > 0) {
-        // Shifts exist — ask user if they want to replace
-        setPendingFile(file)
         setExistingCount(checkData.count)
         setReplaceDialogOpen(true)
         return
       }
     } catch {
-      // If check fails, proceed with upload anyway
+      // If check fails, proceed
     }
 
-    // No existing shifts — upload directly
     await doUpload(file, false)
   }
 
@@ -947,6 +1001,58 @@ export default function EquipoTurnosPage() {
               Eliminar
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================================== */}
+      {/* Preview Dialog                             */}
+      {/* ========================================== */}
+      <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
+        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-md max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg font-bold text-[#3d2c24]">
+              Preview del archivo
+            </DialogTitle>
+            <DialogDescription className="text-[#a39e97]">
+              {previewData?.length ?? 0} empleados detectados. Verificá antes de importar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-2 py-2">
+            {previewData?.map((emp, i) => (
+              <div key={i} className="rounded-xl border border-[#ebe6df] bg-white p-3">
+                <p className="text-sm font-semibold text-[#3d2c24]">{emp.name}</p>
+                <div className="mt-1.5 grid grid-cols-7 gap-1">
+                  {emp.shifts.map((s, j) => {
+                    const isDescanso = s.time.toLowerCase().includes('descanso') || s.time.toLowerCase().includes('franco') || s.time === '-' || s.time === 'X'
+                    return (
+                      <div key={j} className="text-center">
+                        <p className="text-[8px] font-semibold text-[#a39e97]">{s.day.slice(0, 3)}</p>
+                        <p className={`text-[9px] font-bold mt-0.5 ${isDescanso ? 'text-[#a39e97]' : 'text-[#3d2c24]'}`}>
+                          {isDescanso ? 'D' : s.time.replace(/ [Aa] /g, '-').slice(0, 9)}
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 pt-2">
+            <Button
+              variant="outline"
+              className="flex-1 rounded-xl border-[#ebe6df] text-[#a39e97]"
+              onClick={() => { setPreviewDialogOpen(false); setPendingFile(null); setPreviewData(null) }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="flex-1 rounded-xl bg-[#006d5a] text-white hover:bg-[#005a4a]"
+              onClick={confirmPreviewUpload}
+            >
+              <CheckCircle className="size-4 mr-1" />
+              Importar turnos
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
