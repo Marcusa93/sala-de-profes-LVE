@@ -145,7 +145,7 @@ const CHEF_MORE: ExpandableNavItem = {
       label: 'Cocina',
       items: [
         { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Pedir mercadería', href: '/cocina/pedidos', icon: ShoppingCart },
+        { label: 'Stock cocina', href: '/cocina/stock', icon: Package },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
@@ -162,7 +162,7 @@ const COCINA_MORE: ExpandableNavItem = {
       label: 'Cocina',
       items: [
         { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Pedir mercadería', href: '/cocina/pedidos', icon: ShoppingCart },
+        { label: 'Stock cocina', href: '/cocina/stock', icon: Package },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
