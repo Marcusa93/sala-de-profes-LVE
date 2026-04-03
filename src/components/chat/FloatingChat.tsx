@@ -300,7 +300,12 @@ export function FloatingChat() {
   }
 
   // Voice input via Web Speech API
-  const supportsVoice = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
+  const [supportsVoice, setSupportsVoice] = useState(false)
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const W = window as any
+    setSupportsVoice(!!(W.SpeechRecognition ?? W.webkitSpeechRecognition))
+  }, [])
 
   const toggleVoice = useCallback(() => {
     if (isListening) {
@@ -309,42 +314,62 @@ export function FloatingChat() {
       return
     }
 
-    const SpeechRecognition = (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition; webkitSpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition
-      ?? (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition
-    if (!SpeechRecognition) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const W = window as any
+    const SpeechRecognition = W.SpeechRecognition ?? W.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setInput('(Tu navegador no soporta voz)')
+      return
+    }
 
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'es-AR'
-    recognition.continuous = false
-    recognition.interimResults = true
-    recognition.maxAlternatives = 1
-    recognitionRef.current = recognition
+    try {
+      const recognition = new SpeechRecognition()
+      recognition.lang = 'es-AR'
+      recognition.continuous = false
+      recognition.interimResults = true
+      recognition.maxAlternatives = 1
+      recognitionRef.current = recognition
 
-    recognition.onstart = () => setIsListening(true)
+      recognition.onstart = () => {
+        setIsListening(true)
+        setInput('')
+      }
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const transcript = Array.from(event.results)
-        .map(r => r[0].transcript)
-        .join('')
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        const transcript = Array.from(event.results)
+          .map(r => r[0].transcript)
+          .join('')
 
-      setInput(transcript)
+        setInput(transcript)
 
-      // If final result, auto-send
-      if (event.results[event.results.length - 1].isFinal) {
-        setIsListening(false)
-        if (transcript.trim()) {
-          // Small delay so user sees the text before sending
-          setTimeout(() => handleSend(transcript.trim()), 300)
+        // If final result, auto-send
+        if (event.results[event.results.length - 1].isFinal) {
+          setIsListening(false)
+          if (transcript.trim()) {
+            setTimeout(() => handleSend(transcript.trim()), 500)
+          }
         }
       }
-    }
 
-    recognition.onerror = () => {
-      setIsListening(false)
-    }
+      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        setIsListening(false)
+        if (event.error === 'not-allowed') {
+          setInput('⚠️ Permití el micrófono en tu navegador')
+        } else if (event.error === 'no-speech') {
+          setInput('No escuché nada, intentá de nuevo')
+        } else {
+          setInput(`Error de voz: ${event.error}`)
+        }
+      }
 
-    recognition.onend = () => {
+      recognition.onend = () => {
+        setIsListening(false)
+      }
+
+      recognition.start()
+    } catch (err) {
       setIsListening(false)
+      setInput('Error al iniciar el micrófono')
     }
 
     recognition.start()
