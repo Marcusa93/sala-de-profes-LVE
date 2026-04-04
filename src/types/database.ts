@@ -1128,6 +1128,195 @@ export type Database = {
         }
         Relationships: []
       }
+      production_templates: {
+        Row: {
+          id: number
+          name: string
+          description: string | null
+          input_stock_item_id: number | null
+          input_unit: string
+          is_active: boolean
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          name: string
+          description?: string | null
+          input_stock_item_id?: number | null
+          input_unit?: string
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          name?: string
+          description?: string | null
+          input_stock_item_id?: number | null
+          input_unit?: string
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      production_template_outputs: {
+        Row: {
+          id: number
+          template_id: number
+          stock_item_id: number | null
+          output_name: string
+          theoretical_yield_pct: number
+          output_unit: string
+          is_waste: boolean
+          sort_order: number
+          notes: string | null
+        }
+        Insert: {
+          id?: number
+          template_id: number
+          stock_item_id?: number | null
+          output_name: string
+          theoretical_yield_pct: number
+          output_unit: string
+          is_waste?: boolean
+          sort_order?: number
+          notes?: string | null
+        }
+        Update: {
+          id?: number
+          template_id?: number
+          stock_item_id?: number | null
+          output_name?: string
+          theoretical_yield_pct?: number
+          output_unit?: string
+          is_waste?: boolean
+          sort_order?: number
+          notes?: string | null
+        }
+        Relationships: []
+      }
+      production_orders: {
+        Row: {
+          id: number
+          name: string
+          parent_order_id: number | null
+          template_id: number | null
+          status: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+          chef_id: string | null
+          notes: string | null
+          started_at: string | null
+          completed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          name: string
+          parent_order_id?: number | null
+          template_id?: number | null
+          status?: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+          chef_id?: string | null
+          notes?: string | null
+          started_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          name?: string
+          parent_order_id?: number | null
+          template_id?: number | null
+          status?: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+          chef_id?: string | null
+          notes?: string | null
+          started_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      production_inputs: {
+        Row: {
+          id: number
+          production_order_id: number
+          stock_item_id: number
+          qty_used: number
+          unit: string
+          cost_per_unit: number | null
+          stock_movement_id: number | null
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          production_order_id: number
+          stock_item_id: number
+          qty_used: number
+          unit: string
+          cost_per_unit?: number | null
+          stock_movement_id?: number | null
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          production_order_id?: number
+          stock_item_id?: number
+          qty_used?: number
+          unit?: string
+          cost_per_unit?: number | null
+          stock_movement_id?: number | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      production_outputs: {
+        Row: {
+          id: number
+          production_order_id: number
+          stock_item_id: number | null
+          output_name: string
+          qty_produced: number
+          theoretical_qty: number | null
+          unit: string
+          is_waste: boolean
+          notes: string | null
+          stock_movement_id: number | null
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          production_order_id: number
+          stock_item_id?: number | null
+          output_name: string
+          qty_produced: number
+          theoretical_qty?: number | null
+          unit: string
+          is_waste?: boolean
+          notes?: string | null
+          stock_movement_id?: number | null
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          production_order_id?: number
+          stock_item_id?: number | null
+          output_name?: string
+          qty_produced?: number
+          theoretical_qty?: number | null
+          unit?: string
+          is_waste?: boolean
+          notes?: string | null
+          stock_movement_id?: number | null
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -1224,6 +1413,14 @@ export type Database = {
           limiting_item_id: number | null
           status: string
         }[]
+      }
+      complete_production_order: {
+        Args: { p_order_id: number; p_user_id: string }
+        Returns: Record<string, unknown>
+      }
+      production_dashboard: {
+        Args: { p_days?: number }
+        Returns: Record<string, unknown>
       }
     }
     Enums: {
@@ -1404,4 +1601,90 @@ export type RecipeStockStatus = {
   linked_ingredients_count: number
   out_of_stock_count: number
   critical_stock_count: number
+}
+
+// ---------------------------------------------------------------------------
+// Production system types
+// ---------------------------------------------------------------------------
+
+export type ProductionTemplate = Database['public']['Tables']['production_templates']['Row']
+export type ProductionTemplateInsert = Database['public']['Tables']['production_templates']['Insert']
+export type ProductionTemplateUpdate = Database['public']['Tables']['production_templates']['Update']
+
+export type ProductionTemplateOutput = Database['public']['Tables']['production_template_outputs']['Row']
+export type ProductionTemplateOutputInsert = Database['public']['Tables']['production_template_outputs']['Insert']
+export type ProductionTemplateOutputUpdate = Database['public']['Tables']['production_template_outputs']['Update']
+
+export type ProductionOrder = Database['public']['Tables']['production_orders']['Row']
+export type ProductionOrderInsert = Database['public']['Tables']['production_orders']['Insert']
+export type ProductionOrderUpdate = Database['public']['Tables']['production_orders']['Update']
+
+export type ProductionInput = Database['public']['Tables']['production_inputs']['Row']
+export type ProductionInputInsert = Database['public']['Tables']['production_inputs']['Insert']
+export type ProductionInputUpdate = Database['public']['Tables']['production_inputs']['Update']
+
+export type ProductionOutput = Database['public']['Tables']['production_outputs']['Row']
+export type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
+export type ProductionOutputUpdate = Database['public']['Tables']['production_outputs']['Update']
+
+export type ProductionOrderStatus = 'draft' | 'in_progress' | 'completed' | 'cancelled'
+
+// Full order with nested inputs + outputs (returned by GET /api/produccion/orders/[id])
+export type ProductionOrderDetail = ProductionOrder & {
+  chef_name: string | null
+  template_name: string | null
+  inputs: (ProductionInput & { stock_item_name: string; stock_item_unit: string })[]
+  outputs: (ProductionOutput & { stock_item_name: string | null })[]
+  child_orders: Pick<ProductionOrder, 'id' | 'name' | 'status' | 'completed_at'>[]
+  summary: {
+    total_input_qty: number
+    total_output_qty: number
+    total_waste_qty: number
+    efficiency_pct: number | null
+  }
+}
+
+// Dashboard RPC result
+export type ProductionDashboard = {
+  period_days: number
+  total_completed: number
+  total_input_kg: number | null
+  total_waste_kg: number | null
+  avg_efficiency_pct: number | null
+  pending_orders: number
+  by_chef: {
+    chef_id: string | null
+    chef_name: string
+    total_orders: number
+    avg_efficiency: number | null
+    total_waste: number
+  }[]
+  daily: {
+    day: string
+    orders: number
+    avg_efficiency: number | null
+  }[]
+}
+
+// Summary row from v_production_summary view
+export type ProductionSummaryRow = {
+  id: number
+  name: string
+  status: ProductionOrderStatus
+  parent_order_id: number | null
+  template_id: number | null
+  chef_id: string | null
+  notes: string | null
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+  chef_name: string | null
+  chef_role: string | null
+  template_name: string | null
+  total_input_qty: number
+  total_output_qty: number
+  total_waste_qty: number
+  efficiency_pct: number | null
+  child_orders_count: number
 }

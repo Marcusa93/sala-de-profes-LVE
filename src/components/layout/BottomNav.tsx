@@ -29,6 +29,7 @@ import {
   Armchair,
   TrendingUp,
   ClipboardCheck,
+  Hammer,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
@@ -101,6 +102,7 @@ const SOCIO_MORE: ExpandableNavItem = {
       items: [
         { label: 'Stock', href: '/stock', icon: Package },
         { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp },
+        { label: 'Producción', href: '/stock/produccion', icon: Hammer },
         { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
         { label: 'Proveed.', href: '/proveedores', icon: Truck },
@@ -143,6 +145,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
       items: [
         { label: 'Stock general', href: '/stock', icon: Package },
         { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp },
+        { label: 'Producción', href: '/stock/produccion', icon: Hammer },
         { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
         { label: 'Proveedores', href: '/proveedores', icon: Truck },
@@ -162,6 +165,7 @@ const CHEF_MORE: ExpandableNavItem = {
       items: [
         { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Stock cocina', href: '/cocina/stock', icon: Package },
+        { label: 'Producción', href: '/cocina/produccion', icon: Hammer },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
@@ -180,6 +184,7 @@ const COCINA_MORE: ExpandableNavItem = {
       items: [
         { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Stock cocina', href: '/cocina/stock', icon: Package },
+        { label: 'Producción', href: '/cocina/produccion', icon: Hammer },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
