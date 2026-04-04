@@ -27,6 +27,8 @@ import {
   BarChart3,
   X,
   Armchair,
+  TrendingUp,
+  ClipboardCheck,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
@@ -91,12 +93,14 @@ const SOCIO_MORE: ExpandableNavItem = {
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck },
       ],
     },
     {
       label: 'Inventario',
       items: [
         { label: 'Stock', href: '/stock', icon: Package },
+        { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp },
         { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
         { label: 'Proveed.', href: '/proveedores', icon: Truck },
@@ -131,12 +135,14 @@ const ENCARGADO_MORE: ExpandableNavItem = {
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck },
       ],
     },
     {
       label: 'Inventario y compras',
       items: [
         { label: 'Stock general', href: '/stock', icon: Package },
+        { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp },
         { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
         { label: 'Proveedores', href: '/proveedores', icon: Truck },
@@ -157,6 +163,7 @@ const CHEF_MORE: ExpandableNavItem = {
         { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Stock cocina', href: '/cocina/stock', icon: Package },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
