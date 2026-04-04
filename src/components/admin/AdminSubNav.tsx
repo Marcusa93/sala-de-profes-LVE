@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   Users,
   Calendar,
-  Store,
   Calculator,
   Clock,
 } from 'lucide-react'
@@ -18,7 +17,6 @@ const NAV_ITEMS = [
   { label: 'Asistencia', href: '/admin/reportes/asistencia', icon: Users },
   { label: 'Turnos', href: '/admin/reportes/turnos', icon: Calendar },
   { label: 'Salón', href: '/admin/reportes/salon', icon: Clock },
-  { label: 'Fudo', href: '/admin/fudo', icon: Store },
 ]
 
 export function AdminSubNav() {
