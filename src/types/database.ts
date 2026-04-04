@@ -402,6 +402,7 @@ export type Database = {
         Row: {
           id: number
           name: string
+          slug: string | null
           description: string | null
           portion_yield: number
           is_active: boolean
@@ -416,6 +417,7 @@ export type Database = {
         Insert: {
           id?: number
           name: string
+          slug?: string | null
           description?: string | null
           portion_yield?: number
           is_active?: boolean
@@ -430,6 +432,7 @@ export type Database = {
         Update: {
           id?: number
           name?: string
+          slug?: string | null
           description?: string | null
           portion_yield?: number
           is_active?: boolean
@@ -449,6 +452,8 @@ export type Database = {
           recipe_id: number
           stock_item_id: number
           qty_per_portion: number
+          ingredient_unit: string
+          notes: string | null
           created_at: string
           updated_at: string
         }
@@ -457,6 +462,8 @@ export type Database = {
           recipe_id: number
           stock_item_id: number
           qty_per_portion: number
+          ingredient_unit?: string
+          notes?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -465,6 +472,80 @@ export type Database = {
           recipe_id?: number
           stock_item_id?: number
           qty_per_portion?: number
+          ingredient_unit?: string
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      recipe_ingredient_pending_links: {
+        Row: {
+          id: number
+          recipe_id: number | null
+          recipe_name: string
+          recipe_slug: string
+          ingredient_name: string
+          normalized_name: string
+          cantidad: number | null
+          unidad: string | null
+          match_confidence: 'ambiguo' | 'sin_match'
+          match_score: number
+          suggested_stock_item_id: number | null
+          suggested_stock_item_name: string | null
+          match_reasons: string[]
+          status: 'pending' | 'approved' | 'rejected' | 'manual'
+          resolved_stock_item_id: number | null
+          resolved_qty_per_portion: number | null
+          resolved_unit: string | null
+          resolved_by: string | null
+          resolved_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          recipe_id?: number | null
+          recipe_name: string
+          recipe_slug: string
+          ingredient_name: string
+          normalized_name: string
+          cantidad?: number | null
+          unidad?: string | null
+          match_confidence: 'ambiguo' | 'sin_match'
+          match_score?: number
+          suggested_stock_item_id?: number | null
+          suggested_stock_item_name?: string | null
+          match_reasons?: string[]
+          status?: 'pending' | 'approved' | 'rejected' | 'manual'
+          resolved_stock_item_id?: number | null
+          resolved_qty_per_portion?: number | null
+          resolved_unit?: string | null
+          resolved_by?: string | null
+          resolved_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          recipe_id?: number | null
+          recipe_name?: string
+          recipe_slug?: string
+          ingredient_name?: string
+          normalized_name?: string
+          cantidad?: number | null
+          unidad?: string | null
+          match_confidence?: 'ambiguo' | 'sin_match'
+          match_score?: number
+          suggested_stock_item_id?: number | null
+          suggested_stock_item_name?: string | null
+          match_reasons?: string[]
+          status?: 'pending' | 'approved' | 'rejected' | 'manual'
+          resolved_stock_item_id?: number | null
+          resolved_qty_per_portion?: number | null
+          resolved_unit?: string | null
+          resolved_by?: string | null
+          resolved_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1118,6 +1199,32 @@ export type Database = {
         }
         Returns: Record<string, unknown>
       }
+      stock_availability: {
+        Args: {
+          p_recipe_id: number
+        }
+        Returns: Record<string, unknown>
+      }
+      stock_duration: {
+        Args: {
+          p_stock_item_id: number
+          p_days_lookback?: number
+        }
+        Returns: Record<string, unknown>
+      }
+      recipes_at_risk: {
+        Args: {
+          p_min_portions_threshold?: number
+        }
+        Returns: {
+          recipe_id: number
+          recipe_name: string
+          available_portions: number
+          limiting_ingredient: string | null
+          limiting_item_id: number | null
+          status: string
+        }[]
+      }
     }
     Enums: {
       app_role: AppRole
@@ -1168,6 +1275,10 @@ export type RecipeUpdate = Database['public']['Tables']['recipes']['Update']
 export type RecipeIngredient = Database['public']['Tables']['recipe_ingredients']['Row']
 export type RecipeIngredientInsert = Database['public']['Tables']['recipe_ingredients']['Insert']
 export type RecipeIngredientUpdate = Database['public']['Tables']['recipe_ingredients']['Update']
+
+export type RecipeIngredientPendingLink = Database['public']['Tables']['recipe_ingredient_pending_links']['Row']
+export type RecipeIngredientPendingLinkInsert = Database['public']['Tables']['recipe_ingredient_pending_links']['Insert']
+export type RecipeIngredientPendingLinkUpdate = Database['public']['Tables']['recipe_ingredient_pending_links']['Update']
 
 export type MenuCategory = Database['public']['Tables']['menu_categories']['Row']
 export type MenuCategoryInsert = Database['public']['Tables']['menu_categories']['Insert']
@@ -1231,3 +1342,66 @@ export type BarOrderUpdate = Database['public']['Tables']['bar_orders']['Update'
 export type KitchenOrder = Database['public']['Tables']['kitchen_orders']['Row']
 export type KitchenOrderInsert = Database['public']['Tables']['kitchen_orders']['Insert']
 export type KitchenOrderUpdate = Database['public']['Tables']['kitchen_orders']['Update']
+
+// ---------------------------------------------------------------------------
+// RPC return types (stock availability + duration calculations)
+// ---------------------------------------------------------------------------
+
+export type StockAvailabilityIngredient = {
+  stock_item_id: number
+  name: string
+  current_qty: number
+  qty_per_portion: number
+  unit: string
+  available_portions: number
+  is_limiting: boolean
+}
+
+export type StockAvailabilityResult = {
+  success: boolean
+  recipe_id: number
+  recipe_name: string
+  available_portions: number
+  limiting_ingredient: string | null
+  limiting_ingredient_id: number | null
+  ingredients_count: number
+  ingredients: StockAvailabilityIngredient[]
+  warning?: string
+  error?: string
+}
+
+export type StockDurationResult = {
+  success: boolean
+  stock_item_id: number
+  name: string
+  current_qty: number
+  unit: string
+  days_lookback: number
+  total_consumed: number
+  daily_avg_consumption: number
+  days_remaining: number | null
+  semaphore: 'critico' | 'bajo' | 'atención' | 'ok' | 'sin_historial'
+  note: string | null
+  error?: string
+}
+
+export type RecipeAtRisk = {
+  recipe_id: number
+  recipe_name: string
+  available_portions: number
+  limiting_ingredient: string | null
+  limiting_item_id: number | null
+  status: 'sin_stock' | 'bajo' | 'ok'
+}
+
+export type RecipeStockStatus = {
+  recipe_id: number
+  recipe_name: string
+  recipe_slug: string | null
+  portion_yield: number
+  cost_per_portion: number
+  cost_per_batch: number
+  linked_ingredients_count: number
+  out_of_stock_count: number
+  critical_stock_count: number
+}
