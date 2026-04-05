@@ -3,7 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 // ---------------------------------------------------------------------------
-// PATCH /api/attendance/edit — Encargado edits clock_out time
+// PATCH /api/attendance/edit — Encargado edita fichaje con motivo obligatorio
+// Body: { logId, clockOut?, clockIn?, reason }
 // ---------------------------------------------------------------------------
 
 export async function PATCH(request: NextRequest) {
@@ -13,44 +14,86 @@ export async function PATCH(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
 
     const admin = createAdminClient()
-    const { data: profile } = await admin.from('profiles').select('role').eq('id', user.id).single()
+    const { data: profile } = await admin
+      .from('profiles')
+      .select('role, first_name, last_name')
+      .eq('id', user.id)
+      .single()
+
     if (!profile || !['socio', 'encargado'].includes(profile.role)) {
       return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
     }
 
     const body = await request.json()
-    const { logId, clockOut } = body
+    const { logId, clockOut, clockIn, reason } = body
 
-    if (!logId || !clockOut) {
-      return NextResponse.json({ error: 'logId y clockOut requeridos' }, { status: 400 })
+    if (!logId) {
+      return NextResponse.json({ error: 'logId requerido' }, { status: 400 })
+    }
+    if (!reason || reason.trim().length < 5) {
+      return NextResponse.json(
+        { error: 'El motivo es obligatorio y debe tener al menos 5 caracteres' },
+        { status: 400 },
+      )
+    }
+    if (!clockOut && !clockIn) {
+      return NextResponse.json({ error: 'Debe indicar clockOut o clockIn' }, { status: 400 })
     }
 
-    // Get original log
+    // Obtener registro original
     const { data: log } = await admin
       .from('attendance_logs')
-      .select('id, clock_out_at')
+      .select('id, clock_in_at, clock_out_at, user_id')
       .eq('id', logId)
       .single()
 
     if (!log) return NextResponse.json({ error: 'Registro no encontrado' }, { status: 404 })
 
-    // Update
+    // Guardar en auditoría
+    await admin.from('attendance_audit').insert({
+      log_id:    logId,
+      editor_id: user.id,
+      action:    clockOut ? 'edit_clock_out' : 'edit_clock_in',
+      reason:    reason.trim(),
+      old_value: {
+        clock_in_at:  log.clock_in_at,
+        clock_out_at: log.clock_out_at,
+      },
+      new_value: {
+        clock_in_at:  clockIn ?? log.clock_in_at,
+        clock_out_at: clockOut ?? log.clock_out_at,
+      },
+    })
+
+    // Construir update
+    const updateData: Record<string, unknown> = {
+      clock_out_type:    'edited',
+      edited_by:         user.id,
+      edited_reason:     reason.trim(),
+    }
+
+    if (clockOut !== undefined) {
+      updateData.clock_out_at       = clockOut
+      updateData.original_clock_out = log.clock_out_at
+      updateData.status             = clockOut ? 'closed' : 'missing_checkout'
+    }
+    if (clockIn !== undefined) {
+      updateData.clock_in_at = clockIn
+    }
+
     const { error } = await admin
       .from('attendance_logs')
-      .update({
-        clock_out_at: clockOut,
-        clock_out_type: 'edited',
-        edited_by: user.id,
-        original_clock_out: log.clock_out_at,
-        status: 'closed',
-      })
+      .update(updateData)
       .eq('id', logId)
 
     if (error) throw error
 
     return NextResponse.json({ success: true })
-  } catch (error) {
-    console.error('[attendance/edit]', error)
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Error' }, { status: 500 })
+  } catch (err) {
+    console.error('[attendance/edit]', err)
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Error interno' },
+      { status: 500 },
+    )
   }
 }
