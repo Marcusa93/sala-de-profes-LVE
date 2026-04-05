@@ -14,11 +14,19 @@ import { createClient } from '@/lib/supabase/server'
 //   - Re-procesar ventas que fallaron
 //   - Debug
 //
-// TODO: Agregar middleware de auth para validar rol encargado.
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ success: false, error: 'No autenticado' }, { status: 401 })
+
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    if (!profile || !['encargado', 'socio'].includes(profile.role)) {
+      return NextResponse.json({ success: false, error: 'Sin permisos' }, { status: 403 })
+    }
+
     const body = await request.json().catch(() => null)
 
     if (!body || typeof body.saleId !== 'number') {
@@ -29,8 +37,6 @@ export async function POST(request: NextRequest) {
     }
 
     const { saleId } = body as { saleId: number }
-
-    const supabase = await createClient()
 
     const { data, error } = await supabase.rpc('deduct_stock_on_sale', {
       p_sale_id: saleId,
