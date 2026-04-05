@@ -8,9 +8,13 @@ type Props = {
   onCapture: (dataUrl: string) => void
   onSkip?: () => void
   canSkip?: boolean
+  /** Alias: when required=false, canSkip is true */
+  required?: boolean
 }
 
-export default function SelfieCapture({ onCapture, onSkip, canSkip }: Props) {
+export default function SelfieCapture({ onCapture, onSkip, canSkip, required }: Props) {
+  // required=false is equivalent to canSkip=true
+  const showSkip = canSkip ?? (required === false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const [cameraReady, setCameraReady] = useState(false)
   const [captured, setCaptured] = useState<string | null>(null)
@@ -59,7 +63,7 @@ export default function SelfieCapture({ onCapture, onSkip, canSkip }: Props) {
           <X className="size-5 text-[#ea504c]" />
         </div>
         <p className="text-center text-sm text-[#ea504c]">{error}</p>
-        {canSkip && (
+        {showSkip && (
           <button
             onClick={onSkip}
             className="mt-2 rounded-xl bg-[#f5f2ee] px-4 py-2 text-sm font-medium text-[#3d2c24]"
@@ -104,7 +108,7 @@ export default function SelfieCapture({ onCapture, onSkip, canSkip }: Props) {
             <Camera className="size-4" />
             Capturar
           </button>
-          {canSkip && (
+          {showSkip && (
             <button
               onClick={onSkip}
               className="rounded-xl bg-[#f5f2ee] px-4 py-2.5 text-sm font-medium text-[#3d2c24]"
