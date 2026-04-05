@@ -1,76 +1,32 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
-  Clock,
-  LogIn,
-  LogOut,
-  CheckCircle,
-  AlertCircle,
-  Loader2,
-  History,
-  Timer,
-  MapPin,
-  Smartphone,
-  ShieldCheck,
-  ShieldAlert,
-  X,
-  ChevronRight,
+  LogIn, LogOut, Camera, MapPin, Wifi, Shield,
+  CheckCircle, AlertTriangle, XCircle, Loader2,
+  Clock, History, Smartphone, RefreshCw, Timer,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { createClient } from '@/lib/supabase/client'
 import { FadeIn, StaggerList, StaggerItem, motion, AnimatePresence } from '@/components/ui/motion'
 import { SuccessBurst } from '@/components/ui/success-burst'
 import { playSchoolBell } from '@/lib/sounds'
+import type { ClockEvent, AnomalyFlag } from '@/types/database'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type AttendanceRecord = {
-  id: string
-  operative_date: string
-  clock_in_at: string
-  clock_out_at: string | null
-  status: 'open' | 'closed' | 'missing_checkout'
-  notes: string | null
-  clock_out_type?: string | null
-}
+type ValidationState = 'idle' | 'checking' | 'ok' | 'warn' | 'error'
 
-type TodayStatus = 'not_clocked_in' | 'clocked_in' | 'completed'
-
-type GpsStatus = 'idle' | 'loading' | 'ok' | 'denied' | 'error'
-
-type GpsData = {
-  lat: number
-  lng: number
-  accuracy: number
-}
-
-// ---------------------------------------------------------------------------
-// Device fingerprint — deterministic, no external service
-// ---------------------------------------------------------------------------
-
-function computeDeviceFingerprint(): string {
-  if (typeof navigator === 'undefined') return 'ssr'
-  const parts = [
-    navigator.userAgent,
-    navigator.language,
-    `${screen.width}x${screen.height}`,
-    String(screen.colorDepth),
-    Intl.DateTimeFormat().resolvedOptions().timeZone,
-    String(navigator.hardwareConcurrency ?? ''),
-  ].join('|')
-  let hash = 5381
-  for (let i = 0; i < parts.length; i++) {
-    hash = ((hash << 5) + hash) ^ parts.charCodeAt(i)
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0')
+type ValidationItem = {
+  label: string
+  state: ValidationState
+  detail?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +53,7 @@ function formatDuration(start: string, end?: string | null): string {
 
 function humanizeError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
+  if (!msg) return 'Ocurrió un error inesperado'
   if (msg.includes('already') || msg.includes('duplicate') || msg.includes('unique')) {
     return 'Ya registraste tu ingreso hoy'
   }
@@ -109,201 +66,321 @@ function humanizeError(err: unknown): string {
   if (msg.includes('network') || msg.includes('fetch')) {
     return 'Sin conexión. Verificá tu red e intentá de nuevo'
   }
-  return msg || 'Ocurrió un error inesperado'
-}
-
-function getClockOutTypeLabel(type?: string | null): string | null {
-  if (!type || type === 'manual') return null
-  if (type === 'auto') return 'Auto'
-  if (type === 'edited') return 'Editado'
-  return type
+  return msg
 }
 
 // ---------------------------------------------------------------------------
-// Component
+// Device fingerprint (browser, async with SHA-256)
+// ---------------------------------------------------------------------------
+
+async function getDeviceFingerprint(): Promise<string> {
+  const components = [
+    navigator.userAgent,
+    navigator.language,
+    `${screen.width}x${screen.height}`,
+    String(screen.colorDepth),
+    String(new Date().getTimezoneOffset()),
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+    String(navigator.hardwareConcurrency ?? 0),
+  ].join('|')
+
+  try {
+    const buffer = new TextEncoder().encode(components)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+    return Array.from(new Uint8Array(hashBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+  } catch {
+    return btoa(components).replace(/[^a-z0-9]/gi, '').slice(0, 64)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Semaphore helpers
+// ---------------------------------------------------------------------------
+
+function semaphoreColor(state: ValidationState) {
+  switch (state) {
+    case 'ok':       return '#006d5a'
+    case 'warn':     return '#d4943a'
+    case 'error':    return '#ea504c'
+    case 'checking': return '#a39e97'
+    default:         return '#ebe6df'
+  }
+}
+
+function SemaphoreIcon({ state }: { state: ValidationState }) {
+  if (state === 'checking') return <Loader2 className="size-4 animate-spin text-[#a39e97]" />
+  if (state === 'ok')       return <CheckCircle className="size-4 text-[#006d5a]" />
+  if (state === 'warn')     return <AlertTriangle className="size-4 text-[#d4943a]" />
+  if (state === 'error')    return <XCircle className="size-4 text-[#ea504c]" />
+  return <div className="size-4 rounded-full border-2 border-[#ebe6df]" />
+}
+
+// ---------------------------------------------------------------------------
+// Main component
 // ---------------------------------------------------------------------------
 
 export default function FichajePage() {
   const { profile, loading: profileLoading } = useProfileContext()
-  const supabase = createClient()
 
+  // Clock
   const [currentTime, setCurrentTime] = useState(new Date())
-  const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null)
-  const [history, setHistory] = useState<AttendanceRecord[]>([])
-  const [loading, setLoading] = useState(true)
+
+  // Status
+  const [status, setStatus] = useState<'clocked_in' | 'clocked_out' | 'no_record' | null>(null)
+  const [lastEvent, setLastEvent] = useState<ClockEvent | null>(null)
+  const [todayEvents, setTodayEvents] = useState<ClockEvent[]>([])
+  const [openAnomalies, setOpenAnomalies] = useState(0)
+  const [loadingStatus, setLoadingStatus] = useState(true)
+
+  // Validation states
+  const [validations, setValidations] = useState<Record<string, ValidationItem>>({
+    gps:    { label: 'GPS / Ubicación', state: 'idle' },
+    wifi:   { label: 'Red WiFi',        state: 'idle' },
+    device: { label: 'Dispositivo',     state: 'idle' },
+    selfie: { label: 'Selfie',          state: 'idle' },
+  })
+
+  // Captured data
+  const [gpsData, setGpsData] = useState<{ lat: number; lng: number; accuracy: number } | null>(null)
+  const [wifiSSID, setWifiSSID] = useState('')
+  const [deviceFingerprint, setDeviceFingerprint] = useState('')
+  const [selfieBase64, setSelfieBase64] = useState<string | null>(null)
+
+  // Camera
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  // Action
+  const [actionLoading, setActionLoading] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
+  const [anomalyResult, setAnomalyResult] = useState<AnomalyFlag[] | null>(null)
 
-  // Anti-trampa modal
-  const [modalOpen, setModalOpen] = useState(false)
-  const [modalAction, setModalAction] = useState<'in' | 'out'>('in')
-  const [submitting, setSubmitting] = useState(false)
-
-  // GPS
-  const [gpsStatus, setGpsStatus] = useState<GpsStatus>('idle')
-  const [gpsData, setGpsData] = useState<GpsData | null>(null)
-
-  // Device fingerprint (computed once)
-  const deviceFp = useRef<string>('')
-  useEffect(() => {
-    deviceFp.current = computeDeviceFingerprint()
-  }, [])
-
-  // Stable todayStr with midnight refresh
-  const [todayStr, setTodayStr] = useState(() => format(new Date(), 'yyyy-MM-dd'))
-  useEffect(() => {
-    const now = new Date()
-    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-    const msUntilMidnight = nextMidnight.getTime() - now.getTime()
-    const timer = setTimeout(() => setTodayStr(format(new Date(), 'yyyy-MM-dd')), msUntilMidnight)
-    return () => clearTimeout(timer)
-  }, [todayStr])
-
+  // -----------------------------------------------------------------------
   // Live clock
+  // -----------------------------------------------------------------------
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000)
     return () => clearInterval(interval)
   }, [])
 
-  // ------------------------------------------
-  // Fetch attendance
-  // ------------------------------------------
-  const fetchAttendance = useCallback(async () => {
-    if (!profile) return
-    setLoading(true)
-    try {
-      const { data: today, error: e1 } = await supabase
-        .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, clock_out_type')
-        .eq('user_id', profile.id)
-        .eq('operative_date', todayStr)
-        .order('clock_in_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (e1) throw e1
-      setTodayRecord(today)
-
-      const { data: hist, error: e2 } = await supabase
-        .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, clock_out_type')
-        .eq('user_id', profile.id)
-        .order('operative_date', { ascending: false })
-        .order('clock_in_at', { ascending: false })
-        .limit(7)
-      if (e2) throw e2
-      setHistory(hist ?? [])
-    } catch (err) {
-      console.error('Error al cargar asistencia:', err)
-      toast.error('No se pudo cargar tu turno. Intentá de nuevo.')
-    } finally {
-      setLoading(false)
-    }
+  // -----------------------------------------------------------------------
+  // Live duration (re-computes every second via currentTime)
+  // -----------------------------------------------------------------------
+  const liveDuration = useMemo(() => {
+    if (status !== 'clocked_in' || !lastEvent) return null
+    return formatDuration(lastEvent.timestamp)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, todayStr])
+  }, [status, lastEvent, currentTime])
 
+  // -----------------------------------------------------------------------
+  // Fetch status
+  // -----------------------------------------------------------------------
+  const fetchStatus = useCallback(async () => {
+    if (!profile) return
+    setLoadingStatus(true)
+    try {
+      const res = await fetch('/api/attendance/status')
+      if (res.ok) {
+        const data = await res.json()
+        setStatus(data.status)
+        setLastEvent(data.last_event)
+        setTodayEvents(data.today_events ?? [])
+        setOpenAnomalies(data.open_anomalies ?? 0)
+      }
+    } catch { /* silent */ }
+    finally { setLoadingStatus(false) }
+  }, [profile])
+
+  useEffect(() => { fetchStatus() }, [fetchStatus])
+
+  // -----------------------------------------------------------------------
+  // Auto-init validations on page load
+  // -----------------------------------------------------------------------
   useEffect(() => {
-    fetchAttendance()
-  }, [fetchAttendance])
+    if (!profile) return
+    initGPS()
+    initDevice()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile])
 
-  // ------------------------------------------
-  // GPS request
-  // ------------------------------------------
-  const requestGps = useCallback(() => {
-    setGpsStatus('loading')
-    setGpsData(null)
+  // -----------------------------------------------------------------------
+  // GPS
+  // -----------------------------------------------------------------------
+  function initGPS() {
     if (!navigator.geolocation) {
-      setGpsStatus('error')
+      setValidations(v => ({ ...v, gps: { label: 'GPS / Ubicación', state: 'error', detail: 'GPS no disponible en este navegador' } }))
       return
     }
+
+    setValidations(v => ({ ...v, gps: { label: 'GPS / Ubicación', state: 'checking' } }))
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setGpsData({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: Math.round(pos.coords.accuracy),
-        })
-        setGpsStatus('ok')
+        setGpsData({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy })
+        const state: ValidationState = pos.coords.accuracy > 100 ? 'warn' : 'ok'
+        setValidations(v => ({
+          ...v,
+          gps: { label: 'GPS / Ubicación', state, detail: `Precisión: ±${Math.round(pos.coords.accuracy)}m` },
+        }))
       },
       (err) => {
-        if (err.code === GeolocationPositionError.PERMISSION_DENIED) {
-          setGpsStatus('denied')
-        } else {
-          setGpsStatus('error')
-        }
+        setValidations(v => ({
+          ...v,
+          gps: { label: 'GPS / Ubicación', state: 'error', detail: err.message },
+        }))
       },
-      { timeout: 8000, maximumAge: 30000 },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     )
-  }, [])
-
-  // ------------------------------------------
-  // Open modal + start GPS
-  // ------------------------------------------
-  const openModal = (action: 'in' | 'out') => {
-    setModalAction(action)
-    setModalOpen(true)
-    setGpsStatus('loading')
-    setGpsData(null)
-    // Small delay so modal animation starts before GPS request
-    setTimeout(requestGps, 300)
   }
 
-  // ------------------------------------------
-  // Submit clock event
-  // ------------------------------------------
-  const handleSubmit = async () => {
-    if (!profile) return
-    setSubmitting(true)
+  // -----------------------------------------------------------------------
+  // Device fingerprint
+  // -----------------------------------------------------------------------
+  async function initDevice() {
+    setValidations(v => ({ ...v, device: { label: 'Dispositivo', state: 'checking' } }))
     try {
-      const notes = JSON.stringify({
-        device: deviceFp.current,
-        gps: gpsData ?? 'unavailable',
-        via: 'fichaje',
+      const fp = await getDeviceFingerprint()
+      setDeviceFingerprint(fp)
+      setValidations(v => ({
+        ...v,
+        device: { label: 'Dispositivo', state: 'ok', detail: fp.slice(0, 8) + '…' },
+      }))
+    } catch {
+      setValidations(v => ({ ...v, device: { label: 'Dispositivo', state: 'warn', detail: 'No se pudo identificar' } }))
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Camera
+  // -----------------------------------------------------------------------
+  async function openCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+      setCameraStream(stream)
+      setCameraOpen(true)
+      setValidations(v => ({ ...v, selfie: { label: 'Selfie', state: 'checking', detail: 'Cámara activa' } }))
+    } catch {
+      toast.error('No se pudo acceder a la cámara')
+      setValidations(v => ({ ...v, selfie: { label: 'Selfie', state: 'error', detail: 'Cámara denegada' } }))
+    }
+  }
+
+  useEffect(() => {
+    if (cameraOpen && videoRef.current && cameraStream) {
+      videoRef.current.srcObject = cameraStream
+    }
+  }, [cameraOpen, cameraStream])
+
+  function capturePhoto() {
+    if (!videoRef.current || !canvasRef.current) return
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    canvas.width = video.videoWidth || 640
+    canvas.height = video.videoHeight || 480
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(video, 0, 0)
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.8)
+    setSelfieBase64(dataUrl)
+    setCameraOpen(false)
+    cameraStream?.getTracks().forEach(t => t.stop())
+    setCameraStream(null)
+    setValidations(v => ({ ...v, selfie: { label: 'Selfie', state: 'ok', detail: 'Foto capturada' } }))
+    toast.success('¡Selfie tomada!')
+  }
+
+  function closeCamera() {
+    setCameraOpen(false)
+    cameraStream?.getTracks().forEach(t => t.stop())
+    setCameraStream(null)
+  }
+
+  // -----------------------------------------------------------------------
+  // WiFi input
+  // -----------------------------------------------------------------------
+  function handleWifiInput(ssid: string) {
+    setWifiSSID(ssid)
+    setValidations(v => ({
+      ...v,
+      wifi: {
+        label: 'Red WiFi',
+        state: ssid.trim() ? 'ok' : 'warn',
+        detail: ssid.trim() ? ssid : 'No especificada (se anotará como advertencia)',
+      },
+    }))
+  }
+
+  // -----------------------------------------------------------------------
+  // Overall readiness
+  // -----------------------------------------------------------------------
+  function overallState(): ValidationState {
+    const states = Object.values(validations).map(v => v.state)
+    if (states.some(s => s === 'checking')) return 'checking'
+    if (states.some(s => s === 'error')) return 'error'
+    if (states.some(s => s === 'warn' || s === 'idle')) return 'warn'
+    return 'ok'
+  }
+
+  // -----------------------------------------------------------------------
+  // Clock In / Out
+  // -----------------------------------------------------------------------
+  async function handleClockAction(eventType: 'clock_in' | 'clock_out') {
+    if (!profile) return
+    setActionLoading(true)
+    setAnomalyResult(null)
+
+    try {
+      const res = await fetch('/api/attendance/clock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type:          eventType,
+          gps_lat:             gpsData?.lat,
+          gps_lng:             gpsData?.lng,
+          gps_accuracy:        gpsData?.accuracy,
+          wifi_ssid:           wifiSSID || undefined,
+          selfie_base64:       selfieBase64 || undefined,
+          device_fingerprint:  deviceFingerprint || undefined,
+        }),
       })
 
-      if (modalAction === 'in') {
-        const { error } = await supabase.rpc('clock_in', { p_notes: notes })
-        if (error) throw error
-        toast.success('¡Ingreso registrado!')
-      } else {
-        const { error } = await supabase.rpc('clock_out', { p_notes: notes })
-        if (error) throw error
-        toast.success('¡Egreso registrado!')
+      const data = await res.json()
+
+      if (!res.ok) {
+        toast.error(humanizeError(data.error))
+        return
       }
 
       playSchoolBell()
       setShowSuccess(true)
-      setModalOpen(false)
-      await fetchAttendance()
-    } catch (err) {
-      toast.error(humanizeError(err))
+
+      if (data.anomaly_count > 0) {
+        setAnomalyResult(data.anomaly_flags)
+        toast.warning(`Fichaje registrado con ${data.anomaly_count} advertencia${data.anomaly_count > 1 ? 's' : ''}`)
+      } else {
+        toast.success(eventType === 'clock_in' ? '¡Ingreso registrado correctamente!' : '¡Egreso registrado correctamente!')
+      }
+
+      // Reset selfie for next time
+      setSelfieBase64(null)
+      setValidations(v => ({ ...v, selfie: { label: 'Selfie', state: 'idle' } }))
+
+      await fetchStatus()
+    } catch {
+      toast.error('Error de conexión')
     } finally {
-      setSubmitting(false)
+      setActionLoading(false)
     }
   }
 
-  // ------------------------------------------
-  // Derived state
-  // ------------------------------------------
-  const getStatus = (): TodayStatus => {
-    if (!todayRecord) return 'not_clocked_in'
-    if (todayRecord.clock_out_at) return 'completed'
-    return 'clocked_in'
-  }
-  const status = getStatus()
+  // -----------------------------------------------------------------------
+  // Loading
+  // -----------------------------------------------------------------------
+  if (profileLoading || loadingStatus) return <LoadingState message="Cargando fichaje..." />
 
-  const liveDuration = useMemo(() => {
-    if (!todayRecord) return null
-    if (status === 'clocked_in') return formatDuration(todayRecord.clock_in_at)
-    if (status === 'completed') return formatDuration(todayRecord.clock_in_at, todayRecord.clock_out_at)
-    return null
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [todayRecord, status, currentTime])
-
-  const canSubmit = gpsStatus === 'ok' || gpsStatus === 'denied' || gpsStatus === 'error'
-
-  // ------------------------------------------
-  // Loading / access
-  // ------------------------------------------
-  if (profileLoading || loading) return <LoadingState message="Cargando fichaje..." />
   if (!profile) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -312,78 +389,152 @@ export default function FichajePage() {
     )
   }
 
-  // ------------------------------------------
+  const overall = overallState()
+  const canClock = overall !== 'checking' && !actionLoading
+
+  // -----------------------------------------------------------------------
   // Render
-  // ------------------------------------------
+  // -----------------------------------------------------------------------
   return (
-    <div className="mx-auto max-w-lg space-y-8 pb-28">
+    <div className="mx-auto max-w-lg space-y-6 pb-28">
       <SuccessBurst show={showSuccess} onComplete={() => setShowSuccess(false)} />
 
-      {/* =========================================================== */}
-      {/* Hero Clock                                                    */}
-      {/* =========================================================== */}
+      {/* Camera modal */}
+      <AnimatePresence>
+        {cameraOpen && (
+          <motion.div
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          >
+            <video ref={videoRef} autoPlay playsInline muted className="w-full max-w-sm rounded-xl" />
+            <canvas ref={canvasRef} className="hidden" />
+            <div className="mt-6 flex gap-4">
+              <Button onClick={capturePhoto} className="h-16 w-16 rounded-full bg-white text-black shadow-lg">
+                <Camera className="size-7" />
+              </Button>
+              <Button onClick={closeCamera} variant="outline" className="h-16 w-16 rounded-full border-white/30 text-white">
+                <XCircle className="size-7" />
+              </Button>
+            </div>
+            <p className="mt-4 text-sm text-white/70">Mirá a la cámara y presioná el botón blanco</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Hero clock */}
       <FadeIn className="pt-4 text-center">
-        <p className="font-display text-5xl sm:text-7xl font-bold tabular-nums tracking-tight text-[#3d2c24]">
+        <p className="font-display text-5xl font-bold tabular-nums tracking-tight text-[#3d2c24]">
           {format(currentTime, 'HH:mm')}
-          <span className="text-2xl sm:text-3xl font-medium text-[#a39e97]">
-            {format(currentTime, ':ss')}
-          </span>
+          <span className="text-2xl font-medium text-[#a39e97]">{format(currentTime, ':ss')}</span>
         </p>
-        <p className="section-label mt-4">
+        <p className="section-label mt-2">
           {format(currentTime, "EEEE d 'de' MMMM, yyyy", { locale: es })}
         </p>
       </FadeIn>
 
-      {/* =========================================================== */}
-      {/* Status Card                                                   */}
-      {/* =========================================================== */}
+      {/* Semaphore validations */}
+      <FadeIn delay={0.05}>
+        <div className="card-elevated px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between mb-1">
+            <p className="section-label">Validaciones</p>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2 w-2 rounded-full" style={{ backgroundColor: semaphoreColor(overall) }} />
+              <span className="text-xs font-medium" style={{ color: semaphoreColor(overall) }}>
+                {overall === 'ok' ? 'Listo' : overall === 'checking' ? 'Verificando…' : overall === 'warn' ? 'Con advertencias' : 'Requiere atención'}
+              </span>
+            </div>
+          </div>
+
+          {Object.entries(validations).map(([key, v]) => (
+            <div key={key} className="flex items-center gap-3">
+              <SemaphoreIcon state={v.state} />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-[#3d2c24]">{v.label}</p>
+                {v.detail && <p className="text-[10px] text-[#a39e97] truncate">{v.detail}</p>}
+              </div>
+              {key === 'selfie' && v.state !== 'ok' && (
+                <button onClick={openCamera} className="text-[10px] font-medium text-[#006d5a] underline">
+                  Sacar foto
+                </button>
+              )}
+              {key === 'gps' && v.state === 'error' && (
+                <button onClick={initGPS} className="text-[10px] font-medium text-[#006d5a]">
+                  <RefreshCw className="size-3" />
+                </button>
+              )}
+            </div>
+          ))}
+
+          {/* WiFi input */}
+          <div className="mt-2 flex items-center gap-2">
+            <Wifi className="size-4 shrink-0 text-[#a39e97]" />
+            <input
+              type="text"
+              placeholder="Nombre de la red WiFi (ej: LVE_Staff)"
+              value={wifiSSID}
+              onChange={e => handleWifiInput(e.target.value)}
+              className="flex-1 rounded-lg border border-[#ebe6df] bg-[#fefcf9] px-3 py-1.5 text-xs outline-none focus:border-[#006d5a]"
+            />
+          </div>
+        </div>
+      </FadeIn>
+
+      {/* Main action card */}
       <FadeIn delay={0.1}>
         <div
-          className="card-elevated-lg relative overflow-hidden px-6 py-10"
+          className="card-elevated-lg relative overflow-hidden px-6 py-8"
           style={{
             borderLeftWidth: '4px',
             borderLeftColor:
-              status === 'clocked_in'
-                ? '#d4943a'
-                : status === 'completed'
-                  ? '#006d5a'
-                  : 'transparent',
+              status === 'clocked_in' ? '#d4943a' :
+              status === 'clocked_out' || status === 'no_record' ? '#006d5a' :
+              'transparent',
           }}
         >
-          {/* NOT CLOCKED IN */}
-          {status === 'not_clocked_in' && (
-            <div className="flex flex-col items-center gap-6">
+          {/* NOT CLOCKED IN / NO RECORD */}
+          {(status === 'no_record' || status === 'clocked_out') && (
+            <div className="flex flex-col items-center gap-5">
               <div className="flex size-20 items-center justify-center rounded-2xl bg-[#f0f7f5]">
                 <LogIn className="size-9 text-[#006d5a]" strokeWidth={1.5} />
               </div>
               <div className="text-center">
                 <p className="font-display text-lg font-semibold text-[#3d2c24]">
-                  {getGreeting(currentTime)}
+                  {getGreeting(currentTime)}, {profile.first_name}
                 </p>
                 <p className="mt-1 text-sm text-[#a39e97]">
-                  No has registrado ingreso hoy.
+                  {status === 'clocked_out' ? 'Tu último egreso fue registrado.' : '¿Listo para empezar?'}
                 </p>
               </div>
+
+              {selfieBase64 && (
+                <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={selfieBase64} alt="Selfie" className="h-16 w-16 rounded-full object-cover border-2 border-[#006d5a]" />
+                  <CheckCircle className="absolute -bottom-1 -right-1 size-5 text-[#006d5a] bg-white rounded-full" />
+                </div>
+              )}
+
               <Button
-                onClick={() => openModal('in')}
-                className="h-16 w-full rounded-2xl bg-[#006d5a] text-base font-semibold text-white shadow-md hover:bg-[#005a4a] active:scale-[0.98]"
+                onClick={() => handleClockAction('clock_in')}
+                disabled={!canClock}
+                className="h-16 w-full rounded-2xl bg-[#006d5a] text-base font-semibold text-white shadow-md hover:bg-[#005a4a] active:scale-[0.98] disabled:opacity-60"
               >
-                <LogIn className="mr-2.5 size-5" />
+                {actionLoading ? <Loader2 className="mr-2.5 size-5 animate-spin" /> : <LogIn className="mr-2.5 size-5" />}
                 Marcar Ingreso
               </Button>
             </div>
           )}
 
           {/* CLOCKED IN */}
-          {status === 'clocked_in' && todayRecord && (
-            <div className="flex flex-col items-center gap-6">
+          {status === 'clocked_in' && lastEvent && (
+            <div className="flex flex-col items-center gap-5">
               <div className="flex size-20 items-center justify-center rounded-2xl bg-[#fdf6ec]">
                 <Clock className="size-9 text-[#d4943a]" strokeWidth={1.5} />
               </div>
               <div className="text-center">
-                <p className="section-label">Ingreso registrado</p>
-                <p className="mt-2 font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
-                  {format(new Date(todayRecord.clock_in_at), 'HH:mm')}
+                <p className="section-label">En turno desde</p>
+                <p className="mt-1 font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
+                  {format(new Date(lastEvent.timestamp), 'HH:mm')}
                 </p>
                 {liveDuration && (
                   <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#fdf6ec] px-3 py-1">
@@ -393,309 +544,117 @@ export default function FichajePage() {
                     </span>
                   </div>
                 )}
+                {!lastEvent.verified && (
+                  <p className="mt-2 text-xs text-[#d4943a]">⚠️ Ingreso con advertencias de seguridad</p>
+                )}
               </div>
+
+              {selfieBase64 && (
+                <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={selfieBase64} alt="Selfie" className="h-16 w-16 rounded-full object-cover border-2 border-[#d4943a]" />
+                </div>
+              )}
+
               <Button
-                onClick={() => openModal('out')}
-                className="h-16 w-full rounded-2xl bg-[#d4943a] text-base font-semibold text-white shadow-md hover:bg-[#c0852f] active:scale-[0.98]"
+                onClick={() => handleClockAction('clock_out')}
+                disabled={!canClock}
+                className="h-16 w-full rounded-2xl bg-[#d4943a] text-base font-semibold text-white shadow-md hover:bg-[#c0852f] active:scale-[0.98] disabled:opacity-60"
               >
-                <LogOut className="mr-2.5 size-5" />
+                {actionLoading ? <Loader2 className="mr-2.5 size-5 animate-spin" /> : <LogOut className="mr-2.5 size-5" />}
                 Marcar Egreso
               </Button>
             </div>
           )}
-
-          {/* COMPLETED */}
-          {status === 'completed' && todayRecord && (
-            <div className="flex flex-col items-center gap-6">
-              <div className="flex size-20 items-center justify-center rounded-2xl bg-[#e8f5f1]">
-                <CheckCircle className="size-9 text-[#006d5a]" strokeWidth={1.5} />
-              </div>
-              <div className="text-center">
-                <p className="font-display text-xl font-semibold text-[#006d5a]">
-                  Turno completado
-                </p>
-                <div className="mt-6 flex items-center justify-center gap-8">
-                  <div className="text-center">
-                    <p className="section-label">Ingreso</p>
-                    <p className="mt-1 font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
-                      {format(new Date(todayRecord.clock_in_at), 'HH:mm')}
-                    </p>
-                  </div>
-                  <div className="h-12 w-px bg-[#ebe6df]" />
-                  <div className="text-center">
-                    <p className="section-label">Egreso</p>
-                    <p className="mt-1 font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
-                      {todayRecord.clock_out_at
-                        ? format(new Date(todayRecord.clock_out_at), 'HH:mm')
-                        : '--:--'}
-                    </p>
-                  </div>
-                </div>
-                {liveDuration && (
-                  <div className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1">
-                    <Timer className="size-3.5 text-[#006d5a]" />
-                    <span className="text-sm font-semibold tabular-nums text-[#006d5a]">
-                      {liveDuration} trabajados
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </FadeIn>
 
-      {/* =========================================================== */}
-      {/* History                                                       */}
-      {/* =========================================================== */}
-      <FadeIn delay={0.2} className="space-y-4">
-        <div className="flex items-center gap-2.5 px-1">
-          <History className="size-4 text-[#a39e97]" strokeWidth={1.5} />
-          <h2 className="font-display text-lg font-semibold text-[#3d2c24]">
-            Historial reciente
-          </h2>
-        </div>
-
-        {history.length === 0 ? (
-          <div className="card-elevated flex flex-col items-center gap-2 px-6 py-10 text-center">
-            <History className="size-8 text-[#ebe6df]" />
-            <p className="text-sm font-medium text-[#a39e97]">Aún no hay registros</p>
-            <p className="text-xs text-[#a39e97]/70">¡Marcá tu primer ingreso!</p>
-          </div>
-        ) : (
-          <StaggerList className="space-y-2.5">
-            {history.map((record) => {
-              const hasOut = !!record.clock_out_at
-              const isToday = record.operative_date === todayStr
-              const accentColor = hasOut ? '#006d5a' : isToday ? '#d4943a' : '#ea504c'
-              const typeLabel = getClockOutTypeLabel(record.clock_out_type)
-
-              return (
-                <StaggerItem key={record.id}>
-                  <div
-                    className="card-elevated flex items-center gap-4 rounded-xl px-4 py-3.5"
-                    style={{ borderLeftWidth: '3px', borderLeftColor: accentColor }}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium capitalize text-[#3d2c24]">
-                        {format(
-                          new Date(record.operative_date + 'T12:00:00'),
-                          'EEE d MMM',
-                          { locale: es },
-                        )}
-                      </p>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[#a39e97]">
-                        <span className="tabular-nums">
-                          {format(new Date(record.clock_in_at), 'HH:mm')}
-                        </span>
-                        <span className="text-[#ebe6df]">/</span>
-                        <span className="tabular-nums">
-                          {record.clock_out_at
-                            ? format(new Date(record.clock_out_at), 'HH:mm')
-                            : '--:--'}
-                        </span>
-                        {hasOut && (
-                          <>
-                            <span className="text-[#ebe6df]">·</span>
-                            <span>{formatDuration(record.clock_in_at, record.clock_out_at)}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex shrink-0 flex-col items-end gap-1">
-                      {/* Status badge */}
-                      {hasOut ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-[#e8f5f1] px-2.5 py-0.5 text-xs font-medium text-[#006d5a]">
-                          <CheckCircle className="size-3" />
-                          Completado
-                        </span>
-                      ) : isToday ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-[#fdf6ec] px-2.5 py-0.5 text-xs font-medium text-[#d4943a]">
-                          <Clock className="size-3" />
-                          En turno
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-[#ea504c]">
-                          <AlertCircle className="size-3" />
-                          Sin egreso
-                        </span>
-                      )}
-                      {/* Clock-out type label */}
-                      {typeLabel && (
-                        <span className="rounded-full bg-[#f3efe9] px-2 py-0.5 text-[10px] font-medium text-[#a39e97]">
-                          {typeLabel}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </StaggerItem>
-              )
-            })}
-          </StaggerList>
-        )}
-      </FadeIn>
-
-      {/* =========================================================== */}
-      {/* Anti-trampa modal                                             */}
-      {/* =========================================================== */}
+      {/* Anomaly result */}
       <AnimatePresence>
-        {modalOpen && (
+        {anomalyResult && anomalyResult.length > 0 && (
           <motion.div
-            className="fixed inset-0 z-50 flex items-end justify-center"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            className="rounded-2xl border border-[#d4943a]/30 bg-[#fdf6ec] p-4 space-y-2"
+            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
           >
-            {/* Backdrop */}
-            <div
-              className="absolute inset-0 bg-black/40 backdrop-blur-[3px]"
-              onClick={() => !submitting && setModalOpen(false)}
-            />
-
-            {/* Sheet */}
-            <motion.div
-              className="relative z-10 w-full max-w-lg rounded-t-3xl bg-white px-6 pb-10 pt-5 shadow-2xl"
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-            >
-              {/* Handle */}
-              <div className="mx-auto mb-5 h-1 w-10 rounded-full bg-[#ebe6df]" />
-
-              {/* Header */}
-              <div className="mb-6 flex items-start justify-between">
-                <div>
-                  <h2 className="font-display text-xl font-bold text-[#3d2c24]">
-                    {modalAction === 'in' ? 'Marcar Ingreso' : 'Marcar Egreso'}
-                  </h2>
-                  <p className="mt-0.5 text-sm text-[#a39e97]">
-                    Verificando identidad anti-trampa
-                  </p>
-                </div>
-                {!submitting && (
-                  <button
-                    onClick={() => setModalOpen(false)}
-                    className="rounded-full p-1.5 text-[#a39e97] hover:bg-[#f3efe9]"
-                  >
-                    <X className="size-5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Verification steps */}
-              <div className="mb-6 space-y-3">
-                {/* GPS Step */}
-                <div className="flex items-center gap-4 rounded-xl bg-[#faf8f5] px-4 py-3.5">
-                  <div
-                    className="flex size-10 shrink-0 items-center justify-center rounded-xl"
-                    style={{
-                      backgroundColor:
-                        gpsStatus === 'ok'
-                          ? '#e8f5f1'
-                          : gpsStatus === 'denied' || gpsStatus === 'error'
-                            ? '#fef2f2'
-                            : '#f3efe9',
-                    }}
-                  >
-                    {gpsStatus === 'loading' ? (
-                      <Loader2 className="size-5 animate-spin text-[#d4943a]" />
-                    ) : gpsStatus === 'ok' ? (
-                      <MapPin className="size-5 text-[#006d5a]" />
-                    ) : gpsStatus === 'denied' || gpsStatus === 'error' ? (
-                      <ShieldAlert className="size-5 text-[#ea504c]" />
-                    ) : (
-                      <MapPin className="size-5 text-[#a39e97]" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-[#3d2c24]">Ubicación GPS</p>
-                    <p className="text-xs text-[#a39e97]">
-                      {gpsStatus === 'loading' && 'Obteniendo ubicación...'}
-                      {gpsStatus === 'ok' && gpsData &&
-                        `${gpsData.lat.toFixed(4)}, ${gpsData.lng.toFixed(4)} (±${gpsData.accuracy}m)`}
-                      {gpsStatus === 'denied' && 'Permiso denegado — se registrará sin GPS'}
-                      {gpsStatus === 'error' && 'No disponible — se registrará sin GPS'}
-                      {gpsStatus === 'idle' && 'Esperando...'}
-                    </p>
-                  </div>
-                  {gpsStatus === 'ok' && (
-                    <ShieldCheck className="size-5 shrink-0 text-[#006d5a]" />
-                  )}
-                  {(gpsStatus === 'denied' || gpsStatus === 'error') && (
-                    <button
-                      onClick={requestGps}
-                      className="shrink-0 rounded-lg bg-[#f3efe9] px-2 py-1 text-xs font-medium text-[#3d2c24] hover:bg-[#ebe6df]"
-                    >
-                      Reintentar
-                    </button>
-                  )}
-                </div>
-
-                {/* Device Step */}
-                <div className="flex items-center gap-4 rounded-xl bg-[#faf8f5] px-4 py-3.5">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#e8f5f1]">
-                    <Smartphone className="size-5 text-[#006d5a]" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-[#3d2c24]">Dispositivo</p>
-                    <p className="font-mono text-xs text-[#a39e97]">
-                      ID: {deviceFp.current || '...'}
-                    </p>
-                  </div>
-                  <ShieldCheck className="size-5 shrink-0 text-[#006d5a]" />
-                </div>
-              </div>
-
-              {/* Time display */}
-              <div className="mb-6 rounded-xl bg-[#f3efe9] px-4 py-3 text-center">
-                <p className="section-label">Hora de fichaje</p>
-                <p className="mt-1 font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
-                  {format(currentTime, 'HH:mm:ss')}
-                </p>
-              </div>
-
-              {/* CTA */}
-              <Button
-                onClick={handleSubmit}
-                disabled={!canSubmit || submitting}
-                className={`h-14 w-full rounded-2xl text-base font-semibold text-white shadow-md transition ${
-                  modalAction === 'in'
-                    ? 'bg-[#006d5a] hover:bg-[#005a4a]'
-                    : 'bg-[#d4943a] hover:bg-[#c0852f]'
-                } disabled:opacity-50`}
-              >
-                {submitting ? (
-                  <Loader2 className="mr-2 size-5 animate-spin" />
-                ) : gpsStatus === 'loading' ? (
-                  <>
-                    <Loader2 className="mr-2 size-5 animate-spin" />
-                    Verificando ubicación...
-                  </>
-                ) : (
-                  <>
-                    {modalAction === 'in' ? (
-                      <LogIn className="mr-2 size-5" />
-                    ) : (
-                      <LogOut className="mr-2 size-5" />
-                    )}
-                    Confirmar {modalAction === 'in' ? 'Ingreso' : 'Egreso'}
-                    <ChevronRight className="ml-1 size-4" />
-                  </>
-                )}
-              </Button>
-
-              {gpsStatus === 'loading' && (
-                <p className="mt-3 text-center text-xs text-[#a39e97]">
-                  Podés confirmar después de obtener la ubicación
-                </p>
-              )}
-            </motion.div>
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="size-4 text-[#d4943a]" />
+              <p className="text-sm font-semibold text-[#d4943a]">Fichaje con advertencias</p>
+            </div>
+            {anomalyResult.map((f, i) => (
+              <p key={i} className="text-xs text-[#a39e97]">
+                • {f.type === 'gps_out_of_range'  ? 'GPS fuera del rango del local' :
+                   f.type === 'wifi_mismatch'      ? 'Red WiFi no reconocida' :
+                   f.type === 'unknown_device'     ? 'Dispositivo no registrado (pendiente aprobación)' :
+                   f.type === 'selfie_missing'     ? 'No se adjuntó selfie' :
+                   f.type === 'rapid_succession'   ? 'Fichaje muy rápido' :
+                   f.type === 'unusual_hour'       ? 'Horario inusual' : f.type}
+              </p>
+            ))}
+            <p className="text-[10px] text-[#a39e97]">El encargado revisará estas advertencias.</p>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Open anomalies notice */}
+      {openAnomalies > 0 && (
+        <div className="flex items-center gap-2 rounded-xl bg-[#fdf6ec] border border-[#d4943a]/30 px-4 py-2.5">
+          <AlertTriangle className="size-4 text-[#d4943a] shrink-0" />
+          <p className="text-xs text-[#d4943a]">
+            Tenés {openAnomalies} anomalía{openAnomalies > 1 ? 's' : ''} pendiente{openAnomalies > 1 ? 's' : ''} de revisión
+          </p>
+        </div>
+      )}
+
+      {/* Security info */}
+      <FadeIn delay={0.15}>
+        <div className="flex items-start gap-3 rounded-xl border border-[#ebe6df] bg-[#fefcf9] px-4 py-3">
+          <Shield className="size-4 shrink-0 mt-0.5 text-[#a39e97]" />
+          <div>
+            <p className="text-xs font-medium text-[#3d2c24]">Sistema anti-trampa activo</p>
+            <p className="text-[10px] text-[#a39e97]">
+              Se registra: ubicación GPS, red WiFi, dispositivo y selfie.
+              Cualquier inconsistencia queda registrada para revisión del encargado.
+            </p>
+          </div>
+        </div>
+      </FadeIn>
+
+      {/* Today's events */}
+      {todayEvents.length > 0 && (
+        <FadeIn delay={0.2} className="space-y-3">
+          <div className="flex items-center gap-2 px-1">
+            <History className="size-4 text-[#a39e97]" />
+            <h2 className="font-display text-base font-semibold text-[#3d2c24]">Eventos de hoy</h2>
+          </div>
+          <StaggerList className="space-y-2">
+            {todayEvents.map(evt => (
+              <StaggerItem key={evt.id}>
+                <div
+                  className="card-elevated flex items-center gap-3 rounded-xl px-4 py-3"
+                  style={{ borderLeftWidth: '3px', borderLeftColor: evt.event_type === 'clock_in' ? '#006d5a' : '#ea504c' }}
+                >
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-[#3d2c24]">
+                      {evt.event_type === 'clock_in' ? '🟢 Ingreso' : '🔴 Egreso'}
+                    </p>
+                    <p className="text-xs text-[#a39e97] tabular-nums">
+                      {format(new Date(evt.timestamp), 'HH:mm:ss')}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {evt.gps_lat && <MapPin className="size-3.5 text-[#a39e97]" />}
+                    {evt.device_fingerprint && <Smartphone className="size-3.5 text-[#a39e97]" />}
+                    {evt.verified
+                      ? <CheckCircle className="size-3.5 text-[#006d5a]" />
+                      : <AlertTriangle className="size-3.5 text-[#d4943a]" />
+                    }
+                  </div>
+                </div>
+              </StaggerItem>
+            ))}
+          </StaggerList>
+        </FadeIn>
+      )}
     </div>
   )
 }
