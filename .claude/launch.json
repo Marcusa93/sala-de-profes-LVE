@@ -3,10 +3,9 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3007,
-      "runtimeArgs": ["run", "dev", "--", "-p", "3007"]
+      "runtimeExecutable": "/opt/homebrew/Cellar/node@20/20.19.5/bin/node",
+      "runtimeArgs": ["node_modules/.bin/next", "dev", "-p", "3007", "--webpack"],
+      "port": 3007
     }
   ]
 }
