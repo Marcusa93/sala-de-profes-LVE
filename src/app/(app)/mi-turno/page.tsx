@@ -214,6 +214,7 @@ export default function MiTurnoPage() {
         .order('clock_in_at', { ascending: false })
         .limit(1)
         .maybeSingle()
+      setTodayRecord(today as unknown as AttendanceRecord | null)
 
       if (todayError) throw todayError
       setTodayRecord(today as unknown as AttendanceRecord | null)

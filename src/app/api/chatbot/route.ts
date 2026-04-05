@@ -297,6 +297,23 @@ REGLAS DE ACCIONES:
 - Extraé cantidad y unidad por separado (ej: "5 kg", "3 cajas", "10 unidades")
 - Si no entendés la cantidad, preguntá antes de proponer
 
+## CONSULTAS DE ASISTENCIA Y FICHAJES
+
+Cuando el encargado/socio pregunta por asistencia, usá los datos de ASISTENCIA HOY, EGRESOS SIN MARCAR y FICHAJES SOSPECHOSOS.
+
+**Preguntas típicas y cómo responder:**
+
+- "¿Quién está trabajando ahora?" → mostrá los que tienen ingreso abierto (sin egreso), con su horario de entrada
+- "¿Quién llegó hoy?" → mostrá ASISTENCIA HOY con hora de ingreso
+- "¿Hay fichajes sospechosos?" → mostrá FICHAJES SOSPECHOSOS HOY, si no hay decí que todo está ok
+- "¿Cuántas horas trabajó [nombre] esta semana?" → con los datos disponibles del contexto, calculá. Si no tenés el historial semanal, indicá que solo ves hoy y sugerí ir a /admin/reportes/asistencia
+- "¿Alguien se olvidó de marcar egreso?" → mostrá EGRESOS SIN MARCAR
+
+**Para el empleado que quiere fichar:**
+- "Fichar entrada" / "Marcar ingreso" / "Entré al trabajo" → decile que el fichaje se hace desde /mi-turno en la app, que necesita dar permiso de cámara y ubicación
+- "Fichar salida" / "Marcar egreso" → ídem, desde /mi-turno
+- NO podés fichar por el chat. El fichaje requiere selfie + geolocalización en tiempo real.
+
 DISTINGUIR PEDIDO vs ACTUALIZACIÓN DE STOCK:
 - "necesito", "pedí", "falta", "encargá" → PEDIDO_MERCADERIA (pedir al proveedor)
 - "hay", "quedan", "tenemos", "cargá", "actualizar", "son", "conté" → ACTUALIZAR_STOCK (cargar cantidad actual)
@@ -402,6 +419,67 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
           `- ${s.profiles ? `${s.profiles.first_name} ${s.profiles.last_name}` : '?'}: ${s.start_time.slice(0, 5)} - ${s.end_time.slice(0, 5)}`
         )
         sections.push(`TURNOS MAÑANA:\n${lines.join('\n')}`)
+      }
+    }
+
+    // 2b. Clock events (nuevo sistema anti-trampa — paralelo a attendance_logs)
+    if (canSeeAttendance) {
+      const { data: clockEvents } = await supabase
+        .from('clock_events')
+        .select('event_type, timestamp, verified, anomaly_flags, profiles!clock_events_employee_id_fkey(first_name, last_name, role)')
+        .gte('timestamp', `${todayStr}T00:00:00-03:00`)
+        .order('timestamp', { ascending: false })
+
+      if (clockEvents && clockEvents.length > 0) {
+        // Build current status per employee
+        const seenEmployees = new Set<string>()
+        const currentlyIn: string[] = []
+        const completedToday: string[] = []
+
+        for (const evt of clockEvents) {
+          const p = evt.profiles as { first_name: string; last_name: string; role: string } | null
+          if (!p) continue
+          const key = `${p.first_name} ${p.last_name}`
+          if (seenEmployees.has(key)) continue
+          seenEmployees.add(key)
+          const time = format(new Date(evt.timestamp as string), 'HH:mm')
+          const flags = Array.isArray(evt.anomaly_flags) ? evt.anomaly_flags : []
+          const flagStr = flags.length > 0 ? ` ⚠️ (${flags.length} alerta${flags.length > 1 ? 's' : ''})` : ''
+          if (evt.event_type === 'clock_in') {
+            currentlyIn.push(`- ${key} (${p.role}): ingresó ${time}${flagStr}`)
+          } else {
+            completedToday.push(`- ${key} (${p.role}): egresó ${time}${flagStr}`)
+          }
+        }
+
+        if (currentlyIn.length > 0) {
+          sections.push(`FICHAJE ANTI-TRAMPA — ACTUALMENTE EN EL LOCAL (${currentlyIn.length}):\n${currentlyIn.join('\n')}`)
+        }
+      }
+
+      // Open anomalies summary
+      const { data: openAnomalies } = await supabase
+        .from('attendance_anomalies')
+        .select('anomaly_type, severity, employee_id, profiles!attendance_anomalies_employee_id_fkey(first_name, last_name)')
+        .eq('resolved', false)
+        .order('created_at', { ascending: false })
+        .limit(10)
+
+      if (openAnomalies && openAnomalies.length > 0) {
+        const lines = openAnomalies.map((a) => {
+          const p = a.profiles as { first_name: string; last_name: string } | null
+          const name = p ? `${p.first_name} ${p.last_name}` : 'Empleado'
+          const tipo = a.anomaly_type === 'gps_out_of_range' ? 'GPS fuera de rango' :
+                       a.anomaly_type === 'wifi_mismatch' ? 'WiFi no reconocida' :
+                       a.anomaly_type === 'unknown_device' ? 'Dispositivo no registrado' :
+                       a.anomaly_type === 'selfie_missing' ? 'Sin selfie' :
+                       a.anomaly_type === 'rapid_succession' ? 'Fichaje muy rápido' :
+                       a.anomaly_type === 'unusual_hour' ? 'Horario inusual' : a.anomaly_type
+          return `- ${name}: ${tipo} (${a.severity})`
+        })
+        sections.push(`ANOMALÍAS DE ASISTENCIA SIN RESOLVER (${openAnomalies.length}):\n${lines.join('\n')}`)
+      } else {
+        sections.push('ANOMALÍAS DE ASISTENCIA: Sin anomalías pendientes.')
       }
     }
 
@@ -581,7 +659,36 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       }
     }
 
-    // 10. Protocolo de atención — always available for runners and baristas
+    // 10. Fichajes sospechosos — solo encargados/socios
+    if (canSeeAttendance) {
+      try {
+        const { data: suspicious } = await supabase.rpc('get_suspicious_attendance', {
+          p_from_date: todayStr,
+          p_to_date: todayStr,
+        })
+        const rows = suspicious as Array<{
+          first_name: string; last_name: string; role: string;
+          clock_in_at: string; clock_out_at: string | null;
+          suspicious_reasons: string[]; geo_verified: boolean;
+          geo_distance_m: number | null; status: string;
+        }> ?? []
+        if (rows.length > 0) {
+          const lines = rows.map(r => {
+            const name = `${r.first_name} ${r.last_name}`
+            const reasons = r.suspicious_reasons?.join(', ') ?? 'sin detalle'
+            const geo = r.geo_verified ? `GPS OK` : `GPS NO verificado${r.geo_distance_m ? ` (${r.geo_distance_m}m del local)` : ''}`
+            const checkIn = r.clock_in_at ? format(new Date(r.clock_in_at), 'HH:mm') : '?'
+            const checkOut = r.clock_out_at ? format(new Date(r.clock_out_at), 'HH:mm') : 'sin egreso'
+            return `- ${name} (${r.role}): ingreso ${checkIn}, egreso ${checkOut}. ALERTA: ${reasons}. ${geo}`
+          })
+          sections.push(`FICHAJES SOSPECHOSOS HOY (${rows.length}):\n${lines.join('\n')}\nRevisá /equipo/alertas para el detalle completo.`)
+        }
+      } catch {
+        // silent — tabla puede no estar migrada aún
+      }
+    }
+
+    // 11. Protocolo de atención — always available for runners and baristas
     if (['runner', 'barista', 'socio', 'encargado'].includes(role)) {
       sections.push(`PROTOCOLO DE ATENCIÓN — LA VIEJA ESCUELA:
 
@@ -648,10 +755,26 @@ function buildKeywordResponse(question: string, context: string): string {
     return match ? match[0] : ''
   }
 
-  if (q.includes('trabaj') || q.includes('quien') || q.includes('equipo') || q.includes('hoy')) {
+  if (q.includes('trabaj') || q.includes('quien') || q.includes('equipo') || q.includes('hoy') || q.includes('fichaj') || q.includes('local')) {
+    const fichaje = getSection('FICHAJE ANTI-TRAMPA')
     const asistencia = getSection('ASISTENCIA HOY')
     const turnos = getSection('TURNOS HOY')
-    return asistencia + (turnos ? '\n\n' + turnos : '')
+    const sinEgreso = getSection('EGRESOS SIN MARCAR')
+    return [fichaje, asistencia, sinEgreso, turnos].filter(Boolean).join('\n\n')
+  }
+
+  if (q.includes('anomal') || q.includes('alerta') || q.includes('sospech') || q.includes('trampa') || q.includes('irreg') || q.includes('irregulari')) {
+    const anomalias = getSection('ANOMALÍAS DE ASISTENCIA')
+    const suspicious = getSection('FICHAJES SOSPECHOSOS')
+    return [anomalias, suspicious].filter(Boolean).join('\n\n') || 'No hay anomalías ni fichajes sospechosos. ✅'
+  }
+
+  if (q.includes('egreso') || q.includes('salida') || q.includes('sin marcar') || q.includes('olvidó')) {
+    return getSection('EGRESOS SIN MARCAR') || 'Todos marcaron egreso. ✅'
+  }
+
+  if (q.includes('hora') || q.includes('horas') && (q.includes('trabajo') || q.includes('trabaj') || q.includes('semana') || q.includes('mes'))) {
+    return 'Para consultar horas trabajadas de un empleado, revisá el panel de Asistencia en /admin/asistencia donde podés filtrar por empleado y período.'
   }
 
   if (q.includes('stock') || q.includes('rojo') || q.includes('critico') || q.includes('falt')) {
