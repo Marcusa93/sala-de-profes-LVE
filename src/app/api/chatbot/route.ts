@@ -422,6 +422,67 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       }
     }
 
+    // 2b. Clock events (nuevo sistema anti-trampa — paralelo a attendance_logs)
+    if (canSeeAttendance) {
+      const { data: clockEvents } = await supabase
+        .from('clock_events')
+        .select('event_type, timestamp, verified, anomaly_flags, profiles!clock_events_employee_id_fkey(first_name, last_name, role)')
+        .gte('timestamp', `${todayStr}T00:00:00-03:00`)
+        .order('timestamp', { ascending: false })
+
+      if (clockEvents && clockEvents.length > 0) {
+        // Build current status per employee
+        const seenEmployees = new Set<string>()
+        const currentlyIn: string[] = []
+        const completedToday: string[] = []
+
+        for (const evt of clockEvents) {
+          const p = evt.profiles as { first_name: string; last_name: string; role: string } | null
+          if (!p) continue
+          const key = `${p.first_name} ${p.last_name}`
+          if (seenEmployees.has(key)) continue
+          seenEmployees.add(key)
+          const time = format(new Date(evt.timestamp as string), 'HH:mm')
+          const flags = Array.isArray(evt.anomaly_flags) ? evt.anomaly_flags : []
+          const flagStr = flags.length > 0 ? ` ⚠️ (${flags.length} alerta${flags.length > 1 ? 's' : ''})` : ''
+          if (evt.event_type === 'clock_in') {
+            currentlyIn.push(`- ${key} (${p.role}): ingresó ${time}${flagStr}`)
+          } else {
+            completedToday.push(`- ${key} (${p.role}): egresó ${time}${flagStr}`)
+          }
+        }
+
+        if (currentlyIn.length > 0) {
+          sections.push(`FICHAJE ANTI-TRAMPA — ACTUALMENTE EN EL LOCAL (${currentlyIn.length}):\n${currentlyIn.join('\n')}`)
+        }
+      }
+
+      // Open anomalies summary
+      const { data: openAnomalies } = await supabase
+        .from('attendance_anomalies')
+        .select('anomaly_type, severity, employee_id, profiles!attendance_anomalies_employee_id_fkey(first_name, last_name)')
+        .eq('resolved', false)
+        .order('created_at', { ascending: false })
+        .limit(10)
+
+      if (openAnomalies && openAnomalies.length > 0) {
+        const lines = openAnomalies.map((a) => {
+          const p = a.profiles as { first_name: string; last_name: string } | null
+          const name = p ? `${p.first_name} ${p.last_name}` : 'Empleado'
+          const tipo = a.anomaly_type === 'gps_out_of_range' ? 'GPS fuera de rango' :
+                       a.anomaly_type === 'wifi_mismatch' ? 'WiFi no reconocida' :
+                       a.anomaly_type === 'unknown_device' ? 'Dispositivo no registrado' :
+                       a.anomaly_type === 'selfie_missing' ? 'Sin selfie' :
+                       a.anomaly_type === 'rapid_succession' ? 'Fichaje muy rápido' :
+                       a.anomaly_type === 'unusual_hour' ? 'Horario inusual' : a.anomaly_type
+          return `- ${name}: ${tipo} (${a.severity})`
+        })
+        sections.push(`ANOMALÍAS DE ASISTENCIA SIN RESOLVER (${openAnomalies.length}):\n${lines.join('\n')}`)
+      } else {
+        sections.push('ANOMALÍAS DE ASISTENCIA: Sin anomalías pendientes.')
+      }
+    }
+
     // 3. Stock general (encargados, chef, cocina)
     if (canSeeStockGeneral) {
       const { data: stockItems } = await supabase
@@ -694,20 +755,26 @@ function buildKeywordResponse(question: string, context: string): string {
     return match ? match[0] : ''
   }
 
-  if (q.includes('trabaj') || q.includes('quien') || q.includes('equipo') || q.includes('hoy')) {
+  if (q.includes('trabaj') || q.includes('quien') || q.includes('equipo') || q.includes('hoy') || q.includes('fichaj') || q.includes('local')) {
+    const fichaje = getSection('FICHAJE ANTI-TRAMPA')
     const asistencia = getSection('ASISTENCIA HOY')
     const turnos = getSection('TURNOS HOY')
     const sinEgreso = getSection('EGRESOS SIN MARCAR')
-    return [asistencia, sinEgreso, turnos].filter(Boolean).join('\n\n')
+    return [fichaje, asistencia, sinEgreso, turnos].filter(Boolean).join('\n\n')
   }
 
-  if (q.includes('sospech') || q.includes('alerta') || q.includes('irregulari') || q.includes('trampa') || q.includes('fichaj')) {
+  if (q.includes('anomal') || q.includes('alerta') || q.includes('sospech') || q.includes('trampa') || q.includes('irreg') || q.includes('irregulari')) {
+    const anomalias = getSection('ANOMALÍAS DE ASISTENCIA')
     const suspicious = getSection('FICHAJES SOSPECHOSOS')
-    return suspicious || 'No hay fichajes sospechosos hoy. ✅'
+    return [anomalias, suspicious].filter(Boolean).join('\n\n') || 'No hay anomalías ni fichajes sospechosos. ✅'
   }
 
   if (q.includes('egreso') || q.includes('salida') || q.includes('sin marcar') || q.includes('olvidó')) {
     return getSection('EGRESOS SIN MARCAR') || 'Todos marcaron egreso. ✅'
+  }
+
+  if (q.includes('hora') || q.includes('horas') && (q.includes('trabajo') || q.includes('trabaj') || q.includes('semana') || q.includes('mes'))) {
+    return 'Para consultar horas trabajadas de un empleado, revisá el panel de Asistencia en /admin/asistencia donde podés filtrar por empleado y período.'
   }
 
   if (q.includes('stock') || q.includes('rojo') || q.includes('critico') || q.includes('falt')) {

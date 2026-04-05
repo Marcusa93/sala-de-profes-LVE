@@ -64,6 +64,14 @@ export type KitchenDailyItem = {
   is_from_menu: boolean
 }
 
+// Attendance Anti-Fraud enums (needed inside Database type)
+export type ClockEventType = 'clock_in' | 'clock_out'
+export type AnomalyType = 'wifi_mismatch' | 'gps_out_of_range' | 'unknown_device' | 'selfie_missing' | 'rapid_succession' | 'unusual_hour'
+export type AnomalySeverity = 'low' | 'medium' | 'high' | 'critical'
+export type CorrectionType = 'add_missing' | 'change_time' | 'remove_event'
+export type CorrectionStatus = 'pending' | 'approved' | 'rejected'
+export type AnomalyFlag = { type: AnomalyType; [key: string]: unknown }
+
 export type Database = {
   public: {
     Tables: {
@@ -1131,6 +1139,246 @@ export type Database = {
         }
         Relationships: []
       }
+      // -----------------------------------------------------------------------
+      // Attendance Anti-Fraud System tables
+      // -----------------------------------------------------------------------
+      clock_events: {
+        Row: {
+          id: string
+          employee_id: string
+          event_type: 'clock_in' | 'clock_out'
+          timestamp: string
+          wifi_bssid: string | null
+          wifi_ssid: string | null
+          gps_lat: number | null
+          gps_lng: number | null
+          gps_accuracy: number | null
+          selfie_url: string | null
+          device_fingerprint: string | null
+          user_agent: string | null
+          ip_address: string | null
+          verified: boolean
+          anomaly_flags: AnomalyFlag[]
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          employee_id: string
+          event_type: 'clock_in' | 'clock_out'
+          timestamp?: string
+          wifi_bssid?: string | null
+          wifi_ssid?: string | null
+          gps_lat?: number | null
+          gps_lng?: number | null
+          gps_accuracy?: number | null
+          selfie_url?: string | null
+          device_fingerprint?: string | null
+          user_agent?: string | null
+          ip_address?: string | null
+          verified?: boolean
+          anomaly_flags?: AnomalyFlag[]
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          employee_id?: string
+          event_type?: 'clock_in' | 'clock_out'
+          timestamp?: string
+          wifi_bssid?: string | null
+          wifi_ssid?: string | null
+          gps_lat?: number | null
+          gps_lng?: number | null
+          gps_accuracy?: number | null
+          selfie_url?: string | null
+          device_fingerprint?: string | null
+          user_agent?: string | null
+          ip_address?: string | null
+          verified?: boolean
+          anomaly_flags?: AnomalyFlag[]
+          created_at?: string
+        }
+        Relationships: []
+      }
+      device_registrations: {
+        Row: {
+          id: string
+          employee_id: string
+          device_fingerprint: string
+          user_agent: string | null
+          device_name: string | null
+          registered_at: string
+          is_active: boolean
+          approved_by: string | null
+          approved_at: string | null
+        }
+        Insert: {
+          id?: string
+          employee_id: string
+          device_fingerprint: string
+          user_agent?: string | null
+          device_name?: string | null
+          registered_at?: string
+          is_active?: boolean
+          approved_by?: string | null
+          approved_at?: string | null
+        }
+        Update: {
+          id?: string
+          employee_id?: string
+          device_fingerprint?: string
+          user_agent?: string | null
+          device_name?: string | null
+          registered_at?: string
+          is_active?: boolean
+          approved_by?: string | null
+          approved_at?: string | null
+        }
+        Relationships: []
+      }
+      attendance_anomalies: {
+        Row: {
+          id: string
+          clock_event_id: string
+          employee_id: string
+          anomaly_type: AnomalyType
+          severity: AnomalySeverity
+          details: Record<string, unknown>
+          resolved: boolean
+          resolved_by: string | null
+          resolved_at: string | null
+          resolution_notes: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          clock_event_id: string
+          employee_id: string
+          anomaly_type: AnomalyType
+          severity: AnomalySeverity
+          details?: Record<string, unknown>
+          resolved?: boolean
+          resolved_by?: string | null
+          resolved_at?: string | null
+          resolution_notes?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          clock_event_id?: string
+          employee_id?: string
+          anomaly_type?: AnomalyType
+          severity?: AnomalySeverity
+          details?: Record<string, unknown>
+          resolved?: boolean
+          resolved_by?: string | null
+          resolved_at?: string | null
+          resolution_notes?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      attendance_corrections: {
+        Row: {
+          id: string
+          employee_id: string
+          original_event_id: string | null
+          correction_type: CorrectionType
+          old_value: Record<string, unknown> | null
+          new_value: Record<string, unknown>
+          reason: string
+          requested_by: string
+          approved_by: string | null
+          approved_at: string | null
+          status: CorrectionStatus
+          rejection_reason: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          employee_id: string
+          original_event_id?: string | null
+          correction_type: CorrectionType
+          old_value?: Record<string, unknown> | null
+          new_value: Record<string, unknown>
+          reason: string
+          requested_by: string
+          approved_by?: string | null
+          approved_at?: string | null
+          status?: CorrectionStatus
+          rejection_reason?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          employee_id?: string
+          original_event_id?: string | null
+          correction_type?: CorrectionType
+          old_value?: Record<string, unknown> | null
+          new_value?: Record<string, unknown>
+          reason?: string
+          requested_by?: string
+          approved_by?: string | null
+          approved_at?: string | null
+          status?: CorrectionStatus
+          rejection_reason?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      wifi_access_points: {
+        Row: {
+          id: string
+          name: string
+          bssid: string | null
+          ssid: string | null
+          location_description: string | null
+          is_active: boolean
+          created_at: string
+          created_by: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          bssid?: string | null
+          ssid?: string | null
+          location_description?: string | null
+          is_active?: boolean
+          created_at?: string
+          created_by?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          bssid?: string | null
+          ssid?: string | null
+          location_description?: string | null
+          is_active?: boolean
+          created_at?: string
+          created_by?: string | null
+        }
+        Relationships: []
+      }
+      attendance_config: {
+        Row: {
+          key: string
+          value: Record<string, unknown>
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          key: string
+          value: Record<string, unknown>
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          key?: string
+          value?: Record<string, unknown>
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -1256,6 +1504,46 @@ export type Database = {
           status: string
         }[]
       }
+      calculate_employee_hours: {
+        Args: {
+          p_employee_id: string
+          p_from: string
+          p_to: string
+        }
+        Returns: {
+          total_hours: number
+          normal_hours: number
+          nocturnal_hours: number
+          extra_hours: number
+          days_worked: number
+        }[]
+      }
+      attendance_dashboard: {
+        Args: {
+          p_from: string
+          p_to: string
+        }
+        Returns: {
+          employee_id: string
+          first_name: string
+          last_name: string
+          role: string
+          is_currently_in: boolean
+          last_event_time: string | null
+          days_worked: number
+          total_hours: number
+          open_anomalies: number
+        }[]
+      }
+      get_current_attendance_status: {
+        Args: { p_employee_id: string }
+        Returns: {
+          status: string
+          last_event_id: string | null
+          last_event_type: string | null
+          last_event_time: string | null
+        }[]
+      }
     }
     Enums: {
       app_role: AppRole
@@ -1369,3 +1657,108 @@ export type BarOrderUpdate = Database['public']['Tables']['bar_orders']['Update'
 export type KitchenOrder = Database['public']['Tables']['kitchen_orders']['Row']
 export type KitchenOrderInsert = Database['public']['Tables']['kitchen_orders']['Insert']
 export type KitchenOrderUpdate = Database['public']['Tables']['kitchen_orders']['Update']
+
+// ---------------------------------------------------------------------------
+// Attendance Anti-Fraud System types
+// ---------------------------------------------------------------------------
+
+export type AttendanceStatus = 'clocked_in' | 'clocked_out' | 'no_record'
+
+export type ClockEvent = {
+  id: string
+  employee_id: string
+  event_type: ClockEventType
+  timestamp: string
+  wifi_bssid: string | null
+  wifi_ssid: string | null
+  gps_lat: number | null
+  gps_lng: number | null
+  gps_accuracy: number | null
+  selfie_url: string | null
+  device_fingerprint: string | null
+  user_agent: string | null
+  ip_address: string | null
+  verified: boolean
+  anomaly_flags: AnomalyFlag[]
+  created_at: string
+}
+
+export type DeviceRegistration = {
+  id: string
+  employee_id: string
+  device_fingerprint: string
+  user_agent: string | null
+  device_name: string | null
+  registered_at: string
+  is_active: boolean
+  approved_by: string | null
+  approved_at: string | null
+}
+
+export type AttendanceAnomaly = {
+  id: string
+  clock_event_id: string
+  employee_id: string
+  anomaly_type: AnomalyType
+  severity: AnomalySeverity
+  details: Record<string, unknown>
+  resolved: boolean
+  resolved_by: string | null
+  resolved_at: string | null
+  resolution_notes: string | null
+  created_at: string
+}
+
+export type AttendanceCorrection = {
+  id: string
+  employee_id: string
+  original_event_id: string | null
+  correction_type: CorrectionType
+  old_value: Record<string, unknown> | null
+  new_value: Record<string, unknown>
+  reason: string
+  requested_by: string
+  approved_by: string | null
+  approved_at: string | null
+  status: CorrectionStatus
+  rejection_reason: string | null
+  created_at: string
+}
+
+export type WifiAccessPoint = {
+  id: string
+  name: string
+  bssid: string | null
+  ssid: string | null
+  location_description: string | null
+  is_active: boolean
+  created_at: string
+  created_by: string | null
+}
+
+export type AttendanceConfig = {
+  key: string
+  value: Record<string, unknown>
+  updated_at: string
+  updated_by: string | null
+}
+
+export type EmployeeHours = {
+  total_hours: number
+  normal_hours: number
+  nocturnal_hours: number
+  extra_hours: number
+  days_worked: number
+}
+
+export type AttendanceDashboardRow = {
+  employee_id: string
+  first_name: string
+  last_name: string
+  role: string
+  is_currently_in: boolean
+  last_event_time: string | null
+  days_worked: number
+  total_hours: number
+  open_anomalies: number
+}
