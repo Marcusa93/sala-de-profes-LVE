@@ -14,11 +14,19 @@ import { createClient } from '@/lib/supabase/server'
 //   2. Calcula qty_per_portion * portions por ingrediente
 //   3. Registra movimientos de stock con reason = 'production'
 //
-// TODO: Agregar middleware de auth para validar rol encargado/chef/cocina.
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ success: false, error: 'No autenticado' }, { status: 401 })
+
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    if (!profile || !['encargado', 'socio', 'chef', 'cocina'].includes(profile.role)) {
+      return NextResponse.json({ success: false, error: 'Sin permisos' }, { status: 403 })
+    }
+
     const body = await request.json().catch(() => null)
 
     if (!body || typeof body.recipeId !== 'number' || typeof body.portions !== 'number') {
@@ -40,8 +48,6 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       )
     }
-
-    const supabase = await createClient()
 
     const { data, error } = await supabase.rpc('produce_recipe', {
       p_recipe_id: recipeId,
