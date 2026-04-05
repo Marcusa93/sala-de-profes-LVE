@@ -116,6 +116,26 @@ export type Database = {
           status: 'open' | 'closed' | 'missing_checkout'
           notes: string | null
           created_at: string
+          // Security fields
+          photo_url: string | null
+          clock_in_photo_url: string | null
+          clock_out_photo_url: string | null
+          geo_lat: number | null
+          geo_lng: number | null
+          geo_accuracy: number | null
+          geo_verified: boolean
+          geo_distance_m: number | null
+          wifi_ssid: string | null
+          wifi_verified: boolean
+          device_id: string | null
+          device_info: Record<string, unknown> | null
+          ip_address: string | null
+          is_suspicious: boolean
+          suspicious_reasons: string[] | null
+          clock_out_type: string | null
+          edited_by: string | null
+          edited_reason: string | null
+          original_clock_out: string | null
         }
         Insert: {
           id?: string
@@ -126,6 +146,20 @@ export type Database = {
           status?: 'open' | 'closed' | 'missing_checkout'
           notes?: string | null
           created_at?: string
+          photo_url?: string | null
+          clock_in_photo_url?: string | null
+          clock_out_photo_url?: string | null
+          geo_lat?: number | null
+          geo_lng?: number | null
+          geo_accuracy?: number | null
+          geo_verified?: boolean
+          wifi_ssid?: string | null
+          wifi_verified?: boolean
+          device_id?: string | null
+          device_info?: Record<string, unknown> | null
+          ip_address?: string | null
+          is_suspicious?: boolean
+          suspicious_reasons?: string[] | null
         }
         Update: {
           id?: string
@@ -135,7 +169,24 @@ export type Database = {
           clock_out_at?: string | null
           status?: 'open' | 'closed' | 'missing_checkout'
           notes?: string | null
-          created_at?: string
+          photo_url?: string | null
+          clock_in_photo_url?: string | null
+          clock_out_photo_url?: string | null
+          geo_lat?: number | null
+          geo_lng?: number | null
+          geo_accuracy?: number | null
+          geo_verified?: boolean
+          wifi_ssid?: string | null
+          wifi_verified?: boolean
+          device_id?: string | null
+          device_info?: Record<string, unknown> | null
+          ip_address?: string | null
+          is_suspicious?: boolean
+          suspicious_reasons?: string[] | null
+          clock_out_type?: string | null
+          edited_by?: string | null
+          edited_reason?: string | null
+          original_clock_out?: string | null
         }
         Relationships: []
       }
@@ -1047,6 +1098,39 @@ export type Database = {
         }
         Relationships: []
       }
+      attendance_audit: {
+        Row: {
+          id: string
+          log_id: string
+          editor_id: string
+          action: string
+          reason: string
+          old_value: Record<string, unknown> | null
+          new_value: Record<string, unknown> | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          log_id: string
+          editor_id: string
+          action: string
+          reason: string
+          old_value?: Record<string, unknown> | null
+          new_value?: Record<string, unknown> | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          log_id?: string
+          editor_id?: string
+          action?: string
+          reason?: string
+          old_value?: Record<string, unknown> | null
+          new_value?: Record<string, unknown> | null
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -1117,6 +1201,60 @@ export type Database = {
           p_sale_id: number
         }
         Returns: Record<string, unknown>
+      }
+      clock_in_secure: {
+        Args: {
+          p_photo_url?: string | null
+          p_geo_lat?: number | null
+          p_geo_lng?: number | null
+          p_geo_accuracy?: number | null
+          p_wifi_ssid?: string | null
+          p_device_id?: string | null
+          p_device_info?: Record<string, unknown> | null
+          p_ip_address?: string | null
+          p_notes?: string | null
+        }
+        Returns: Record<string, unknown>
+      }
+      clock_out_secure: {
+        Args: {
+          p_photo_url?: string | null
+          p_geo_lat?: number | null
+          p_geo_lng?: number | null
+          p_geo_accuracy?: number | null
+          p_wifi_ssid?: string | null
+          p_device_id?: string | null
+          p_device_info?: Record<string, unknown> | null
+          p_ip_address?: string | null
+          p_notes?: string | null
+        }
+        Returns: Record<string, unknown>
+      }
+      get_suspicious_attendance: {
+        Args: {
+          p_from_date?: string
+          p_to_date?: string
+        }
+        Returns: {
+          log_id: string
+          user_id: string
+          first_name: string
+          last_name: string
+          role: string
+          operative_date: string
+          clock_in_at: string
+          clock_out_at: string | null
+          hours_worked: number | null
+          suspicious_reasons: string[]
+          geo_verified: boolean
+          geo_distance_m: number | null
+          wifi_verified: boolean
+          wifi_ssid: string | null
+          clock_in_photo_url: string | null
+          clock_out_photo_url: string | null
+          device_id: string | null
+          status: string
+        }[]
       }
     }
     Enums: {

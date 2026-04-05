@@ -297,6 +297,23 @@ REGLAS DE ACCIONES:
 - Extraé cantidad y unidad por separado (ej: "5 kg", "3 cajas", "10 unidades")
 - Si no entendés la cantidad, preguntá antes de proponer
 
+## CONSULTAS DE ASISTENCIA Y FICHAJES
+
+Cuando el encargado/socio pregunta por asistencia, usá los datos de ASISTENCIA HOY, EGRESOS SIN MARCAR y FICHAJES SOSPECHOSOS.
+
+**Preguntas típicas y cómo responder:**
+
+- "¿Quién está trabajando ahora?" → mostrá los que tienen ingreso abierto (sin egreso), con su horario de entrada
+- "¿Quién llegó hoy?" → mostrá ASISTENCIA HOY con hora de ingreso
+- "¿Hay fichajes sospechosos?" → mostrá FICHAJES SOSPECHOSOS HOY, si no hay decí que todo está ok
+- "¿Cuántas horas trabajó [nombre] esta semana?" → con los datos disponibles del contexto, calculá. Si no tenés el historial semanal, indicá que solo ves hoy y sugerí ir a /admin/reportes/asistencia
+- "¿Alguien se olvidó de marcar egreso?" → mostrá EGRESOS SIN MARCAR
+
+**Para el empleado que quiere fichar:**
+- "Fichar entrada" / "Marcar ingreso" / "Entré al trabajo" → decile que el fichaje se hace desde /mi-turno en la app, que necesita dar permiso de cámara y ubicación
+- "Fichar salida" / "Marcar egreso" → ídem, desde /mi-turno
+- NO podés fichar por el chat. El fichaje requiere selfie + geolocalización en tiempo real.
+
 DISTINGUIR PEDIDO vs ACTUALIZACIÓN DE STOCK:
 - "necesito", "pedí", "falta", "encargá" → PEDIDO_MERCADERIA (pedir al proveedor)
 - "hay", "quedan", "tenemos", "cargá", "actualizar", "son", "conté" → ACTUALIZAR_STOCK (cargar cantidad actual)
@@ -581,7 +598,36 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       }
     }
 
-    // 10. Protocolo de atención — always available for runners and baristas
+    // 10. Fichajes sospechosos — solo encargados/socios
+    if (canSeeAttendance) {
+      try {
+        const { data: suspicious } = await supabase.rpc('get_suspicious_attendance', {
+          p_from_date: todayStr,
+          p_to_date: todayStr,
+        })
+        const rows = suspicious as Array<{
+          first_name: string; last_name: string; role: string;
+          clock_in_at: string; clock_out_at: string | null;
+          suspicious_reasons: string[]; geo_verified: boolean;
+          geo_distance_m: number | null; status: string;
+        }> ?? []
+        if (rows.length > 0) {
+          const lines = rows.map(r => {
+            const name = `${r.first_name} ${r.last_name}`
+            const reasons = r.suspicious_reasons?.join(', ') ?? 'sin detalle'
+            const geo = r.geo_verified ? `GPS OK` : `GPS NO verificado${r.geo_distance_m ? ` (${r.geo_distance_m}m del local)` : ''}`
+            const checkIn = r.clock_in_at ? format(new Date(r.clock_in_at), 'HH:mm') : '?'
+            const checkOut = r.clock_out_at ? format(new Date(r.clock_out_at), 'HH:mm') : 'sin egreso'
+            return `- ${name} (${r.role}): ingreso ${checkIn}, egreso ${checkOut}. ALERTA: ${reasons}. ${geo}`
+          })
+          sections.push(`FICHAJES SOSPECHOSOS HOY (${rows.length}):\n${lines.join('\n')}\nRevisá /equipo/alertas para el detalle completo.`)
+        }
+      } catch {
+        // silent — tabla puede no estar migrada aún
+      }
+    }
+
+    // 11. Protocolo de atención — always available for runners and baristas
     if (['runner', 'barista', 'socio', 'encargado'].includes(role)) {
       sections.push(`PROTOCOLO DE ATENCIÓN — LA VIEJA ESCUELA:
 
@@ -651,7 +697,17 @@ function buildKeywordResponse(question: string, context: string): string {
   if (q.includes('trabaj') || q.includes('quien') || q.includes('equipo') || q.includes('hoy')) {
     const asistencia = getSection('ASISTENCIA HOY')
     const turnos = getSection('TURNOS HOY')
-    return asistencia + (turnos ? '\n\n' + turnos : '')
+    const sinEgreso = getSection('EGRESOS SIN MARCAR')
+    return [asistencia, sinEgreso, turnos].filter(Boolean).join('\n\n')
+  }
+
+  if (q.includes('sospech') || q.includes('alerta') || q.includes('irregulari') || q.includes('trampa') || q.includes('fichaj')) {
+    const suspicious = getSection('FICHAJES SOSPECHOSOS')
+    return suspicious || 'No hay fichajes sospechosos hoy. ✅'
+  }
+
+  if (q.includes('egreso') || q.includes('salida') || q.includes('sin marcar') || q.includes('olvidó')) {
+    return getSection('EGRESOS SIN MARCAR') || 'Todos marcaron egreso. ✅'
   }
 
   if (q.includes('stock') || q.includes('rojo') || q.includes('critico') || q.includes('falt')) {
