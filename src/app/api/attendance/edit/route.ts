@@ -19,34 +19,74 @@ export async function PATCH(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { logId, clockOut } = body
+    const { logId, clockOut, clockIn, reason } = body
 
-    if (!logId || !clockOut) {
-      return NextResponse.json({ error: 'logId y clockOut requeridos' }, { status: 400 })
+    if (!logId) {
+      return NextResponse.json({ error: 'logId requerido' }, { status: 400 })
+    }
+    if (!clockOut && !clockIn) {
+      return NextResponse.json({ error: 'clockOut o clockIn requerido' }, { status: 400 })
+    }
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 3) {
+      return NextResponse.json({ error: 'Motivo de corrección obligatorio (mín 3 caracteres)' }, { status: 400 })
     }
 
     // Get original log
     const { data: log } = await admin
       .from('attendance_logs')
-      .select('id, clock_out_at')
+      .select('id, user_id, clock_in_at, clock_out_at')
       .eq('id', logId)
       .single()
 
     if (!log) return NextResponse.json({ error: 'Registro no encontrado' }, { status: 404 })
 
-    // Update
+    // Build update
+    const update: Record<string, unknown> = {
+      edited_by: user.id,
+      edit_reason: reason.trim(),
+    }
+
+    if (clockOut) {
+      update.clock_out_at = clockOut
+      update.clock_out_type = 'edited'
+      update.original_clock_out = log.clock_out_at
+      update.status = 'closed'
+    }
+    if (clockIn) {
+      update.clock_in_at = clockIn
+      update.original_clock_in = log.clock_in_at
+    }
+
     const { error } = await admin
       .from('attendance_logs')
-      .update({
-        clock_out_at: clockOut,
-        clock_out_type: 'edited',
-        edited_by: user.id,
-        original_clock_out: log.clock_out_at,
-        status: 'closed',
-      })
+      .update(update)
       .eq('id', logId)
 
     if (error) throw error
+
+    // Audit trail
+    const { data: editorProfile } = await admin.from('profiles').select('first_name, last_name').eq('id', user.id).single()
+    const { data: empProfile } = await admin.from('profiles').select('first_name, last_name').eq('id', log.user_id).single()
+    const editorName = editorProfile ? `${editorProfile.first_name} ${editorProfile.last_name}` : '?'
+    const empName = empProfile ? `${empProfile.first_name} ${empProfile.last_name}` : '?'
+
+    await admin.from('audit_trail').insert({
+      user_id: user.id,
+      user_name: editorName,
+      action: 'attendance_edit',
+      module: 'asistencia',
+      entity_type: 'attendance_log',
+      entity_id: logId,
+      description: `${editorName} corrigió fichaje de ${empName}: ${reason.trim()}`,
+      metadata: {
+        employee_id: log.user_id,
+        original_clock_in: log.clock_in_at,
+        original_clock_out: log.clock_out_at,
+        new_clock_in: clockIn ?? null,
+        new_clock_out: clockOut ?? null,
+        reason: reason.trim(),
+      },
+    }).catch(() => {})
 
     return NextResponse.json({ success: true })
   } catch (error) {

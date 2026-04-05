@@ -353,7 +353,14 @@ Cuándo usar QUERY_JSON:
 - "¿Cuánto me dura?" / "¿Para cuántos días alcanza?" → STOCK_DURACION
 - "¿Qué recetas están en riesgo?" / "¿Qué platos no puedo hacer?" → RECETAS_RIESGO
 - "¿Qué producciones hubo hoy?" / "¿Qué se hizo hoy?" → PRODUCCION_HOY
-- "¿Cuántos links pendientes hay?" / "¿Hay ingredientes sin vincular?" → PENDIENTES_LINKS`
+- "¿Cuántos links pendientes hay?" / "¿Hay ingredientes sin vincular?" → PENDIENTES_LINKS
+
+## FICHAJE / ASISTENCIA
+Si alguien dice "fichar entrada", "fichar salida", "marcar ingreso", "marcar egreso":
+- NO fichés desde el chat. El fichaje requiere verificación de seguridad (GPS, selfie, dispositivo).
+- Respondé: "Para fichar necesitás hacerlo desde **Mi Turno** en la app — ahí se verifica tu ubicación y se saca selfie. Entrá a /mi-turno."
+- Si un encargado/socio pregunta "¿quién está trabajando?", "¿fichajes sospechosos?", "¿horas de [nombre]?" → respondé con los datos del contexto.
+- Si preguntan "¿cuántas horas trabajó [nombre] esta semana/mes?" → buscá en el contexto de asistencia.`
 
 // ---------------------------------------------------------------------------
 // Recopilar contexto de datos — ampliado
@@ -677,7 +684,30 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       }
     }
 
-    // 12. Protocolo de atención — always available for runners and baristas
+    // 12. Fichajes sospechosos (encargado, socio)
+    if (isSocio || role === 'encargado') {
+      const sevenDaysAgo = new Date()
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+      const { data: suspicious } = await supabase
+        .from('attendance_logs')
+        .select('operative_date, suspicious_reasons, profiles!attendance_logs_user_id_fkey(first_name)')
+        .eq('is_suspicious', true)
+        .gte('operative_date', sevenDaysAgo.toISOString().split('T')[0])
+        .order('operative_date', { ascending: false })
+        .limit(10)
+
+      const suspRows = (suspicious ?? []) as unknown as { operative_date: string; suspicious_reasons: string[]; profiles: { first_name: string } | null }[]
+      if (suspRows.length > 0) {
+        const lines = suspRows.map(s => {
+          const name = s.profiles?.first_name ?? '?'
+          const reasons = (s.suspicious_reasons ?? []).map(r => r.split(':')[0]).join(', ')
+          return `- ${name} (${s.operative_date}): ${reasons}`
+        })
+        sections.push(`⚠️ FICHAJES SOSPECHOSOS (últimos 7 días, ${suspRows.length}):\n${lines.join('\n')}\nVer detalle en Admin → Reportes → Sospechosos`)
+      }
+    }
+
+    // 13. Protocolo de atención — always available for runners and baristas
     if (['runner', 'barista', 'socio', 'encargado'].includes(role)) {
       sections.push(`PROTOCOLO DE ATENCIÓN — LA VIEJA ESCUELA:
 

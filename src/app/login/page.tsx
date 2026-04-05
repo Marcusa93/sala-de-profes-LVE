@@ -128,13 +128,7 @@ export default function LoginPage() {
               animate={{ opacity: 1 }}
               transition={{ delay: 0.6, duration: 0.5 }}
             >
-              <motion.span
-                className="text-4xl"
-                animate={{ rotate: [0, 15, -15, 10, -10, 0] }}
-                transition={{ duration: 1.5, repeat: Infinity, repeatDelay: 0.5, ease: 'easeInOut' }}
-              >
-                ☕
-              </motion.span>
+              <span className="animate-coffee text-4xl">☕</span>
               <p className="font-display text-2xl tracking-tight text-[#3d2c24]">
                 Tranqui profe...
               </p>
