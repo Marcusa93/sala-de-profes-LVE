@@ -763,9 +763,21 @@ export async function executeAction(
         return result
       }
 
-      const efficiency = (completed as { efficiency_pct?: number })?.efficiency_pct ?? 0
-      result.created = 1
-      result.details.push(`Producción completada — ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name} → ${outs.length} productos, ${efficiency}% eficiencia`)
+      const completedData = completed as { efficiency_pct?: number; movements?: { stock_item_id: number; change: number }[] }
+      const efficiency = completedData?.efficiency_pct ?? 0
+
+      // Sync affected stock items to Fudo
+      const movements = completedData?.movements ?? []
+      if (movements.length > 0) {
+        const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
+        const fudoResult = await syncProductionToFudo(admin, movements, userId)
+        const fudoTag = fudoResult.synced > 0 ? ` (Fudo ✓ ${fudoResult.synced} items)` : ''
+        result.created = 1
+        result.details.push(`Producción completada — ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name} → ${outs.length} productos, ${efficiency}% eficiencia${fudoTag}`)
+      } else {
+        result.created = 1
+        result.details.push(`Producción completada — ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name} → ${outs.length} productos, ${efficiency}% eficiencia`)
+      }
 
       await admin.from('audit_trail').insert({
         user_id: userId,

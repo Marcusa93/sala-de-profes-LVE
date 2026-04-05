@@ -58,6 +58,16 @@ export async function POST(
       return NextResponse.json({ error: result.error ?? 'Error al completar la orden' }, { status: 400 })
     }
 
+    // Sync affected stock items to Fudo
+    const movements = (result.movements ?? []) as { stock_item_id: number; change: number }[]
+    if (movements.length > 0) {
+      const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
+      const fudoResult = await syncProductionToFudo(admin, movements, user.id)
+      if (fudoResult.errors.length > 0) {
+        console.warn('[Fudo sync warnings]', fudoResult.errors)
+      }
+    }
+
     return NextResponse.json({
       success: true,
       order_id: result.order_id,
