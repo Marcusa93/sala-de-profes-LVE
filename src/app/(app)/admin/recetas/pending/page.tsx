@@ -385,6 +385,10 @@ export default function PendingLinksPage() {
       ])
 
       const pendingJson = await pendingRes.json()
+      if (pendingJson.error) {
+        toast.error(pendingJson.error)
+        return
+      }
       setData(pendingJson)
 
       const { data: items } = await stockRes
@@ -462,7 +466,7 @@ export default function PendingLinksPage() {
             >
               <p className={`font-display text-xl font-bold tabular-nums ${activeTab === t.key ? 'text-white' : ''}`}
                  style={{ color: activeTab === t.key ? undefined : t.color }}>
-                {data.counts[t.key]}
+                {data.counts?.[t.key] ?? 0}
               </p>
               <p className={`text-[9px] font-semibold uppercase tracking-wider ${
                 activeTab === t.key ? 'text-white/80' : 'text-[#a39e97]'

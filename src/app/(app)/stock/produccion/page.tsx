@@ -242,7 +242,7 @@ export default function ProduccionDashboardPage() {
                 />
                 <KpiCard
                   label="Merma total"
-                  value={dashboard?.total_waste_kg !== null ? Number((dashboard!.total_waste_kg ?? 0).toFixed(2)) : null}
+                  value={dashboard?.total_waste_kg != null ? Number((dashboard.total_waste_kg).toFixed(2)) : null}
                   unit=" kg"
                   color={dashboard?.total_waste_kg ? 'text-[#ea504c]' : 'text-[#3d2c24]'}
                 />
