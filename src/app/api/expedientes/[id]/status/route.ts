@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyExpedienteToResponsible } from '@/lib/email/send'
 import { STATUS_TRANSITIONS, EXPEDIENTE_STATUSES } from '@/lib/constants/expedientes'
 import type { ExpedienteStatus } from '@/types/expedientes'
 
@@ -44,17 +45,19 @@ export async function PATCH(
     const currentStatus = expediente.status as ExpedienteStatus
     const role = profile.role as string
 
-    // Validate transition
-    const validNext = STATUS_TRANSITIONS[currentStatus] ?? []
-    if (!validNext.includes(newStatus)) {
-      return NextResponse.json({
-        error: `Transición ${currentStatus} → ${newStatus} no permitida`,
-      }, { status: 400 })
-    }
-
     // Permission checks
     const isSocio = role === 'socio'
     const isEncargado = role === 'encargado'
+
+    // Validate transition — socio can skip to any status
+    if (!isSocio) {
+      const validNext = STATUS_TRANSITIONS[currentStatus] ?? []
+      if (!validNext.includes(newStatus)) {
+        return NextResponse.json({
+          error: `Transición ${currentStatus} → ${newStatus} no permitida`,
+        }, { status: 400 })
+      }
+    }
     const isAuthor = expediente.author_id === user.id
     const isResponsible = expediente.responsible_id === user.id
 
@@ -116,13 +119,23 @@ export async function PATCH(
         author_id: user.id,
         type: 'operativo',
         priority: expediente.urgency === 'critica' ? 'critica' : 'media',
-        title: `📋 ${expediente.code} → ${toLabel}`,
-        body: `${authorName} cambió el estado de tu expediente`,
+        title: `📋 ${expediente.title} → ${toLabel}`,
+        body: `${authorName} cambió el estado del expediente ${expediente.code}`,
         scope: 'user',
         target_user_id: expediente.author_id,
         is_active: true,
       })
     }
+
+    // Email only to the responsible person
+    notifyExpedienteToResponsible({
+      responsibleId: expediente.responsible_id,
+      code: expediente.code,
+      title: expediente.title,
+      action: `Cambio de estado: ${fromLabel} → ${toLabel}`,
+      authorName,
+      detail: closeReason || undefined,
+    }).catch(() => {})
 
     return NextResponse.json({ success: true })
   } catch (error) {

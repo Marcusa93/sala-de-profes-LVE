@@ -131,7 +131,7 @@ export default function NuevoExpedientePage() {
         <Link
           href="/expedientes"
           aria-label="Volver a expedientes"
-          className="flex size-9 items-center justify-center rounded-xl bg-secondary text-secondary-foreground"
+          className="flex size-10 items-center justify-center rounded-xl bg-secondary text-secondary-foreground"
         >
           <ArrowLeft className="size-4" />
         </Link>
@@ -164,7 +164,7 @@ export default function NuevoExpedientePage() {
       <div className="space-y-5">
         {/* Title */}
         <div>
-          <label htmlFor="exp-title" className="block text-xs font-semibold text-foreground mb-1.5">
+          <label htmlFor="exp-title" className="form-label block text-xs font-semibold text-foreground mb-1.5">
             Título *
           </label>
           <input
@@ -173,13 +173,13 @@ export default function NuevoExpedientePage() {
             placeholder="Ej: Renovar carta de meriendas"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+            className="h-12 w-full rounded-xl border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
           />
         </div>
 
         {/* Type */}
         <div>
-          <label className="block text-xs font-semibold text-foreground mb-1.5">
+          <label className="form-label block text-xs font-semibold text-foreground mb-1.5">
             Tipo de expediente *
           </label>
           <div className="grid grid-cols-2 gap-2">
@@ -188,7 +188,7 @@ export default function NuevoExpedientePage() {
                 key={key}
                 type="button"
                 onClick={() => setType(key as ExpedienteType)}
-                className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-all ${
+                className={`flex items-center gap-1.5 rounded-xl border px-3 py-3 text-xs font-medium transition-all ${
                   type === key
                     ? 'border-[#006d5a] bg-[#e8f5f1] ring-1 ring-[#006d5a]'
                     : 'border-border hover:bg-muted'
@@ -203,7 +203,7 @@ export default function NuevoExpedientePage() {
 
         {/* Description */}
         <div>
-          <label htmlFor="exp-desc" className="block text-xs font-semibold text-foreground mb-1.5">
+          <label htmlFor="exp-desc" className="form-label block text-xs font-semibold text-foreground mb-1.5">
             Descripción
           </label>
           <textarea
@@ -218,7 +218,7 @@ export default function NuevoExpedientePage() {
 
         {/* Reason */}
         <div>
-          <label htmlFor="exp-reason" className="block text-xs font-semibold text-foreground mb-1.5">
+          <label htmlFor="exp-reason" className="form-label block text-xs font-semibold text-foreground mb-1.5">
             ¿Por qué?
           </label>
           <textarea
@@ -233,7 +233,7 @@ export default function NuevoExpedientePage() {
 
         {/* Areas */}
         <div>
-          <label className="block text-xs font-semibold text-foreground mb-1.5">
+          <label className="form-label block text-xs font-semibold text-foreground mb-1.5">
             Áreas involucradas *
           </label>
           <div className="flex flex-wrap gap-2">
@@ -244,10 +244,10 @@ export default function NuevoExpedientePage() {
                   key={key}
                   type="button"
                   onClick={() => toggleArea(key as ExpedienteArea)}
-                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${
                     selected
                       ? 'border-[#006d5a] bg-[#e8f5f1] text-[#006d5a]'
-                      : 'border-border text-muted-foreground hover:bg-muted'
+                      : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                   }`}
                 >
                   {config.icon} {config.label}
@@ -259,7 +259,7 @@ export default function NuevoExpedientePage() {
 
         {/* Urgency */}
         <div>
-          <label className="block text-xs font-semibold text-foreground mb-1.5">
+          <label className="form-label block text-xs font-semibold text-foreground mb-1.5">
             Urgencia
           </label>
           <div className="flex gap-2">
@@ -283,7 +283,7 @@ export default function NuevoExpedientePage() {
 
         {/* Target date */}
         <div>
-          <label htmlFor="exp-date" className="block text-xs font-semibold text-foreground mb-1.5">
+          <label htmlFor="exp-date" className="form-label block text-xs font-semibold text-foreground mb-1.5">
             Fecha objetivo (opcional)
           </label>
           <input
@@ -291,8 +291,15 @@ export default function NuevoExpedientePage() {
             type="date"
             value={targetDate}
             onChange={(e) => setTargetDate(e.target.value)}
-            className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+            onKeyDown={(e) => {
+              if (e.key === 'f' || e.key === 'F') {
+                e.preventDefault()
+                setTargetDate(new Date().toISOString().split('T')[0])
+              }
+            }}
+            className="h-12 w-full rounded-xl border border-border bg-background px-3 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
           />
+          <p className="mt-1 text-[10px] text-muted-foreground">Presioná <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[9px] font-semibold">F</kbd> para fecha de hoy</p>
         </div>
 
         {/* Submit */}

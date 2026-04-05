@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
+import { countBySemaphore } from '@/lib/contracts/stock'
 
 // ---------------------------------------------------------------------------
 // Executive Summary API — generates a structured operational summary
@@ -22,7 +23,7 @@ export async function GET() {
       .eq('id', user.id)
       .single()
 
-    if (profile?.role !== 'encargado') {
+    if (profile?.role !== 'encargado' && profile?.role !== 'socio') {
       return NextResponse.json({ error: 'Acceso restringido' }, { status: 403 })
     }
 
@@ -127,13 +128,12 @@ async function gatherExecutiveContext(supabase: Awaited<ReturnType<typeof create
     .eq('is_active', true)
 
   const items = stockItems ?? []
-  const red = items.filter((s) => s.current_qty <= s.min_qty)
-  const yellow = items.filter((s) => s.current_qty > s.min_qty && s.current_qty <= s.min_qty * 1.5)
-  const green = items.length - red.length - yellow.length
+  const counts = countBySemaphore(items)
 
-  sections.push(`STOCK: ${items.length} items — ${red.length} críticos, ${yellow.length} en atención, ${green} normales`)
-  if (red.length > 0) {
-    sections.push(`ITEMS CRÍTICOS: ${red.map((r) => `${r.name} (${r.current_qty}/${r.min_qty} ${r.unit})`).join(', ')}`)
+  sections.push(`STOCK: ${counts.total} items — ${counts.red} críticos, ${counts.yellow} en atención, ${counts.green} normales`)
+  if (counts.red > 0) {
+    const redItems = items.filter((s) => s.current_qty <= s.min_qty || s.current_qty <= 0)
+    sections.push(`ITEMS CRÍTICOS: ${redItems.map((r) => `${r.name} (${r.current_qty}/${r.min_qty} ${r.unit})`).join(', ')}`)
   }
 
   // Announcements

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Barlow, Playfair_Display } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
+import { RegisterSW } from '@/components/pwa/register-sw'
 import './globals.css'
 
 const barlow = Barlow({
@@ -20,11 +21,21 @@ const playfairDisplay = Playfair_Display({
 export const metadata: Metadata = {
   title: 'Sala de Profes — La Vieja Escuela',
   description: 'Gestión interna de La Vieja Escuela',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Sala de Profes',
+  },
+  other: {
+    'apple-touch-icon': '/icons/apple-touch-icon.png',
+  },
 }
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  viewportFit: 'cover',
   themeColor: '#006d5a',
 }
 
@@ -38,6 +49,7 @@ export default function RootLayout({
       <body
         className={`${barlow.variable} ${playfairDisplay.variable} font-sans antialiased`}
       >
+        <RegisterSW />
         {children}
         <Toaster
           position="top-center"

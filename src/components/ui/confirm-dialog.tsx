@@ -55,9 +55,9 @@ export function ConfirmDialog({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={() => !loading && setOpen(false)} />
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => !loading && setOpen(false)} />
             <motion.div
-              className="relative mx-4 mb-4 w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl sm:mb-0"
+              className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-sm max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl sm:mx-auto sm:mb-0"
               initial={{ opacity: 0, y: 50, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 20, scale: 0.97 }}
@@ -80,16 +80,14 @@ export function ConfirmDialog({
               <div className="mt-5 flex gap-2.5">
                 <Button
                   variant="outline"
-                  size="sm"
-                  className="flex-1"
+                  className="h-12 flex-1"
                   onClick={() => setOpen(false)}
                   disabled={loading}
                 >
                   {cancelLabel}
                 </Button>
                 <Button
-                  size="sm"
-                  className={`flex-1 text-white ${colors.btnClass}`}
+                  className={`h-12 flex-1 text-white ${colors.btnClass}`}
                   onClick={handleConfirm}
                   disabled={loading}
                 >

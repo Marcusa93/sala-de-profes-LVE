@@ -11,8 +11,6 @@ import {
   AlertCircle,
   Loader2,
   History,
-  MapPin,
-  MapPinOff,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -22,33 +20,6 @@ import { createClient } from '@/lib/supabase/client'
 import { FadeIn, StaggerList, StaggerItem, ScalePress, PulseRing, AnimatePresence, motion } from '@/components/ui/motion'
 import { SuccessBurst } from '@/components/ui/success-burst'
 import { playSchoolBell } from '@/lib/sounds'
-
-// ---------------------------------------------------------------------------
-// Geolocation constants
-// ---------------------------------------------------------------------------
-
-const RESTAURANT_LOCATION = { lat: -26.8241, lng: -65.2226 }
-const MAX_DISTANCE_METERS = 150
-
-/**
- * Calculate distance between two GPS coordinates using the Haversine formula.
- * Returns distance in meters.
- */
-function haversineDistance(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-): number {
-  const R = 6371000 // Earth radius in meters
-  const toRad = (deg: number) => (deg * Math.PI) / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLon = toRad(lon2 - lon1)
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,8 +50,6 @@ export default function MiTurnoPage() {
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
-  const [geoStatus, setGeoStatus] = useState<'unknown' | 'checking' | 'in_range' | 'out_of_range' | 'error'>('unknown')
-  const [geoLoading, setGeoLoading] = useState(false)
 
   const todayStr = format(new Date(), 'yyyy-MM-dd')
 
@@ -148,104 +117,40 @@ export default function MiTurnoPage() {
   const status = getStatus()
 
   // ------------------------------------------
-  // Geolocation verification helper
-  // ------------------------------------------
-  const verifyLocation = (): Promise<boolean> => {
-    return new Promise((resolve) => {
-      if (!navigator.geolocation) {
-        toast.error('Necesitás activar la ubicación para fichar')
-        setGeoStatus('error')
-        resolve(false)
-        return
-      }
-
-      setGeoLoading(true)
-      setGeoStatus('checking')
-
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const distance = haversineDistance(
-            position.coords.latitude,
-            position.coords.longitude,
-            RESTAURANT_LOCATION.lat,
-            RESTAURANT_LOCATION.lng,
-          )
-
-          if (distance <= MAX_DISTANCE_METERS) {
-            setGeoStatus('in_range')
-            setGeoLoading(false)
-            resolve(true)
-          } else {
-            setGeoStatus('out_of_range')
-            setGeoLoading(false)
-            toast.error(
-              'Estás fuera del rango del local. Acercate a La Vieja Escuela para fichar.',
-            )
-            resolve(false)
-          }
-        },
-        () => {
-          setGeoStatus('error')
-          setGeoLoading(false)
-          toast.error('Necesitás activar la ubicación para fichar')
-          resolve(false)
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-      )
-    })
-  }
-
-  // ------------------------------------------
-  // Clock In (with geolocation check)
+  // Clock In — direct, no GPS
   // ------------------------------------------
   const handleClockIn = async () => {
     if (!profile) return
     setActionLoading(true)
-
     try {
-      const locationOk = await verifyLocation()
-      if (!locationOk) {
-        setActionLoading(false)
-        return
-      }
-
-      const { error } = await supabase.rpc('clock_in')
-
+      const { error } = await supabase.rpc('clock_in', { p_notes: undefined })
       if (error) throw error
-
       playSchoolBell()
       setShowSuccess(true)
-      toast.success('Ingreso registrado correctamente')
+      toast.success('¡Ingreso registrado!')
       await fetchAttendance()
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Error al marcar ingreso'
-      toast.error('Error al registrar ingreso', { description: message })
+      toast.error(err instanceof Error ? err.message : 'Error al fichar')
     } finally {
       setActionLoading(false)
     }
   }
 
   // ------------------------------------------
-  // Clock Out
+  // Clock Out — direct, no GPS
   // ------------------------------------------
   const handleClockOut = async () => {
     if (!profile || !todayRecord) return
     setActionLoading(true)
-
     try {
-      const { error } = await supabase.rpc('clock_out')
-
+      const { error } = await supabase.rpc('clock_out', { p_notes: undefined })
       if (error) throw error
-
       playSchoolBell()
       setShowSuccess(true)
-      toast.success('Egreso registrado correctamente')
+      toast.success('¡Egreso registrado!')
       await fetchAttendance()
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Error al marcar egreso'
-      toast.error('Error al registrar egreso', { description: message })
+      toast.error(err instanceof Error ? err.message : 'Error al fichar')
     } finally {
       setActionLoading(false)
     }
@@ -316,11 +221,9 @@ export default function MiTurnoPage() {
       {/* Hero Clock — Ceremonial, display-driven                        */}
       {/* ============================================================= */}
       <FadeIn className="pt-4 text-center">
-        <p className="font-display text-7xl font-bold tabular-nums tracking-tight text-[#3d2c24]">
+        <p className="font-display text-5xl sm:text-7xl font-bold tabular-nums tracking-tight text-[#3d2c24]">
           {format(currentTime, 'HH:mm')}
-        </p>
-        <p className="font-display text-2xl font-medium tabular-nums text-[#a39e97]">
-          {format(currentTime, ':ss')}
+          <span className="text-2xl sm:text-3xl font-medium text-[#a39e97]">{format(currentTime, ':ss')}</span>
         </p>
         <p className="section-label mt-4">
           {format(currentTime, "EEEE d 'de' MMMM, yyyy", { locale: es })}
@@ -359,50 +262,16 @@ export default function MiTurnoPage() {
             </div>
             <Button
               onClick={handleClockIn}
-              disabled={actionLoading || geoLoading}
+              disabled={actionLoading}
               className="h-16 w-full rounded-2xl bg-[#006d5a] text-base font-semibold text-white shadow-md hover:bg-[#005a4a] active:scale-[0.98]"
             >
-              {actionLoading || geoLoading ? (
+              {actionLoading ? (
                 <Loader2 className="mr-2.5 size-5 animate-spin" />
               ) : (
                 <LogIn className="mr-2.5 size-5" />
               )}
-              {geoLoading ? 'Verificando ubicación...' : 'Marcar Ingreso'}
+              Marcar Ingreso
             </Button>
-
-            {/* Location status badge */}
-            <div className="flex items-center justify-center">
-              {geoStatus === 'checking' && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f5f0e8] px-3 py-1 text-xs font-medium text-[#a39e97]">
-                  <Loader2 className="size-3 animate-spin" />
-                  Verificando ubicación...
-                </span>
-              )}
-              {geoStatus === 'in_range' && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1 text-xs font-medium text-[#006d5a]">
-                  <MapPin className="size-3" />
-                  Dentro del rango del local
-                </span>
-              )}
-              {geoStatus === 'out_of_range' && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-[#ea504c]">
-                  <MapPinOff className="size-3" />
-                  Fuera del rango del local
-                </span>
-              )}
-              {geoStatus === 'error' && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-[#ea504c]">
-                  <MapPinOff className="size-3" />
-                  Ubicación no disponible
-                </span>
-              )}
-              {geoStatus === 'unknown' && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f5f0e8] px-3 py-1 text-xs font-medium text-[#a39e97]">
-                  <MapPin className="size-3" />
-                  Se verificará tu ubicación al fichar
-                </span>
-              )}
-            </div>
           </div>
         )}
 
@@ -478,9 +347,13 @@ export default function MiTurnoPage() {
         </div>
 
         {history.length === 0 ? (
-          <div className="card-elevated px-6 py-10 text-center">
-            <p className="text-sm text-[#a39e97]">
-              No hay registros de asistencia.
+          <div className="card-elevated flex flex-col items-center gap-2 px-6 py-10 text-center">
+            <History className="size-8 text-[#ebe6df]" />
+            <p className="text-sm font-medium text-[#a39e97]">
+              Aún no hay registros
+            </p>
+            <p className="text-xs text-[#a39e97]/70">
+              ¡Marcá tu primer ingreso!
             </p>
           </div>
         ) : (
@@ -488,7 +361,7 @@ export default function MiTurnoPage() {
             {history.map((record) => (
               <StaggerItem key={record.id}>
               <div
-                className="card-elevated flex items-center gap-4 px-4 py-3.5"
+                className="card-elevated flex items-center gap-4 rounded-xl px-4 py-3.5"
                 style={{
                   borderLeftWidth: '3px',
                   borderLeftColor: getRecordAccentColor(record),
@@ -526,6 +399,8 @@ export default function MiTurnoPage() {
           </StaggerList>
         )}
       </FadeIn>
+
+      {/* GPS dialog removed — fichaje libre */}
     </div>
   )
 }

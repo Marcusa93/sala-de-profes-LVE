@@ -7,8 +7,12 @@
 // Docs: https://dev.fu.do/api/
 // ---------------------------------------------------------------------------
 
-const FUDO_AUTH_URL = 'https://auth.fu.do/api'
+const FUDO_AUTH_URL = 'https://auth.fu.do/authenticate'
 const FUDO_API_URL = 'https://api.fu.do/v1alpha1'
+const FUDO_LOGIN = process.env.FUDO_LOGIN ?? ''
+const FUDO_PASSWORD = process.env.FUDO_PASSWORD ?? ''
+
+// Fallback to old apiKey/apiSecret if login/password not set
 const FUDO_API_KEY = process.env.FUDO_API_KEY ?? ''
 const FUDO_API_SECRET = process.env.FUDO_API_SECRET ?? ''
 
@@ -24,25 +28,51 @@ async function getToken(): Promise<string> {
     return cachedToken
   }
 
-  if (!FUDO_API_KEY || !FUDO_API_SECRET) {
-    throw new Error('Faltan FUDO_API_KEY o FUDO_API_SECRET')
+  // Primary: login/password via auth.fu.do/authenticate
+  if (FUDO_LOGIN && FUDO_PASSWORD) {
+    const res = await fetch(FUDO_AUTH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ login: FUDO_LOGIN, password: FUDO_PASSWORD }),
+    })
+
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get('retry-after') ?? '60')
+      throw new Error(`Fudo rate limited. Reintentar en ${retryAfter}s`)
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`Fudo auth failed (${res.status}): ${body}`)
+    }
+
+    const data = await res.json()
+    cachedToken = data.token
+    // JWT tokens from Fudo last ~24h
+    tokenExpiresAt = data.exp ?? (Date.now() / 1000 + 82800) // 23h to be safe
+    return cachedToken!
   }
 
-  const res = await fetch(FUDO_AUTH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify({ apiKey: FUDO_API_KEY, apiSecret: FUDO_API_SECRET }),
-  })
+  // Fallback: apiKey/apiSecret via old endpoint
+  if (FUDO_API_KEY && FUDO_API_SECRET) {
+    const res = await fetch('https://auth.fu.do/api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ apiKey: FUDO_API_KEY, apiSecret: FUDO_API_SECRET }),
+    })
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`Fudo auth failed (${res.status}): ${body}`)
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`Fudo auth fallback failed (${res.status}): ${body}`)
+    }
+
+    const data = await res.json()
+    cachedToken = data.token
+    tokenExpiresAt = data.exp ?? (Date.now() / 1000 + 86400)
+    return cachedToken!
   }
 
-  const data = await res.json()
-  cachedToken = data.token
-  tokenExpiresAt = data.exp ?? (Date.now() / 1000 + 86400)
-  return cachedToken!
+  throw new Error('Faltan credenciales de Fudo (FUDO_LOGIN/FUDO_PASSWORD o FUDO_API_KEY/FUDO_API_SECRET)')
 }
 
 // ---------------------------------------------------------------------------
@@ -228,12 +258,26 @@ export const fudo = {
     return fudoFetchAll<FudoProduct>('/products')
   },
 
-  getSales: async (params?: { from?: string; to?: string }): Promise<FudoSale[]> => {
-    const filters: string[] = []
-    if (params?.from) filters.push(`filter[from]=${params.from}`)
-    if (params?.to) filters.push(`filter[to]=${params.to}`)
-    const qs = filters.length > 0 ? `?${filters.join('&')}` : ''
-    return fudoFetchAll<FudoSale>(`/sales${qs}`)
+  getSales: async (params?: { from?: string; to?: string; includeItems?: boolean }): Promise<FudoSale[]> => {
+    const include = params?.includeItems ? '?include=items,payments&sort=-closedAt' : '?sort=-closedAt'
+    const all = await fudoFetchAll<FudoSale>(`/sales${include}`)
+    if (!params?.from && !params?.to) return all
+    return all.filter((s) => {
+      const d = s.createdAt || s.closedAt || ''
+      if (params.from && d < params.from) return false
+      if (params.to && d > params.to + 'T23:59:59') return false
+      return true
+    })
+  },
+
+  /** Fetch sales with included items in a single request (more efficient) */
+  getSalesWithItems: async (pageSize = 50): Promise<{ sales: FudoSale[]; included: JsonApiResource[] }> => {
+    const response = await fudoFetch<JsonApiResponse & { included?: JsonApiResource[] }>(
+      `/sales?include=items,payments&sort=-closedAt&page[size]=${pageSize}&page[number]=1`
+    )
+    const sales = (Array.isArray(response.data) ? response.data : [response.data])
+      .map(flattenResource) as unknown as FudoSale[]
+    return { sales, included: response.included ?? [] }
   },
 
   getSaleItems: async (saleId: string): Promise<FudoSaleItem[]> => {

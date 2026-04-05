@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import {
   Truck,
   Phone,
@@ -101,7 +102,7 @@ export default function ProveedoresPage() {
   const [assigning, setAssigning] = useState(false)
   const [assignFilter, setAssignFilter] = useState('')
 
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
 
   // -------------------------------------------------------------------------
   // Fetch suppliers + low stock items
@@ -488,8 +489,8 @@ export default function ProveedoresPage() {
     )
   }
 
-  // Solo encargado puede acceder a proveedores
-  if (profile && profile.role !== 'encargado') {
+  // Solo encargado/socio puede acceder a proveedores
+  if (profile && !isEncargado) {
     return (
       <div className="mx-auto max-w-lg pb-28 pt-2">
         <div className="card-elevated-lg rounded-2xl p-8 text-center">
@@ -519,7 +520,7 @@ export default function ProveedoresPage() {
           <button
             onClick={handleSync}
             disabled={syncing}
-            className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-xs font-semibold text-white transition-all hover:bg-[#005a4a] active:scale-95 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-sm font-semibold text-white transition-all hover:bg-[#005a4a] active:scale-95 disabled:opacity-50"
           >
             {syncing ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -567,7 +568,7 @@ export default function ProveedoresPage() {
           placeholder="Buscar por nombre, contacto, email..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="h-11 rounded-xl border-[#ebe6df] bg-[#faf8f5] pl-10 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
+          className="h-12 rounded-xl border-[#ebe6df] bg-[#faf8f5] pl-10 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-2 focus-visible:ring-[#006d5a]"
         />
       </div>
 
@@ -627,7 +628,7 @@ export default function ProveedoresPage() {
       {isEncargado && (
         <button
           onClick={openCreateDialog}
-          className="fixed bottom-20 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:shadow-xl hover:shadow-[#006d5a]/30 sm:bottom-6 sm:right-6"
+          className="fab"
           aria-label="Agregar proveedor"
         >
           <Plus className="size-6" />
@@ -948,22 +949,22 @@ function SupplierCard({
           <div className="flex gap-1">
             <button
               onClick={onAssign}
-              className="flex size-8 items-center justify-center rounded-lg text-[#a39e97] transition-colors hover:bg-[#f0f7f5] hover:text-[#006d5a]"
+              className="icon-btn hover:bg-[#f0f7f5] hover:text-[#006d5a]"
               title="Vincular productos"
             >
-              <Package className="size-3.5" />
+              <Package className="size-4" />
             </button>
             <button
               onClick={onEdit}
-              className="flex size-8 items-center justify-center rounded-lg text-[#a39e97] transition-colors hover:bg-[#faf8f5] hover:text-[#3d2c24]"
+              className="icon-btn hover:bg-[#faf8f5] hover:text-[#3d2c24]"
             >
-              <Pencil className="size-3.5" />
+              <Pencil className="size-4" />
             </button>
             <button
               onClick={onDelete}
-              className="flex size-8 items-center justify-center rounded-lg text-[#a39e97] transition-colors hover:bg-[#fef2f2] hover:text-[#ea504c]"
+              className="icon-btn hover:bg-[#fef2f2] hover:text-[#ea504c]"
             >
-              <Trash2 className="size-3.5" />
+              <Trash2 className="size-4" />
             </button>
           </div>
         )}
@@ -985,16 +986,16 @@ function SupplierCard({
       {(supplier.phone || supplier.email) && (
         <div className="space-y-1.5 text-xs text-[#a39e97]">
           {supplier.phone && (
-            <p className="flex items-center gap-2">
+            <a href={`tel:${supplier.phone}`} className="flex items-center gap-2 hover:text-[#006d5a] transition-colors">
               <Phone className="size-3 shrink-0" />
-              <span className="text-[#3d2c24]">{supplier.phone}</span>
-            </p>
+              <span className="text-[#3d2c24] underline decoration-dotted">{supplier.phone}</span>
+            </a>
           )}
           {supplier.email && (
-            <p className="flex items-center gap-2">
+            <a href={`mailto:${supplier.email}`} className="flex items-center gap-2 hover:text-[#006d5a] transition-colors">
               <Mail className="size-3 shrink-0" />
-              <span className="text-[#3d2c24]">{supplier.email}</span>
-            </p>
+              <span className="text-[#3d2c24] underline decoration-dotted">{supplier.email}</span>
+            </a>
           )}
         </div>
       )}

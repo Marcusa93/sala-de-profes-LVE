@@ -6,6 +6,8 @@ import { BottomNav } from '@/components/layout/BottomNav'
 import { PageTransition } from '@/components/layout/PageTransition'
 import { FloatingChat } from '@/components/chat/FloatingChat'
 import { ForcePasswordChange } from '@/components/auth/ForcePasswordChange'
+import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
+import { KitchenAlarms } from '@/components/kitchen/KitchenAlarms'
 
 export default async function AppLayout({
   children,
@@ -31,6 +33,8 @@ export default async function AppLayout({
         <BottomNav />
         <FloatingChat />
         <ForcePasswordChange />
+        <AnnouncementPopup />
+        <KitchenAlarms />
       </div>
     </ProfileProvider>
   )

@@ -18,7 +18,7 @@ import type { AppRole } from '@/types/database'
 // }
 // ---------------------------------------------------------------------------
 
-const VALID_ROLES: AppRole[] = ['encargado', 'chef', 'cocina', 'barista', 'runner']
+const VALID_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner']
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,9 +38,9 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!callerProfile || callerProfile.role !== 'encargado') {
+    if (!callerProfile || callerProfile.role !== 'encargado' && callerProfile.role !== 'socio') {
       return NextResponse.json(
-        { error: 'Solo el encargado puede actualizar roles' },
+        { error: 'Solo socios y encargados pueden actualizar roles' },
         { status: 403 },
       )
     }

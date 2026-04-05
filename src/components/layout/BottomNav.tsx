@@ -12,7 +12,7 @@ import {
   MoreHorizontal,
   MessageCircle,
   Users,
-  AlertTriangle,
+  Shield,
   Truck,
   ChefHat,
   UtensilsCrossed,
@@ -23,7 +23,10 @@ import {
   ShoppingCart,
   FolderOpen,
   Lightbulb,
+  Wine,
+  BarChart3,
   X,
+  Armchair,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
@@ -65,86 +68,94 @@ const BASE_NAV: NavItem[] = [
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
+// Runners get Salón in main bar instead of Horarios
+const RUNNER_NAV: NavItem[] = [
+  { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Salón', href: '/salon', icon: Armchair },
+  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
+  { label: 'Avisos', href: '/notificaciones', icon: Bell },
+]
+
+// SOCIO — todo accesible, 3 grupos
 const SOCIO_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Gestión',
+      label: 'El local',
       items: [
-        { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
-        { label: 'Control', href: '/admin', icon: LayoutDashboard },
+        { label: 'Salón', href: '/salon', icon: Armchair },
+        { label: 'Ventas', href: '/ventas', icon: BarChart3 },
         { label: 'Equipo', href: '/equipo', icon: Users },
-        { label: 'Alertas', href: '/alertas', icon: AlertTriangle },
+        { label: 'Turnos', href: '/equipo/turnos', icon: Calendar },
+        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
       ],
     },
     {
-      label: 'Operaciones',
+      label: 'Inventario',
       items: [
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
         { label: 'Stock', href: '/stock', icon: Package },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
+        { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
         { label: 'Proveed.', href: '/proveedores', icon: Truck },
+      ],
+    },
+    {
+      label: 'Gestión',
+      items: [
+        { label: 'Auditoría', href: '/auditoria', icon: Shield },
       ],
     },
     {
       label: 'Herramientas',
       items: [
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
   ],
 }
 
+// ENCARGADO — gestiona todo lo operativo
 const ENCARGADO_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Operaciones',
+      label: 'El local',
       items: [
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
-        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
-        { label: 'Stock', href: '/stock', icon: Package },
-      ],
-    },
-    {
-      label: 'Gestión',
-      items: [
-        { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
+        { label: 'Salón', href: '/salon', icon: Armchair },
         { label: 'Control', href: '/admin', icon: LayoutDashboard },
         { label: 'Equipo', href: '/equipo', icon: Users },
-        { label: 'Alertas', href: '/alertas', icon: AlertTriangle },
-        { label: 'Proveed.', href: '/proveedores', icon: Truck },
+        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen },
       ],
     },
     {
-      label: 'Herramientas',
+      label: 'Inventario y compras',
       items: [
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
+        { label: 'Stock general', href: '/stock', icon: Package },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
+        { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
+        { label: 'Proveedores', href: '/proveedores', icon: Truck },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
   ],
 }
 
+// CHEF — cocina y pedidos
 const CHEF_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Operaciones',
+      label: 'Cocina',
       items: [
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
-      ],
-    },
-    {
-      label: 'Herramientas',
-      items: [
-        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
+        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Stock cocina', href: '/cocina/stock', icon: Package },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
@@ -152,21 +163,16 @@ const CHEF_MORE: ExpandableNavItem = {
   ],
 }
 
+// COCINA — igual que chef
 const COCINA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Operaciones',
+      label: 'Cocina',
       items: [
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Pedidos', href: '/cocina/pedidos', icon: ShoppingCart },
-      ],
-    },
-    {
-      label: 'Herramientas',
-      items: [
-        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
+        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
+        { label: 'Stock cocina', href: '/cocina/stock', icon: Package },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
@@ -174,34 +180,57 @@ const COCINA_MORE: ExpandableNavItem = {
   ],
 }
 
+// BARISTA — barra, vajilla y herramientas
 const BARISTA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Operaciones',
+      label: 'Mi sector',
       items: [
+        { label: 'Stock barra', href: '/cocina/barra', icon: Coffee },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
+        { label: 'La Vieja', href: '/asistente', icon: Bot },
+      ],
+    },
+  ],
+}
+
+// RUNNER — vajilla + barra (Agustín necesita ver barra) + chatbot
+const RUNNER_MORE: ExpandableNavItem = {
+  label: 'Más',
+  icon: MoreHorizontal,
+  groups: [
+    {
+      label: 'Salón',
+      items: [
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
       ],
     },
     {
       label: 'Herramientas',
       items: [
-        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
   ],
 }
 
-const RUNNER_MORE: ExpandableNavItem = {
+// BACHA — mínimo: vajilla + chatbot
+const BACHA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
       label: 'Herramientas',
       items: [
-        { label: 'Propuestas', href: '/expedientes', icon: Lightbulb },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
@@ -213,9 +242,10 @@ function getAllMoreItems(more?: ExpandableNavItem): NavItem[] {
   return more.groups.flatMap((g) => g.items)
 }
 
-// Socios get Expedientes in the main bar instead of Horarios
+// Socios: Inicio, Control, Expedientes, Avisos + Más
 const SOCIO_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Control', href: '/admin', icon: LayoutDashboard },
   { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
@@ -226,8 +256,9 @@ function getNavItems(role?: AppRole): { items: NavItem[]; more?: ExpandableNavIt
   if (role === 'chef') return { items: BASE_NAV, more: CHEF_MORE }
   if (role === 'cocina') return { items: BASE_NAV, more: COCINA_MORE }
   if (role === 'barista') return { items: BASE_NAV, more: BARISTA_MORE }
-  if (role === 'runner') return { items: BASE_NAV, more: RUNNER_MORE }
-  return { items: BASE_NAV, more: RUNNER_MORE }
+  if (role === 'runner') return { items: RUNNER_NAV, more: RUNNER_MORE }
+  if (role === 'bacha') return { items: BASE_NAV, more: BACHA_MORE }
+  return { items: BASE_NAV, more: BACHA_MORE }
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +349,7 @@ export function BottomNav() {
           >
             <div className="absolute inset-0 bg-black/20 backdrop-blur-[3px]" />
             <motion.div
-              className="absolute bottom-20 left-3 right-3 glass rounded-2xl p-4 ring-1 ring-[#ebe6df]/50 shadow-xl"
+              className="absolute bottom-[4.5rem] left-3 right-3 glass rounded-2xl p-4 ring-1 ring-[#ebe6df]/50 shadow-xl"
               onClick={(e) => e.stopPropagation()}
               initial={{ opacity: 0, y: 40, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -338,10 +369,12 @@ export function BottomNav() {
               </div>
               <StaggerList className="space-y-3" staggerDelay={0.03}>
                 {more.groups.map((group) => (
-                  <StaggerItem key={group.label}>
-                    <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                      {group.label}
-                    </p>
+                  <StaggerItem key={group.label || 'default'}>
+                    {group.label && (
+                      <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                        {group.label}
+                      </p>
+                    )}
                     <div className="grid grid-cols-3 gap-1.5">
                       {group.items.map((child) => {
                         const Icon = child.icon
@@ -377,7 +410,7 @@ export function BottomNav() {
         aria-label="Navegacion principal"
         className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/60 bg-[#fefcf9] pb-[env(safe-area-inset-bottom)]"
       >
-        <div className="flex h-16 items-center justify-around px-1">
+        <div className="flex h-[4.25rem] items-center justify-around px-1">
           {items.map((item) => {
             const Icon = item.icon
             const active = isActive(item.href)
@@ -393,7 +426,7 @@ export function BottomNav() {
                     : 'text-[#a39e97] hover:text-foreground',
                 )}
               >
-                <div className="relative flex size-9 items-center justify-center rounded-xl transition-all">
+                <div className="relative flex size-11 items-center justify-center rounded-xl transition-all">
                   {/* Animated active background */}
                   {active && (
                     <motion.div
@@ -403,7 +436,7 @@ export function BottomNav() {
                     />
                   )}
                   <Icon
-                    className="relative size-5"
+                    className="relative size-[22px]"
                     strokeWidth={active ? 2.25 : 1.75}
                   />
                   {showBadge && (
@@ -429,7 +462,7 @@ export function BottomNav() {
                   : 'text-[#a39e97] hover:text-foreground',
               )}
             >
-              <div className="relative flex size-9 items-center justify-center rounded-xl transition-all">
+              <div className="relative flex size-11 items-center justify-center rounded-xl transition-all">
                 {(moreOpen || isMoreActive()) && !items.some((i) => isActive(i.href)) && (
                   <motion.div
                     layoutId="nav-active-bg"
@@ -438,7 +471,7 @@ export function BottomNav() {
                   />
                 )}
                 <MoreHorizontal
-                  className="relative size-5"
+                  className="relative size-[22px]"
                   strokeWidth={moreOpen || isMoreActive() ? 2.25 : 1.75}
                 />
               </div>

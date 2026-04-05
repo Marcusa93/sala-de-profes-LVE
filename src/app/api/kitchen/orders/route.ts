@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyOrderToEncargados } from '@/lib/email/send'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
         .eq('id', user.id)
         .single()
 
-      const allowedRoles = ['chef', 'cocina', 'encargado']
+      const allowedRoles = ['chef', 'cocina', 'encargado', 'socio']
       if (!profile || !allowedRoles.includes(profile.role)) {
         return NextResponse.json({ success: false, error: 'No tenés permiso para crear pedidos' }, { status: 403 })
       }
@@ -94,6 +95,15 @@ export async function POST(request: NextRequest) {
         is_active: true,
       })
 
+      // Email to encargados + socios
+      notifyOrderToEncargados({
+        type: 'cocina',
+        authorName,
+        items: items.map((i) => ({ name: i.product_name, quantity: i.quantity })),
+        urgency: orderUrgency,
+        note,
+      }).catch(() => {})
+
       return NextResponse.json({ success: true, count: items.length })
     }
 
@@ -129,7 +139,7 @@ export async function POST(request: NextRequest) {
         .eq('id', user.id)
         .single()
 
-      if (!profile || profile.role !== 'encargado') {
+      if (!profile || profile.role !== 'encargado' && profile.role !== 'socio') {
         return NextResponse.json({ success: false, error: 'Solo encargados pueden cambiar estado' }, { status: 403 })
       }
 
@@ -141,7 +151,7 @@ export async function POST(request: NextRequest) {
       if (error) throw error
 
       // Notify the order creator about status change
-      if (status === 'ordered' || status === 'received') {
+      if (status === 'ordered' || status === 'received' || status === 'cancelled') {
         const { data: order } = await admin
           .from('kitchen_orders')
           .select('created_by, product_name, quantity')
@@ -152,22 +162,38 @@ export async function POST(request: NextRequest) {
           const titleMap: Record<string, string> = {
             ordered: '✅ Pedido enviado al proveedor',
             received: '📦 Pedido recibido',
+            cancelled: '❌ Pedido cancelado',
           }
           const bodyMap: Record<string, string> = {
             ordered: `${order.product_name} (${order.quantity}) — tu pedido fue enviado al proveedor`,
-            received: `${order.product_name} (${order.quantity}) — ya llegó`,
+            received: `${order.product_name} (${order.quantity}) — ya llegó, stock actualizado`,
+            cancelled: `${order.product_name} (${order.quantity}) — fue cancelado`,
           }
           await admin.from('announcements').insert({
             author_id: user.id,
             type: 'operativo',
             priority: 'baja',
-            title: titleMap[status],
-            body: bodyMap[status],
+            title: titleMap[status] ?? `Pedido ${status}`,
+            body: bodyMap[status] ?? `${order.product_name} — ${status}`,
             scope: 'user',
             target_user_id: order.created_by,
             is_active: true,
           })
+
+          // Email to order creator
+          try {
+            const { notifyOrderStatusChange } = await import('@/lib/email/send')
+            notifyOrderStatusChange({
+              userId: order.created_by,
+              productName: order.product_name,
+              quantity: order.quantity,
+              newStatus: status as 'ordered' | 'received' | 'cancelled',
+            }).catch(() => {})
+          } catch { /* email optional */ }
         }
+
+        // NOTE: Stock does NOT auto-update on "received".
+        // Chef/cocina manually updates stock after verifying the delivery.
       }
 
       return NextResponse.json({ success: true })

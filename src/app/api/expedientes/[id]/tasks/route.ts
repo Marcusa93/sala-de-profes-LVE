@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyExpedienteToResponsible } from '@/lib/email/send'
 
 // ---------------------------------------------------------------------------
 // GET /api/expedientes/[id]/tasks — list tasks
@@ -103,12 +104,25 @@ export async function POST(
         author_id: user.id,
         type: 'operativo',
         priority: 'media',
-        title: `📌 Tarea asignada — ${exp?.code ?? ''}`,
-        body: `${authorName} te asignó: "${title.trim()}"${due_date ? ` · Vence: ${new Date(due_date).toLocaleDateString('es-AR')}` : ''}`,
+        title: `📌 Tarea: ${title.trim()}`,
+        body: `${authorName} te asignó esta tarea en "${exp?.title ?? 'expediente'}"${due_date ? ` · Vence: ${new Date(due_date).toLocaleDateString('es-AR')}` : ''}`,
         scope: 'user',
         target_user_id: assigned_to,
         is_active: true,
       })
+    }
+
+    // Email only to the assigned person (not all socios)
+    const authorNameFull = `${profile.first_name} ${profile.last_name}`.trim()
+    if (assigned_to) {
+      notifyExpedienteToResponsible({
+        responsibleId: assigned_to,
+        code: exp?.code ?? id,
+        title: exp?.title ?? '',
+        action: 'Tarea asignada',
+        authorName: authorNameFull,
+        detail: `"${title.trim()}"`,
+      }).catch(() => {})
     }
 
     return NextResponse.json({ data: task })
@@ -133,27 +147,98 @@ export async function PATCH(
 
     const admin = createAdminClient()
     const body = await request.json()
-    const { task_id, status } = body
+    const { task_id, status, assigned_to } = body
 
-    if (!task_id || !status) {
-      return NextResponse.json({ error: 'task_id y status requeridos' }, { status: 400 })
+    if (!task_id) {
+      return NextResponse.json({ error: 'task_id requerido' }, { status: 400 })
     }
 
-    const validStatuses = ['pending', 'in_progress', 'done', 'cancelled']
-    if (!validStatuses.includes(status)) {
-      return NextResponse.json({ error: 'Estado inválido' }, { status: 400 })
+    // Must provide either status or assigned_to (or both)
+    if (!status && assigned_to === undefined) {
+      return NextResponse.json({ error: 'status o assigned_to requerido' }, { status: 400 })
+    }
+
+    if (status) {
+      const validStatuses = ['pending', 'in_progress', 'done', 'cancelled']
+      if (!validStatuses.includes(status)) {
+        return NextResponse.json({ error: 'Estado inválido' }, { status: 400 })
+      }
     }
 
     // Get current task
     const { data: task } = await admin
       .from('expediente_tasks')
-      .select('title, assigned_to, status')
+      .select('title, assigned_to, status, created_by')
       .eq('id', task_id)
       .single()
 
     if (!task) return NextResponse.json({ error: 'Tarea no encontrada' }, { status: 404 })
 
-    // Update
+    // Get user profile + role
+    const { data: userProfile } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
+    const isSocio = userProfile?.role === 'socio'
+
+    // Reassignment — socios can always reassign, assigned person can also reassign
+    if (assigned_to !== undefined) {
+      const canReassign = isSocio || task.assigned_to === user.id || task.created_by === user.id
+      if (!canReassign) {
+        return NextResponse.json({ error: 'No tenés permiso para reasignar esta tarea' }, { status: 403 })
+      }
+
+      const updateFields: Record<string, unknown> = { assigned_to: assigned_to || null }
+      if (status) updateFields.status = status
+
+      const { error } = await admin.from('expediente_tasks').update(updateFields).eq('id', task_id)
+      if (error) throw error
+
+      // Log reassignment
+      const reassignerName = userProfile ? `${userProfile.first_name} ${userProfile.last_name}`.trim() : 'Alguien'
+      const newAssigneeName = assigned_to ? await getProfileName(admin, assigned_to) : 'nadie'
+
+      await admin.from('expediente_comments').insert({
+        expediente_id: id,
+        author_id: user.id,
+        type: 'edit',
+        body: `${reassignerName} reasignó tarea "${task.title}" a ${newAssigneeName}`,
+        metadata: { action: 'task_reassignment', task_id, from: task.assigned_to, to: assigned_to },
+      })
+
+      // Email to new assignee
+      if (assigned_to) {
+        const { data: exp } = await admin.from('expedientes').select('code, title').eq('id', id).single()
+        notifyExpedienteToResponsible({
+          responsibleId: assigned_to,
+          code: exp?.code ?? id,
+          title: exp?.title ?? '',
+          action: 'Tarea reasignada',
+          authorName: reassignerName,
+          detail: `"${task.title}" te fue asignada`,
+        }).catch(() => {})
+      }
+
+      // Notify previous assignee that they were unassigned
+      if (task.assigned_to && task.assigned_to !== assigned_to) {
+        const { data: exp } = await admin.from('expedientes').select('code, title').eq('id', id).single()
+        notifyExpedienteToResponsible({
+          responsibleId: task.assigned_to,
+          code: exp?.code ?? id,
+          title: exp?.title ?? '',
+          action: 'Tarea reasignada',
+          authorName: reassignerName,
+          detail: `"${task.title}" fue reasignada a ${newAssigneeName}`,
+        }).catch(() => {})
+      }
+
+      return NextResponse.json({ success: true })
+    }
+
+    // Status change only — only assigned person or socio can do it
+    const canAct = isSocio || (task.assigned_to ? task.assigned_to === user.id : task.created_by === user.id)
+    if (!canAct) {
+      return NextResponse.json({ error: 'Solo la persona asignada puede gestionar esta tarea' }, { status: 403 })
+    }
+
+    // Update status
     const { error } = await admin
       .from('expediente_tasks')
       .update({ status })
@@ -198,13 +283,23 @@ export async function PATCH(
           author_id: user.id,
           type: 'operativo',
           priority: 'baja',
-          title: `✅ Tarea completada — ${exp.code}`,
-          body: `${updaterName} completó: "${task.title}"`,
+          title: `✅ Tarea completada: ${task.title}`,
+          body: `${updaterName} completó esta tarea del expediente ${exp.code}`,
           scope: 'user',
           target_user_id: targetId,
           is_active: true,
         })
       }
+
+      // Email only to the expediente responsible
+      notifyExpedienteToResponsible({
+        responsibleId: exp.responsible_id,
+        code: exp.code,
+        title: task.title,
+        action: 'Tarea completada',
+        authorName: updaterName,
+        detail: `"${task.title}" marcada como completada`,
+      }).catch(() => {})
     }
 
     return NextResponse.json({ success: true })

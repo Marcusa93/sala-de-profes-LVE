@@ -37,6 +37,12 @@ const MAX_MESSAGE_LENGTH = 1500
 type ChatRequest = {
   message: string
   history?: { role: 'user' | 'assistant'; content: string }[]
+  confirmAction?: {
+    intent: string
+    items?: { name: string; quantity: string }[]
+    message?: string
+    urgency?: string
+  }
 }
 
 type StockItemRow = {
@@ -167,13 +173,21 @@ const SYSTEM_PROMPT = `Sos **La Vieja de Historia**, la asistente interna de **L
 - **Asistente** (/asistente) — Este chatbot (todos los roles, con info filtrada)
 
 ## ACCESO POR ROL AL CHATBOT
-Cada rol ve solo los datos que le corresponden:
-- **encargado**: Ve TODO (asistencia, stock, barra, cocina, proveedores, recetas, equipo, avisos)
-- **barista**: Ve stock de barra, pedidos de barra, turnos de baristas, avisos
-- **chef / cocina**: Ve cocina (checklists, turnos cocina), stock general (para ingredientes), recetas, avisos
-- **runner**: Ve turnos generales, avisos
+Cada rol ve datos adaptados a su función:
+- **socio**: Ve TODO sin restricciones
+- **encargado**: Ve TODO (asistencia, stock, barra, cocina, proveedores, recetas completas, equipo, avisos)
+- **barista**: Ve stock de barra, pedidos de barra, carta/menú (descripción de platos), protocolo de atención, turnos, avisos
+- **chef / cocina**: Ve cocina (checklists, turnos cocina), stock general (para ingredientes), recetas CON CANTIDADES Y PREPARACIÓN DETALLADA, avisos
+- **runner**: Ve carta/menú (qué es cada plato, cómo se sirve), protocolo de atención completo, turnos generales, avisos, barra (Agustín)
+- **bacha**: Ve vajilla, protocolo de atención, turnos generales, avisos
 
-IMPORTANTE: Adaptá tu respuesta al rol del usuario. Si un barista pregunta por proveedores, decile con onda que eso lo maneja el encargado. Si alguien de cocina pregunta por la barra, redirigí amablemente.
+IMPORTANTE:
+- Runners NO ven cantidades de recetas ni stock, pero SÍ saben qué contiene cada plato para informar al cliente.
+- Runners tienen acceso al protocolo de atención (saludo, servicio, vajilla, demoras).
+- Si un runner pregunta "¿qué lleva la milanesa napolitana?" respondé con la descripción del plato, NO con cantidades de ingredientes.
+- Si un runner pregunta "¿en qué se sirve un cortado?" respondé con la vajilla correcta.
+- Cocina/Chef ven las recetas completas con cantidades, preparación paso a paso y rendimiento.
+- Si un barista pregunta por proveedores, decile con onda que eso lo maneja el encargado.
 
 ## SISTEMA DE STOCK (SEMÁFORO)
 - 🟢 Verde: stock > min_qty × 1.5
@@ -200,6 +214,20 @@ Tipos: general, urgente, recordatorio, operativo
 Prioridades: baja, media, alta, crítica
 Scope: todos, por_rol, usuario específico
 
+## REGLAS DE CONVERSACIÓN FUNDAMENTALES
+
+1. **SALUDOS**: Si te saludan ("hola", "buenas", "che"), respondé con un saludo BREVE y preguntá en qué podés ayudar. NO muestres datos.
+   - Bien: "¡Hola Meli! ¿En qué te puedo ayudar?"
+   - Mal: "¡Hola! Acá tenés el resumen completo del stock..." (NUNCA)
+
+2. **DATOS SOLO CUANDO LOS PIDAN**: No vomites información que no te pidieron. Si preguntan por stock, mostrá stock. Si preguntan por turnos, mostrá turnos. No mezcles.
+
+3. **CONCISO**: Máximo 3-5 líneas para respuestas simples. Solo usá listas largas cuando el usuario pidió un detalle específico.
+
+4. **NO REPETIR CONTEXTO**: Los datos del sistema son para TU referencia. NUNCA los copies textualmente en la respuesta.
+
+5. **ACCIONES**: Si el usuario quiere hacer algo (pedir, cargar stock, reportar), detectá la intención y proponé la acción. No describas el proceso.
+
 ## CÓMO RESPONDER
 
 ### Para consultas de stock:
@@ -217,6 +245,12 @@ Mostrá items bajos, pedidos pendientes, qué se necesita comprar.
 ### Para consultas sobre proveedores:
 Dá los datos de contacto completos y qué productos proveen.
 
+### Para consultas sobre la carta/menú:
+Explicá qué es el plato, qué contiene, cómo se sirve. NO des cantidades a runners. Sí a cocina.
+
+### Para consultas de protocolo/atención:
+Respondé con el protocolo de LVE. Vajilla, servicio, saludo, demoras. Sé específico.
+
 ### Para sugerencias y recomendaciones:
 Basate SIEMPRE en los datos reales. Podés sugerir acciones basándote en patrones (ej: "Café Oyambre está en rojo, recomiendo pedir a [proveedor]").
 
@@ -227,7 +261,49 @@ Basate SIEMPRE en los datos reales. Podés sugerir acciones basándote en patron
 - Máximo 500 palabras por respuesta
 - Si la respuesta es muy larga, priorizá lo más urgente
 
-IMPORTANTE: La fecha y hora actual están en el contexto. Usala para contextualizar tus respuestas (ej: "Hoy viernes 20 de marzo..." ).`
+IMPORTANTE: La fecha y hora actual están en el contexto. Usala para contextualizar tus respuestas (ej: "Hoy viernes 20 de marzo..." ).
+
+## ACCIONES AUTOMÁTICAS — MODO ACCIÓN
+Cuando el usuario pide algo que requiere CREAR algo en el sistema (pedido, reporte, aviso), respondé con el texto normal de confirmación PERO además incluí al final un bloque JSON entre marcadores especiales:
+
+Si detectás intención de PEDIDO DE MERCADERÍA:
+\`\`\`ACTION_JSON
+{"intent":"PEDIDO_MERCADERIA","items":[{"name":"nombre del producto","quantity":"cantidad con unidad"}],"urgency":"normal"}
+\`\`\`
+
+Si detectás intención de ACTUALIZAR STOCK (el usuario quiere CARGAR cantidades, no pedir):
+\`\`\`ACTION_JSON
+{"intent":"ACTUALIZAR_STOCK","items":[{"name":"nombre del producto","quantity":"cantidad con unidad"}]}
+\`\`\`
+
+Si detectás intención de REPORTAR PROBLEMA:
+\`\`\`ACTION_JSON
+{"intent":"REPORTE_PROBLEMA","message":"descripción del problema","urgency":"urgente"}
+\`\`\`
+
+Si detectás intención de AVISAR AL ENCARGADO:
+\`\`\`ACTION_JSON
+{"intent":"AVISO_ENCARGADO","message":"el mensaje","urgency":"normal"}
+\`\`\`
+
+REGLAS DE ACCIONES:
+- SIEMPRE incluí un texto de confirmación ANTES del bloque JSON
+- El texto debe listar claramente qué se va a hacer
+- Terminá pidiendo confirmación: "¿Lo envío?" o "¿Confirmo?"
+- NO ejecutes la acción directamente — el sistema mostrará un botón de confirmación
+- Si el usuario dice "sí", "dale", "mandalo", "confirmo" después de una propuesta, incluí el JSON de nuevo para ejecutar
+- Si el usuario dice "no", "cancelar", "mejor no", respondé amablemente sin JSON
+- Para pedidos, normalizá los nombres de productos lo mejor posible
+- Extraé cantidad y unidad por separado (ej: "5 kg", "3 cajas", "10 unidades")
+- Si no entendés la cantidad, preguntá antes de proponer
+
+DISTINGUIR PEDIDO vs ACTUALIZACIÓN DE STOCK:
+- "necesito", "pedí", "falta", "encargá" → PEDIDO_MERCADERIA (pedir al proveedor)
+- "hay", "quedan", "tenemos", "cargá", "actualizar", "son", "conté" → ACTUALIZAR_STOCK (cargar cantidad actual)
+- "hay 10kg de café" = el usuario está diciendo cuánto HAY → ACTUALIZAR_STOCK
+- "necesito 10kg de café" = el usuario está pidiendo que le compren → PEDIDO_MERCADERIA
+- Si no está claro, preguntá: "¿Querés cargar stock (decirme cuánto hay) o pedir mercadería (que te compren)?"
+- ACTUALIZAR_STOCK escribe en la webapp Y se sincroniza con Fudo automáticamente`
 
 // ---------------------------------------------------------------------------
 // Recopilar contexto de datos — ampliado
@@ -242,16 +318,18 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
 
   sections.push(`FECHA Y HORA ACTUAL: ${format(today, "EEEE d 'de' MMMM yyyy, HH:mm", { locale: es })}`)
 
-  // Define what data each role can access
-  const canSeeAttendance = ['encargado'].includes(role)
-  const canSeeAllShifts = ['encargado'].includes(role)
-  const canSeeStockGeneral = ['encargado', 'chef', 'cocina'].includes(role)
-  const canSeeBarStock = ['encargado', 'barista'].includes(role)
-  const canSeeBarOrders = ['encargado', 'barista'].includes(role)
-  const canSeeKitchen = ['encargado', 'chef', 'cocina'].includes(role)
+  // Define what data each role can access — socio sees everything
+  const isSocio = role === 'socio'
+  const canSeeAttendance = isSocio || ['encargado'].includes(role)
+  const canSeeAllShifts = isSocio || ['encargado'].includes(role)
+  const canSeeStockGeneral = isSocio || ['encargado', 'chef', 'cocina'].includes(role)
+  const canSeeBarStock = isSocio || ['encargado', 'barista'].includes(role)
+  const canSeeBarOrders = isSocio || ['encargado', 'barista'].includes(role)
+  const canSeeKitchen = isSocio || ['encargado', 'chef', 'cocina'].includes(role)
   const canSeeAnnouncements = true // All roles
-  const canSeeSuppliers = ['encargado'].includes(role)
-  const canSeeRecipes = ['encargado', 'chef', 'cocina'].includes(role)
+  const canSeeSuppliers = isSocio || ['encargado'].includes(role)
+  const canSeeRecipesFull = isSocio || ['encargado', 'chef', 'cocina'].includes(role) // Full with quantities
+  const canSeeRecipesMenu = true // ALL roles see menu descriptions (runners need to know dishes)
   const canSeeTeamShifts = true // Everyone sees who works today
 
   try {
@@ -468,28 +546,85 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       }
     }
 
-    // 9. Recetas disponibles (encargados, chef, cocina)
-    if (canSeeRecipes) {
+    // 9. Recetas — full detail for cocina/chef/encargado/socio, menu description for all
+    if (canSeeRecipesFull) {
       const { data: recipes } = await supabase
         .from('recipes')
-        .select('name, category, portion_yield')
+        .select('name, category, yield_portions, preparation, notes, ingredients')
         .eq('is_active', true)
         .order('category')
         .order('name')
 
       if (recipes && recipes.length > 0) {
-        const byCategory = new Map<string, string[]>()
-        for (const r of recipes) {
-          const cat = r.category ?? 'otros'
-          if (!byCategory.has(cat)) byCategory.set(cat, [])
-          byCategory.get(cat)!.push(`${r.name} (rinde ${r.portion_yield})`)
-        }
-        const lines: string[] = []
-        for (const [cat, items] of byCategory) {
-          lines.push(`  ${cat}: ${items.join(', ')}`)
-        }
-        sections.push(`RECETAS (${recipes.length} activas):\n${lines.join('\n')}`)
+        const lines = recipes.map((r) => {
+          const ings = Array.isArray(r.ingredients) ? (r.ingredients as Array<{ name: string; qty: string }>).map(i => `${i.name} ${i.qty}`).join(', ') : ''
+          return `- **${r.name}** (${r.category}, rinde ${r.yield_portions}): ${ings}\n  Preparación: ${(r.preparation ?? '').slice(0, 200)}${r.notes ? `\n  Notas: ${r.notes}` : ''}`
+        })
+        sections.push(`RECETAS CON DETALLE (${recipes.length}):\n${lines.join('\n')}`)
       }
+    } else if (canSeeRecipesMenu) {
+      // Runners and baristas: see menu descriptions (what each dish IS, how it's served)
+      const { data: recipes } = await supabase
+        .from('recipes')
+        .select('name, category, notes, preparation')
+        .eq('is_active', true)
+        .order('category')
+        .order('name')
+
+      if (recipes && recipes.length > 0) {
+        const lines = recipes.map((r) => {
+          // Short description without quantities
+          const desc = (r.preparation ?? '').split('.').slice(0, 2).join('.') + '.'
+          return `- **${r.name}** (${r.category}): ${desc}${r.notes ? ` — ${r.notes}` : ''}`
+        })
+        sections.push(`CARTA / MENÚ (${recipes.length} platos):\nEstos son los platos que vendemos. Usá esta info para informar al cliente qué contiene cada plato.\n${lines.join('\n')}`)
+      }
+    }
+
+    // 10. Protocolo de atención — always available for runners and baristas
+    if (['runner', 'barista', 'socio', 'encargado'].includes(role)) {
+      sections.push(`PROTOCOLO DE ATENCIÓN — LA VIEJA ESCUELA:
+
+**SALUDO Y BIENVENIDA:**
+- Saludar siempre al cliente cuando entra: "¡Bienvenidos a La Vieja Escuela!"
+- Presentarse: "Mi nombre es [tu nombre], voy a atenderlos hoy"
+- Acompañar a la mesa si es posible
+
+**SERVICIO EN MESA:**
+- Servir SIEMPRE por el lado izquierdo del comensal
+- Retirar por el lado derecho
+- Las bebidas se sirven primero, antes que la comida
+- El plato se presenta con el logo del plato mirando al comensal
+- Usar la vajilla correspondiente a cada plato (no improvisar)
+- Cubiertos van antes que llegue el plato
+
+**VAJILLA:**
+- Café cortado/espresso → pocillo
+- Café con leche/cappuccino → taza 150ml
+- Latte/especialidades → taza 200ml o vaso según corresponda
+- Agua/jugos → vaso bombe
+- Cerveza → vaso correspondiente al estilo
+- Postres → plato de postre con cubierto correspondiente
+- Platos principales → plato grande
+- Entradas → plato chico
+
+**DURANTE EL SERVICIO:**
+- Estar presente en el salón, no desaparecer
+- Pasar por las mesas periódicamente ("¿Todo bien? ¿Necesitan algo?")
+- Si hay demora en cocina, avisar al cliente proactivamente: "Les comento que el plato tiene unos minutitos más de lo habitual, ya sale"
+- NO esperar a que el cliente se queje por la demora
+- Comunicar tiempos aproximados cuando toman el pedido si hay mucha cola en cocina
+
+**DEMORAS:**
+- Tiempo normal de salida: 15-20 minutos
+- Si pasa de 25 minutos, avisar al cliente
+- Si pasa de 30 minutos, hablar con cocina y ofrecer algo al cliente (agua, pan)
+- SIEMPRE comunicar, nunca ignorar la espera
+
+**CUENTA Y DESPEDIDA:**
+- Preguntar si desean algo más antes de traer la cuenta
+- Agradecer la visita: "¡Gracias por venir, los esperamos pronto!"
+- Si hubo algún problema, disculparse y asegurar que se resuelve`)
     }
 
   } catch (err) {
@@ -599,6 +734,54 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Demasiadas solicitudes. Esperá un momento.' }, { status: 429 })
     }
 
+    // --- HANDLE ACTION CONFIRMATION ---
+    if (body.confirmAction) {
+      const { buildProposal, executeAction, detectIntent, checkPermission } = await import('@/lib/ai/chatbot-actions')
+      const { createAdminClient } = await import('@/lib/supabase/admin')
+      const admin = createAdminClient()
+
+      const intent = detectIntent(body.confirmAction)
+
+      // Permission check
+      const perm = checkPermission(intent, userRole)
+      if (!perm.allowed) {
+        return NextResponse.json({
+          response: `Mirá ${profile.first_name}, ${perm.reason}`,
+          actionExecuted: false,
+        })
+      }
+      const proposal = await buildProposal(
+        admin,
+        intent,
+        body.confirmAction.items ?? [],
+        body.confirmAction.message,
+        body.confirmAction.urgency,
+        userRole,
+      )
+
+      proposal.readyToExecute = true
+      const userName = profile.first_name ?? 'Usuario'
+      const result = await executeAction(admin, proposal, user.id, userName, userRole)
+
+      if (result.success && result.created > 0) {
+        return NextResponse.json({
+          response: `✅ ¡Listo, ${profile.first_name}! ${result.details.join(', ')}. ${
+            proposal.intent === 'PEDIDO_MERCADERIA'
+              ? 'El pedido le llegó al encargado como notificación.'
+              : proposal.intent === 'REPORTE_PROBLEMA'
+                ? 'El reporte le llegó a los encargados.'
+                : 'Aviso enviado a los encargados.'
+          }`,
+          actionExecuted: true,
+        })
+      } else {
+        return NextResponse.json({
+          response: `Qué macana, hubo un error: ${result.errors.join(', ')}. Intentá de nuevo.`,
+          actionExecuted: false,
+        })
+      }
+    }
+
     // Recopilar contexto filtrado por rol
     const context = await gatherContext(supabase, userRole)
 
@@ -618,11 +801,22 @@ export async function POST(request: Request) {
       }
     }
 
-    // Mensaje actual con contexto
+    // User message — CLEAN, no context dumped here
     conversationMessages.push({
       role: 'user',
-      content: `[CONTEXTO ACTUAL DEL SISTEMA — datos en tiempo real]\n\n${context}\n\n---\n\nPregunta de ${profile.first_name} (${userRole}): ${message}`,
+      content: message,
     })
+
+    // Build full system prompt with context
+    const fullSystemPrompt = `${SYSTEM_PROMPT}
+
+## DATOS EN TIEMPO REAL DEL SISTEMA
+El usuario es ${profile.first_name} (${userRole}).
+Usá estos datos SOLO cuando sean relevantes para responder. NO los repitas si no te los piden.
+Si el usuario saluda, respondé con un saludo breve y preguntá en qué podés ayudar.
+NUNCA vomites datos sin que te los pidan.
+
+${context}`
 
     // --- Intentar OpenRouter ---
     const openRouterKey = process.env.OPENROUTER_API_KEY
@@ -642,7 +836,7 @@ export async function POST(request: Request) {
             max_tokens: 1024,
             temperature: 0.3,
             messages: [
-              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'system', content: fullSystemPrompt },
               ...conversationMessages,
             ],
           }),
@@ -651,6 +845,47 @@ export async function POST(request: Request) {
         if (response.ok) {
           const data = await response.json()
           const responseText = data.choices?.[0]?.message?.content ?? 'No pude generar una respuesta.'
+
+          // Check if response contains an action proposal
+          const actionMatch = responseText.match(/```ACTION_JSON\s*([\s\S]*?)\s*```/)
+          if (actionMatch) {
+            try {
+              const actionData = JSON.parse(actionMatch[1].trim())
+              // Remove the JSON block from the visible text
+              const cleanText = responseText.replace(/```ACTION_JSON[\s\S]*?```/, '').trim()
+
+              // Build proposal for validation
+              const { buildProposal, detectIntent } = await import('@/lib/ai/chatbot-actions')
+              const { createAdminClient } = await import('@/lib/supabase/admin')
+              const admin = createAdminClient()
+
+              const intent = detectIntent(actionData)
+              const proposal = await buildProposal(
+                admin,
+                intent,
+                actionData.items ?? [],
+                actionData.message,
+                actionData.urgency,
+                userRole,
+              )
+
+              return NextResponse.json({
+                response: cleanText || proposal.confirmationText,
+                actionProposal: {
+                  intent: actionData.intent,
+                  items: actionData.items,
+                  message: actionData.message,
+                  urgency: actionData.urgency,
+                },
+                duplicateWarnings: proposal.duplicateWarnings,
+              })
+            } catch {
+              // JSON parse failed — return as regular text
+              const cleanText = responseText.replace(/```ACTION_JSON[\s\S]*?```/, '').trim()
+              return NextResponse.json({ response: cleanText })
+            }
+          }
+
           return NextResponse.json({ response: responseText })
         }
 
@@ -675,7 +910,7 @@ export async function POST(request: Request) {
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
             max_tokens: 1024,
-            system: SYSTEM_PROMPT,
+            system: fullSystemPrompt,
             messages: conversationMessages,
           }),
         })

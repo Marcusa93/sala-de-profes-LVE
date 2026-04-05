@@ -59,8 +59,8 @@ export default function NuevaNotificacionPage() {
   const router = useRouter()
   const [supabase] = useState(() => createClient())
 
-  const canCreate =
-    profile?.role === 'encargado' || profile?.role === 'chef'
+  // Todos pueden crear anuncios generales
+  const canCreate = !!profile
 
   // Form state
   const [title, setTitle] = useState('')
@@ -185,7 +185,7 @@ export default function NuevaNotificacionPage() {
           </div>
           <h3 className="font-display text-base font-semibold text-[#3d2c24]">Sin permisos</h3>
           <p className="max-w-xs text-sm text-[#a39e97]">
-            Solo los encargados y chefs pueden crear notificaciones.
+            Necesitás estar logueado para crear notificaciones.
           </p>
         </div>
       </div>
@@ -298,7 +298,15 @@ export default function NuevaNotificacionPage() {
                 <SelectValue placeholder="Alcance" />
               </SelectTrigger>
               <SelectContent className="rounded-xl border-[#ebe6df]">
-                {SCOPE_OPTIONS.map((opt) => (
+                {SCOPE_OPTIONS
+                  .filter((opt) => {
+                    // Non-managers can only send to 'todos'
+                    if (profile?.role !== 'socio' && profile?.role !== 'encargado') {
+                      return opt.value === 'todos'
+                    }
+                    return true
+                  })
+                  .map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>

@@ -52,11 +52,12 @@ import Link from 'next/link'
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getCurrentShiftType(): KitchenShiftTypeValue | null {
+function getCurrentShiftType(): KitchenShiftTypeValue {
   const h = new Date().getHours()
   if (h >= 7 && h < 16) return 'morning'
-  if (h >= 16 && h < 23) return 'night'
-  return null
+  // Night shift or outside hours — default to night (or morning if very early)
+  if (h < 7) return 'morning' // early morning = prep for morning shift
+  return 'night'
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +99,8 @@ type TimingSection = {
 export default function TurnoPage() {
   const { profile, loading: profileLoading } = useProfileContext()
   const router = useRouter()
-  const shiftType = useMemo(() => getCurrentShiftType(), [])
+  const autoShiftType = useMemo(() => getCurrentShiftType(), [])
+  const [shiftType, setShiftType] = useState<KitchenShiftTypeValue>(autoShiftType)
   const [now] = useState(() => new Date())
   const today = format(now, 'yyyy-MM-dd')
 
@@ -388,6 +390,23 @@ export default function TurnoPage() {
             </p>
           </div>
           {shift?.status === 'in_progress' && <PulseRing color="#d4943a" />}
+          {/* Shift toggle — only when no shift started yet */}
+          {(!shift || shift.status === 'pending') && (
+            <div className="flex rounded-full bg-secondary p-0.5">
+              <button
+                onClick={() => { setShiftType('morning'); setLoading(true) }}
+                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${shiftType === 'morning' ? 'bg-[#d4943a] text-white' : 'text-muted-foreground'}`}
+              >
+                ☀️ Mañana
+              </button>
+              <button
+                onClick={() => { setShiftType('night'); setLoading(true) }}
+                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${shiftType === 'night' ? 'bg-[#5a6b52] text-white' : 'text-muted-foreground'}`}
+              >
+                🌙 Noche
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Progress bar */}

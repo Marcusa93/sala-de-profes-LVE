@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyExpedienteToResponsible } from '@/lib/email/send'
 
 // ---------------------------------------------------------------------------
 // GET  /api/expedientes  — listar con filtros
@@ -30,12 +31,14 @@ export async function GET(request: NextRequest) {
     const urgency = params.get('urgency')
     const search = params.get('search')
 
+    // Lighter query — only select needed fields for list view
     let query = admin
       .from('expedientes')
       .select(`
-        *,
-        author:profiles!expedientes_author_id_fkey(first_name, last_name, role),
-        responsible:profiles!expedientes_responsible_id_fkey(first_name, last_name, role)
+        id, code, title, type, areas, urgency, priority, status,
+        target_date, created_at, updated_at, author_id, responsible_id,
+        author:profiles!expedientes_author_id_fkey(first_name, last_name),
+        responsible:profiles!expedientes_responsible_id_fkey(first_name, last_name)
       `)
       .order('created_at', { ascending: false })
 
@@ -112,6 +115,18 @@ export async function POST(request: NextRequest) {
       body: 'Expediente creado',
       metadata: { to_status: 'borrador' },
     })
+
+    // Get author name and email socios
+    const { data: profile } = await admin.from('profiles').select('first_name, last_name').eq('id', user.id).single()
+    const authorName = profile ? `${profile.first_name} ${profile.last_name}`.trim() : 'Alguien'
+    notifyExpedienteToResponsible({
+      responsibleId: responsible_id || null,
+      code: data.code,
+      title: title.trim(),
+      action: 'Expediente creado',
+      authorName,
+      detail: description?.trim() || undefined,
+    }).catch(() => {})
 
     return NextResponse.json({ success: true, data })
   } catch (error) {

@@ -124,21 +124,13 @@ export default function MisHorariosPage() {
       <div className="card-elevated flex items-center gap-1 p-1.5">
         <button
           onClick={() => setWeekFilter('this_week')}
-          className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
-            weekFilter === 'this_week'
-              ? 'bg-[#006d5a] text-white shadow-sm'
-              : 'text-[#a39e97] hover:text-[#3d2c24]'
-          }`}
+          className={`pill flex-1 ${weekFilter === 'this_week' ? 'pill-active' : 'pill-inactive'}`}
         >
           Esta semana
         </button>
         <button
           onClick={() => setWeekFilter('next_week')}
-          className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${
-            weekFilter === 'next_week'
-              ? 'bg-[#006d5a] text-white shadow-sm'
-              : 'text-[#a39e97] hover:text-[#3d2c24]'
-          }`}
+          className={`pill flex-1 ${weekFilter === 'next_week' ? 'pill-active' : 'pill-inactive'}`}
         >
           Proxima semana
         </button>
@@ -151,21 +143,26 @@ export default function MisHorariosPage() {
         <Button
           variant="ghost"
           size="icon"
-          className="size-9 rounded-xl text-[#a39e97] hover:text-[#3d2c24]"
+          className="icon-btn rounded-xl text-[#a39e97] hover:text-[#3d2c24]"
           onClick={() => setWeekFilter('this_week')}
           disabled={weekFilter === 'this_week'}
         >
           <ChevronLeft className="size-5" />
         </Button>
 
-        <span className="section-label capitalize">
-          {weekLabel}
-        </span>
+        <div className="text-center">
+          <span className="section-label capitalize block">
+            {weekFilter === 'this_week' ? 'Esta semana' : 'Proxima semana'}
+          </span>
+          <span className="text-xs text-[#a39e97] capitalize">
+            {weekLabel}
+          </span>
+        </div>
 
         <Button
           variant="ghost"
           size="icon"
-          className="size-9 rounded-xl text-[#a39e97] hover:text-[#3d2c24]"
+          className="icon-btn rounded-xl text-[#a39e97] hover:text-[#3d2c24]"
           onClick={() => setWeekFilter('next_week')}
           disabled={weekFilter === 'next_week'}
         >
@@ -181,11 +178,11 @@ export default function MisHorariosPage() {
       ) : shifts.length === 0 ? (
         <EmptyState
           icon={CalendarX2}
-          title="No tienes turnos programados"
+          title="Sin turnos programados"
           description={
             weekFilter === 'this_week'
-              ? 'No hay turnos asignados para esta semana.'
-              : 'No hay turnos asignados para la proxima semana.'
+              ? 'No tenés turnos esta semana. Consultá con tu encargado para que te asigne.'
+              : 'Aún no hay turnos para la próxima semana. Se suelen cargar con anticipación.'
           }
         />
       ) : (

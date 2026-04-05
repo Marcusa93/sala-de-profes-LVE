@@ -293,14 +293,30 @@
     border-color: rgba(0, 109, 90, 0.15);
   }
 
+  /* Page title utility */
+  .page-title {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #3d2c24;
+  }
+
   /* Editorial section label */
   .section-label {
     font-family: var(--font-barlow), sans-serif;
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--muted-foreground);
+  }
+
+  /* Form label standard */
+  .form-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #3d2c24;
   }
 
   /* Glass effect for overlays */
@@ -308,5 +324,150 @@
     backdrop-filter: blur(12px) saturate(1.8);
     -webkit-backdrop-filter: blur(12px) saturate(1.8);
     background: rgba(254, 252, 249, 0.85);
+  }
+
+  /* ---------------------------------------------------------------
+     STANDARDIZED UI COMPONENTS
+     --------------------------------------------------------------- */
+
+  /* Touch target — minimum 44px for accessibility */
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Icon button — standard touchable icon */
+  .icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.75rem;
+    transition: all 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .icon-btn:active {
+    transform: scale(0.92);
+  }
+
+  /* Action button — labeled button for actions */
+  .action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.875rem;
+    border-radius: 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    transition: all 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .action-btn:active {
+    transform: scale(0.95);
+  }
+
+  /* Standard input — h-12 with consistent styling */
+  .input-standard {
+    height: 3rem;
+    padding: 0 0.875rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--border);
+    background: var(--card);
+    font-size: 0.9375rem;
+    color: #3d2c24;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .input-standard:focus {
+    outline: none;
+    border-color: #006d5a;
+    box-shadow: 0 0 0 2px rgba(0, 109, 90, 0.15);
+  }
+  .input-standard::placeholder {
+    color: var(--muted-foreground);
+    opacity: 0.6;
+  }
+
+  /* FAB — floating action button */
+  .fab {
+    position: fixed;
+    bottom: 5.5rem;
+    right: 1rem;
+    z-index: 30;
+    width: 3.5rem;
+    height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: #006d5a;
+    color: white;
+    box-shadow: 0 4px 12px rgba(0, 109, 90, 0.3), 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fab:active {
+    transform: scale(0.92);
+  }
+  .fab:hover {
+    box-shadow: 0 6px 20px rgba(0, 109, 90, 0.4), 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  /* KPI card — standard metrics card */
+  .kpi-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+    box-shadow: 0 1px 2px rgba(44, 36, 32, 0.04);
+  }
+
+  /* Pill filter button */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.875rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    transition: all 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pill:active {
+    transform: scale(0.95);
+  }
+  .pill-active {
+    background: #006d5a;
+    color: white;
+  }
+  .pill-inactive {
+    background: var(--secondary);
+    color: var(--muted-foreground);
+  }
+  .pill-inactive:hover {
+    color: #3d2c24;
+  }
+}
+
+/* ===================================================================
+   Reduced motion — respect user preference
+   =================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .press-scale:active,
+  .card-interactive:active {
+    transform: none !important;
   }
 }

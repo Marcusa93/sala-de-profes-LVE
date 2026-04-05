@@ -1,94 +1,55 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import {
-  Package,
-  Plus,
-  Loader2,
-  Pencil,
-  CheckCircle2,
-  Truck,
-  CalendarClock,
-} from 'lucide-react'
-import { toast } from 'sonner'
+import { isManagerOrAbove } from '@/lib/roles'
+import { Package, Loader2, Search, X, ChevronDown, ChevronUp, RefreshCw, History, User, Clock } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
+import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import type { StockItem, StockItemInsert, Supplier, StockCategoryValue, MenuItem } from '@/types/database'
-import {
-  STOCK_CATEGORIES,
-  STOCK_CATEGORY_OPTIONS,
-  STOCK_UNITS,
-  type StockCategory,
-} from '@/lib/constants'
-import {
-  StockSemaphoreBadge,
-  getSemaphore,
-} from '@/components/stock/StockSemaphoreBadge'
-
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { STOCK_CATEGORIES, STOCK_CATEGORY_OPTIONS } from '@/lib/constants'
+import type { StockCategoryValue } from '@/types/database'
 import { EmptyState } from '@/components/ui/EmptyState'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  DialogClose,
-} from '@/components/ui/dialog'
+import { FadeIn } from '@/components/ui/motion'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type StockItemWithSupplier = StockItem & {
-  suppliers: { name: string } | null
-}
-
-type FudoMenuItem = Pick<MenuItem, 'id' | 'name' | 'sale_price' | 'fudo_product_id'>
-
-type StockFormData = {
+type StockItem = {
+  id: string
   name: string
   category: StockCategoryValue
   unit: string
-  current_qty: string
-  min_qty: string
-  next_purchase_date: string
-  supplier_id: string
-  fudo_product_id: string
-  notes: string
+  current_qty: number
+  min_qty: number
+  is_active: boolean
+  supplier_id: string | null
+  suppliers: { name: string } | null
 }
 
-const EMPTY_FORM: StockFormData = {
-  name: '',
-  category: 'otros',
-  unit: 'unidad',
-  current_qty: '0',
-  min_qty: '0',
-  next_purchase_date: '',
-  supplier_id: '',
-  fudo_product_id: '',
-  notes: '',
+type StockLog = {
+  id: number
+  old_qty: number | null
+  new_qty: number | null
+  created_at: string
+  profiles?: { first_name: string; last_name: string } | null
 }
 
 type SemaphoreColor = 'red' | 'yellow' | 'green'
 
-const SEMAPHORE_ACCENT: Record<SemaphoreColor, string> = {
-  green: 'bg-[#006d5a]',
-  yellow: 'bg-[#d4943a]',
-  red: 'bg-[#ea504c]',
+function getSemaphore(item: StockItem): SemaphoreColor {
+  if (item.current_qty === 0) return 'red'
+  if (item.current_qty <= item.min_qty) return 'red'
+  if (item.current_qty <= item.min_qty * 1.5) return 'yellow'
+  return 'green'
+}
+
+const COLORS: Record<SemaphoreColor, { text: string; bg: string; border: string; dot: string }> = {
+  red: { text: 'text-[#ea504c]', bg: 'bg-[#fef2f2]', border: 'border-[#ea504c]', dot: 'bg-[#ea504c]' },
+  yellow: { text: 'text-[#d4943a]', bg: 'bg-[#fdf6ec]', border: 'border-[#d4943a]', dot: 'bg-[#d4943a]' },
+  green: { text: 'text-[#006d5a]', bg: 'bg-[#e8f5f1]', border: 'border-[#006d5a]', dot: 'bg-[#006d5a]' },
 }
 
 // ---------------------------------------------------------------------------
@@ -97,335 +58,264 @@ const SEMAPHORE_ACCENT: Record<SemaphoreColor, string> = {
 
 export default function StockPage() {
   const { profile, loading: profileLoading } = useProfileContext()
-
-  const [items, setItems] = useState<StockItemWithSupplier[]>([])
-  const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [menuItems, setMenuItems] = useState<FudoMenuItem[]>([])
+  const [items, setItems] = useState<StockItem[]>([])
   const [loading, setLoading] = useState(true)
-
-  // Filters
+  const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [semaphoreFilter, setSemaphoreFilter] = useState<SemaphoreColor | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editQty, setEditQty] = useState('')
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
+  const [syncing, setSyncing] = useState(false)
+  const [historyItemId, setHistoryItemId] = useState<string | null>(null)
+  const [historyLogs, setHistoryLogs] = useState<StockLog[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
 
-  // Dialog state
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editingItem, setEditingItem] = useState<StockItemWithSupplier | null>(
-    null,
-  )
-  const [formData, setFormData] = useState<StockFormData>(EMPTY_FORM)
-  const [saving, setSaving] = useState(false)
+  const isEncargado = isManagerOrAbove(profile?.role)
+  const [lastFudoSync, setLastFudoSync] = useState<string | null>(null)
+  const [fudoSyncCount, setFudoSyncCount] = useState(0)
 
-  // Inline qty edit
-  const [editingQty, setEditingQty] = useState<number | null>(null)
-  const [qtyValue, setQtyValue] = useState('')
-
-  const isEncargado = profile?.role === 'encargado'
-
-  // -------------------------------------------------------------------------
-  // Fetch data
-  // -------------------------------------------------------------------------
-
-  const fetchData = useCallback(async () => {
-    setLoading(true)
-    try {
-      const supabase = createClient()
-
-      const [itemsRes, suppliersRes, menuRes] = await Promise.all([
-        supabase
-          .from('stock_items')
-          .select('*, suppliers(name)')
-          .eq('is_active', true)
-          .order('name', { ascending: true }),
-        supabase
-          .from('suppliers')
-          .select('*')
-          .eq('is_active', true)
-          .order('name', { ascending: true }),
-        supabase
-          .from('menu_items')
-          .select('id, name, sale_price, fudo_product_id')
-          .not('fudo_product_id', 'is', null)
-          .eq('is_active', true)
-          .order('name'),
-      ])
-
-      if (itemsRes.error) throw itemsRes.error
-      if (suppliersRes.error) throw suppliersRes.error
-
-      setItems(
-        (itemsRes.data as unknown as StockItemWithSupplier[]) ?? [],
-      )
-      setSuppliers(suppliersRes.data ?? [])
-      if (menuRes.data) setMenuItems(menuRes.data as FudoMenuItem[])
-    } catch (err) {
-      console.error(err)
-      toast.error('Error al cargar el stock')
-    } finally {
-      setLoading(false)
+  const fetchData = useCallback(async (doFudoSync = false) => {
+    // If Fudo sync requested, pull from Fudo first
+    if (doFudoSync) {
+      setSyncing(true)
+      try {
+        const syncRes = await fetch('/api/stock/sync')
+        const syncData = await syncRes.json()
+        if (syncData.success) {
+          setLastFudoSync(syncData.timestamp)
+          setFudoSyncCount(syncData.read?.synced ?? 0)
+        }
+      } catch { /* silent */ }
+      setSyncing(false)
     }
+
+    // Then load from Supabase (now updated with Fudo data)
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('stock_items')
+      .select('id, name, category, unit, current_qty, min_qty, is_active, supplier_id, fudo_ingredient_id, suppliers(name)')
+      .eq('is_active', true)
+      .order('category')
+      .order('name')
+    setItems((data as unknown as (StockItem & { fudo_ingredient_id: string | null })[]) ?? [])
+    setLoading(false)
   }, [])
 
-  useEffect(() => {
-    if (profile) fetchData()
-  }, [profile, fetchData])
+  // Sync from Fudo on first load
+  useEffect(() => { fetchData(true) }, [fetchData])
 
-  // -------------------------------------------------------------------------
-  // Auto-sync Fudo sales → stock deduction (every 5 min)
-  // -------------------------------------------------------------------------
+  // Load history for an item
+  const loadHistory = async (itemId: string) => {
+    if (historyItemId === itemId) { setHistoryItemId(null); return }
+    setHistoryItemId(itemId)
+    setLoadingHistory(true)
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('stock_logs')
+      .select('id, old_qty, new_qty, created_at, profiles:user_id(first_name, last_name)')
+      .eq('stock_item_id', itemId)
+      .order('created_at', { ascending: false })
+      .limit(15)
+    setHistoryLogs((data as unknown as StockLog[]) ?? [])
+    setLoadingHistory(false)
+  }
 
-  useEffect(() => {
-    if (!profile) return
-
-    const COOLDOWN_KEY = 'fudo_sales_last_sync'
-    const COOLDOWN_MS = 5 * 60 * 1000
-
-    async function syncSales() {
-      const lastSync = localStorage.getItem(COOLDOWN_KEY)
-      const now = Date.now()
-      if (lastSync && now - Number(lastSync) < COOLDOWN_MS) return
-
-      try {
-        const res = await fetch('/api/fudo/sync/sales', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        })
-        const data = await res.json()
-        localStorage.setItem(COOLDOWN_KEY, String(now))
-
-        if (data.success && data.importedSales > 0) {
-          toast.success(`${data.importedSales} ventas Fudo sincronizadas — stock actualizado`)
-          fetchData() // Refresh stock after deductions
-        }
-      } catch {
-        // Silent fail — don't bother user with sync errors
-      }
-    }
-
-    syncSales()
-    const interval = setInterval(syncSales, COOLDOWN_MS)
-    return () => clearInterval(interval)
-  }, [profile, fetchData])
-
-  // -------------------------------------------------------------------------
-  // Filtered items
-  // -------------------------------------------------------------------------
-
+  // Filter
   const filtered = useMemo(() => {
     let result = items
-
-    // Filter by semaphore
-    if (semaphoreFilter) {
-      result = result.filter(
-        (item) =>
-          getSemaphore(item.current_qty, item.min_qty) === semaphoreFilter,
+    if (search.trim()) {
+      const q = search.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      result = result.filter(i =>
+        i.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q)
       )
     }
-
-    // Filter by category
     if (categoryFilter !== 'all') {
-      result = result.filter((item) => item.category === categoryFilter)
+      result = result.filter(i => i.category === categoryFilter)
     }
-
+    if (semaphoreFilter) {
+      result = result.filter(i => getSemaphore(i) === semaphoreFilter)
+    }
     return result
-  }, [items, semaphoreFilter, categoryFilter])
+  }, [items, search, categoryFilter, semaphoreFilter])
 
-  // Counts for semaphore dots
+  // Counts
   const counts = useMemo(() => {
-    const c = { red: 0, yellow: 0, green: 0 }
-    items.forEach((item) => {
-      const s = getSemaphore(item.current_qty, item.min_qty)
-      c[s]++
-    })
-    return c
-  }, [items])
-
-  // -------------------------------------------------------------------------
-  // Form handlers
-  // -------------------------------------------------------------------------
-
-  function openCreateDialog() {
-    setEditingItem(null)
-    setFormData(EMPTY_FORM)
-    setDialogOpen(true)
-  }
-
-  function openEditDialog(item: StockItemWithSupplier) {
-    setEditingItem(item)
-    setFormData({
-      name: item.name,
-      category: item.category,
-      unit: item.unit,
-      current_qty: String(item.current_qty),
-      min_qty: String(item.min_qty),
-      next_purchase_date: '',
-      supplier_id: item.supplier_id ? String(item.supplier_id) : '',
-      fudo_product_id: item.fudo_product_id ?? '',
-      notes: item.notes ?? '',
-    })
-    setDialogOpen(true)
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-
-    if (!formData.name.trim()) {
-      toast.error('El nombre del item es obligatorio')
-      return
+    let red = 0, yellow = 0, green = 0
+    for (const i of filtered) {
+      const s = getSemaphore(i)
+      if (s === 'red') red++
+      else if (s === 'yellow') yellow++
+      else green++
     }
+    return { red, yellow, green, total: filtered.length }
+  }, [filtered])
 
-    setSaving(true)
+  // Group by category
+  const grouped = useMemo(() => {
+    const map = new Map<string, StockItem[]>()
+    for (const item of filtered) {
+      const cat = item.category || 'otros'
+      if (!map.has(cat)) map.set(cat, [])
+      map.get(cat)!.push(item)
+    }
+    // Sort items: red first, then yellow, then green, then by name
+    for (const [, arr] of map) {
+      arr.sort((a, b) => {
+        const sa = getSemaphore(a) === 'red' ? 0 : getSemaphore(a) === 'yellow' ? 1 : 2
+        const sb = getSemaphore(b) === 'red' ? 0 : getSemaphore(b) === 'yellow' ? 1 : 2
+        if (sa !== sb) return sa - sb
+        return a.name.localeCompare(b.name)
+      })
+    }
+    return map
+  }, [filtered])
+
+  // Update qty — writes to Supabase + Fudo (bidirectional)
+  const handleSave = async (itemId: string) => {
+    const newQty = parseFloat(editQty)
+    if (isNaN(newQty) || newQty < 0) { toast.error('Cantidad inválida'); return }
     try {
-      const supabase = createClient()
-      const payload: StockItemInsert = {
-        name: formData.name.trim(),
-        category: formData.category,
-        unit: formData.unit,
-        current_qty: Number(formData.current_qty) || 0,
-        min_qty: Number(formData.min_qty) || 0,
-        supplier_id: formData.supplier_id ? Number(formData.supplier_id) : null,
-        fudo_product_id: formData.fudo_product_id || null,
-        notes: formData.notes.trim() || null,
-      }
+      const res = await fetch('/api/stock/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stockItemId: itemId, newQty }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
 
-      if (editingItem) {
-        const { error } = await supabase
-          .from('stock_items')
-          .update(payload)
-          .eq('id', editingItem.id)
-
-        if (error) throw error
-        toast.success('Item actualizado')
+      if (data.fudoSynced) {
+        toast.success('Stock actualizado — sincronizado con Fudo ✓')
       } else {
-        const { error } = await supabase.from('stock_items').insert(payload)
-
-        if (error) throw error
-        toast.success('Item creado')
+        toast.success('Stock actualizado')
       }
-
-      setDialogOpen(false)
+      setEditingId(null)
       fetchData()
     } catch (err) {
-      console.error(err)
-      toast.error('Error al guardar item')
-    } finally {
-      setSaving(false)
+      toast.error(err instanceof Error ? err.message : 'Error al guardar')
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Inline quantity update
-  // -------------------------------------------------------------------------
-
-  async function handleQtyUpdate(itemId: number) {
-    const newQty = Number(qtyValue)
-    if (isNaN(newQty) || newQty < 0) {
-      toast.error('Cantidad invalida')
-      return
-    }
-
-    try {
-      const supabase = createClient()
-      const { error } = await supabase
-        .from('stock_items')
-        .update({ current_qty: newQty })
-        .eq('id', itemId)
-
-      if (error) throw error
-
-      toast.success('Cantidad actualizada')
-      setEditingQty(null)
-      fetchData()
-    } catch (err) {
-      console.error(err)
-      toast.error('Error al actualizar cantidad')
-    }
+  const toggleCat = (cat: string) => {
+    setCollapsedCats(prev => {
+      const next = new Set(prev)
+      if (next.has(cat)) next.delete(cat)
+      else next.add(cat)
+      return next
+    })
   }
 
-  // -------------------------------------------------------------------------
-  // Mark as ordered
-  // -------------------------------------------------------------------------
-
-  async function handleMarkOrdered(itemId: number) {
-    try {
-      const supabase = createClient()
-      const { error } = await supabase
-        .from('stock_items')
-        .update({ last_ordered_at: new Date().toISOString() })
-        .eq('id', itemId)
-
-      if (error) throw error
-
-      toast.success('Pedido marcado como realizado')
-      fetchData()
-    } catch (err) {
-      console.error(err)
-      toast.error('Error al marcar pedido')
-    }
-  }
-
-  // -------------------------------------------------------------------------
   // Loading
-  // -------------------------------------------------------------------------
-
   if (profileLoading || loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="size-8 animate-spin text-[#006d5a]" />
-          <p className="text-sm text-[#a39e97]">Cargando...</p>
-        </div>
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-[#a39e97]" />
       </div>
     )
   }
 
-  // Solo encargado puede acceder a stock
-  if (profile && profile.role !== 'encargado') {
-    return (
-      <div className="mx-auto max-w-lg pb-28 pt-2">
-        <div className="card-elevated-lg rounded-2xl p-8 text-center">
-          <Package className="mx-auto size-10 text-[#a39e97]" />
-          <p className="mt-4 text-sm font-medium text-[#3d2c24]">Acceso restringido</p>
-          <p className="mt-1 text-xs text-[#a39e97]">Esta sección es solo para encargados.</p>
-        </div>
-      </div>
-    )
+  if (profile && !isEncargado) {
+    return <EmptyState icon={Package} title="Acceso restringido" description="Solo encargados y socios." />
   }
-
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
 
   return (
-    <div className="relative mx-auto max-w-2xl space-y-5 pb-24">
+    <div className="mx-auto max-w-lg space-y-4 pb-28">
       {/* Header */}
-      <div className="space-y-1">
-        <h1 className="font-display text-2xl font-semibold tracking-tight text-[#3d2c24]">
-          Stock
-        </h1>
-        <p className="section-label">Inventario y control</p>
+      <FadeIn>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Stock</h1>
+            <p className="section-label mt-0.5">
+              {counts.total} items
+              {lastFudoSync && (
+                <span className="ml-1 text-[#006d5a]">
+                  · Fudo {format(new Date(lastFudoSync), 'HH:mm')}
+                </span>
+              )}
+            </p>
+          </div>
+          {isEncargado && (
+            <button
+              onClick={async () => {
+                setSyncing(true)
+                try {
+                  const res = await fetch('/api/stock/sync')
+                  const json = await res.json()
+                  if (json.success) {
+                    setLastFudoSync(json.timestamp)
+                    setFudoSyncCount(json.read?.synced ?? 0)
+                    toast.success(`Sincronizado con Fudo — ${json.read?.synced ?? 0} items`)
+                    fetchData()
+                  } else {
+                    toast.error(json.error || 'Error al sincronizar')
+                  }
+                } catch { toast.error('Error de conexión') }
+                setSyncing(false)
+              }}
+              disabled={syncing}
+              className="flex items-center gap-1.5 rounded-xl bg-[#e8f5f1] px-3 py-1.5 text-[11px] font-bold text-[#006d5a] transition-colors hover:bg-[#c0e4da] disabled:opacity-50"
+            >
+              {syncing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+              Sync Fudo
+            </button>
+          )}
+        </div>
+      </FadeIn>
+
+      {/* Search */}
+      <div className="relative">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar producto..."
+          className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] py-2.5 pl-10 pr-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+        />
+        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
+        {search && (
+          <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[#a39e97] hover:bg-[#f3efe9]">
+            <X className="size-3.5" />
+          </button>
+        )}
       </div>
 
-      {/* Category filter: horizontal scrollable pills */}
-      <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-2 scrollbar-none">
+      {/* Semaphore pills — always visible */}
+      <div className="flex gap-2">
+        {(['red', 'yellow', 'green'] as const).map((color) => {
+          const isActive = semaphoreFilter === color
+          const c = COLORS[color]
+          const labels: Record<SemaphoreColor, string> = { red: 'Crítico', yellow: 'Atención', green: 'OK' }
+          return (
+            <button
+              key={color}
+              onClick={() => setSemaphoreFilter(isActive ? null : color)}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl border py-2 text-xs font-semibold transition-all ${
+                isActive ? `${c.bg} ${c.border}` : 'border-[#ebe6df] bg-white text-[#a39e97] hover:bg-[#faf8f5]'
+              }`}
+            >
+              <span className={`size-2 rounded-full ${c.dot}`} />
+              <span className={isActive ? c.text.replace('text-', 'text-') : ''}>{counts[color]}</span>
+              <span>{labels[color]}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Category pills — horizontal scroll */}
+      <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 scrollbar-none">
         <button
           onClick={() => setCategoryFilter('all')}
-          className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold transition-all ${
-            categoryFilter === 'all'
-              ? 'bg-[#006d5a] text-white shadow-sm shadow-[#006d5a]/20'
-              : 'border border-[#ebe6df] bg-[#fefcf9] text-[#3d2c24] hover:border-[#006d5a]/20 hover:bg-[#f0f7f5]'
+          className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all ${
+            categoryFilter === 'all' ? 'bg-[#3d2c24] text-white' : 'bg-[#f3efe9] text-[#a39e97]'
           }`}
         >
           Todas
         </button>
-        {STOCK_CATEGORY_OPTIONS.map((opt) => (
+        {STOCK_CATEGORY_OPTIONS.map(opt => (
           <button
             key={opt.value}
             onClick={() => setCategoryFilter(opt.value)}
-            className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold transition-all ${
-              categoryFilter === opt.value
-                ? 'bg-[#006d5a] text-white shadow-sm shadow-[#006d5a]/20'
-                : 'border border-[#ebe6df] bg-[#fefcf9] text-[#3d2c24] hover:border-[#006d5a]/20 hover:bg-[#f0f7f5]'
+            className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all ${
+              categoryFilter === opt.value ? 'bg-[#3d2c24] text-white' : 'bg-[#f3efe9] text-[#a39e97]'
             }`}
           >
             {opt.label}
@@ -433,423 +323,155 @@ export default function StockPage() {
         ))}
       </div>
 
-      {/* Semaphore filter row */}
-      <div className="card-elevated flex items-center justify-between rounded-xl px-4 py-3">
-        <span className="section-label">Estado</span>
-        <div className="flex items-center gap-4">
-          {(['red', 'yellow', 'green'] as const).map((color) => {
-            const isActive = semaphoreFilter === color
-            const dotColors: Record<SemaphoreColor, string> = {
-              red: 'bg-[#ea504c]',
-              yellow: 'bg-[#d4943a]',
-              green: 'bg-[#006d5a]',
-            }
-            const labels: Record<SemaphoreColor, string> = {
-              red: 'Critico',
-              yellow: 'Atencion',
-              green: 'Normal',
-            }
-            return (
-              <button
-                key={color}
-                onClick={() =>
-                  setSemaphoreFilter(isActive ? null : color)
-                }
-                className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-all ${
-                  isActive
-                    ? 'bg-[#faf8f5] ring-2 ring-[#3d2c24]/10 shadow-sm'
-                    : 'hover:bg-[#faf8f5]'
-                }`}
-                aria-label={`Filtrar por ${color}`}
-              >
-                <span
-                  className={`size-2.5 rounded-full ${dotColors[color]}`}
-                  style={isActive ? { boxShadow: `0 0 0 2px #fefcf9, 0 0 0 4px currentColor` } : undefined}
-                />
-                <span className={`tabular-nums ${isActive ? 'text-[#3d2c24] font-semibold' : 'text-[#a39e97]'}`}>
-                  {counts[color]}
-                </span>
-                <span className={`hidden sm:inline ${isActive ? 'text-[#3d2c24]' : 'text-[#a39e97]'}`}>
-                  {labels[color]}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Stock cards */}
+      {/* Items grouped by category */}
       {filtered.length === 0 ? (
-        <EmptyState
-          icon={Package}
-          title="Sin items de stock"
-          description="No hay items que coincidan con los filtros seleccionados"
-        />
+        <EmptyState icon={Package} title="Sin resultados" description="Probá con otra búsqueda o filtro." />
       ) : (
-        <div className="grid gap-3">
-          {filtered.map((item) => (
-            <StockCard
-              key={item.id}
-              item={item}
-              isEncargado={isEncargado}
-              editingQty={editingQty}
-              qtyValue={qtyValue}
-              fudoMenuItem={menuItems.find((m) => m.fudo_product_id === item.fudo_product_id) ?? null}
-              onEdit={() => openEditDialog(item)}
-              onQtyClick={() => {
-                setEditingQty(item.id)
-                setQtyValue(String(item.current_qty))
-              }}
-              onQtyChange={setQtyValue}
-              onQtySubmit={() => handleQtyUpdate(item.id)}
-              onQtyCancel={() => setEditingQty(null)}
-              onMarkOrdered={() => handleMarkOrdered(item.id)}
-            />
-          ))}
-        </div>
-      )}
+        Array.from(grouped.entries()).map(([cat, catItems]) => {
+          const catConfig = STOCK_CATEGORIES[cat as keyof typeof STOCK_CATEGORIES]
+          const isCollapsed = collapsedCats.has(cat)
+          const catCritical = catItems.filter(i => getSemaphore(i) === 'red').length
 
-      {/* FAB for adding item (encargado only) */}
-      {isEncargado && (
-        <button
-          onClick={openCreateDialog}
-          className="fixed bottom-20 right-4 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-all active:scale-95 hover:shadow-xl hover:shadow-[#006d5a]/30 sm:bottom-6 sm:right-6"
-          aria-label="Agregar item de stock"
-        >
-          <Plus className="size-6" />
-        </button>
-      )}
-
-      {/* Create/Edit Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-display text-lg text-[#3d2c24]">
-              {editingItem ? 'Editar Item' : 'Nuevo Item de Stock'}
-            </DialogTitle>
-            <DialogDescription className="text-[#a39e97]">
-              {editingItem
-                ? 'Modifica los datos del item'
-                : 'Completa los datos del nuevo item'}
-            </DialogDescription>
-          </DialogHeader>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="stock-name" className="text-[#3d2c24] text-xs font-semibold">Nombre *</Label>
-              <Input
-                id="stock-name"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, name: e.target.value }))
-                }
-                placeholder="Nombre del item"
-                className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-[#3d2c24] text-xs font-semibold">Categoria</Label>
-                <Select
-                  value={formData.category}
-                  onValueChange={(val) =>
-                    val && setFormData((prev) => ({ ...prev, category: val as StockCategoryValue }))
-                  }
-                >
-                  <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl border-[#ebe6df] bg-[#fefcf9]">
-                    {STOCK_CATEGORY_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-[#3d2c24] text-xs font-semibold">Unidad</Label>
-                <Select
-                  value={formData.unit}
-                  onValueChange={(val) =>
-                    val && setFormData((prev) => ({ ...prev, unit: val }))
-                  }
-                >
-                  <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl border-[#ebe6df] bg-[#fefcf9]">
-                    {STOCK_UNITS.map((u) => (
-                      <SelectItem key={u.value} value={u.value}>
-                        {u.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="stock-current-qty" className="text-[#3d2c24] text-xs font-semibold">Cantidad actual</Label>
-                <Input
-                  id="stock-current-qty"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={formData.current_qty}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      current_qty: e.target.value,
-                    }))
-                  }
-                  className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] focus-visible:ring-[#006d5a]"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="stock-min-qty" className="text-[#3d2c24] text-xs font-semibold">Cantidad minima</Label>
-                <Input
-                  id="stock-min-qty"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={formData.min_qty}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      min_qty: e.target.value,
-                    }))
-                  }
-                  className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] focus-visible:ring-[#006d5a]"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-[#3d2c24] text-xs font-semibold">Proveedor</Label>
-              <Select
-                value={formData.supplier_id}
-                onValueChange={(val) =>
-                  val !== null && setFormData((prev) => ({ ...prev, supplier_id: val }))
-                }
-              >
-                <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24]">
-                  <SelectValue placeholder="Sin proveedor asignado" />
-                </SelectTrigger>
-                <SelectContent className="rounded-xl border-[#ebe6df] bg-[#fefcf9]">
-                  <SelectItem value="">Sin proveedor</SelectItem>
-                  {suppliers.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {menuItems.length > 0 && (
-              <div className="space-y-1.5">
-                <Label className="text-[#3d2c24] text-xs font-semibold">Producto Fudo</Label>
-                <Select
-                  value={formData.fudo_product_id}
-                  onValueChange={(val) =>
-                    setFormData((prev) => ({ ...prev, fudo_product_id: val }))
-                  }
-                >
-                  <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24]">
-                    <SelectValue placeholder="Sin vincular a Fudo" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-60 rounded-xl border-[#ebe6df] bg-[#fefcf9]">
-                    <SelectItem value="">Sin vincular</SelectItem>
-                    {menuItems.map((m) => (
-                      <SelectItem key={m.id} value={m.fudo_product_id!}>
-                        {m.name} — ${m.sale_price?.toLocaleString('es-AR')}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-[10px] text-[#a39e97]">Vincula este item con un producto del POS Fudo</p>
-              </div>
-            )}
-
-            <div className="space-y-1.5">
-              <Label htmlFor="stock-notes" className="text-[#3d2c24] text-xs font-semibold">Notas</Label>
-              <Textarea
-                id="stock-notes"
-                value={formData.notes}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, notes: e.target.value }))
-                }
-                placeholder="Notas adicionales..."
-                className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
-              />
-            </div>
-
-            <DialogFooter className="gap-2 pt-2">
-              <DialogClose render={<Button variant="outline" className="rounded-xl border-[#ebe6df] text-[#3d2c24] hover:bg-[#faf8f5]" />}>
-                Cancelar
-              </DialogClose>
-              <Button type="submit" disabled={saving} className="rounded-xl bg-[#006d5a] text-white hover:bg-[#004d3f]">
-                {saving && <Loader2 className="size-4 animate-spin" />}
-                {editingItem ? 'Guardar' : 'Crear'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// StockCard
-// ---------------------------------------------------------------------------
-
-type StockCardProps = {
-  item: StockItemWithSupplier
-  isEncargado: boolean
-  editingQty: number | null
-  qtyValue: string
-  fudoMenuItem: FudoMenuItem | null
-  onEdit: () => void
-  onQtyClick: () => void
-  onQtyChange: (val: string) => void
-  onQtySubmit: () => void
-  onQtyCancel: () => void
-  onMarkOrdered: () => void
-}
-
-function StockCard({
-  item,
-  isEncargado,
-  editingQty,
-  qtyValue,
-  fudoMenuItem,
-  onEdit,
-  onQtyClick,
-  onQtyChange,
-  onQtySubmit,
-  onQtyCancel,
-  onMarkOrdered,
-}: StockCardProps) {
-  const semaphore = getSemaphore(item.current_qty, item.min_qty)
-  const categoryConfig =
-    STOCK_CATEGORIES[item.category] ?? STOCK_CATEGORIES.otros
-  const isEditingThisQty = editingQty === item.id
-
-  return (
-    <div className="card-elevated hover-lift relative flex overflow-hidden rounded-xl">
-      {/* Left accent bar */}
-      <div className={`w-1 shrink-0 ${SEMAPHORE_ACCENT[semaphore]}`} />
-
-      {/* Card content */}
-      <div className="flex-1 p-5 space-y-3">
-        {/* Header row */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 space-y-1">
-            <div className="flex items-center gap-2.5">
-              <h3 className="font-semibold text-[#3d2c24]">{item.name}</h3>
-              <StockSemaphoreBadge semaphore={semaphore} />
-            </div>
-            <p className="text-xs text-[#a39e97]">
-              {categoryConfig.icon} {categoryConfig.label}
-              <span className="mx-2 text-[#ebe6df]">|</span>
-              {item.unit}
-            </p>
-          </div>
-          {isEncargado && (
-            <button
-              onClick={onEdit}
-              className="flex size-8 items-center justify-center rounded-lg text-[#a39e97] transition-colors hover:bg-[#faf8f5] hover:text-[#3d2c24]"
-            >
-              <Pencil className="size-3.5" />
-            </button>
-          )}
-        </div>
-
-        {/* Quantity display: current vs min */}
-        <div className="flex items-center gap-2">
-          {isEditingThisQty ? (
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={qtyValue}
-                onChange={(e) => onQtyChange(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') onQtySubmit()
-                  if (e.key === 'Escape') onQtyCancel()
-                }}
-                className="h-8 w-20 rounded-lg border-[#ebe6df] bg-[#faf8f5] text-sm text-[#3d2c24] focus-visible:ring-[#006d5a]"
-                autoFocus
-              />
-              <span className="text-xs text-[#a39e97]">
-                / {item.min_qty} {item.unit}
-              </span>
+          return (
+            <div key={cat}>
+              {/* Category header */}
               <button
-                onClick={onQtySubmit}
-                className="flex size-7 items-center justify-center rounded-full bg-[#f0f7f5] text-[#006d5a] transition-colors hover:bg-[#006d5a] hover:text-white"
+                onClick={() => toggleCat(cat)}
+                className="flex w-full items-center justify-between py-2"
               >
-                <CheckCircle2 className="size-3.5" />
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">{catConfig?.icon ?? '📦'}</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#3d2c24]">
+                    {catConfig?.label ?? cat}
+                  </span>
+                  <span className="text-[10px] text-[#a39e97]">({catItems.length})</span>
+                  {catCritical > 0 && (
+                    <span className="rounded-full bg-[#fef2f2] px-1.5 py-0.5 text-[9px] font-bold text-[#ea504c]">
+                      {catCritical} ⚠
+                    </span>
+                  )}
+                </div>
+                {isCollapsed ? <ChevronDown className="size-4 text-[#a39e97]" /> : <ChevronUp className="size-4 text-[#a39e97]" />}
               </button>
+
+              {/* Items */}
+              {!isCollapsed && (
+                <div className="space-y-1 mb-4">
+                  {catItems.map(item => {
+                    const s = getSemaphore(item)
+                    const c = COLORS[s]
+                    const isEditing = editingId === item.id
+
+                    const showHistory = historyItemId === item.id
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="rounded-xl border bg-card overflow-hidden"
+                        style={{ borderLeftWidth: 3, borderLeftColor: c.border.replace('border-[', '').replace(']', '') }}
+                      >
+                        <div className="flex items-center px-3 py-2.5">
+                          {/* Name */}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-[#3d2c24]">{item.name}</p>
+                            {item.suppliers?.name && (
+                              <p className="truncate text-[10px] text-[#a39e97]">{item.suppliers.name}</p>
+                            )}
+                          </div>
+
+                          {/* Qty — tap to edit */}
+                          {isEditing ? (
+                            <div className="flex items-center gap-1 ml-2">
+                              <input
+                                value={editQty}
+                                onChange={(e) => setEditQty(e.target.value)}
+                                className="w-16 rounded-lg border bg-white px-2 py-1.5 text-center text-sm font-bold tabular-nums focus:border-[#006d5a] focus:outline-none"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSave(item.id)
+                                  if (e.key === 'Escape') setEditingId(null)
+                                }}
+                              />
+                              <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+                              <button
+                                onClick={() => handleSave(item.id)}
+                                className="rounded-lg bg-[#006d5a] px-2 py-1.5 text-[10px] font-bold text-white"
+                              >
+                                OK
+                              </button>
+                              <button
+                                onClick={() => setEditingId(null)}
+                                className="rounded-lg px-1.5 py-1.5 text-[#a39e97]"
+                              >
+                                <X className="size-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 ml-2">
+                              <button
+                                onClick={() => {
+                                  if (!isEncargado) return
+                                  setEditingId(item.id)
+                                  setEditQty(String(item.current_qty))
+                                }}
+                                className={`flex items-baseline gap-0.5 rounded-lg px-2.5 py-1 ${isEncargado ? 'hover:bg-[#f3efe9] cursor-pointer active:scale-95' : ''}`}
+                              >
+                                <span className={`text-base font-bold tabular-nums ${c.text}`}>
+                                  {item.current_qty}
+                                </span>
+                                <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+                              </button>
+                              {/* History button */}
+                              <button
+                                onClick={() => loadHistory(item.id)}
+                                className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9]"
+                                title="Ver historial"
+                              >
+                                <History className="size-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* History panel */}
+                        {showHistory && (
+                          <div className="border-t bg-[#faf8f5] px-3 py-2.5">
+                            {loadingHistory ? (
+                              <Loader2 className="size-4 animate-spin text-[#a39e97] mx-auto" />
+                            ) : historyLogs.length === 0 ? (
+                              <p className="text-[11px] text-[#a39e97] text-center">Sin movimientos registrados</p>
+                            ) : (
+                              <div className="space-y-1.5">
+                                {historyLogs.map(log => (
+                                  <div key={log.id} className="flex items-center justify-between text-[11px]">
+                                    <div className="flex items-center gap-1.5">
+                                      <User className="size-2.5 text-[#a39e97]" />
+                                      <span className="font-medium text-[#3d2c24]">
+                                        {log.profiles?.first_name ?? '?'}
+                                      </span>
+                                      <span className="text-[#a39e97]">
+                                        {log.old_qty} → {log.new_qty}
+                                      </span>
+                                    </div>
+                                    <span className="flex items-center gap-1 text-[#a39e97]">
+                                      <Clock className="size-2.5" />
+                                      {format(new Date(log.created_at), 'd MMM HH:mm', { locale: es })}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
-          ) : (
-            <button
-              onClick={onQtyClick}
-              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition-colors hover:bg-[#faf8f5]"
-              title="Toca para editar cantidad"
-            >
-              <span className="font-display text-xl font-semibold tabular-nums text-[#3d2c24]">
-                {item.current_qty}
-              </span>
-              <span className="text-sm text-[#a39e97]">
-                / {item.min_qty} {item.unit}
-              </span>
-            </button>
-          )}
-        </div>
-
-        {/* Meta info: supplier + date + Fudo */}
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#a39e97]">
-          {item.suppliers?.name && (
-            <span className="flex items-center gap-1.5">
-              <Truck className="size-3" />
-              {item.suppliers.name}
-            </span>
-          )}
-          {item.last_ordered_at && (
-            <span className="flex items-center gap-1.5">
-              <CalendarClock className="size-3" />
-              Pedido{' '}
-              {format(new Date(item.last_ordered_at), 'd MMM', {
-                locale: es,
-              })}
-            </span>
-          )}
-          {fudoMenuItem && (
-            <span className="flex items-center gap-1.5 rounded-full bg-[#f0f7f5] px-2 py-0.5 text-[10px] font-semibold text-[#006d5a]">
-              Fudo · ${fudoMenuItem.sale_price?.toLocaleString('es-AR')}
-            </span>
-          )}
-        </div>
-
-        {/* Mark ordered button */}
-        {isEncargado && semaphore !== 'green' && (
-          <button
-            onClick={onMarkOrdered}
-            className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-[#006d5a]/20 bg-[#f0f7f5] px-3 py-1.5 text-xs font-semibold text-[#006d5a] transition-all hover:bg-[#006d5a] hover:text-white active:scale-95"
-          >
-            <CheckCircle2 className="size-3" />
-            Marcar pedido realizado
-          </button>
-        )}
-      </div>
+          )
+        })
+      )}
     </div>
   )
 }

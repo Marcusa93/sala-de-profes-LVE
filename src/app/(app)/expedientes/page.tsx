@@ -1,12 +1,14 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import Link from 'next/link'
 import { Plus, Search, FolderOpen, X } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { ExpedienteCard } from '@/components/expedientes/ExpedienteCard'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ActionBanner } from '@/components/ui/ActionBanner'
+import { deriveExpedienteActions, sortActions } from '@/lib/actions/operational'
 import { EXPEDIENTE_TYPES } from '@/lib/constants/expedientes'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import type { ExpedienteWithPeople } from '@/types/expedientes'
@@ -25,7 +27,7 @@ export default function ExpedientesPage() {
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   // Debounce search — 350ms
   useEffect(() => {
@@ -56,6 +58,21 @@ export default function ExpedientesPage() {
   const isSocioOrEncargado = profile?.role === 'socio' || profile?.role === 'encargado'
   const hasActiveFilters = typeFilter || debouncedSearch
 
+  // Derive operational actions from expedientes
+  const expActions = useMemo(() => {
+    const mapped = expedientes.map((exp) => ({
+      id: exp.id,
+      code: exp.code,
+      title: exp.title,
+      status: exp.status,
+      urgency: exp.urgency,
+      target_date: exp.target_date,
+      updated_at: exp.updated_at,
+      responsible_id: exp.responsible_id,
+    }))
+    return sortActions(deriveExpedienteActions(mapped))
+  }, [expedientes])
+
   const clearFilters = () => {
     setSearch('')
     setDebouncedSearch('')
@@ -82,8 +99,8 @@ export default function ExpedientesPage() {
             onClick={() => setStatusTab(tab.key)}
             className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
               statusTab === tab.key
-                ? 'bg-[#006d5a] text-white'
-                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+                ? 'pill pill-active'
+                : 'pill pill-inactive'
             }`}
           >
             {tab.label}
@@ -102,12 +119,12 @@ export default function ExpedientesPage() {
             placeholder="Buscar por título o código..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-9 w-full rounded-xl border border-border bg-background pl-9 pr-8 text-sm placeholder:text-muted-foreground focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+            className="h-12 w-full rounded-xl border border-border bg-background pl-9 pr-8 text-sm placeholder:text-muted-foreground focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
           />
           {search && (
             <button
               onClick={() => setSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-0.5 hover:bg-muted"
+              className="absolute right-1 top-1/2 -translate-y-1/2 flex size-10 items-center justify-center rounded-full hover:bg-muted"
               aria-label="Limpiar búsqueda"
             >
               <X className="size-3.5 text-muted-foreground" />
@@ -119,7 +136,7 @@ export default function ExpedientesPage() {
           id="exp-type-filter"
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
-          className="h-9 rounded-xl border border-border bg-background px-2 text-xs font-medium text-foreground focus:border-[#006d5a] focus:outline-none"
+          className="h-12 rounded-xl border border-border bg-background px-2 text-xs font-medium text-foreground focus:border-[#006d5a] focus:outline-none"
         >
           <option value="">Todos los tipos</option>
           {Object.entries(EXPEDIENTE_TYPES).map(([key, config]) => (
@@ -155,10 +172,19 @@ export default function ExpedientesPage() {
           description={
             hasActiveFilters
               ? 'No se encontraron resultados. Probá limpiando los filtros.'
-              : 'Creá tu primer expediente con el botón +'
+              : 'Abrí tu primer expediente para empezar a gestionar.'
           }
+          actionLabel={hasActiveFilters ? undefined : 'Crear expediente'}
+          actionHref={hasActiveFilters ? undefined : '/expedientes/nuevo'}
         />
       ) : (
+        <>
+        {/* Operational actions — overdue, stale, no responsible */}
+        {statusTab === 'activos' && expActions.length > 0 && (
+          <div className="mb-3">
+            <ActionBanner actions={expActions} max={3} compact />
+          </div>
+        )}
         <StaggerList className="mt-2 space-y-3">
           {expedientes.map((exp) => (
             <StaggerItem key={exp.id}>
@@ -166,13 +192,14 @@ export default function ExpedientesPage() {
             </StaggerItem>
           ))}
         </StaggerList>
+        </>
       )}
 
       {/* FAB */}
       <Link
         href="/expedientes/nuevo"
         aria-label="Crear nuevo expediente"
-        className="fixed bottom-24 right-5 z-30 flex size-14 items-center justify-center rounded-2xl bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
+        className="fab fixed bottom-24 right-5 z-30 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
       >
         <Plus className="size-6" />
       </Link>

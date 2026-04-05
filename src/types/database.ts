@@ -1,4 +1,4 @@
-export type AppRole = 'socio' | 'encargado' | 'chef' | 'barista' | 'runner' | 'cocina'
+export type AppRole = 'socio' | 'encargado' | 'chef' | 'barista' | 'runner' | 'cocina' | 'bacha'
 export type AnnouncementTypeValue = 'general' | 'urgente' | 'recordatorio' | 'operativo'
 export type PriorityValue = 'baja' | 'media' | 'alta' | 'critica'
 export type AlertTypeValue = 'low_stock' | 'upcoming_purchase' | 'critical'
@@ -76,6 +76,7 @@ export type Database = {
           avatar_url: string | null
           phone: string | null
           is_active: boolean
+          settings: Record<string, unknown>
           created_at: string
           updated_at: string
         }
@@ -87,6 +88,7 @@ export type Database = {
           avatar_url?: string | null
           phone?: string | null
           is_active?: boolean
+          settings?: Record<string, unknown>
           created_at?: string
           updated_at?: string
         }
@@ -98,6 +100,7 @@ export type Database = {
           avatar_url?: string | null
           phone?: string | null
           is_active?: boolean
+          settings?: Record<string, unknown>
           created_at?: string
           updated_at?: string
         }

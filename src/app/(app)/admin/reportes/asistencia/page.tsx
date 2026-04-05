@@ -349,7 +349,8 @@ export default function AsistenciaReportPage() {
                 <YAxis tick={{ fontSize: 11, fill: '#a39e97' }} axisLine={false} tickLine={false} />
                 <Tooltip
                   contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
-                  formatter={(v: number, name: string) => [
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  formatter={(v: any, name: any) => [
                     name === 'count' ? `${v} marcaciones` : `${v}h promedio`,
                     name === 'count' ? 'Asistencia' : 'Horas',
                   ]}
@@ -390,7 +391,8 @@ export default function AsistenciaReportPage() {
                 />
                 <Tooltip
                   contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
-                  formatter={(v: number) => [`${v} marcaciones`, '']}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  formatter={(v: any) => [`${v} marcaciones`, '']}
                 />
               </PieChart>
             </ResponsiveContainer>
@@ -509,7 +511,8 @@ export default function AsistenciaReportPage() {
                                 <YAxis tick={{ fontSize: 9, fill: '#a39e97' }} axisLine={false} tickLine={false} />
                                 <Tooltip
                                   contentStyle={{ borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', fontSize: 11 }}
-                                  formatter={(v: number) => [`${v}h`, 'Horas']}
+                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  formatter={(v: any) => [`${v}h`, 'Horas']}
                                 />
                                 <Bar dataKey="hours" fill={roleConfig?.color ?? '#006d5a'} radius={[4, 4, 0, 0]} />
                               </BarChart>

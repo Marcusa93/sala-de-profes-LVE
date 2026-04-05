@@ -97,7 +97,7 @@ export async function POST(
         author_id: user.id,
         type: 'operativo',
         priority: 'baja',
-        title: `💬 Comentario en ${expediente.code}`,
+        title: `💬 Comentario en: ${expediente.title}`,
         body: `${authorName}: ${body.body.trim().slice(0, 100)}`,
         scope: 'user',
         target_user_id: notifyId,

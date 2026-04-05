@@ -59,12 +59,12 @@ function AssignDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md max-h-[70vh] rounded-t-2xl sm:rounded-2xl bg-card shadow-xl flex flex-col">
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-md max-h-[85vh] rounded-2xl bg-card shadow-xl flex flex-col sm:mx-auto sm:mb-0">
         <div className="flex items-center justify-between p-5 pb-3">
           <h3 className="text-base font-semibold">Asignar Responsable</h3>
-          <button onClick={onClose} className="rounded-full p-1 hover:bg-muted" aria-label="Cerrar">
-            <X className="size-4" />
+          <button onClick={onClose} className="icon-btn flex items-center justify-center rounded-full hover:bg-muted" aria-label="Cerrar">
+            <X className="size-5" />
           </button>
         </div>
 
@@ -295,25 +295,34 @@ export default function ExpedienteDetailPage() {
 
   return (
     <FadeIn className={isClosed ? 'pb-8' : 'pb-28'}>
-      {/* Header sticky */}
-      <div className="sticky top-0 z-20 border-b bg-card px-5 py-3">
-        <div className="flex items-center gap-3">
+      {/* Header sticky — compact with status + urgency */}
+      <div className="sticky top-0 z-20 border-b bg-card px-4 py-2.5">
+        <div className="flex items-center gap-2.5">
           <Link
             href="/expedientes"
-            className="flex size-8 items-center justify-center rounded-xl bg-secondary text-secondary-foreground"
+            className="icon-btn flex items-center justify-center rounded-xl bg-secondary text-secondary-foreground"
             aria-label="Volver a expedientes"
           >
             <ArrowLeft className="size-4" />
           </Link>
           <div className="min-w-0 flex-1">
-            <span className="font-mono text-[10px] font-bold text-[#1a1a2e]/60">
-              {expediente.code}
-            </span>
-            <h1 className="text-sm font-semibold text-foreground line-clamp-1">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[10px] font-bold text-muted-foreground">
+                {expediente.code}
+              </span>
+              <ExpedienteStatusBadge status={expediente.status} />
+            </div>
+            <h1 className="text-[15px] font-semibold text-foreground line-clamp-1 mt-0.5">
               {expediente.title}
             </h1>
           </div>
-          <ExpedienteStatusBadge status={expediente.status} />
+          {/* Urgency pill */}
+          <span
+            className="shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold"
+            style={{ color: urgencyConfig?.color, backgroundColor: urgencyConfig?.bg }}
+          >
+            {urgencyConfig?.label}
+          </span>
         </div>
       </div>
 
@@ -328,100 +337,71 @@ export default function ExpedienteDetailPage() {
           </div>
         )}
 
-        {/* Info card */}
-        <div className="rounded-xl border bg-card p-4 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <ExpedienteTypeBadge type={expediente.type} />
-            <span
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
-              style={{ color: urgencyConfig?.color, backgroundColor: urgencyConfig?.bg }}
-            >
-              Urgencia: {urgencyConfig?.label}
+        {/* Quick facts — compact row */}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <ExpedienteTypeBadge type={expediente.type} />
+          {expediente.areas.length > 0 && <ExpedienteAreaTags areas={expediente.areas} />}
+          <span className="flex items-center gap-1"><User className="size-3" />{authorName}</span>
+          {responsibleName && <span className="flex items-center gap-1"><UserPlus className="size-3" /><strong className="text-foreground">{responsibleName}</strong></span>}
+          <span className="flex items-center gap-1"><Clock className="size-3" />{timeAgo}</span>
+          {expediente.target_date && (
+            <span className={`flex items-center gap-1 ${isOverdue ? 'text-[#ea504c] font-semibold' : ''}`}>
+              <Calendar className="size-3" />
+              {new Date(expediente.target_date).toLocaleDateString('es-AR')}
             </span>
-          </div>
-
-          {expediente.description && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Descripción</p>
-              <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{expediente.description}</p>
-            </div>
-          )}
-
-          {expediente.reason && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Fundamento</p>
-              <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">{expediente.reason}</p>
-            </div>
-          )}
-
-          {expediente.areas.length > 0 && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Áreas</p>
-              <ExpedienteAreaTags areas={expediente.areas} />
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            <div className="flex items-center gap-1.5 text-muted-foreground">
-              <User className="size-3" />
-              <span>Autor: <strong className="text-foreground">{authorName}</strong></span>
-            </div>
-            {responsibleName && (
-              <div className="flex items-center gap-1.5 text-muted-foreground">
-                <UserPlus className="size-3" />
-                <span>Resp: <strong className="text-foreground">{responsibleName}</strong></span>
-              </div>
-            )}
-            <div className="flex items-center gap-1.5 text-muted-foreground">
-              <Clock className="size-3" />
-              <span>{timeAgo}</span>
-            </div>
-            {expediente.target_date && (
-              <div className={`flex items-center gap-1.5 ${isOverdue ? 'text-[#ea504c] font-semibold' : 'text-muted-foreground'}`}>
-                <Calendar className="size-3" />
-                <span>Objetivo: {new Date(expediente.target_date).toLocaleDateString('es-AR')}</span>
-              </div>
-            )}
-          </div>
-
-          {expediente.close_reason && (
-            <div className="rounded-lg bg-muted p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Motivo de cierre</p>
-              <p className="text-sm text-foreground">{expediente.close_reason}</p>
-            </div>
           )}
         </div>
 
-        {/* Actions */}
+        {/* Actions — immediately visible for decision makers */}
         {!isClosed && (isSocioOrEncargado || isAuthor) && (
-          <div className="space-y-2">
-            <div className="flex gap-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setStatusDialogOpen(true)}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-[#006d5a] h-10 text-xs font-semibold text-[#006d5a] transition-colors hover:bg-[#e8f5f1]"
+            >
+              <ArrowRightLeft className="size-3.5" />
+              Estado
+            </button>
+            {isSocioOrEncargado && (
               <button
-                onClick={() => setStatusDialogOpen(true)}
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-[#006d5a] px-3 py-2.5 text-xs font-semibold text-[#006d5a] transition-colors hover:bg-[#e8f5f1]"
+                onClick={openAssignDialog}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#006d5a] h-10 text-xs font-semibold text-white transition-colors hover:bg-[#005a4a]"
               >
-                <ArrowRightLeft className="size-3.5" />
-                Cambiar Estado
+                <UserPlus className="size-3.5" />
+                Asignar
               </button>
-              {isSocioOrEncargado && (
-                <button
-                  onClick={openAssignDialog}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-[#005a4a]"
-                >
-                  <UserPlus className="size-3.5" />
-                  Asignar
-                </button>
-              )}
-            </div>
-            {/* Delete draft */}
+            )}
             {expediente.status === 'borrador' && (isAuthor || isSocioOrEncargado) && (
               <button
                 onClick={handleDelete}
-                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-[#ea504c]/30 px-3 py-2 text-xs font-medium text-[#ea504c] transition-colors hover:bg-[#fef2f2]"
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-[#ea504c]/30 h-10 px-3 text-xs font-medium text-[#ea504c] transition-colors hover:bg-[#fef2f2]"
               >
                 <Trash2 className="size-3.5" />
-                Eliminar borrador
               </button>
+            )}
+          </div>
+        )}
+
+        {/* Description + Reason — collapsible detail */}
+        {(expediente.description || expediente.reason || expediente.close_reason) && (
+          <div className="rounded-xl border bg-card p-4 space-y-3">
+            {expediente.description && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Descripción</p>
+                <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{expediente.description}</p>
+              </div>
+            )}
+            {expediente.reason && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Fundamento</p>
+                <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">{expediente.reason}</p>
+              </div>
+            )}
+            {expediente.close_reason && (
+              <div className="rounded-lg bg-muted p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Motivo de cierre</p>
+                <p className="text-sm text-foreground">{expediente.close_reason}</p>
+              </div>
             )}
           </div>
         )}
@@ -429,6 +409,7 @@ export default function ExpedienteDetailPage() {
         {/* Tasks */}
         <TasksSection
           expedienteId={expediente.id}
+          currentUserId={profile?.id ?? ''}
           isSocio={profile?.role === 'socio'}
           canManage={isSocioOrEncargado}
           isClosed={isClosed}
@@ -436,8 +417,8 @@ export default function ExpedienteDetailPage() {
 
         {/* Timeline */}
         <div>
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-            Historial y Comentarios
+          <h2 className="section-label mb-2">
+            Historial ({comments.length})
           </h2>
           <ExpedienteTimeline comments={comments} />
         </div>

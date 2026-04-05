@@ -22,19 +22,19 @@ import { cn } from '@/lib/utils'
 // ---------------------------------------------------------------------------
 
 type MenuCategory = {
-  id: string
+  id: number
   name: string
   fudo_category_id: string | null
-  sort_order: number
+  sort_order: number | null
 }
 
 type MenuItem = {
-  id: string
+  id: number
   name: string
-  sale_price: number
+  sale_price: number | null
   fudo_product_id: string | null
-  menu_category_id: string | null
-  is_active: boolean
+  menu_category_id: number | null
+  is_active: boolean | null
 }
 
 type SyncResult = {
@@ -178,7 +178,7 @@ export default function FudoAdminPage() {
   }
 
   function expandAll() {
-    setExpandedCats(new Set(categories.map((c) => c.id)))
+    setExpandedCats(new Set(categories.map((c) => String(c.id))))
   }
 
   // ---------------------------------------------------------------------------
@@ -284,7 +284,7 @@ export default function FudoAdminPage() {
       {!loading && (
         <div className="space-y-2">
           {itemsByCategory.map((group) => {
-            const isExpanded = expandedCats.has(group.id) || !!search.trim()
+            const isExpanded = expandedCats.has(String(group.id)) || !!search.trim()
             return (
               <div
                 key={group.id}
@@ -292,7 +292,7 @@ export default function FudoAdminPage() {
               >
                 {/* Category header */}
                 <button
-                  onClick={() => toggleCat(group.id)}
+                  onClick={() => toggleCat(String(group.id))}
                   className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-[#faf8f5]"
                 >
                   <div className="flex items-center gap-2">

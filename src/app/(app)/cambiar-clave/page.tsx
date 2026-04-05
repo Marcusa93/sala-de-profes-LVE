@@ -68,7 +68,7 @@ export default function CambiarClavePage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* New password */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#a39e97]">
+            <label className="text-sm font-medium text-[#a39e97]">
               Nueva contraseña
             </label>
             <div className="relative">
@@ -78,7 +78,7 @@ export default function CambiarClavePage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Mínimo 6 caracteres"
-                className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] py-3 pl-10 pr-10 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-2 focus:ring-[#006d5a]/20"
+                className="h-12 w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] pl-10 pr-10 text-sm focus:border-[#006d5a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#006d5a]"
                 autoFocus
               />
               <button
@@ -90,13 +90,13 @@ export default function CambiarClavePage() {
               </button>
             </div>
             {password.length > 0 && password.length < 6 && (
-              <p className="text-[11px] text-[#ea504c]">Mínimo 6 caracteres</p>
+              <p className="text-xs text-[#ea504c]">Mínimo 6 caracteres</p>
             )}
           </div>
 
           {/* Confirm password */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold uppercase tracking-wider text-[#a39e97]">
+            <label className="text-sm font-medium text-[#a39e97]">
               Confirmar contraseña
             </label>
             <div className="relative">
@@ -106,11 +106,11 @@ export default function CambiarClavePage() {
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 placeholder="Repetí la contraseña"
-                className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] py-3 pl-10 pr-4 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-2 focus:ring-[#006d5a]/20"
+                className="h-12 w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] pl-10 pr-4 text-sm focus:border-[#006d5a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#006d5a]"
               />
             </div>
             {confirm.length > 0 && password !== confirm && (
-              <p className="text-[11px] text-[#ea504c]">Las contraseñas no coinciden</p>
+              <p className="text-xs text-[#ea504c]">Las contraseñas no coinciden</p>
             )}
           </div>
 
@@ -118,7 +118,7 @@ export default function CambiarClavePage() {
           <button
             type="submit"
             disabled={!isValid || loading}
-            className="w-full rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#005a4a] disabled:opacity-50"
+            className="h-12 w-full rounded-xl bg-[#006d5a] text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#005a4a] disabled:opacity-50"
           >
             {loading ? 'Actualizando...' : 'Guardar nueva contraseña'}
           </button>

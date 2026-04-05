@@ -10,6 +10,9 @@ import {
   Loader2,
   X,
   Minimize2,
+  Check,
+  Mic,
+  MicOff,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { AnimatePresence, motion } from '@/components/ui/motion'
@@ -18,11 +21,20 @@ import { AnimatePresence, motion } from '@/components/ui/motion'
 // Types
 // ---------------------------------------------------------------------------
 
+type ActionProposal = {
+  intent: string
+  items?: { name: string; quantity: string }[]
+  message?: string
+  urgency?: string
+}
+
 type ChatMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: Date
+  actionProposal?: ActionProposal
+  actionExecuted?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -97,15 +109,16 @@ const SQ_ENCARGADO: SQ[] = [
 ]
 
 const SQ_BARISTA: SQ[] = [
-  { label: '☕ Stock barra', question: '¿Cómo está el stock de barra hoy? ¿Qué falta?' },
+  { label: '☕ Stock', question: '¿Cómo está el stock de barra hoy? ¿Qué falta?' },
   { label: '📦 Pedidos', question: '¿Hay pedidos de barra pendientes?' },
-  { label: '👥 Equipo', question: '¿Quién está trabajando hoy en barra?' },
+  { label: '🛒 Pedir', question: 'Necesito leche entera 10lt y café 2kg' },
 ]
 
 const SQ_COCINA: SQ[] = [
-  { label: '👨‍🍳 Tareas', question: '¿Qué tareas del checklist de cocina están pendientes?' },
-  { label: '🥩 Stock', question: '¿Qué items de stock están bajos que necesito para cocinar?' },
-  { label: '📖 Recetas', question: '¿Qué recetas tenemos disponibles?' },
+  { label: '🥩 Stock', question: '¿Qué items de stock cocina están bajos?' },
+  { label: '🛒 Pedir', question: 'Necesito 5kg de nalga y 3kg de morrón' },
+  { label: '📖 Recetas', question: '¿Cómo se hace el lomo LVE?' },
+  { label: '⚠️ Reportar', question: 'La freidora no enciende bien' },
 ]
 
 const SQ_RUNNER: SQ[] = [
@@ -140,6 +153,8 @@ export function FloatingChat() {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
   const [isThinking, setIsThinking] = useState(false)
   const [hasUnread, setHasUnread] = useState(false)
 
@@ -196,6 +211,8 @@ export function FloatingChat() {
           role: 'assistant',
           content: data.response ?? 'No pude procesar tu consulta.',
           timestamp: new Date(),
+          actionProposal: data.actionProposal ?? undefined,
+          actionExecuted: data.actionExecuted ?? undefined,
         },
       ])
 
@@ -216,12 +233,152 @@ export function FloatingChat() {
     }
   }, [input, isThinking, messages, open])
 
+  // Confirm an action proposal
+  const handleConfirmAction = useCallback(async (proposal: ActionProposal) => {
+    if (isThinking) return
+    setIsThinking(true)
+
+    // Add user confirmation message
+    setMessages(prev => [...prev, {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: '✅ Confirmado',
+      timestamp: new Date(),
+    }])
+
+    try {
+      const res = await fetch('/api/chatbot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'confirmar acción',
+          confirmAction: proposal,
+        }),
+      })
+
+      const data = await res.json()
+
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: data.response ?? 'Acción ejecutada.',
+        timestamp: new Date(),
+        actionExecuted: data.actionExecuted ?? true,
+      }])
+    } catch {
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: 'Hubo un error al ejecutar la acción. Intentá de nuevo.',
+        timestamp: new Date(),
+      }])
+    } finally {
+      setIsThinking(false)
+    }
+  }, [isThinking])
+
+  // Cancel an action proposal
+  const handleCancelAction = useCallback(() => {
+    setMessages(prev => [...prev, {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: '❌ Cancelar',
+      timestamp: new Date(),
+    }, {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: 'Dale, no hay drama. Si necesitás algo más, decime nomás.',
+      timestamp: new Date(),
+    }])
+  }, [])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
   }
+
+  // Voice input via Web Speech API
+  const [supportsVoice, setSupportsVoice] = useState(false)
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const W = window as any
+    setSupportsVoice(!!(W.SpeechRecognition ?? W.webkitSpeechRecognition))
+  }, [])
+
+  const toggleVoice = useCallback(() => {
+    if (isListening) {
+      recognitionRef.current?.stop()
+      setIsListening(false)
+      return
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const W = window as any
+    const SpeechRecognition = W.SpeechRecognition ?? W.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setInput('(Tu navegador no soporta voz)')
+      return
+    }
+
+    try {
+      const recognition = new SpeechRecognition()
+      recognition.lang = 'es-AR'
+      recognition.continuous = false
+      recognition.interimResults = true
+      recognition.maxAlternatives = 1
+      recognitionRef.current = recognition
+
+      recognition.onstart = () => {
+        setIsListening(true)
+        setInput('')
+      }
+
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        const transcript = Array.from(event.results)
+          .map(r => r[0].transcript)
+          .join('')
+
+        setInput(transcript)
+
+        // If final result, auto-send
+        if (event.results[event.results.length - 1].isFinal) {
+          setIsListening(false)
+          if (transcript.trim()) {
+            setTimeout(() => handleSend(transcript.trim()), 500)
+          }
+        }
+      }
+
+      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        setIsListening(false)
+        if (event.error === 'not-allowed') {
+          setInput('⚠️ Permití el micrófono en tu navegador')
+        } else if (event.error === 'no-speech') {
+          setInput('No escuché nada, intentá de nuevo')
+        } else {
+          setInput(`Error de voz: ${event.error}`)
+        }
+      }
+
+      recognition.onend = () => {
+        setIsListening(false)
+      }
+
+      recognition.start()
+    } catch (err) {
+      setIsListening(false)
+      setInput('Error al iniciar el micrófono')
+    }
+
+    recognition.start()
+  }, [isListening, handleSend])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { recognitionRef.current?.stop() }
+  }, [])
 
   if (!profile) return null
 
@@ -341,6 +498,35 @@ export function FloatingChat() {
                     ) : (
                       <p className="whitespace-pre-wrap">{msg.content}</p>
                     )}
+
+                    {/* Action confirmation buttons */}
+                    {msg.actionProposal && !msg.actionExecuted && (
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          onClick={() => handleConfirmAction(msg.actionProposal!)}
+                          disabled={isThinking}
+                          className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-3 py-1.5 text-xs font-bold text-white transition-all hover:bg-[#005a4a] active:scale-95 disabled:opacity-50"
+                        >
+                          <Check className="size-3" />
+                          Confirmar
+                        </button>
+                        <button
+                          onClick={handleCancelAction}
+                          className="rounded-lg border border-[#ebe6df] px-3 py-1.5 text-xs font-medium text-[#a39e97] transition-colors hover:bg-[#f3efe9]"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Action executed badge */}
+                    {msg.actionExecuted && (
+                      <div className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-[#006d5a]">
+                        <Check className="size-3" />
+                        Acción ejecutada
+                      </div>
+                    )}
+
                     <p className={`mt-1 text-[9px] ${msg.role === 'user' ? 'text-white/40' : 'text-[#a39e97]'}`}>
                       {msg.timestamp.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
                     </p>
@@ -387,10 +573,30 @@ export function FloatingChat() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Preguntá algo..."
+                placeholder={isListening ? 'Escuchando...' : 'Preguntá algo...'}
                 disabled={isThinking}
-                className="flex-1 rounded-xl border border-[#ebe6df] bg-[#faf8f5] px-3 py-2 text-sm placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-2 focus:ring-[#006d5a]/20 disabled:opacity-50"
+                className={`flex-1 rounded-xl border bg-[#faf8f5] px-3 py-2 text-sm placeholder:text-[#a39e97] focus:outline-none focus:ring-2 disabled:opacity-50 ${
+                  isListening
+                    ? 'border-[#ea504c] ring-2 ring-[#ea504c]/30 placeholder:text-[#ea504c]'
+                    : 'border-[#ebe6df] focus:border-[#006d5a] focus:ring-[#006d5a]/20'
+                }`}
               />
+              {/* Mic button */}
+              {supportsVoice && (
+                <button
+                  onClick={toggleVoice}
+                  disabled={isThinking}
+                  className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-all disabled:opacity-40 ${
+                    isListening
+                      ? 'bg-[#ea504c] text-white shadow-md animate-pulse'
+                      : 'bg-[#f3efe9] text-[#a39e97] hover:bg-[#ebe6df] hover:text-[#3d2c24]'
+                  }`}
+                  aria-label={isListening ? 'Dejar de escuchar' : 'Hablar'}
+                >
+                  {isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+                </button>
+              )}
+              {/* Send button */}
               <button
                 onClick={() => handleSend()}
                 disabled={!input.trim() || isThinking}

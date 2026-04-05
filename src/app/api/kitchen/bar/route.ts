@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { notifyOrderToEncargados, notifyOrderStatusChange } from '@/lib/email/send'
 
 // ---------------------------------------------------------------------------
 // POST /api/kitchen/bar
@@ -104,6 +105,15 @@ export async function POST(request: NextRequest) {
         is_active: true,
       })
 
+      // Email to encargados + socios
+      notifyOrderToEncargados({
+        type: 'barra',
+        authorName,
+        items: [{ name: productName, quantity }],
+        urgency: urgency || 'normal',
+        note,
+      }).catch(() => {})
+
       return NextResponse.json({ success: true })
     }
 
@@ -122,32 +132,45 @@ export async function POST(request: NextRequest) {
       if (error) throw error
 
       // Notify the order creator about status change
-      if (status === 'ordered' || status === 'received') {
+      if (status === 'ordered' || status === 'received' || status === 'cancelled') {
         const { data: order } = await admin
           .from('bar_orders')
           .select('requested_by, product_name, quantity')
           .eq('id', orderId)
           .single()
 
+        // NOTE: Stock does NOT auto-update on "received".
+        // The barista manually updates stock after verifying the delivery.
+
         if (order?.requested_by) {
           const titleMap: Record<string, string> = {
-            ordered: '✅ Pedido de barra enviado',
-            received: '📦 Pedido de barra recibido',
+            ordered: '✅ Pedido enviado al proveedor',
+            received: '📦 Mercadería recibida — actualizá stock',
+            cancelled: '❌ Pedido cancelado',
           }
           const bodyMap: Record<string, string> = {
-            ordered: `${order.product_name} (${order.quantity}) — tu pedido fue enviado al proveedor`,
-            received: `${order.product_name} (${order.quantity}) — ya llegó`,
+            ordered: `${order.product_name} (${order.quantity}) — el encargado ya lo pidió al proveedor`,
+            received: `${order.product_name} (${order.quantity}) — ya llegó. Revisá y actualizá el stock de barra.`,
+            cancelled: `${order.product_name} (${order.quantity}) — fue cancelado`,
           }
           await admin.from('announcements').insert({
             author_id: user.id,
             type: 'operativo',
-            priority: 'baja',
-            title: titleMap[status],
-            body: bodyMap[status],
+            priority: status === 'received' ? 'alta' : 'baja',
+            title: titleMap[status] ?? `Pedido ${status}`,
+            body: bodyMap[status] ?? `${order.product_name} — ${status}`,
             scope: 'user',
             target_user_id: order.requested_by,
             is_active: true,
           })
+
+          // Email to order creator
+          notifyOrderStatusChange({
+            userId: order.requested_by,
+            productName: order.product_name,
+            quantity: order.quantity,
+            newStatus: status as 'ordered' | 'received' | 'cancelled',
+          }).catch(() => {})
         }
       }
 

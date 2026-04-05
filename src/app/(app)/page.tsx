@@ -1,6 +1,10 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
+import { isStockCritical } from '@/lib/contracts/stock'
+import { DailyBriefing } from '@/components/ai/DailyBriefing'
+import { ActionCenter } from '@/components/ai/ActionCenter'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -20,6 +24,9 @@ import {
   Send,
   Loader2,
   X,
+  BarChart3,
+  FolderOpen,
+  Package,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -27,6 +34,8 @@ import { createClient } from '@/lib/supabase/client'
 import { ROLES } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
 import { DashboardSkeleton } from '@/components/ui/skeleton'
+import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
+import { ShiftReminder } from '@/components/notifications/ShiftReminder'
 import {
   FadeIn,
   StaggerList,
@@ -70,6 +79,13 @@ export default function DashboardPage() {
   const [announcementCount, setAnnouncementCount] = useState(0)
   const [teamToday, setTeamToday] = useState<TeamMember[]>([])
   const [criticalStockCount, setCriticalStockCount] = useState(0)
+  const [stockItems, setStockItems] = useState<{ id: string; name: string; current_qty: number; min_qty: number; supplier_id: string | null; category: string }[]>([])
+  const [pendingOrders, setPendingOrders] = useState(0)
+  const [expedientesActivos, setExpedientesActivos] = useState(0)
+  const [expedientesData, setExpedientesData] = useState<{ id: string; code: string; title: string; status: string; urgency: string; target_date: string | null; updated_at: string; responsible_id: string | null }[]>([])
+  const [ventasHoy, setVentasHoy] = useState<{ total: number; tickets: number } | null>(null)
+  const [fudoLastSync, setFudoLastSync] = useState<string | null>(null)
+  const [barUrgent, setBarUrgent] = useState(0)
   const [loading, setLoading] = useState(true)
 
   // Report dialog state
@@ -105,7 +121,7 @@ export default function DashboardPage() {
 
   const [today] = useState(() => new Date())
   const todayStr = format(today, 'yyyy-MM-dd')
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
 
   // Fetch all dashboard data
   useEffect(() => {
@@ -135,12 +151,10 @@ export default function DashboardPage() {
           .limit(1)
           .maybeSingle()
 
-        const announcementsPromise = supabase
-          .from('announcements')
-          .select('*', { count: 'exact', head: true })
-          .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+        // Count unread announcements for this user using the RPC
+        const announcementsPromise = supabase.rpc('get_my_announcements')
 
-        const teamPromise = profile!.role === 'encargado'
+        const teamPromise = isEncargado
           ? supabase
               .from('attendance_logs')
               .select(
@@ -150,35 +164,83 @@ export default function DashboardPage() {
               .is('clock_out_at', null)
           : null
 
-        const stockPromise = profile!.role === 'encargado'
+        const stockPromise = isEncargado
           ? supabase
               .from('stock_items')
-              .select('id, current_qty, min_qty')
+              .select('id, name, current_qty, min_qty, supplier_id, category')
               .eq('is_active', true)
           : null
 
-        const [attendanceRes, shiftRes, announcementsRes, teamRes, stockRes] =
+        // Pedidos pendientes (cocina + barra) — for encargado/socio
+        const ordersPromise = isEncargado
+          ? Promise.all([
+              supabase.from('kitchen_orders').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+              supabase.from('bar_orders').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+            ])
+          : null
+
+        // Expedientes activos — for socio (fetch full data for actions)
+        const expedientesPromise = profile!.role === 'socio'
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ? (supabase as any).from('expedientes').select('id, code, title, status, urgency, target_date, updated_at, responsible_id').neq('status', 'cumplido').neq('status', 'cerrado_sin_implementacion').neq('status', 'archivado')
+          : null
+
+        // Ventas hoy — for socio
+        const ventasPromise = profile!.role === 'socio'
+          ? fetch('/api/fudo/auto-sync', { credentials: 'include' }).then(async r => {
+              const json = await r.json()
+              if (json.error) console.error('[Ventas Home]', json.error)
+              return json
+            }).catch((err) => { console.error('[Ventas Home fetch]', err); return null })
+          : null
+
+        // Bar stock urgente — for barista
+        const barUrgentPromise = profile!.role === 'barista'
+          ? supabase.from('bar_stock_items').select('id', { count: 'exact', head: true }).eq('is_urgent', true).eq('is_active', true)
+          : null
+
+        const [attendanceRes, shiftRes, announcementsRes, teamRes, stockRes, ordersRes, expedientesRes, ventasRes, barUrgentRes] =
           await Promise.all([
             attendancePromise,
             shiftPromise,
             announcementsPromise,
             teamPromise,
             stockPromise,
+            ordersPromise,
+            expedientesPromise,
+            ventasPromise,
+            barUrgentPromise,
           ])
 
         setTodayAttendance(attendanceRes.data)
         setNextShift(shiftRes.data)
-        setAnnouncementCount(announcementsRes.count ?? 0)
+        // Count unread from get_my_announcements — filter out already read
+        const allAnnouncements = announcementsRes.data ?? []
+        setAnnouncementCount(allAnnouncements.length)
 
         if (teamRes) {
           setTeamToday((teamRes.data as unknown as TeamMember[]) ?? [])
         }
-        if (stockRes) {
-          const critical =
-            stockRes.data?.filter(
-              (item) => item.current_qty <= item.min_qty,
-            ) ?? []
+        if (stockRes?.data) {
+          const items = stockRes.data ?? []
+          setStockItems(items as unknown as typeof stockItems)
+          const critical = items.filter((item) => isStockCritical(item.current_qty ?? 0, item.min_qty ?? 0))
           setCriticalStockCount(critical.length)
+        }
+        if (ordersRes) {
+          const [kitchenRes, barRes] = ordersRes
+          setPendingOrders((kitchenRes.count ?? 0) + (barRes.count ?? 0))
+        }
+        if (expedientesRes?.data) {
+          setExpedientesData(expedientesRes.data ?? [])
+          setExpedientesActivos(expedientesRes.data?.length ?? 0)
+        }
+        if (ventasRes?.today) {
+          setVentasHoy({ total: ventasRes.today.totalFacturado ?? 0, tickets: ventasRes.today.totalTickets ?? 0 })
+          if (ventasRes.lastSync) setFudoLastSync(ventasRes.lastSync)
+        }
+        if (barUrgentRes) {
+          setBarUrgent(barUrgentRes.count ?? 0)
         }
       } catch (err) {
         console.error('Error al cargar datos del dashboard:', err)
@@ -210,237 +272,247 @@ export default function DashboardPage() {
   // Attendance status helpers
   const isCompleted = !!todayAttendance?.clock_out_at
   const isInProgress = !!todayAttendance && !todayAttendance.clock_out_at
-  const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : 'transparent'
+  const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : '#ebe6df'
+  const isSocio = profile?.role === 'socio'
 
   return (
-    <div className="mx-auto max-w-2xl space-y-7 pb-8">
+    <div className="mx-auto max-w-2xl space-y-5 pb-8">
       {/* ---------------------------------------------------------------- */}
-      {/* Header / Welcome                                                 */}
+      {/* Header / Welcome — compact                                       */}
       {/* ---------------------------------------------------------------- */}
       <FadeIn className="pt-1">
-        <h1 className="font-display text-3xl tracking-tight text-[#3d2c24]">
-          Hola, <span className="text-[#006d5a]">{firstName}</span>
-        </h1>
-        <p className="section-label mt-2 capitalize">
-          {format(today, "EEEE d 'de' MMMM, yyyy", { locale: es })}
-        </p>
-      </FadeIn>
-
-      {/* ---------------------------------------------------------------- */}
-      {/* Hero KPI — Mi Estado Hoy                                         */}
-      {/* ---------------------------------------------------------------- */}
-      <FadeIn delay={0.05}>
-        <ScalePress>
-          <Link href="/mi-turno">
-            <div className="card-elevated-lg overflow-hidden rounded-2xl">
-              <div className="flex items-stretch">
-                <div className="w-1.5 shrink-0" style={{ backgroundColor: statusColor }} />
-                <div className="flex-1 p-5">
-                  <div className="flex items-center gap-2">
-                    <div className="flex size-8 items-center justify-center rounded-lg bg-[#f0f7f5]">
-                      <Clock className="size-4 text-[#006d5a]" />
-                    </div>
-                    <span className="section-label">Mi Estado Hoy</span>
-                    {isInProgress && <PulseRing color="#d4943a" />}
-                  </div>
-
-                  <div className="mt-4">
-                    {isCompleted ? (
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="size-5 text-[#006d5a]" />
-                        <span className="font-display text-2xl font-bold text-[#006d5a]">
-                          Turno completado
-                        </span>
-                      </div>
-                    ) : isInProgress ? (
-                      <span className="font-display text-2xl font-bold text-[#d4943a]">
-                        En turno
-                      </span>
-                    ) : (
-                      <span className="text-lg font-medium text-[#a39e97]">
-                        Sin registrar
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="mt-3">
-                    {todayAttendance ? (
-                      <div className="flex items-center gap-4 text-sm text-[#a39e97]">
-                        <p>
-                          Ingreso:{' '}
-                          <span className="font-semibold tabular-nums text-[#3d2c24]">
-                            {format(new Date(todayAttendance.clock_in_at), 'HH:mm')}
-                          </span>
-                        </p>
-                        {todayAttendance.clock_out_at && (
-                          <p>
-                            Egreso:{' '}
-                            <span className="font-semibold tabular-nums text-[#3d2c24]">
-                              {format(new Date(todayAttendance.clock_out_at), 'HH:mm')}
-                            </span>
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-[#a39e97]">
-                        Tocá para marcar ingreso
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center pr-4">
-                  <ArrowRight className="size-4 text-[#d1cdc7]" />
-                </div>
-              </div>
-            </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="font-display text-2xl tracking-tight text-[#3d2c24]">
+              Hola, <span className="text-[#006d5a]">{firstName}</span>
+            </h1>
+            <p className="section-label mt-1 capitalize">
+              {format(today, "EEEE d 'de' MMMM", { locale: es })}
+            </p>
+          </div>
+          {/* Compact attendance status — right aligned */}
+          <Link href="/mi-turno" className="flex items-center gap-2 rounded-xl px-3 py-2 transition-colors hover:bg-[#f3efe9]">
+            <div className="size-2.5 rounded-full" style={{ backgroundColor: statusColor }} />
+            <span className="text-xs font-semibold text-[#3d2c24]">
+              {isCompleted ? 'Turno OK' : isInProgress ? 'En turno' : 'Sin fichar'}
+            </span>
+            {todayAttendance && (
+              <span className="text-[10px] tabular-nums text-[#a39e97]">
+                {format(new Date(todayAttendance.clock_in_at), 'HH:mm')}
+              </span>
+            )}
           </Link>
-        </ScalePress>
+        </div>
       </FadeIn>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* KPI Grid — Turno + Avisos (+ Equipo + Stock for encargado)       */}
-      {/* ---------------------------------------------------------------- */}
-      <StaggerList className="grid grid-cols-2 gap-3" staggerDelay={0.06}>
-        {/* Proximo Turno */}
-        <StaggerItem>
-          <ScalePress>
-            <Link href="/mis-horarios">
-              <div className="card-interactive rounded-xl p-4">
-                <div className="flex items-center gap-2">
-                  <CalendarDays className="size-3.5 text-[#b8906e]" />
-                  <span className="section-label">Proximo Turno</span>
-                </div>
-                <div className="mt-3">
-                  {nextShift ? (
-                    <>
-                      <p className="text-xs font-semibold capitalize text-[#3d2c24]">
-                        {format(
-                          new Date(nextShift.shift_date + 'T12:00:00'),
-                          "EEE d MMM",
-                          { locale: es },
-                        )}
-                      </p>
-                      <p className="mt-1 font-display text-lg font-bold tabular-nums text-[#3d2c24]">
-                        {nextShift.start_time.slice(0, 5)} – {nextShift.end_time.slice(0, 5)}
-                      </p>
-                      <span
-                        className="mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                        style={{
-                          backgroundColor: ROLES[nextShift.shift_role].bg,
-                          color: ROLES[nextShift.shift_role].color,
-                        }}
-                      >
-                        {ROLES[nextShift.shift_role].emoji} {ROLES[nextShift.shift_role].label}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm font-medium text-[#a39e97]">Sin turnos</p>
-                      <p className="mt-1 text-xs text-[#a39e97]">Consultá con tu encargado</p>
-                    </>
-                  )}
-                </div>
-              </div>
-            </Link>
-          </ScalePress>
-        </StaggerItem>
+      {/* AI briefing removed — replaced by Action Center below */}
 
-        {/* Avisos */}
-        <StaggerItem>
-          <ScalePress>
-            <Link href="/notificaciones">
-              <div className="card-interactive rounded-xl p-4">
-                <div className="flex items-center gap-2">
-                  <Bell className="size-3.5 text-[#d4943a]" />
-                  <span className="section-label">Avisos</span>
-                </div>
-                <div className="mt-3">
-                  <span className="font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
-                    <AnimatedNumber value={announcementCount} />
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-[#a39e97]">
-                  {announcementCount === 1 ? 'aviso pendiente' : 'avisos pendientes'}
-                </p>
-              </div>
-            </Link>
-          </ScalePress>
-        </StaggerItem>
-
-        {/* Encargado: Equipo Hoy */}
-        {isEncargado && (
+      {/* ---------------------------------------------------------------- */}
+      {/* KPI Grid — role-aware, most important first                      */}
+      {/* ---------------------------------------------------------------- */}
+      <StaggerList className="grid grid-cols-2 gap-3" staggerDelay={0.04}>
+        {/* Socio: Ventas Hoy — FIRST for socios */}
+        {isSocio && ventasHoy && (
           <StaggerItem>
             <ScalePress>
-              <Link href="/equipo">
-                <div className="card-interactive rounded-xl p-4">
+              <Link href="/ventas">
+                <div className="kpi-card rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#006d5a' }}>
                   <div className="flex items-center gap-2">
-                    <Users className="size-3.5 text-[#006d5a]" />
-                    <span className="section-label">Equipo Hoy</span>
+                    <BarChart3 className="size-3.5 text-[#006d5a]" />
+                    <span className="section-label">Facturado hoy</span>
                   </div>
-                  <div className="mt-3">
-                    <span className="font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
-                      <AnimatedNumber value={teamToday.length} />
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    {teamToday.length > 0 ? (
-                      <div className="space-y-0.5">
-                        {teamToday.slice(0, 3).map((member, i) => (
-                          <p key={i} className="truncate text-[11px] text-[#a39e97]">
-                            <span className="font-medium text-[#3d2c24]">
-                              {member.profiles?.first_name}
-                            </span>{' '}
-                            {ROLES[member.profiles?.role ?? 'runner'].emoji}
-                          </p>
-                        ))}
-                        {teamToday.length > 3 && (
-                          <p className="text-[11px] text-[#a39e97]">
-                            +{teamToday.length - 3} más
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-[#a39e97]">Nadie aún</p>
-                    )}
-                  </div>
-                </div>
-              </Link>
-            </ScalePress>
-          </StaggerItem>
-        )}
-
-        {/* Encargado: Stock Crítico */}
-        {isEncargado && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/stock">
-                <div className="card-interactive rounded-xl p-4">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="size-3.5 text-[#ea504c]" />
-                    <span className="section-label">Stock Critico</span>
-                  </div>
-                  <div className="mt-3">
-                    <span
-                      className={`font-display text-4xl font-bold tabular-nums ${
-                        criticalStockCount > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'
-                      }`}
-                    >
-                      <AnimatedNumber value={criticalStockCount} />
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-[#a39e97]">
-                    {criticalStockCount === 0
-                      ? 'Todo en orden'
-                      : criticalStockCount === 1
-                        ? 'producto bajo mínimo'
-                        : 'productos bajo mínimo'}
+                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#006d5a]">
+                    ${(ventasHoy.total / 1000).toFixed(0)}k
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {ventasHoy.tickets} tickets
+                    {fudoLastSync && ` · Fudo ${format(new Date(fudoLastSync), 'HH:mm')}`}
                   </p>
                 </div>
               </Link>
             </ScalePress>
           </StaggerItem>
         )}
+
+        {/* Encargado/Socio: Pedidos Pendientes */}
+        {isEncargado && pendingOrders > 0 && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/pedidos">
+                <div className="kpi-card rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#d4943a' }}>
+                  <div className="flex items-center gap-2">
+                    <ShoppingCart className="size-3.5 text-[#d4943a]" />
+                    <span className="section-label">Pedidos</span>
+                  </div>
+                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#d4943a]">
+                    <AnimatedNumber value={pendingOrders} />
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">pendientes</p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Avisos — always visible */}
+        <StaggerItem>
+          <ScalePress>
+            <Link href="/notificaciones">
+              <div className="kpi-card rounded-xl p-4">
+                <div className="flex items-center gap-2">
+                  <Bell className={`size-3.5 ${announcementCount > 5 ? 'text-[#d4943a]' : 'text-[#a39e97]'}`} />
+                  <span className="section-label">Avisos</span>
+                </div>
+                <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
+                  <AnimatedNumber value={announcementCount} />
+                </p>
+                <p className="text-[10px] text-[#a39e97]">pendientes</p>
+              </div>
+            </Link>
+          </ScalePress>
+        </StaggerItem>
+
+        {/* Proximo Turno — compact */}
+        <StaggerItem>
+          <ScalePress>
+            <Link href="/mis-horarios">
+              <div className="kpi-card rounded-xl p-4">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="size-3.5 text-[#8b5e34]" />
+                  <span className="section-label">Próximo turno</span>
+                </div>
+                {nextShift ? (
+                  <>
+                    <p className="mt-2 font-display text-lg font-bold tabular-nums text-[#3d2c24]">
+                      {nextShift.start_time.slice(0, 5)} – {nextShift.end_time.slice(0, 5)}
+                    </p>
+                    <p className="text-[10px] capitalize text-[#a39e97]">
+                      {format(new Date(nextShift.shift_date + 'T12:00:00'), 'EEE d MMM', { locale: es })}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-2 text-sm text-[#a39e97]">Sin turnos</p>
+                )}
+              </div>
+            </Link>
+          </ScalePress>
+        </StaggerItem>
+
+        {/* Socio: Expedientes */}
+        {isSocio && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/expedientes">
+                <div className="kpi-card rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <FolderOpen className="size-3.5 text-[#8b5e34]" />
+                    <span className="section-label">Expedientes</span>
+                  </div>
+                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
+                    <AnimatedNumber value={expedientesActivos} />
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">activos</p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Encargado/Socio: Stock Crítico */}
+        {isEncargado && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/stock">
+                <div className="kpi-card rounded-xl p-4" style={criticalStockCount > 0 ? { borderLeftWidth: 3, borderLeftColor: '#ea504c' } : {}}>
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className={`size-3.5 ${criticalStockCount > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`} />
+                    <span className="section-label">Stock</span>
+                  </div>
+                  <p className={`mt-2 font-display text-2xl font-bold tabular-nums ${criticalStockCount > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}>
+                    {criticalStockCount > 0 ? <AnimatedNumber value={criticalStockCount} /> : '✓'}
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {criticalStockCount === 0 ? 'Todo en orden' : 'críticos'}
+                  </p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Barista: Stock Barra */}
+        {profile?.role === 'barista' && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/cocina/barra">
+                <div className="kpi-card rounded-xl p-4" style={barUrgent > 0 ? { borderLeftWidth: 3, borderLeftColor: '#ea504c' } : {}}>
+                  <div className="flex items-center gap-2">
+                    <Coffee className={`size-3.5 ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`} />
+                    <span className="section-label">Stock Barra</span>
+                  </div>
+                  <p className={`mt-2 font-display text-2xl font-bold tabular-nums ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}>
+                    {barUrgent > 0 ? <AnimatedNumber value={barUrgent} /> : '✓'}
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {barUrgent === 0 ? 'Todo OK' : 'urgentes'}
+                  </p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Barista/Runner: Vajilla */}
+        {(profile?.role === 'barista' || profile?.role === 'runner') && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/vajilla">
+                <div className="kpi-card rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <Package className="size-3.5 text-[#8b5e34]" />
+                    <span className="section-label">Vajilla</span>
+                  </div>
+                  <p className="mt-2 text-sm font-semibold text-[#3d2c24]">Control</p>
+                  <p className="text-[10px] text-[#a39e97]">Ver inventario</p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Encargado: Equipo Hoy */}
+        {isEncargado && (
+          <StaggerItem>
+            <ScalePress>
+              <Link href="/equipo">
+                <div className="kpi-card rounded-xl p-4">
+                  <div className="flex items-center gap-2">
+                    <Users className="size-3.5 text-[#006d5a]" />
+                    <span className="section-label">Equipo</span>
+                  </div>
+                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
+                    <AnimatedNumber value={teamToday.length} />
+                  </p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {teamToday.length === 0 ? 'Nadie fichó' : 'presentes'}
+                  </p>
+                </div>
+              </Link>
+            </ScalePress>
+          </StaggerItem>
+        )}
+
+        {/* Stock Critico — already in grid above for encargado/socio */}
       </StaggerList>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Unified Action Center                                            */}
+      {/* ---------------------------------------------------------------- */}
+      {isEncargado && (
+        <FadeIn delay={0.2}>
+          <ActionCenter compact maxItems={4} />
+        </FadeIn>
+      )}
 
       {/* ---------------------------------------------------------------- */}
       {/* Quick Actions                                                    */}
@@ -450,16 +522,21 @@ export default function DashboardPage() {
         <StaggerList className="flex flex-col gap-2.5" staggerDelay={0.06}>
           {[
             { href: '/mi-turno', icon: LogIn, label: 'Marcar Ingreso/Egreso' },
-            ...(isEncargado ? [
+            ...(profile?.role === 'socio' ? [
+              { href: '/ventas', icon: BarChart3, label: 'Ventas del día' },
               { href: '/admin', icon: CalendarDays, label: 'Centro de Control' },
+              { href: '/pedidos', icon: ShoppingCart, label: 'Gestión de Compras' },
+              { href: '/expedientes', icon: FolderOpen, label: 'Expedientes' },
+            ] : isEncargado ? [
+              { href: '/admin', icon: CalendarDays, label: 'Centro de Control' },
+              { href: '/pedidos', icon: ShoppingCart, label: 'Gestión de Compras' },
               { href: '/cocina', icon: UtensilsCrossed, label: 'Cocina' },
-              { href: '/cocina/pedidos', icon: ShoppingCart, label: 'Pedidos de Cocina' },
+              { href: '/stock', icon: Package, label: 'Stock' },
             ] : profile?.role === 'chef' || profile?.role === 'cocina' ? [
               { href: '/cocina', icon: UtensilsCrossed, label: 'Cocina' },
               { href: '/cocina/pedidos', icon: ShoppingCart, label: 'Pedir mercadería' },
             ] : profile?.role === 'barista' ? [
-              { href: '/cocina/barra', icon: Coffee, label: 'Barra' },
-              { href: '/mis-horarios', icon: CalendarDays, label: 'Ver Horarios' },
+              { href: '/cocina/barra', icon: Coffee, label: 'Barra — Stock y Pedidos' },
             ] : [
               { href: '/mis-horarios', icon: CalendarDays, label: 'Ver Horarios' },
             ]),
@@ -472,7 +549,7 @@ export default function DashboardPage() {
                     <div className="w-1 self-stretch bg-[#006d5a]" />
                     <div className="flex flex-1 items-center justify-between px-4 py-3.5">
                       <span className="flex items-center gap-3">
-                        <div className="flex size-9 items-center justify-center rounded-xl bg-[#f0f7f5]">
+                        <div className="icon-btn flex items-center justify-center rounded-xl bg-[#f0f7f5]">
                           <action.icon className="size-4 text-[#006d5a]" />
                         </div>
                         <span className="text-sm font-medium text-[#3d2c24]">
@@ -496,7 +573,7 @@ export default function DashboardPage() {
                 <div className="w-1 self-stretch bg-[#ea504c]" />
                 <div className="flex flex-1 items-center justify-between px-4 py-3.5">
                   <span className="flex items-center gap-3">
-                    <div className="flex size-9 items-center justify-center rounded-xl bg-[#fef2f2]">
+                    <div className="icon-btn flex items-center justify-center rounded-xl bg-[#fef2f2]">
                       <AlertTriangle className="size-4 text-[#ea504c]" />
                     </div>
                     <span className="text-sm font-medium text-[#3d2c24]">
@@ -512,22 +589,30 @@ export default function DashboardPage() {
       </FadeIn>
 
       {/* ---------------------------------------------------------------- */}
+      {/* Announcement Popup — unread urgent/general on load               */}
+      {/* ---------------------------------------------------------------- */}
+      <AnnouncementPopup />
+
+      {/* Shift Reminder — for non-socios who haven't clocked in */}
+      <ShiftReminder />
+
+      {/* ---------------------------------------------------------------- */}
       {/* Report Problem Dialog                                            */}
       {/* ---------------------------------------------------------------- */}
       {reportOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
           <div
-            className="absolute inset-0 bg-black/30 backdrop-blur-[2px]"
+            className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
             onClick={() => setReportOpen(false)}
           />
-          <div className="relative z-10 mx-3 mb-3 w-full max-w-md rounded-2xl bg-white p-5 shadow-xl sm:mb-0">
+          <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-4 sm:p-5 shadow-xl sm:mx-auto sm:mb-0">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
               <button
                 onClick={() => setReportOpen(false)}
-                className="rounded-full p-1.5 text-[#a39e97] hover:bg-[#f3efe9]"
+                className="icon-btn flex items-center justify-center rounded-full text-[#a39e97] hover:bg-[#f3efe9]"
               >
-                <X className="size-4" />
+                <X className="size-5" />
               </button>
             </div>
 
@@ -535,7 +620,7 @@ export default function DashboardPage() {
               value={reportMsg}
               onChange={(e) => setReportMsg(e.target.value)}
               placeholder="¿Qué problema hay? Ej: Se rompió la máquina de café, falta leche urgente..."
-              rows={3}
+              rows={2}
               className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] p-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
             />
 
@@ -565,7 +650,7 @@ export default function DashboardPage() {
             <button
               onClick={sendReport}
               disabled={reportSending || !reportMsg.trim()}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-sm font-semibold text-white shadow-md transition-all hover:bg-[#005a4a] disabled:opacity-50 active:scale-[0.98]"
+              className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] text-sm font-semibold text-white shadow-md transition-all hover:bg-[#005a4a] disabled:opacity-50 active:scale-[0.98]"
             >
               {reportSending ? (
                 <Loader2 className="size-4 animate-spin" />

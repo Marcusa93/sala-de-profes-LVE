@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { FadeIn, StaggerList, StaggerItem, AnimatedNumber } from '@/components/ui/motion'
 import { ChartCard } from '@/components/admin/ChartCard'
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts'
+import { getStockSemaphore } from '@/lib/contracts/stock'
 
 const SEMAPHORE_COLORS = { red: '#ea504c', yellow: '#d4943a', green: '#006d5a' }
 
@@ -36,7 +37,7 @@ export default function StockReportPage() {
       const categorized = items.map((item) => ({
         ...item,
         supplier_name: null as string | null,
-        semaphore: item.current_qty <= item.min_qty ? 'red' : item.current_qty <= item.min_qty * 1.5 ? 'yellow' : 'green',
+        semaphore: getStockSemaphore(item.current_qty, item.min_qty),
       }))
 
       const byCategory = Object.entries(

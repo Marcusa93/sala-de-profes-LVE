@@ -15,6 +15,8 @@ import {
   Calendar,
   Phone,
   ShieldAlert,
+  Pencil,
+  Loader2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Link from 'next/link'
@@ -35,10 +37,13 @@ import { EditUserDialog } from '@/components/equipo/EditUserDialog'
 // ---------------------------------------------------------------------------
 
 type AttendanceRecord = {
+  id: string
   user_id: string
   clock_in_at: string
   clock_out_at: string | null
   status: 'open' | 'closed' | 'missing_checkout'
+  clock_out_type?: string | null
+  edited_by?: string | null
 }
 
 type EmployeeAttendance = {
@@ -67,6 +72,49 @@ export default function EquipoPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [editUser, setEditUser] = useState<Profile | null>(null)
 
+  // Edit egreso
+  const [editingEgresoId, setEditingEgresoId] = useState<string | null>(null)
+  const [egresoTime, setEgresoTime] = useState('')
+  const [egresoReason, setEgresoReason] = useState('')
+  const [savingEgreso, setSavingEgreso] = useState(false)
+
+  const isManager = profile?.role === 'socio' || profile?.role === 'encargado'
+
+  const handleSaveEgreso = async (attendanceId: string, operativeDate: string) => {
+    if (!egresoTime || savingEgreso) return
+    setSavingEgreso(true)
+    try {
+      const clockOut = new Date(`${operativeDate}T${egresoTime}:00-03:00`)
+      // If time is before 06:00, it's next day (after midnight)
+      const [h] = egresoTime.split(':').map(Number)
+      if (h < 6) {
+        clockOut.setDate(clockOut.getDate() + 1)
+      }
+
+      const res = await fetch('/api/admin/extend-shift', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          attendance_id: attendanceId,
+          new_clock_out: clockOut.toISOString(),
+          reason: egresoReason.trim() || 'Ajuste de egreso por encargado',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success('Egreso actualizado')
+      setEditingEgresoId(null)
+      setEgresoTime('')
+      setEgresoReason('')
+      // Refresh
+      fetchAttendance()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error')
+    } finally {
+      setSavingEgreso(false)
+    }
+  }
+
   const dateStr = format(selectedDate, 'yyyy-MM-dd')
   const isToday = dateStr === format(new Date(), 'yyyy-MM-dd')
 
@@ -89,7 +137,7 @@ export default function EquipoPage() {
       // Fetch attendance for the selected date
       const { data: attendance } = await supabase
         .from('attendance_logs')
-        .select('user_id, clock_in_at, clock_out_at, status')
+        .select('id, user_id, clock_in_at, clock_out_at, status, clock_out_type, edited_by')
         .eq('operative_date', dateStr)
 
       const attendanceMap = new Map(
@@ -163,7 +211,7 @@ export default function EquipoPage() {
     const r = ROLES[role]
     return (
       <span
-        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold"
         style={{ color: r.color, backgroundColor: r.bg }}
       >
         {r.emoji} {r.label}
@@ -177,7 +225,7 @@ export default function EquipoPage() {
 
   if (profileLoading) return <LoadingState message="Cargando..." />
 
-  if (!profile || profile.role !== 'encargado') {
+  if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center">
         <ShieldAlert className="size-12 text-[#ea504c]" strokeWidth={1.5} />
@@ -240,7 +288,7 @@ export default function EquipoPage() {
           <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-[#ebe6df]">
             <button
               onClick={() => goDay(-1)}
-              className="rounded-lg p-1.5 text-[#a39e97] transition hover:bg-[#f3efe9] hover:text-[#3d2c24]"
+              className="icon-btn"
             >
               <ChevronLeft className="size-5" />
             </button>
@@ -259,7 +307,7 @@ export default function EquipoPage() {
             <button
               onClick={() => goDay(1)}
               disabled={isToday}
-              className="rounded-lg p-1.5 text-[#a39e97] transition hover:bg-[#f3efe9] hover:text-[#3d2c24] disabled:opacity-30"
+              className="icon-btn disabled:opacity-30"
             >
               <ChevronRight className="size-5" />
             </button>
@@ -346,14 +394,78 @@ export default function EquipoPage() {
                       </div>
                     </div>
 
-                    {/* Status badge */}
-                    <span
-                      className="inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold"
-                      style={{ color: status.color, backgroundColor: status.bg }}
-                    >
-                      <StatusIcon className="size-3" />
-                      {status.label}
-                    </span>
+                    {/* Status badge + edit button */}
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold"
+                        style={{ color: status.color, backgroundColor: status.bg }}
+                      >
+                        <StatusIcon className="size-3" />
+                        {status.label}
+                      </span>
+                      {isManager && ea.attendance && (
+                        <button
+                          onClick={() => {
+                            if (editingEgresoId === ea.attendance!.id) {
+                              setEditingEgresoId(null)
+                            } else {
+                              setEditingEgresoId(ea.attendance!.id)
+                              setEgresoTime(ea.attendance!.clock_out_at
+                                ? format(new Date(ea.attendance!.clock_out_at), 'HH:mm')
+                                : ''
+                              )
+                              setEgresoReason('')
+                            }
+                          }}
+                          className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9] hover:text-[#3d2c24]"
+                          title="Editar egreso"
+                        >
+                          <Pencil className="size-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Inline edit egreso */}
+                    {editingEgresoId === ea.attendance?.id && ea.attendance && (
+                      <div className="col-span-full mt-2 rounded-lg bg-[#faf8f5] p-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-medium text-[#3d2c24]">Egreso:</label>
+                          <input
+                            type="time"
+                            value={egresoTime}
+                            onChange={(e) => setEgresoTime(e.target.value)}
+                            className="rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                          />
+                        </div>
+                        <input
+                          value={egresoReason}
+                          onChange={(e) => setEgresoReason(e.target.value)}
+                          placeholder="Motivo (opcional)"
+                          className="w-full rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditingEgresoId(null)}
+                            className="flex-1 rounded-lg border border-[#ebe6df] py-2 text-xs font-semibold text-[#a39e97] hover:bg-white"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleSaveEgreso(
+                                ea.attendance!.id,
+                                format(selectedDate, 'yyyy-MM-dd')
+                              )
+                            }}
+                            disabled={!egresoTime || savingEgreso}
+                            className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-[#006d5a] py-2 text-xs font-semibold text-white disabled:opacity-50"
+                          >
+                            {savingEgreso ? <Loader2 className="size-3 animate-spin" /> : null}
+                            Guardar
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )
               })}

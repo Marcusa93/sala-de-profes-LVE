@@ -11,7 +11,7 @@ import {
   Package,
   AlertTriangle,
   Bell,
-  Truck,
+  RefreshCw,
   ArrowRight,
   MessageCircle,
   LogOut,
@@ -47,6 +47,8 @@ type DashboardKpis = {
   announcements_active: number
   announcements_urgent: number
   suppliers_total: number
+  fudo_synced?: number
+  fudo_last_sync?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +105,13 @@ export default function AdminDashboard() {
           announcements_urgent: announcementsUrgent.count ?? 0,
           suppliers_total: suppliersRes.count ?? 0,
         })
+
+        // Fudo sync — background, non-blocking
+        fetch('/api/stock/sync').then(r => r.json()).then(d => {
+          if (d.success) {
+            setKpis(prev => prev ? { ...prev, fudo_synced: d.read?.synced ?? 0, fudo_last_sync: d.timestamp } : prev)
+          }
+        }).catch(() => {})
       } catch (err) {
         console.error('Error loading admin KPIs:', err)
       } finally {
@@ -201,12 +210,13 @@ export default function AdminDashboard() {
         </StaggerItem>
         <StaggerItem>
           <KpiCard
-            label="Proveedores"
-            value={kpis.suppliers_total}
-            icon={Truck}
-            color="#5a6b52"
-            bg="#eef2ec"
-            href="/proveedores"
+            label="Fudo"
+            value={kpis.fudo_synced ?? 0}
+            icon={RefreshCw}
+            color="#006d5a"
+            bg="#e8f5f1"
+            href="/stock"
+            subtitle={kpis.fudo_last_sync ? `Sync ${new Date(kpis.fudo_last_sync).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}` : 'sin sync'}
           />
         </StaggerItem>
       </StaggerList>

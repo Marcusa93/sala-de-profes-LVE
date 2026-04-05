@@ -68,8 +68,9 @@ export default function RecetasPage() {
   const [formPreparation, setFormPreparation] = useState('')
   const [formNotes, setFormNotes] = useState('')
 
-  const isChef = profile?.role === 'chef'
+  const isChef = profile?.role === 'chef' || profile?.role === 'socio'
   const canView =
+    profile?.role === 'socio' ||
     profile?.role === 'chef' ||
     profile?.role === 'encargado' ||
     profile?.role === 'cocina'
@@ -264,19 +265,11 @@ export default function RecetasPage() {
 
   if (!profile || !canView) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <div className="flex size-14 items-center justify-center rounded-2xl bg-[#e8f5f1]">
-            <ShieldAlert className="size-7 text-[#006d5a]" />
-          </div>
-          <h3 className="font-display text-base font-semibold text-[#3d2c24]">
-            Sin permisos
-          </h3>
-          <p className="max-w-xs text-sm text-[#a39e97]">
-            No tienes acceso al recetario.
-          </p>
-        </div>
-      </div>
+      <EmptyState
+        icon={ShieldAlert}
+        title="Sin permisos"
+        description="No tienes acceso al recetario."
+      />
     )
   }
 
@@ -298,11 +291,7 @@ export default function RecetasPage() {
         <button
           type="button"
           onClick={() => setActiveTab('todas')}
-          className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
-            activeTab === 'todas'
-              ? 'bg-[#006d5a] text-white shadow-sm'
-              : 'border border-[#ebe6df] bg-[#fefcf9] text-[#a39e97] hover:border-[#006d5a]/30 hover:text-[#3d2c24]'
-          }`}
+          className={`pill ${activeTab === 'todas' ? 'pill-active' : 'pill-inactive'}`}
         >
           Todas
         </button>
@@ -311,11 +300,7 @@ export default function RecetasPage() {
             key={cat.value}
             type="button"
             onClick={() => setActiveTab(cat.value)}
-            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
-              activeTab === cat.value
-                ? 'bg-[#006d5a] text-white shadow-sm'
-                : 'border border-[#ebe6df] bg-[#fefcf9] text-[#a39e97] hover:border-[#006d5a]/30 hover:text-[#3d2c24]'
-            }`}
+            className={`pill ${activeTab === cat.value ? 'pill-active' : 'pill-inactive'}`}
           >
             {cat.label}
           </button>
@@ -365,7 +350,7 @@ export default function RecetasPage() {
       {isChef && (
         <button
           onClick={openCreateDialog}
-          className="fixed bottom-20 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-8 md:right-8"
+          className="fab"
           aria-label="Nueva receta"
         >
           <Plus className="size-6" />

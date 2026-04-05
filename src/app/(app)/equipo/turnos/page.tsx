@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import {
   format,
   startOfWeek,
@@ -20,6 +21,10 @@ import {
   CalendarDays,
   Loader2,
   ShieldAlert,
+  Upload,
+  FileSpreadsheet,
+  CheckCircle,
+  AlertCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent } from '@/components/ui/card'
@@ -91,6 +96,136 @@ export default function EquipoTurnosPage() {
   const [editingShift, setEditingShift] = useState<ShiftWithProfile | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // Excel upload
+  const [uploading, setUploading] = useState(false)
+  const [uploadResult, setUploadResult] = useState<{
+    created: number; skipped: number; errors: number
+    details: { created: string[]; skipped: string[]; errors: string[] }
+  } | null>(null)
+  const [showUploadResult, setShowUploadResult] = useState(false)
+
+  // Replace confirmation
+  const [replaceDialogOpen, setReplaceDialogOpen] = useState(false)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [existingCount, setExistingCount] = useState(0)
+
+  // Preview
+  const [previewData, setPreviewData] = useState<{ name: string; shifts: { day: string; time: string }[] }[] | null>(null)
+  const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
+
+  const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setPendingFile(file)
+
+    // Quick client-side preview using xlsx
+    try {
+      const XLSX = (await import('xlsx'))
+      const buffer = await file.arrayBuffer()
+      const wb = XLSX.read(buffer, { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const rows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true })
+
+      const dayNames = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado', 'Domingo']
+      const preview: { name: string; shifts: { day: string; time: string }[] }[] = []
+      let currentRole = ''
+
+      for (const row of rows) {
+        if (!row || row.length === 0) continue
+        const first = String(row[0] ?? '').trim()
+        if (!first) continue
+
+        // Role header (all uppercase, no time data)
+        if (first === first.toUpperCase() && first.length > 2 && !String(row[1] ?? '').match(/\d/)) {
+          currentRole = first
+          continue
+        }
+
+        // Employee row
+        const shifts: { day: string; time: string }[] = []
+        for (let i = 1; i <= 7 && i < row.length; i++) {
+          const val = String(row[i] ?? '').trim()
+          if (!val) continue
+          const day = dayNames[i - 1] ?? `Día ${i}`
+          shifts.push({ day, time: val })
+        }
+
+        if (shifts.length > 0) {
+          preview.push({ name: `${first}${currentRole ? ` (${currentRole.toLowerCase()})` : ''}`, shifts })
+        }
+      }
+
+      setPreviewData(preview)
+      setPreviewDialogOpen(true)
+    } catch {
+      // If preview fails, go straight to upload
+      await checkAndUpload(file)
+    }
+  }
+
+  const confirmPreviewUpload = async () => {
+    setPreviewDialogOpen(false)
+    if (!pendingFile) return
+    await checkAndUpload(pendingFile)
+  }
+
+  const checkAndUpload = async (file: File) => {
+    // Check if shifts already exist for this week
+    try {
+      const checkForm = new FormData()
+      checkForm.append('checkOnly', 'true')
+      checkForm.append('weekStart', format(currentWeekStart, 'yyyy-MM-dd'))
+      const checkRes = await fetch('/api/shifts/upload', { method: 'POST', body: checkForm })
+      const checkData = await checkRes.json()
+
+      if (checkData.exists && checkData.count > 0) {
+        setExistingCount(checkData.count)
+        setReplaceDialogOpen(true)
+        return
+      }
+    } catch {
+      // If check fails, proceed
+    }
+
+    await doUpload(file, false)
+  }
+
+  const doUpload = async (file: File, replace: boolean) => {
+    setUploading(true)
+    setReplaceDialogOpen(false)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('weekStart', format(currentWeekStart, 'yyyy-MM-dd'))
+      if (replace) formData.append('replace', 'true')
+
+      const res = await fetch('/api/shifts/upload', { method: 'POST', body: formData })
+      const data = await res.json()
+
+      if (!res.ok) throw new Error(data.error)
+
+      setUploadResult(data)
+      setShowUploadResult(true)
+
+      if (data.created > 0) {
+        toast.success(`${data.created} turno${data.created > 1 ? 's' : ''} ${replace ? 'reemplazado' : 'creado'}${data.created > 1 ? 's' : ''}`)
+        await fetchShifts()
+      }
+      if (data.skipped > 0 && !replace) {
+        toast.info(`${data.skipped} turno${data.skipped > 1 ? 's' : ''} ya existía${data.skipped > 1 ? 'n' : ''}`)
+      }
+      if (data.errors > 0) {
+        toast.error(`${data.errors} fila${data.errors > 1 ? 's' : ''} con error`)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al procesar archivo')
+    } finally {
+      setUploading(false)
+      setPendingFile(null)
+    }
+  }
+
   // Delete confirmation
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deletingShift, setDeletingShift] = useState<ShiftWithProfile | null>(
@@ -106,7 +241,7 @@ export default function EquipoTurnosPage() {
   const [formRole, setFormRole] = useState<AppRole>('runner')
   const [formNotes, setFormNotes] = useState('')
 
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
 
   // ------------------------------------------
   // Fetch shifts for the current week
@@ -347,14 +482,70 @@ export default function EquipoTurnosPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-28">
       {/* Header */}
-      <div>
-        <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">
-          Turnos del Equipo
-        </h1>
-        <p className="section-label mt-2">
-          Gestiona los horarios de todo tu equipo
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">
+            Turnos del Equipo
+          </h1>
+          <p className="section-label mt-2">
+            Gestiona los horarios de todo tu equipo
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {/* Upload Excel */}
+          <label className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-xs font-semibold text-[#3d2c24] transition-colors hover:border-[#006d5a] hover:text-[#006d5a]">
+            {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            <span className="hidden sm:inline">Subir Excel</span>
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={handleExcelUpload}
+              className="hidden"
+              disabled={uploading}
+            />
+          </label>
+          {/* Create shift */}
+          <button
+            onClick={openCreateDialog}
+            className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#005a4a]"
+          >
+            <Plus className="size-4" />
+            <span className="hidden sm:inline">Nuevo turno</span>
+          </button>
+        </div>
       </div>
+
+      {/* Upload result banner */}
+      {showUploadResult && uploadResult && (
+        <div className="rounded-xl border border-[#ebe6df] bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileSpreadsheet className="size-5 text-[#006d5a]" />
+              <span className="text-sm font-semibold text-[#3d2c24]">Resultado de carga</span>
+            </div>
+            <button onClick={() => setShowUploadResult(false)} className="text-xs text-[#a39e97] hover:text-[#3d2c24]">Cerrar</button>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+            <div className="rounded-lg bg-[#e8f5f1] p-2">
+              <p className="font-bold text-[#006d5a]">{uploadResult.created}</p>
+              <p className="text-[#006d5a]">Creados</p>
+            </div>
+            <div className="rounded-lg bg-[#fdf6ec] p-2">
+              <p className="font-bold text-[#d4943a]">{uploadResult.skipped}</p>
+              <p className="text-[#d4943a]">Duplicados</p>
+            </div>
+            <div className="rounded-lg bg-[#fef2f2] p-2">
+              <p className="font-bold text-[#ea504c]">{uploadResult.errors}</p>
+              <p className="text-[#ea504c]">Errores</p>
+            </div>
+          </div>
+          {uploadResult.details.errors.length > 0 && (
+            <div className="mt-2 max-h-24 overflow-y-auto rounded-lg bg-[#fef2f2] p-2 text-[11px] text-[#ea504c]">
+              {uploadResult.details.errors.map((e, i) => <p key={i}>{e}</p>)}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Week navigation */}
       <div className="card-elevated flex items-center justify-between rounded-xl px-3 py-3">
@@ -391,173 +582,225 @@ export default function EquipoTurnosPage() {
       ) : (
         <>
           {/* ======================================== */}
-          {/* Desktop: 7-column grid (Mon - Sun)       */}
+          {/* PLANILLA: Filas = empleados, Cols = días  */}
+          {/* Agrupado por rol                         */}
           {/* ======================================== */}
-          <div className="hidden md:grid md:grid-cols-7 md:gap-2.5">
-            {weekDays.map((day) => {
-              const dayShifts = getShiftsForDay(day)
-              const isToday = isSameDay(day, new Date())
+          {(() => {
+            // Group employees by role with their shifts
+            const roleOrder: AppRole[] = ['encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha' as AppRole]
+            const employeesWithShifts = employees.map(emp => {
+              const empShifts = weekDays.map(day => {
+                const dayStr = format(day, 'yyyy-MM-dd')
+                return shifts.find(s => s.user_id === emp.id && s.shift_date === dayStr) ?? null
+              })
+              return { ...emp, weekShifts: empShifts }
+            })
 
-              return (
-                <div key={day.toISOString()} className="min-h-[160px]">
-                  {/* Day header */}
-                  <div
-                    className={`mb-2.5 rounded-xl px-2 py-2.5 text-center transition-colors ${
-                      isToday
-                        ? 'bg-[#006d5a] text-white shadow-sm'
-                        : 'border border-[#ebe6df] bg-[#fefcf9]'
-                    }`}
-                  >
-                    <p className={`text-[11px] font-semibold uppercase tracking-wider ${isToday ? 'opacity-80' : 'text-[#a39e97]'}`}>
-                      {format(day, 'EEE', { locale: es })}
-                    </p>
-                    <p className={`text-lg font-bold tabular-nums ${isToday ? '' : 'text-[#3d2c24]'}`}>
-                      {format(day, 'd')}
-                    </p>
-                  </div>
+            const byRole = new Map<string, typeof employeesWithShifts>()
+            for (const emp of employeesWithShifts) {
+              const role = emp.role
+              if (!byRole.has(role)) byRole.set(role, [])
+              byRole.get(role)!.push(emp)
+            }
 
-                  {/* Shift cards for this day */}
-                  <div className="space-y-2">
-                    {dayShifts.length === 0 ? (
-                      <p className="py-4 text-center text-[11px] text-[#a39e97]">
-                        Sin turnos
-                      </p>
-                    ) : (
-                      dayShifts.map((shift) => (
-                        <div key={shift.id} className="group relative">
+            // Sort roles
+            const sortedRoles = roleOrder.filter(r => byRole.has(r))
+            // Add any roles not in the order
+            for (const r of byRole.keys()) {
+              if (!sortedRoles.includes(r as AppRole)) sortedRoles.push(r as AppRole)
+            }
+
+            return (
+              <div className="space-y-4">
+                {/* Day headers — sticky */}
+                <div className="overflow-x-auto -mx-4 px-4 scrollbar-none">
+                  <div className="min-w-[700px]">
+                    <div className="grid grid-cols-[140px_repeat(7,1fr)] gap-1">
+                      <div /> {/* empty cell for name column */}
+                      {weekDays.map(day => {
+                        const isToday = isSameDay(day, new Date())
+                        return (
                           <div
-                            className="cursor-pointer"
-                            onClick={() => openEditDialog(shift)}
+                            key={day.toISOString()}
+                            className={`rounded-lg px-1 py-2 text-center text-[11px] font-semibold ${
+                              isToday ? 'bg-[#006d5a] text-white' : 'bg-[#f8f5f0] text-[#3d2c24]'
+                            }`}
                           >
-                            <Card className="hover-lift overflow-hidden rounded-xl border border-[#ebe6df] bg-[#fefcf9] shadow-none">
-                              <div className="flex">
-                                {/* Left border with role color */}
-                                <div
-                                  className="w-1 shrink-0 rounded-l-xl"
-                                  style={{
-                                    backgroundColor: ROLES[shift.shift_role].color,
-                                  }}
-                                />
-                                <CardContent className="flex-1 p-2.5">
-                                  {/* Person name */}
-                                  <p className="truncate text-xs font-semibold text-[#3d2c24]">
-                                    {shift.profile
-                                      ? `${shift.profile.first_name} ${shift.profile.last_name}`
-                                      : 'Sin nombre'}
-                                  </p>
-                                  {/* Time */}
-                                  <p className="mt-0.5 text-[11px] tabular-nums text-[#a39e97]">
-                                    {shift.start_time.slice(0, 5)} -{' '}
-                                    {shift.end_time.slice(0, 5)}
-                                  </p>
-                                  {/* Role badge */}
-                                  <span
-                                    className="mt-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-                                    style={{
-                                      backgroundColor: ROLES[shift.shift_role].bg,
-                                      color: ROLES[shift.shift_role].color,
-                                    }}
-                                  >
-                                    {ROLES[shift.shift_role].emoji}{' '}
-                                    {ROLES[shift.shift_role].label}
-                                  </span>
-                                </CardContent>
-                              </div>
-                            </Card>
+                            <span className="uppercase">{format(day, 'EEE', { locale: es })}</span>
+                            <span className="ml-1 tabular-nums">{format(day, 'd')}</span>
                           </div>
-                          {/* Action buttons on hover */}
-                          <div className="absolute right-1.5 top-1.5 hidden gap-1 group-hover:flex">
-                            <button
-                              className="flex size-6 items-center justify-center rounded-lg border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#f3efe9]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openEditDialog(shift)
-                              }}
-                            >
-                              <Pencil className="size-3 text-[#a39e97]" />
-                            </button>
-                            <button
-                              className="flex size-6 items-center justify-center rounded-lg border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#fef2f2]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openDeleteDialog(shift)
-                              }}
-                            >
-                              <Trash2 className="size-3 text-[#ea504c]" />
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* ======================================== */}
-          {/* Mobile: List view grouped by day          */}
-          {/* ======================================== */}
-          <div className="space-y-5 md:hidden">
-            {weekDays.map((day) => {
-              const dayShifts = getShiftsForDay(day)
-              const isToday = isSameDay(day, new Date())
-
-              return (
-                <div key={day.toISOString()}>
-                  {/* Day header */}
-                  <div
-                    className={`mb-3 rounded-xl px-4 py-3 ${
-                      isToday
-                        ? 'bg-[#006d5a] text-white shadow-sm'
-                        : 'border border-[#ebe6df] bg-[#fefcf9]'
-                    }`}
-                  >
-                    <p className={`text-sm font-semibold capitalize ${isToday ? '' : 'text-[#3d2c24]'}`}>
-                      {format(day, "EEEE d 'de' MMMM", { locale: es })}
-                    </p>
-                  </div>
-
-                  {/* Shift cards */}
-                  {dayShifts.length === 0 ? (
-                    <p className="py-4 text-center text-sm text-[#a39e97]">
-                      Sin turnos programados
-                    </p>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {dayShifts.map((shift) => (
-                        <div key={shift.id} className="relative">
-                          <div onClick={() => openEditDialog(shift)}>
-                            <ShiftCard shift={shift} showPerson />
-                          </div>
-                          <div className="absolute right-2.5 top-2.5 flex gap-1.5">
-                            <button
-                              className="flex size-8 items-center justify-center rounded-xl border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#f3efe9]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openEditDialog(shift)
-                              }}
-                            >
-                              <Pencil className="size-3.5 text-[#a39e97]" />
-                            </button>
-                            <button
-                              className="flex size-8 items-center justify-center rounded-xl border border-[#ebe6df] bg-[#fefcf9]/95 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#fef2f2]"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                openDeleteDialog(shift)
-                              }}
-                            >
-                              <Trash2 className="size-3.5 text-[#ea504c]" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
-                  )}
+
+                    {/* Roles + employees */}
+                    {sortedRoles.map(role => {
+                      const roleEmps = byRole.get(role) ?? []
+                      if (roleEmps.length === 0) return null
+                      const roleConfig = ROLES[role] ?? { label: role, emoji: '👤', color: '#a39e97', bg: '#f3efe9' }
+
+                      return (
+                        <div key={role} className="mt-3">
+                          {/* Role header */}
+                          <div className="mb-1 flex items-center gap-1.5 px-1">
+                            <span className="text-sm">{roleConfig.emoji}</span>
+                            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: roleConfig.color }}>
+                              {roleConfig.label}s
+                            </span>
+                            <span className="text-[10px] text-[#a39e97]">({roleEmps.length})</span>
+                          </div>
+
+                          {/* Employee rows */}
+                          {roleEmps.map(emp => (
+                            <div
+                              key={emp.id}
+                              className="grid grid-cols-[140px_repeat(7,1fr)] gap-1 mb-1"
+                            >
+                              {/* Name cell */}
+                              <div className="flex items-center gap-1.5 rounded-lg bg-white px-2 py-2 ring-1 ring-[#ebe6df]">
+                                <div
+                                  className="flex size-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white"
+                                  style={{ backgroundColor: roleConfig.color }}
+                                >
+                                  {(emp.first_name?.[0] ?? '')}{(emp.last_name?.[0] ?? '')}
+                                </div>
+                                <span className="truncate text-xs font-medium text-[#3d2c24]">
+                                  {emp.first_name}
+                                </span>
+                              </div>
+
+                              {/* Day cells */}
+                              {emp.weekShifts.map((shift, i) => {
+                                const day = weekDays[i]
+                                const isToday = isSameDay(day, new Date())
+
+                                if (!shift) {
+                                  return (
+                                    <div
+                                      key={day.toISOString()}
+                                      className={`flex items-center justify-center rounded-lg text-[10px] ${
+                                        isToday ? 'bg-[#f0f7f5] ring-1 ring-[#006d5a]/20' : 'bg-[#faf8f5]'
+                                      } text-[#d1cdc7] cursor-pointer hover:bg-[#f3efe9]`}
+                                      onClick={() => {
+                                        setEditingShift(null)
+                                        setFormUserId(emp.id)
+                                        setFormDate(format(day, 'yyyy-MM-dd'))
+                                        setFormStartTime('08:00')
+                                        setFormEndTime('16:00')
+                                        setFormRole(emp.role)
+                                        setFormNotes('')
+                                        setDialogOpen(true)
+                                      }}
+                                    >
+                                      —
+                                    </div>
+                                  )
+                                }
+
+                                // Has shift
+                                const time = `${shift.start_time.slice(0, 5)}-${shift.end_time.slice(0, 5)}`
+                                const isDescanso = shift.notes?.toLowerCase().includes('descanso')
+
+                                return (
+                                  <div
+                                    key={day.toISOString()}
+                                    className={`group relative flex flex-col items-center justify-center rounded-lg px-1 py-1.5 cursor-pointer transition-colors ${
+                                      isDescanso
+                                        ? 'bg-[#f3efe9] text-[#a39e97]'
+                                        : isToday
+                                          ? 'bg-[#e8f5f1] ring-1 ring-[#006d5a]/30'
+                                          : 'bg-white ring-1 ring-[#ebe6df]'
+                                    } hover:ring-[#006d5a]/50`}
+                                    onClick={() => openEditDialog(shift)}
+                                  >
+                                    {isDescanso ? (
+                                      <span className="text-[10px] font-medium">Desc.</span>
+                                    ) : (
+                                      <>
+                                        <span className="text-[10px] font-bold tabular-nums text-[#3d2c24]">
+                                          {time}
+                                        </span>
+                                      </>
+                                    )}
+                                    {/* Delete on hover */}
+                                    <button
+                                      className="absolute -right-1 -top-1 hidden size-4 items-center justify-center rounded-full bg-[#ea504c] text-white shadow-sm group-hover:flex"
+                                      onClick={(e) => { e.stopPropagation(); openDeleteDialog(shift) }}
+                                    >
+                                      <Trash2 className="size-2.5" />
+                                    </button>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
-              )
-            })}
-          </div>
+
+                {/* Mobile: compact list by employee */}
+                <div className="md:hidden space-y-3">
+                  {sortedRoles.map(role => {
+                    const roleEmps = byRole.get(role) ?? []
+                    if (roleEmps.length === 0) return null
+                    const roleConfig = ROLES[role] ?? { label: role, emoji: '👤', color: '#a39e97', bg: '#f3efe9' }
+
+                    return (
+                      <div key={role}>
+                        <div className="mb-2 flex items-center gap-1.5">
+                          <span>{roleConfig.emoji}</span>
+                          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: roleConfig.color }}>
+                            {roleConfig.label}s
+                          </span>
+                        </div>
+                        {roleEmps.map(emp => (
+                          <div key={emp.id} className="mb-2 rounded-xl bg-white p-3 ring-1 ring-[#ebe6df]">
+                            <p className="text-sm font-semibold text-[#3d2c24]">{emp.first_name} {emp.last_name}</p>
+                            <div className="mt-2 grid grid-cols-7 gap-1">
+                              {emp.weekShifts.map((shift, i) => {
+                                const day = weekDays[i]
+                                const isToday = isSameDay(day, new Date())
+                                const dayLabel = format(day, 'EEE', { locale: es }).slice(0, 2).toUpperCase()
+
+                                return (
+                                  <div key={day.toISOString()} className="text-center">
+                                    <p className={`text-[9px] font-semibold ${isToday ? 'text-[#006d5a]' : 'text-[#a39e97]'}`}>
+                                      {dayLabel}
+                                    </p>
+                                    {shift ? (
+                                      <button
+                                        onClick={() => openEditDialog(shift)}
+                                        className={`mt-0.5 w-full rounded-md px-0.5 py-1 text-[9px] font-bold tabular-nums ${
+                                          shift.notes?.toLowerCase().includes('descanso')
+                                            ? 'bg-[#f3efe9] text-[#a39e97]'
+                                            : isToday
+                                              ? 'bg-[#e8f5f1] text-[#006d5a]'
+                                              : 'bg-[#faf8f5] text-[#3d2c24]'
+                                        }`}
+                                      >
+                                        {shift.notes?.toLowerCase().includes('descanso')
+                                          ? 'D'
+                                          : `${shift.start_time.slice(0, 2)}-${shift.end_time.slice(0, 2)}`
+                                        }
+                                      </button>
+                                    ) : (
+                                      <div className="mt-0.5 rounded-md bg-[#faf8f5] py-1 text-[9px] text-[#d1cdc7]">—</div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Empty state when no shifts at all */}
           {shifts.length === 0 && !loading && (
@@ -575,7 +818,7 @@ export default function EquipoTurnosPage() {
       {/* ========================================== */}
       <button
         onClick={openCreateDialog}
-        className="fixed bottom-20 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-8 md:right-8"
+        className="fixed bottom-24 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-8 md:right-8"
         aria-label="Agregar turno"
       >
         <Plus className="size-6" />
@@ -758,6 +1001,97 @@ export default function EquipoTurnosPage() {
               Eliminar
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================================== */}
+      {/* Preview Dialog                             */}
+      {/* ========================================== */}
+      <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
+        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-md max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg font-bold text-[#3d2c24]">
+              Preview del archivo
+            </DialogTitle>
+            <DialogDescription className="text-[#a39e97]">
+              {previewData?.length ?? 0} empleados detectados. Verificá antes de importar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-2 py-2">
+            {previewData?.map((emp, i) => (
+              <div key={i} className="rounded-xl border border-[#ebe6df] bg-white p-3">
+                <p className="text-sm font-semibold text-[#3d2c24]">{emp.name}</p>
+                <div className="mt-1.5 grid grid-cols-7 gap-1">
+                  {emp.shifts.map((s, j) => {
+                    const isDescanso = s.time.toLowerCase().includes('descanso') || s.time.toLowerCase().includes('franco') || s.time === '-' || s.time === 'X'
+                    return (
+                      <div key={j} className="text-center">
+                        <p className="text-[8px] font-semibold text-[#a39e97]">{s.day.slice(0, 3)}</p>
+                        <p className={`text-[9px] font-bold mt-0.5 ${isDescanso ? 'text-[#a39e97]' : 'text-[#3d2c24]'}`}>
+                          {isDescanso ? 'D' : s.time.replace(/ [Aa] /g, '-').slice(0, 9)}
+                        </p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 pt-2">
+            <Button
+              variant="outline"
+              className="flex-1 rounded-xl border-[#ebe6df] text-[#a39e97]"
+              onClick={() => { setPreviewDialogOpen(false); setPendingFile(null); setPreviewData(null) }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="flex-1 rounded-xl bg-[#006d5a] text-white hover:bg-[#005a4a]"
+              onClick={confirmPreviewUpload}
+            >
+              <CheckCircle className="size-4 mr-1" />
+              Importar turnos
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================================== */}
+      {/* Replace Confirmation Dialog                */}
+      {/* ========================================== */}
+      <Dialog open={replaceDialogOpen} onOpenChange={setReplaceDialogOpen}>
+        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg font-bold text-[#3d2c24]">
+              Ya hay turnos cargados
+            </DialogTitle>
+            <DialogDescription className="text-[#a39e97]">
+              Esta semana ya tiene <strong className="text-[#3d2c24]">{existingCount} turnos</strong> cargados.
+              ¿Qué querés hacer?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 pt-2">
+            <Button
+              className="w-full rounded-xl bg-[#ea504c] text-white hover:bg-[#d4413e]"
+              onClick={() => pendingFile && doUpload(pendingFile, true)}
+            >
+              Reemplazar todos los turnos de la semana
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full rounded-xl border-[#ebe6df] text-[#3d2c24]"
+              onClick={() => pendingFile && doUpload(pendingFile, false)}
+            >
+              Agregar sin borrar los existentes
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full rounded-xl border-[#ebe6df] text-[#a39e97]"
+              onClick={() => { setReplaceDialogOpen(false); setPendingFile(null) }}
+            >
+              Cancelar
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

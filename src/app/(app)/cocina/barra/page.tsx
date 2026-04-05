@@ -1,187 +1,282 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import Link from 'next/link'
+import { format } from 'date-fns'
+import { es } from 'date-fns/locale/es'
 import {
-  ArrowLeft,
-  Coffee,
-  AlertTriangle,
-  Check,
-  ShoppingCart,
-  Loader2,
-  Minus,
-  Plus,
-  Send,
-  X,
-  Truck,
-  MessageCircle,
+  ArrowLeft, Coffee, AlertTriangle, Check, ShoppingCart,
+  Loader2, Minus, Plus, Send, Package, Clock, ChevronDown,
+  ChevronUp, History, Pencil, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
-import { cn } from '@/lib/utils'
-import {
-  FadeIn,
-  StaggerList,
-  StaggerItem,
-  AnimatedNumber,
-} from '@/components/ui/motion'
-import { BAR_CATEGORIES, BAR_ORDER_URGENCY } from '@/lib/constants'
-import type { BarCategoryValue, BarOrderUrgencyValue } from '@/types/database'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  DialogClose,
-} from '@/components/ui/dialog'
+import { FadeIn } from '@/components/ui/motion'
+import { BAR_CATEGORIES } from '@/lib/constants'
 
-// DB urgency values differ from frontend: normal=normal, high=alta, critical=urgente
-const DB_TO_FRONTEND_URGENCY: Record<string, BarOrderUrgencyValue> = {
-  normal: 'normal',
-  low: 'normal',
-  high: 'alta',
-  critical: 'urgente',
-  // Also handle frontend values directly
-  alta: 'alta',
-  urgente: 'urgente',
-}
-
-const FALLBACK_URGENCY_CFG = { label: 'Normal', color: '#006d5a', bg: '#e8f5f1' }
-
-type BarSupplier = { id: string; name: string; phone: string | null }
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 type BarItem = {
-  id: number; name: string; category: BarCategoryValue; unit: string
-  current_qty: number; current_detail: string | null; min_level: number
-  is_urgent: boolean; supplier_id: string | null
+  id: number
+  name: string
+  category: string
+  unit: string | null
+  current_qty: number
+  min_level: number
+  current_detail: string | null
+  is_urgent: boolean
+  is_active: boolean
 }
 
-type BarOrderRow = {
-  id: number; product_name: string; category: string; quantity: string
-  urgency: BarOrderUrgencyValue; status: string; note: string | null
-  requested_by: string | null; created_at: string
+const UNIT_SHORT: Record<string, string> = {
+  unidad: 'u', litro: 'lt', kg: 'kg', gr: 'gr', caja: 'caja', ml: 'ml',
 }
 
-export default function BarraPage() {
+type BarOrder = {
+  id: number
+  product_name: string
+  quantity: string
+  status: string
+  note: string | null
+  created_at: string
+  bar_stock_item_id: number | null
+}
+
+type LogEntry = {
+  id: number
+  action: string
+  old_qty: number | null
+  new_qty: number | null
+  note: string | null
+  created_at: string
+  user_id: string | null
+  profiles?: { first_name: string; last_name: string } | null
+}
+
+type SemaphoreColor = 'red' | 'yellow' | 'green'
+
+function getSemaphore(item: BarItem): SemaphoreColor {
+  if (item.is_urgent || item.current_qty === 0) return 'red'
+  if (item.current_qty <= item.min_level) return 'yellow'
+  return 'green'
+}
+
+const SEMAPHORE = {
+  red: { label: 'Urgente', color: '#ea504c', bg: '#fef2f2', border: '#ea504c' },
+  yellow: { label: 'Atención', color: '#d4943a', bg: '#fdf6ec', border: '#d4943a' },
+  green: { label: 'OK', color: '#006d5a', bg: '#e8f5f1', border: '#006d5a' },
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+export default function MiBarraPage() {
   const { profile, loading: profileLoading } = useProfileContext()
-  const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<BarItem[]>([])
-  const [orders, setOrders] = useState<BarOrderRow[]>([])
-  const [suppliers, setSuppliers] = useState<Map<string, BarSupplier>>(new Map())
+  const [orders, setOrders] = useState<BarOrder[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showOk, setShowOk] = useState(true)
+  const [search, setSearch] = useState('')
 
-  // Edit dialog
-  const [editItem, setEditItem] = useState<BarItem | null>(null)
+  // Consumption data from Fudo
+  const [consumption, setConsumption] = useState<{ id: number; consumed: number; consumedUnit: string; pctUsed: number }[]>([])
+  const [consumptionLoaded, setConsumptionLoaded] = useState(false)
+
+  // Edit state
+  const [editingId, setEditingId] = useState<number | null>(null)
   const [editQty, setEditQty] = useState('')
-  const [editDetail, setEditDetail] = useState('')
-  const [saving, setSaving] = useState(false)
 
   // Order dialog
-  const [orderItem, setOrderItem] = useState<BarItem | null>(null)
+  const [orderItemId, setOrderItemId] = useState<number | null>(null)
   const [orderQty, setOrderQty] = useState('')
-  const [orderUrgency, setOrderUrgency] = useState<BarOrderUrgencyValue>('normal')
   const [orderNote, setOrderNote] = useState('')
   const [ordering, setOrdering] = useState(false)
 
-  const isEncargado = profile?.role === 'encargado'
-  const canEdit = ['encargado', 'barista'].includes(profile?.role ?? '')
+  // History
+  const [historyItemId, setHistoryItemId] = useState<number | null>(null)
+  const [historyLogs, setHistoryLogs] = useState<LogEntry[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
 
+  // Handover state
+  const [lastHandover, setLastHandover] = useState<{
+    shift_type: string; date: string; notes: string | null
+    items: { id: number; name: string; qty: number }[]
+    closedByName?: string
+    created_at?: string
+  } | null>(null)
+  const [closingShift, setClosingShift] = useState(false)
+  const [handoverDismissed, setHandoverDismissed] = useState(false)
+
+  // Quick stock mode
+  const [stockMode, setStockMode] = useState(false)
+  const [stockDraft, setStockDraft] = useState<Map<number, string>>(new Map())
+  const [savingStock, setSavingStock] = useState(false)
+
+  // Multi-order mode
+  const [orderMode, setOrderMode] = useState(false)
+  const [orderCart, setOrderCart] = useState<Map<number, { qty: string; note: string }>>(new Map())
+  const [sendingOrders, setSendingOrders] = useState(false)
+
+  const isManager = isManagerOrAbove(profile?.role)
+  const canEdit = profile?.role === 'barista' || isManager
+
+  // Fetch everything
   const fetchData = useCallback(async () => {
     const supabase = createClient()
-    try {
-      const [itemsRes, ordersRes, suppRes] = await Promise.all([
-        supabase.from('bar_stock_items').select('*').eq('is_active', true).order('sort_order'),
-        supabase.from('bar_orders').select('*').in('status', ['pending', 'ordered']).order('created_at', { ascending: false }),
-        supabase.from('suppliers').select('id, name, phone').eq('is_active', true),
-      ])
-      if (itemsRes.data) setItems(itemsRes.data as BarItem[])
-      if (ordersRes.data) setOrders(ordersRes.data as BarOrderRow[])
-      if (suppRes.data) {
-        const map = new Map<string, BarSupplier>()
-        for (const s of suppRes.data) map.set(s.id, s as BarSupplier)
-        setSuppliers(map)
-      }
-    } catch {
-      // Tables might not exist yet
-    } finally {
-      setLoading(false)
+    const [itemsRes, ordersRes, handoverRes] = await Promise.all([
+      supabase.from('bar_stock_items').select('*').eq('is_active', true).order('sort_order'),
+      supabase.from('bar_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }),
+      supabase.from('bar_shift_handover').select('*, profiles:closed_by(first_name, last_name)').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    ])
+    setItems(itemsRes.data ?? [])
+    setOrders(ordersRes.data ?? [])
+    if (handoverRes.data) {
+      const hd = handoverRes.data as Record<string, unknown>
+      const prof = hd.profiles as { first_name: string; last_name: string } | null
+      setLastHandover({
+        shift_type: hd.shift_type as string,
+        date: hd.date as string,
+        notes: hd.notes as string | null,
+        items: (hd.items as { id: number; name: string; qty: number }[]) ?? [],
+        closedByName: prof ? `${prof.first_name} ${prof.last_name}` : undefined,
+        created_at: hd.created_at as string,
+      })
     }
+    setLoading(false)
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // -------------------------------------------------------------------------
+  // Fetch Fudo consumption (lazy, after main data)
+  useEffect(() => {
+    if (loading || consumptionLoaded) return
+    fetch('/api/bar/consumption')
+      .then(r => r.json())
+      .then(d => {
+        if (d.consumption) setConsumption(d.consumption)
+        setConsumptionLoaded(true)
+      })
+      .catch(() => setConsumptionLoaded(true))
+  }, [loading, consumptionLoaded])
+
+  // Filter by search
+  const filteredItems = useMemo(() => {
+    if (!search.trim()) return items
+    const q = search.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    return items.filter(i =>
+      i.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q) ||
+      (BAR_CATEGORIES[i.category as keyof typeof BAR_CATEGORIES]?.label ?? i.category).toLowerCase().includes(q)
+    )
+  }, [items, search])
+
+  // Semaphore counts (for stats)
+  const semaphoreCounts = useMemo(() => {
+    let red = 0, yellow = 0, green = 0
+    for (const item of filteredItems) {
+      const s = getSemaphore(item)
+      if (s === 'red') red++
+      else if (s === 'yellow') yellow++
+      else green++
+    }
+    return { red, yellow, green }
+  }, [filteredItems])
+
+  // Group by category — urgents first within each category
+  const grouped = useMemo(() => {
+    // Urgents across all categories go in a special section
+    const urgents = filteredItems.filter(i => getSemaphore(i) === 'red')
+
+    // Group rest by category (including urgents in their category too)
+    const byCat = new Map<string, BarItem[]>()
+    const catOrder = ['cafe', 'lacteos', 'insumos_oyambre', 'suministros', 'packaging', 'general']
+    for (const cat of catOrder) byCat.set(cat, [])
+
+    for (const item of filteredItems) {
+      const cat = item.category || 'general'
+      if (!byCat.has(cat)) byCat.set(cat, [])
+      byCat.get(cat)!.push(item)
+    }
+
+    // Sort items within each category: urgents first, then by name
+    for (const [, items] of byCat) {
+      items.sort((a, b) => {
+        const sa = getSemaphore(a) === 'red' ? 0 : getSemaphore(a) === 'yellow' ? 1 : 2
+        const sb = getSemaphore(b) === 'red' ? 0 : getSemaphore(b) === 'yellow' ? 1 : 2
+        if (sa !== sb) return sa - sb
+        return a.name.localeCompare(b.name)
+      })
+    }
+
+    return { urgents, byCat }
+  }, [filteredItems])
+
+  // Build consumption map for passing to sections
+  const consumptionMap = useMemo(() => {
+    const map = new Map<number, { consumed: number; unit: string; pctUsed: number }>()
+    for (const c of consumption) {
+      if (c.consumed > 0) {
+        map.set(c.id, { consumed: c.consumed, unit: c.consumedUnit, pctUsed: c.pctUsed })
+      }
+    }
+    return map
+  }, [consumption])
+
+  // Items with received orders (need stock update)
+  const receivedOrders = useMemo(() => orders.filter(o => o.status === 'received'), [orders])
+
+  // Map: item_id -> active order
+  const orderByItem = useMemo(() => {
+    const map = new Map<number, BarOrder>()
+    for (const o of orders) {
+      if (o.bar_stock_item_id && (o.status === 'pending' || o.status === 'ordered')) {
+        map.set(o.bar_stock_item_id, o)
+      }
+    }
+    return map
+  }, [orders])
+
   // Update stock qty
-  // -------------------------------------------------------------------------
+  const handleUpdateQty = async (itemId: number, newQty: number) => {
+    const item = items.find(i => i.id === itemId)
+    if (!item) return
 
-  function openEditDialog(item: BarItem) {
-    setEditItem(item)
-    setEditQty(String(item.current_qty))
-    setEditDetail(item.current_detail ?? '')
-  }
-
-  async function handleSaveQty() {
-    if (!editItem) return
-    setSaving(true)
     try {
-      const newQty = parseFloat(editQty) || 0
-      const newDetail = editDetail.trim() || null
-      const isNowUrgent = newQty <= 0 || newQty < editItem.min_level
-
       const res = await fetch('/api/kitchen/bar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'update_stock',
-          itemId: editItem.id,
-          qty: newQty,
-          detail: newDetail,
-          isUrgent: isNowUrgent,
-        }),
+        body: JSON.stringify({ action: 'update_stock', itemId, qty: newQty }),
       })
-      const result = await res.json()
-      if (!result.success) throw new Error(result.error)
+      if (!res.ok) throw new Error('Error')
 
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === editItem.id
-            ? { ...i, current_qty: newQty, current_detail: newDetail, is_urgent: isNowUrgent }
-            : i,
-        ),
-      )
-      toast.success(`${editItem.name} actualizado`)
-      setEditItem(null)
-    } catch (err) {
-      console.error(err)
+      // Log the change
+      const supabase = createClient()
+      await supabase.from('bar_stock_logs').insert({
+        bar_stock_item_id: itemId,
+        user_id: profile?.id,
+        action: 'update',
+        old_qty: item.current_qty,
+        new_qty: newQty,
+      })
+
+      setEditingId(null)
+      toast.success(`${item.name} → ${newQty}`)
+      fetchData()
+    } catch {
       toast.error('Error al actualizar')
-    } finally {
-      setSaving(false)
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Create order + notify encargado
-  // -------------------------------------------------------------------------
+  // Create order
+  const handleCreateOrder = async () => {
+    if (!orderItemId || !orderQty.trim() || ordering) return
+    const item = items.find(i => i.id === orderItemId)
+    if (!item) return
 
-  function openOrderDialog(item: BarItem) {
-    setOrderItem(item)
-    const needed = Math.max(0, item.min_level - item.current_qty)
-    setOrderQty(needed > 0 ? `${needed} ${item.unit}` : '')
-    setOrderUrgency(item.current_qty <= 0 ? 'urgente' : item.current_qty <= item.min_level ? 'alta' : 'normal')
-    setOrderNote('')
-  }
-
-  async function handleCreateOrder() {
-    if (!orderItem || !profile) return
-    if (!orderQty.trim()) {
-      toast.error('Indica la cantidad a pedir')
-      return
-    }
     setOrdering(true)
     try {
       const res = await fetch('/api/kitchen/bar', {
@@ -189,451 +284,792 @@ export default function BarraPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'create_order',
-          barStockItemId: orderItem.id,
-          productName: orderItem.name,
-          category: orderItem.category,
+          barStockItemId: orderItemId,
+          productName: item.name,
+          category: item.category,
           quantity: orderQty.trim(),
-          urgency: orderUrgency,
+          urgency: getSemaphore(item) === 'red' ? 'urgente' : 'normal',
           note: orderNote.trim() || null,
         }),
       })
-      const result = await res.json()
-      if (!result.success) throw new Error(result.error)
-
-      toast.success('Pedido enviado al encargado')
-      setOrderItem(null)
+      if (!res.ok) throw new Error('Error')
+      toast.success(`Pedido de ${item.name} enviado`)
+      setOrderItemId(null)
+      setOrderQty('')
+      setOrderNote('')
       fetchData()
-    } catch (err) {
-      console.error(err)
+    } catch {
       toast.error('Error al crear pedido')
     } finally {
       setOrdering(false)
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Manage orders (encargado)
-  // -------------------------------------------------------------------------
+  // Load history for an item
+  const loadHistory = async (itemId: number) => {
+    if (historyItemId === itemId) { setHistoryItemId(null); return }
+    setHistoryItemId(itemId)
+    setLoadingHistory(true)
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('bar_stock_logs')
+      .select('id, action, old_qty, new_qty, note, created_at, user_id, profiles:user_id(first_name, last_name)')
+      .eq('bar_stock_item_id', itemId)
+      .order('created_at', { ascending: false })
+      .limit(10)
+    setHistoryLogs((data as unknown as LogEntry[]) ?? [])
+    setLoadingHistory(false)
+  }
 
-  async function updateOrderStatus(orderId: number, newStatus: string) {
+  // Enter stock mode — pre-fill with current values
+  const enterStockMode = () => {
+    const draft = new Map<number, string>()
+    items.forEach(i => draft.set(i.id, String(i.current_qty)))
+    setStockDraft(draft)
+    setStockMode(true)
+  }
+
+  // Save all stock changes at once
+  const handleSaveStock = async () => {
+    setSavingStock(true)
+    let updated = 0
     try {
-      const res = await fetch('/api/kitchen/bar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update_order_status', orderId, status: newStatus }),
-      })
-      const result = await res.json()
-      if (!result.success) throw new Error(result.error)
+      for (const [itemId, qtyStr] of stockDraft) {
+        const newQty = parseFloat(qtyStr) || 0
+        const item = items.find(i => i.id === itemId)
+        if (!item || item.current_qty === newQty) continue
 
-      if (newStatus === 'received' || newStatus === 'cancelled') {
-        setOrders((prev) => prev.filter((o) => o.id !== orderId))
-      } else {
-        setOrders((prev) =>
-          prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)),
-        )
+        const res = await fetch('/api/kitchen/bar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update_stock', itemId, qty: newQty }),
+        })
+        if (res.ok) updated++
       }
-      toast.success(newStatus === 'ordered' ? 'Marcado como pedido' : newStatus === 'received' ? 'Pedido recibido' : 'Pedido cancelado')
+
+      toast.success(`Stock actualizado — ${updated} item${updated !== 1 ? 's' : ''} modificado${updated !== 1 ? 's' : ''}`)
+      setStockMode(false)
+      fetchData()
     } catch {
-      toast.error('Error al actualizar pedido')
+      toast.error('Error al guardar stock')
+    } finally {
+      setSavingStock(false)
     }
   }
 
-  // Derived
-  const urgent = items.filter((i) => i.is_urgent || i.current_qty <= 0)
-  const lowStock = items.filter((i) => !i.is_urgent && i.current_qty > 0 && i.current_qty <= i.min_level)
-  const ok = items.filter((i) => !i.is_urgent && i.current_qty > i.min_level)
-
-  const grouped = useMemo(() => {
-    const map = new Map<BarCategoryValue, BarItem[]>()
-    for (const item of items) {
-      const list = map.get(item.category) ?? []
-      list.push(item)
-      map.set(item.category, list)
+  // Toggle item in order cart
+  const toggleOrderCart = (itemId: number) => {
+    const cart = new Map(orderCart)
+    if (cart.has(itemId)) {
+      cart.delete(itemId)
+    } else {
+      cart.set(itemId, { qty: '', note: '' })
     }
-    return Array.from(map.entries()).map(([cat, catItems]) => ({
-      category: cat,
-      config: BAR_CATEGORIES[cat],
-      items: catItems,
-    }))
-  }, [items])
+    setOrderCart(cart)
+  }
+
+  // Send all orders at once
+  const handleSendOrders = async () => {
+    if (orderCart.size === 0 || sendingOrders) return
+    setSendingOrders(true)
+    let sent = 0
+    try {
+      for (const [itemId, { qty, note }] of orderCart) {
+        const item = items.find(i => i.id === itemId)
+        if (!item || !qty.trim()) continue
+
+        const res = await fetch('/api/kitchen/bar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'create_order',
+            barStockItemId: itemId,
+            productName: item.name,
+            category: item.category,
+            quantity: qty.trim(),
+            urgency: getSemaphore(item) === 'red' ? 'urgente' : 'normal',
+            note: note.trim() || null,
+          }),
+        })
+        if (res.ok) sent++
+      }
+
+      toast.success(`${sent} pedido${sent !== 1 ? 's' : ''} enviado${sent !== 1 ? 's' : ''} al encargado`)
+      setOrderMode(false)
+      setOrderCart(new Map())
+      fetchData()
+    } catch {
+      toast.error('Error al enviar pedidos')
+    } finally {
+      setSendingOrders(false)
+    }
+  }
+
+  // Close shift — save current stock as handover
+  const handleCloseShift = async () => {
+    if (closingShift) return
+    setClosingShift(true)
+    try {
+      const supabase = createClient()
+      const shiftType = new Date().getHours() < 15 ? 'morning' : 'night'
+      const today = format(new Date(), 'yyyy-MM-dd')
+
+      const handoverItems = items.map(i => ({
+        id: i.id,
+        name: i.name,
+        qty: i.current_qty,
+        unit: i.unit,
+        category: i.category,
+        detail: i.current_detail,
+      }))
+
+      const { error } = await supabase.from('bar_shift_handover').insert({
+        shift_type: shiftType,
+        date: today,
+        closed_by: profile?.id,
+        items: handoverItems,
+        notes: null,
+      })
+
+      if (error) throw error
+      toast.success('Turno cerrado — stock guardado para el siguiente')
+      fetchData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al cerrar turno')
+    } finally {
+      setClosingShift(false)
+    }
+  }
 
   if (profileLoading || loading) {
-    return <div className="flex min-h-[60vh] items-center justify-center"><Loader2 className="size-6 animate-spin text-[#006d5a]" /></div>
-  }
-
-  // Solo encargado y barista pueden acceder a barra
-  if (profile && !['encargado', 'barista'].includes(profile.role)) {
     return (
-      <div className="mx-auto max-w-lg pb-28 pt-4">
-        <div className="flex items-center gap-3 mb-6">
-          <Link href="/" className="rounded-lg p-1.5 text-[#a39e97] active:scale-90"><ArrowLeft className="size-5" /></Link>
-          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">☕ Barra</h1>
-        </div>
-        <div className="card-elevated-lg rounded-2xl p-6 text-center">
-          <Coffee className="mx-auto size-10 text-[#a39e97]" />
-          <p className="mt-4 text-sm font-medium text-[#3d2c24]">Acceso restringido</p>
-          <p className="mt-1 text-xs text-[#a39e97]">Esta sección es solo para baristas y encargados.</p>
-        </div>
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-[#a39e97]" />
       </div>
     )
   }
 
-  if (items.length === 0 && orders.length === 0) {
-    return (
-      <div className="mx-auto max-w-lg pb-28 pt-4">
-        <div className="flex items-center gap-3 mb-6">
-          <Link href="/cocina" className="rounded-lg p-1.5 text-[#a39e97] active:scale-90"><ArrowLeft className="size-5" /></Link>
-          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">☕ Barra</h1>
-        </div>
-        <div className="card-elevated-lg rounded-2xl p-6 text-center">
-          <Coffee className="mx-auto size-10 text-[#a39e97]" />
-          <p className="mt-4 text-sm font-medium text-[#3d2c24]">Sin datos de barra</p>
-          <p className="mt-1 text-xs text-[#a39e97]">Ejecutá la migración SQL para activar el módulo</p>
-        </div>
-      </div>
-    )
-  }
+  const currentShift = new Date().getHours() < 15 ? 'Mañana' : 'Noche'
 
   return (
-    <div className="mx-auto max-w-lg pb-28">
+    <div className="mx-auto max-w-lg space-y-4 pb-28">
       {/* Header */}
-      <FadeIn className="flex items-center gap-3 pt-2 pb-4">
-        <Link href="/cocina" className="rounded-lg p-1.5 text-[#a39e97] active:scale-90"><ArrowLeft className="size-5" /></Link>
-        <div className="flex-1">
-          <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">☕ Barra</h1>
-          <p className="section-label mt-0.5">Control de insumos y pedidos</p>
-        </div>
-        {urgent.length > 0 && (
-          <div className="flex items-center gap-1.5 rounded-full bg-[#fef2f2] px-3 py-1.5 text-[11px] font-bold text-[#ea504c]">
-            <AlertTriangle className="size-3" />
-            {urgent.length}
+      <FadeIn>
+        <div className="flex items-center gap-3">
+          <Link href="/" className="icon-btn flex items-center justify-center rounded-xl bg-secondary">
+            <ArrowLeft className="size-4" />
+          </Link>
+          <div className="flex-1">
+            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Stock Cafetería</h1>
+            <p className="text-[11px] text-[#a39e97]">
+              Turno {currentShift} · {profile?.first_name} · {format(new Date(), "d MMM HH:mm", { locale: es })}
+            </p>
           </div>
-        )}
+          <Coffee className="size-5 text-[#8b5e34]" />
+        </div>
+
+        {/* Search */}
+        <div className="relative mt-3">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar producto..."
+            className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] py-2.5 pl-10 pr-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+          />
+          <Package className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[#a39e97] hover:bg-[#f3efe9]">
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Quick stats */}
+        <div className="mt-3 flex gap-2">
+          <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#fef2f2] py-2">
+            <span className="size-2 rounded-full bg-[#ea504c]" />
+            <span className="text-xs font-bold text-[#ea504c]">{semaphoreCounts.red}</span>
+            <span className="text-[10px] text-[#ea504c]">urgente</span>
+          </div>
+          <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#fdf6ec] py-2">
+            <span className="size-2 rounded-full bg-[#d4943a]" />
+            <span className="text-xs font-bold text-[#d4943a]">{semaphoreCounts.yellow}</span>
+            <span className="text-[10px] text-[#d4943a]">atención</span>
+          </div>
+          <div className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#e8f5f1] py-2">
+            <span className="size-2 rounded-full bg-[#006d5a]" />
+            <span className="text-xs font-bold text-[#006d5a]">{semaphoreCounts.green}</span>
+            <span className="text-[10px] text-[#006d5a]">ok</span>
+          </div>
+        </div>
       </FadeIn>
 
-      {/* KPI row */}
-      <FadeIn delay={0.05}>
-        <div className="grid grid-cols-3 gap-2.5 mb-4">
-          <div className="rounded-xl bg-[#fef2f2] p-3 text-center">
-            <p className="font-display text-xl font-bold tabular-nums text-[#ea504c]"><AnimatedNumber value={urgent.length} /></p>
-            <p className="text-[9px] font-semibold uppercase tracking-wider text-[#ea504c]">Urgente</p>
+      {/* ============================================================= */}
+      {/* HANDOVER — what the previous shift left */}
+      {/* ============================================================= */}
+      {lastHandover && !handoverDismissed && (
+        <div className="rounded-2xl border border-[#006d5a]/30 bg-[#f0f7f5] p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Clock className="size-4 text-[#006d5a]" />
+              <span className="text-xs font-bold uppercase tracking-wider text-[#006d5a]">
+                Turno anterior — {lastHandover.closedByName ?? 'Anónimo'}
+              </span>
+            </div>
+            <button onClick={() => setHandoverDismissed(true)} className="text-[#006d5a]/50 hover:text-[#006d5a]">
+              <X className="size-4" />
+            </button>
           </div>
-          <div className="rounded-xl bg-[#fdf6ec] p-3 text-center">
-            <p className="font-display text-xl font-bold tabular-nums text-[#d4943a]"><AnimatedNumber value={lowStock.length} /></p>
-            <p className="text-[9px] font-semibold uppercase tracking-wider text-[#d4943a]">Bajo</p>
+          <p className="text-[10px] text-[#006d5a]/60 mb-2">
+            {lastHandover.created_at ? format(new Date(lastHandover.created_at), "d MMM HH:mm", { locale: es }) : lastHandover.date} · Turno {lastHandover.shift_type === 'morning' ? 'Mañana' : 'Noche'}
+          </p>
+          {lastHandover.notes && (
+            <p className="text-xs text-[#006d5a] mb-2 italic">&quot;{lastHandover.notes}&quot;</p>
+          )}
+          <div className="grid grid-cols-3 gap-1.5">
+            {(lastHandover.items ?? []).slice(0, 9).map((item, i) => (
+              <div key={i} className="rounded-lg bg-white/70 px-2 py-1.5 text-center">
+                <p className="text-[10px] text-[#3d2c24] truncate">{item.name}</p>
+                <p className="text-sm font-bold tabular-nums text-[#006d5a]">{item.qty}</p>
+              </div>
+            ))}
           </div>
-          <div className="rounded-xl bg-[#e8f5f1] p-3 text-center">
-            <p className="font-display text-xl font-bold tabular-nums text-[#006d5a]"><AnimatedNumber value={ok.length} /></p>
-            <p className="text-[9px] font-semibold uppercase tracking-wider text-[#006d5a]">OK</p>
-          </div>
+          {(lastHandover.items ?? []).length > 9 && (
+            <p className="text-[10px] text-[#006d5a]/50 mt-1 text-center">
+              +{(lastHandover.items ?? []).length - 9} items más
+            </p>
+          )}
         </div>
-      </FadeIn>
-
-      {/* Pedidos pendientes */}
-      {orders.length > 0 && (
-        <FadeIn delay={0.1}>
-          <div className="mb-5">
-            <div className="flex items-center gap-2 px-1 mb-2">
-              <ShoppingCart className="size-4 text-[#d4943a]" />
-              <span className="section-label text-[#d4943a]">Pedidos pendientes ({orders.length})</span>
-            </div>
-            <div className="space-y-1.5">
-              {orders.map((order) => {
-                const mappedUrgency = DB_TO_FRONTEND_URGENCY[order.urgency] ?? 'normal'
-                const urgCfg = BAR_ORDER_URGENCY[mappedUrgency] ?? FALLBACK_URGENCY_CFG
-                const isOrdered = order.status === 'ordered'
-                return (
-                  <div key={order.id} className={cn(
-                    'rounded-xl px-3.5 py-3 ring-1 ring-[#ebe6df]/50',
-                    isOrdered ? 'bg-[#f0f7f5]' : 'bg-white',
-                  )}>
-                    <div className="flex items-center gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-[#3d2c24]">{order.product_name}</p>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-[#a39e97]">
-                          <span className="font-medium">{order.quantity}</span>
-                          <span className="rounded-full px-1.5 py-0.5 font-bold" style={{ color: urgCfg.color, backgroundColor: urgCfg.bg }}>
-                            {urgCfg.label}
-                          </span>
-                          {isOrdered && (
-                            <span className="rounded-full bg-[#e8f5f1] px-1.5 py-0.5 font-bold text-[#006d5a]">
-                              Pedido
-                            </span>
-                          )}
-                          {order.note && <span className="italic truncate">{order.note}</span>}
-                        </div>
-                      </div>
-                      {isEncargado ? (
-                        <div className="flex gap-1">
-                          {!isOrdered && (
-                            <button
-                              onClick={() => updateOrderStatus(order.id, 'ordered')}
-                              className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#d4943a] text-white active:scale-90"
-                              title="Marcar como pedido"
-                            >
-                              <Truck className="size-3.5" />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => updateOrderStatus(order.id, 'received')}
-                            className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#006d5a] text-white active:scale-90"
-                            title="Recibido"
-                          >
-                            <Check className="size-4" />
-                          </button>
-                          <button
-                            onClick={() => updateOrderStatus(order.id, 'cancelled')}
-                            className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#fef2f2] text-[#ea504c] active:scale-90"
-                            title="Cancelar"
-                          >
-                            <X className="size-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => updateOrderStatus(order.id, 'received')}
-                          className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#006d5a] text-white active:scale-90"
-                        >
-                          <Check className="size-4" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </FadeIn>
       )}
 
-      {/* Stock by category */}
-      <StaggerList className="space-y-4" staggerDelay={0.04}>
-        {grouped.map((group) => (
-          <StaggerItem key={group.category}>
-            <div className="mb-2 flex items-center gap-2 px-1">
-              <span className="text-base">{group.config.icon}</span>
-              <span className="section-label" style={{ color: group.config.color }}>{group.config.label}</span>
-            </div>
-            <div className="space-y-1.5">
-              {group.items.map((item) => {
-                const isZero = item.current_qty <= 0
-                const isLow = !isZero && item.current_qty <= item.min_level
-                const semColor = isZero || item.is_urgent ? '#ea504c' : isLow ? '#d4943a' : '#006d5a'
-                const needsOrder = isZero || isLow || item.is_urgent
+      {/* ============================================================= */}
+      {/* ACTION BUTTONS — Stock / Pedir / Cerrar turno */}
+      {/* ============================================================= */}
+      {canEdit && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => { if (stockMode) { setStockMode(false) } else { enterStockMode() } }}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-3 text-xs font-bold transition-all ${
+              stockMode
+                ? 'bg-[#006d5a] text-white'
+                : 'border border-[#ebe6df] bg-white text-[#3d2c24] hover:border-[#006d5a]'
+            }`}
+          >
+            <Pencil className="size-3.5" />
+            {stockMode ? 'Editando stock...' : 'Hacer stock'}
+          </button>
+          <button
+            onClick={() => { if (orderMode) { setOrderMode(false); setOrderCart(new Map()) } else { setOrderMode(true) } }}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-3 text-xs font-bold transition-all ${
+              orderMode
+                ? 'bg-[#8b5e34] text-white'
+                : 'border border-[#ebe6df] bg-white text-[#3d2c24] hover:border-[#8b5e34]'
+            }`}
+          >
+            <ShoppingCart className="size-3.5" />
+            {orderMode ? `Pedido (${orderCart.size})` : 'Armar pedido'}
+          </button>
+        </div>
+      )}
 
-                return (
-                  <div key={item.id} className={cn(
-                    'rounded-xl px-3.5 py-3 ring-1 ring-[#ebe6df]/50 transition-all',
-                    isZero ? 'bg-[#fef2f2]/40' : isLow ? 'bg-[#fdf6ec]/30' : 'bg-white',
-                  )}>
-                    <div className="flex items-center gap-3">
-                      <div className="size-2 shrink-0 rounded-full" style={{ backgroundColor: semColor }} />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-[#3d2c24]">{item.name}</p>
-                        <p className="mt-0.5 text-[10px] text-[#a39e97]">
-                          {item.current_detail ?? `${item.current_qty} ${item.unit}`}
-                          {item.min_level > 0 && <span> · mín: {item.min_level} {item.unit}</span>}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <p className={cn('text-sm font-bold tabular-nums', isZero ? 'text-[#ea504c]' : isLow ? 'text-[#d4943a]' : 'text-[#3d2c24]')}>
-                          {item.current_qty}
-                        </p>
-                        {canEdit && (
-                          <>
-                            <button
-                              onClick={() => openEditDialog(item)}
-                              className="flex size-7 items-center justify-center rounded-lg text-[#a39e97] transition-colors hover:bg-[#faf8f5] hover:text-[#3d2c24] active:scale-90"
-                              title="Editar cantidad"
-                            >
-                              <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-                              </svg>
-                            </button>
-                            {needsOrder && (
-                              <button
-                                onClick={() => openOrderDialog(item)}
-                                className={cn(
-                                  'flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold transition-all active:scale-95',
-                                  isZero
-                                    ? 'bg-[#ea504c] text-white'
-                                    : 'bg-[#fef7ed] text-[#d4943a] hover:bg-[#d4943a] hover:text-white',
-                                )}
-                              >
-                                <Send className="size-3" />
-                                Pedir
-                              </button>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </StaggerItem>
-        ))}
-      </StaggerList>
+      {/* SAVE STOCK bar — sticky when in stock mode */}
+      {stockMode && (
+        <div className="sticky top-0 z-10 flex gap-2 rounded-xl bg-[#006d5a] p-3 shadow-lg">
+          <button
+            onClick={() => setStockMode(false)}
+            className="flex-1 rounded-lg bg-white/20 py-2.5 text-xs font-semibold text-white"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSaveStock}
+            disabled={savingStock}
+            className="flex flex-[2] items-center justify-center gap-1.5 rounded-lg bg-white py-2.5 text-xs font-bold text-[#006d5a] disabled:opacity-50"
+          >
+            {savingStock ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+            Guardar stock
+          </button>
+        </div>
+      )}
 
-      {/* Edit Qty Dialog */}
-      <Dialog open={!!editItem} onOpenChange={(open) => !open && setEditItem(null)}>
-        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="font-display text-lg text-[#3d2c24]">
-              {editItem?.name}
-            </DialogTitle>
-            <DialogDescription className="text-[#a39e97]">
-              Actualizar stock actual
-            </DialogDescription>
-          </DialogHeader>
+      {/* SEND ORDERS bar — sticky when in order mode */}
+      {orderMode && orderCart.size > 0 && (
+        <div className="sticky top-0 z-10 flex gap-2 rounded-xl bg-[#8b5e34] p-3 shadow-lg">
+          <button
+            onClick={() => { setOrderMode(false); setOrderCart(new Map()) }}
+            className="flex-1 rounded-lg bg-white/20 py-2.5 text-xs font-semibold text-white"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSendOrders}
+            disabled={sendingOrders}
+            className="flex flex-[2] items-center justify-center gap-1.5 rounded-lg bg-white py-2.5 text-xs font-bold text-[#8b5e34] disabled:opacity-50"
+          >
+            {sendingOrders ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+            Enviar {orderCart.size} pedido{orderCart.size !== 1 ? 's' : ''}
+          </button>
+        </div>
+      )}
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-center gap-4">
-              <button
-                onClick={() => setEditQty(String(Math.max(0, (parseFloat(editQty) || 0) - 1)))}
-                className="flex size-10 items-center justify-center rounded-xl bg-[#faf8f5] text-[#3d2c24] ring-1 ring-[#ebe6df] active:scale-90"
-              >
-                <Minus className="size-4" />
-              </button>
-              <div className="text-center">
-                <Input
-                  type="number"
-                  value={editQty}
-                  onChange={(e) => setEditQty(e.target.value)}
-                  className="w-24 text-center text-2xl font-bold rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] focus-visible:ring-[#006d5a] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                />
-                <p className="mt-1 text-[10px] text-[#a39e97]">{editItem?.unit} · mín: {editItem?.min_level}</p>
-              </div>
-              <button
-                onClick={() => setEditQty(String((parseFloat(editQty) || 0) + 1))}
-                className="flex size-10 items-center justify-center rounded-xl bg-[#faf8f5] text-[#3d2c24] ring-1 ring-[#ebe6df] active:scale-90"
-              >
-                <Plus className="size-4" />
-              </button>
-            </div>
+      {/* CLOSE SHIFT button — visible and prominent */}
+      {canEdit && !stockMode && !orderMode && (
+        <button
+          onClick={handleCloseShift}
+          disabled={closingShift}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[#ebe6df] py-3 text-xs font-semibold text-[#a39e97] transition-colors hover:border-[#006d5a] hover:text-[#006d5a]"
+        >
+          {closingShift ? <Loader2 className="size-3.5 animate-spin" /> : <Clock className="size-3.5" />}
+          Cerrar turno y guardar stock para el siguiente
+        </button>
+      )}
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-[#3d2c24]">Detalle (opcional)</label>
-              <Input
-                value={editDetail}
-                onChange={(e) => setEditDetail(e.target.value)}
-                placeholder="Ej: 2 fardos + 5 sueltos"
-                className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
-              />
-            </div>
+      {/* ============================================================= */}
+      {/* SECTION: Mercadería recibida — needs stock update */}
+      {/* ============================================================= */}
+      {receivedOrders.length > 0 && (
+        <div className="rounded-2xl border-2 border-[#006d5a] bg-[#e8f5f1] p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Package className="size-4 text-[#006d5a]" />
+            <span className="text-xs font-bold uppercase tracking-wider text-[#006d5a]">
+              Llegó mercadería ({receivedOrders.length})
+            </span>
           </div>
-
-          <DialogFooter className="gap-2 pt-2">
-            <DialogClose render={<Button variant="outline" className="rounded-xl border-[#ebe6df] text-[#3d2c24] hover:bg-[#faf8f5] text-xs h-9" />}>
-              Cancelar
-            </DialogClose>
-            <Button onClick={handleSaveQty} disabled={saving} className="rounded-xl bg-[#006d5a] text-white hover:bg-[#004d3f] text-xs h-9">
-              {saving && <Loader2 className="size-3.5 animate-spin" />}
-              Guardar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Order Dialog */}
-      <Dialog open={!!orderItem} onOpenChange={(open) => !open && setOrderItem(null)}>
-        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="font-display text-lg text-[#3d2c24]">
-              Solicitar pedido
-            </DialogTitle>
-            <DialogDescription className="text-[#a39e97]">
-              {orderItem?.name} — stock actual: {orderItem?.current_qty} {orderItem?.unit}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-[#3d2c24]">Cantidad a pedir *</label>
-              <Input
-                value={orderQty}
-                onChange={(e) => setOrderQty(e.target.value)}
-                placeholder={`Ej: 5 ${orderItem?.unit ?? 'unidades'}`}
-                className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-[#3d2c24]">Urgencia</label>
-              <div className="flex gap-2">
-                {(Object.entries(BAR_ORDER_URGENCY) as [BarOrderUrgencyValue, { label: string; color: string; bg: string }][]).map(([key, cfg]) => (
-                  <button
-                    key={key}
-                    onClick={() => setOrderUrgency(key)}
-                    className={cn(
-                      'flex-1 rounded-xl py-2.5 text-xs font-bold transition-all active:scale-95',
-                      orderUrgency === key
-                        ? 'ring-2 shadow-sm'
-                        : 'ring-1 ring-[#ebe6df]',
-                    )}
-                    style={
-                      orderUrgency === key
-                        ? { backgroundColor: cfg.bg, color: cfg.color, ringColor: cfg.color }
-                        : {}
-                    }
-                  >
-                    {cfg.label}
-                  </button>
-                ))}
+          <p className="text-xs text-[#006d5a]/70 mb-3">Revisá y actualizá el stock de cada item</p>
+          <div className="space-y-2">
+            {receivedOrders.map(order => (
+              <div key={order.id} className="flex items-center justify-between rounded-xl bg-white px-3 py-2.5">
+                <div>
+                  <p className="text-sm font-semibold text-[#3d2c24]">{order.product_name}</p>
+                  <p className="text-[11px] text-[#a39e97]">{order.quantity}</p>
+                </div>
+                <Check className="size-5 text-[#006d5a]" />
               </div>
-            </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-[#3d2c24]">Nota (opcional)</label>
-              <Textarea
-                value={orderNote}
-                onChange={(e) => setOrderNote(e.target.value)}
-                placeholder="Ej: para cubrir fin de semana"
-                rows={2}
-                className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
-              />
-            </div>
+      {/* ============================================================= */}
+      {/* SECTION: Urgentes — always visible if any */}
+      {/* ============================================================= */}
+      {grouped.urgents.length > 0 && (
+        <div className="rounded-2xl border-2 border-[#ea504c]/30 bg-[#fef2f2] p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className="size-4 text-[#ea504c]" />
+            <span className="text-xs font-bold uppercase tracking-wider text-[#ea504c]">
+              Urgente — Reponer ({grouped.urgents.length})
+            </span>
+          </div>
+          <Section
+            color="red"
+            label=""
+            items={grouped.urgents}
+            orderByItem={orderByItem}
+            editingId={editingId}
+            editQty={editQty}
+            canEdit={canEdit}
+            historyItemId={historyItemId}
+            historyLogs={historyLogs}
+            loadingHistory={loadingHistory}
+            onEditStart={(id, qty) => { setEditingId(id); setEditQty(String(qty)) }}
+            onEditCancel={() => setEditingId(null)}
+            onEditSave={(id) => handleUpdateQty(id, parseFloat(editQty) || 0)}
+            onEditQtyChange={setEditQty}
+            onOrder={(id) => setOrderItemId(id)}
+            onHistory={loadHistory}
+            consumptionMap={consumptionMap}
+            stockMode={stockMode}
+            stockDraft={stockDraft}
+            onStockDraftChange={(id, val) => setStockDraft(new Map(stockDraft).set(id, val))}
+            orderMode={orderMode}
+            orderCart={orderCart}
+            onToggleCart={toggleOrderCart}
+            onCartQtyChange={(id, qty) => { const c = new Map(orderCart); const e = c.get(id); if (e) { e.qty = qty; c.set(id, e) }; setOrderCart(c) }}
+            hideHeader
+          />
+        </div>
+      )}
 
-            {/* Supplier info */}
-            {orderItem?.supplier_id && suppliers.get(orderItem.supplier_id) && (() => {
-              const sup = suppliers.get(orderItem.supplier_id!)!
+      {/* ============================================================= */}
+      {/* STOCK BY CATEGORY — all visible */}
+      {/* ============================================================= */}
+      {Array.from(grouped.byCat.entries()).map(([cat, catItems]) => {
+        if (catItems.length === 0) return null
+        const catConfig = BAR_CATEGORIES[cat as keyof typeof BAR_CATEGORIES]
+        const catLabel = catConfig?.label ?? cat
+        const catIcon = catConfig?.icon ?? '📦'
+
+        return (
+          <div key={cat}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm">{catIcon}</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-[#3d2c24]">
+                {catLabel} ({catItems.length})
+              </span>
+            </div>
+            <Section
+              color="green"
+              label=""
+              items={catItems}
+              orderByItem={orderByItem}
+              editingId={editingId}
+              editQty={editQty}
+              canEdit={canEdit}
+              historyItemId={historyItemId}
+              historyLogs={historyLogs}
+              loadingHistory={loadingHistory}
+              consumptionMap={consumptionMap}
+              stockMode={stockMode}
+              stockDraft={stockDraft}
+              onStockDraftChange={(id, val) => setStockDraft(new Map(stockDraft).set(id, val))}
+              orderMode={orderMode}
+              orderCart={orderCart}
+              onToggleCart={toggleOrderCart}
+              onCartQtyChange={(id, qty) => { const c = new Map(orderCart); const e = c.get(id); if (e) { e.qty = qty; c.set(id, e) }; setOrderCart(c) }}
+              onEditStart={(id, qty) => { setEditingId(id); setEditQty(String(qty)) }}
+              onEditCancel={() => setEditingId(null)}
+              onEditSave={(id) => handleUpdateQty(id, parseFloat(editQty) || 0)}
+              onEditQtyChange={setEditQty}
+              onOrder={(id) => setOrderItemId(id)}
+              onHistory={loadHistory}
+              hideHeader
+            />
+          </div>
+        )
+      })}
+
+      {/* ============================================================= */}
+      {/* SECTION: Mis pedidos */}
+      {/* ============================================================= */}
+      {orders.filter(o => o.status !== 'received').length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <ShoppingCart className="size-3.5 text-[#8b5e34]" />
+            <span className="text-xs font-bold uppercase tracking-wider text-[#a39e97]">Mis pedidos</span>
+          </div>
+          <div className="space-y-1.5">
+            {orders.filter(o => o.status !== 'received').map(order => {
+              const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
+                pending: { label: 'Pendiente', color: '#d4943a', bg: '#fdf6ec' },
+                ordered: { label: 'Pedido ✓', color: '#006d5a', bg: '#e8f5f1' },
+                cancelled: { label: 'Cancelado', color: '#ea504c', bg: '#fef2f2' },
+              }
+              const s = statusConfig[order.status] ?? statusConfig.pending
               return (
-                <div className="flex items-center gap-2 rounded-xl bg-[#e8f5f1]/50 px-3 py-2.5 ring-1 ring-[#006d5a]/10">
-                  <Truck className="size-4 text-[#006d5a] shrink-0" />
-                  <span className="flex-1 text-xs font-medium text-[#3d2c24] truncate">{sup.name}</span>
-                  {sup.phone && (
-                    <a
-                      href={`https://wa.me/${sup.phone.replace(/\D/g, '')}?text=${encodeURIComponent(
-                        `Hola, soy de La Vieja Escuela. Necesitamos: ${orderItem.name} — ${orderQty || 'a definir'}${orderNote ? ` (${orderNote})` : ''}`
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 rounded-lg bg-[#25d366] px-2 py-1 text-[10px] font-bold text-white active:scale-95"
-                    >
-                      <MessageCircle className="size-3" />
-                      WhatsApp
-                    </a>
-                  )}
+                <div key={order.id} className="flex items-center justify-between rounded-xl border bg-card px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-[#3d2c24]">{order.product_name}</p>
+                    <p className="text-[11px] text-[#a39e97]">{order.quantity} · {format(new Date(order.created_at), 'd MMM HH:mm', { locale: es })}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold" style={{ color: s.color, backgroundColor: s.bg }}>
+                    {s.label}
+                  </span>
                 </div>
               )
-            })()}
-            {orderItem && !orderItem.supplier_id && (
-              <p className="text-[10px] text-[#a39e97] italic">Sin proveedor vinculado — asigná uno desde Proveedores</p>
-            )}
+            })}
           </div>
+        </div>
+      )}
 
-          <DialogFooter className="gap-2 pt-2">
-            <DialogClose render={<Button variant="outline" className="rounded-xl border-[#ebe6df] text-[#3d2c24] hover:bg-[#faf8f5] text-xs h-9" />}>
-              Cancelar
-            </DialogClose>
-            <Button onClick={handleCreateOrder} disabled={ordering} className="rounded-xl bg-[#006d5a] text-white hover:bg-[#004d3f] text-xs h-9">
-              {ordering ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+      {/* ============================================================= */}
+      {/* HANDOVER — cerrar turno + ver turno anterior */}
+      {/* ============================================================= */}
+      {canEdit && (
+        <div className="space-y-2">
+          {/* Previous handover */}
+          {lastHandover && (
+            <div className="rounded-xl border bg-[#faf8f5] p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="size-3.5 text-[#8b5e34]" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8b5e34]">
+                  Turno anterior dejó
+                </span>
+                <span className="text-[10px] text-[#a39e97]">
+                  {lastHandover.shift_type === 'morning' ? 'Mañana' : 'Noche'} · {lastHandover.date}
+                </span>
+              </div>
+              {lastHandover.notes && (
+                <p className="text-xs text-[#3d2c24] mb-1">📝 {lastHandover.notes}</p>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                {(lastHandover.items as Array<{ name: string; qty: number; unit: string }>).slice(0, 8).map((item, i) => (
+                  <span key={i} className="rounded-lg bg-white px-2 py-1 text-[10px] text-[#3d2c24]">
+                    {item.name} <strong>{item.qty}</strong> {item.unit || ''}
+                  </span>
+                ))}
+                {(lastHandover.items as unknown[]).length > 8 && (
+                  <span className="text-[10px] text-[#a39e97]">+{(lastHandover.items as unknown[]).length - 8} más</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Close shift button */}
+          <button
+            onClick={handleCloseShift}
+            disabled={closingShift}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#8b5e34] py-3 text-sm font-bold text-white transition-all hover:bg-[#7a5230] active:scale-[0.98] disabled:opacity-50"
+          >
+            {closingShift ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+            Cerrar turno — Guardar estado para el siguiente
+          </button>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* ORDER DIALOG — bottom sheet */}
+      {/* ============================================================= */}
+      {orderItemId && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => setOrderItemId(null)} />
+          <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-md rounded-2xl bg-white p-5 shadow-xl sm:mx-auto sm:mb-0">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-[#3d2c24]">
+                Pedir {items.find(i => i.id === orderItemId)?.name}
+              </h3>
+              <button onClick={() => setOrderItemId(null)} className="rounded-full p-1 text-[#a39e97] hover:bg-[#f3efe9]">
+                <X className="size-5" />
+              </button>
+            </div>
+            <input
+              value={orderQty}
+              onChange={(e) => setOrderQty(e.target.value)}
+              placeholder="Cantidad (ej: 10 lt, 2 cajas)"
+              className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] px-3 py-3 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+              autoFocus
+            />
+            <input
+              value={orderNote}
+              onChange={(e) => setOrderNote(e.target.value)}
+              placeholder="Nota opcional"
+              className="mt-2 w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] px-3 py-3 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+            />
+            <button
+              onClick={handleCreateOrder}
+              disabled={!orderQty.trim() || ordering}
+              className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] text-sm font-bold text-white transition-all hover:bg-[#005a4a] active:scale-[0.98] disabled:opacity-50"
+            >
+              {ordering ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
               Enviar pedido
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Section component — renders a list of items in a semaphore group
+// ---------------------------------------------------------------------------
+
+type SectionProps = {
+  color: SemaphoreColor
+  label: string
+  items: BarItem[]
+  orderByItem: Map<number, BarOrder>
+  editingId: number | null
+  editQty: string
+  canEdit: boolean
+  historyItemId: number | null
+  historyLogs: LogEntry[]
+  loadingHistory: boolean
+  consumptionMap: Map<number, { consumed: number; unit: string; pctUsed: number }>
+  stockMode: boolean
+  stockDraft: Map<number, string>
+  onStockDraftChange: (id: number, val: string) => void
+  orderMode: boolean
+  orderCart: Map<number, { qty: string; note: string }>
+  onToggleCart: (id: number) => void
+  onCartQtyChange: (id: number, qty: string) => void
+  onEditStart: (id: number, qty: number) => void
+  onEditCancel: () => void
+  onEditSave: (id: number) => void
+  onEditQtyChange: (v: string) => void
+  onOrder: (id: number) => void
+  onHistory: (id: number) => void
+  hideHeader?: boolean
+}
+
+function Section({
+  color, label, items, orderByItem, editingId, editQty, canEdit,
+  historyItemId, historyLogs, loadingHistory, consumptionMap,
+  stockMode, stockDraft, onStockDraftChange,
+  orderMode, orderCart, onToggleCart, onCartQtyChange,
+  onEditStart, onEditCancel, onEditSave, onEditQtyChange, onOrder, onHistory,
+  hideHeader,
+}: SectionProps) {
+  const s = SEMAPHORE[color]
+
+  return (
+    <div>
+      {!hideHeader && (
+        <div className="flex items-center gap-2 mb-2">
+          <span className="size-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: s.color }}>
+            {label}
+          </span>
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {items.map(item => {
+          const isEditing = editingId === item.id
+          const activeOrder = orderByItem.get(item.id)
+          const showingHistory = historyItemId === item.id
+          const cat = BAR_CATEGORIES[item.category as keyof typeof BAR_CATEGORIES]
+
+          // Per-item semaphore color when rendering by category
+          const itemSemaphore = hideHeader ? SEMAPHORE[getSemaphore(item)] : s
+
+          return (
+            <div key={item.id} className="rounded-xl border bg-card overflow-hidden" style={{ borderLeftWidth: 3, borderLeftColor: itemSemaphore.border }}>
+              <div className="flex items-center gap-2 px-3 py-2.5">
+                {/* Order mode checkbox */}
+                {orderMode && (
+                  <button
+                    onClick={() => onToggleCart(item.id)}
+                    className={`size-6 shrink-0 rounded-md border-2 flex items-center justify-center transition-colors ${
+                      orderCart.has(item.id)
+                        ? 'border-[#8b5e34] bg-[#8b5e34] text-white'
+                        : 'border-[#ebe6df] bg-white'
+                    }`}
+                  >
+                    {orderCart.has(item.id) && <Check className="size-3.5" />}
+                  </button>
+                )}
+
+                {/* Name + category + consumption */}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-[#3d2c24] truncate">{item.name}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[10px] text-[#a39e97]">{cat?.label ?? item.category}</span>
+                    {item.current_detail && (
+                      <span className="text-[10px] font-medium text-[#d4943a]">{item.current_detail}</span>
+                    )}
+                    {(() => {
+                      const cons = consumptionMap.get(item.id)
+                      if (!cons || cons.consumed === 0) return null
+                      return (
+                        <span className="text-[10px] font-medium text-[#4a90d9]">
+                          ↓{cons.consumed} {cons.unit} hoy
+                        </span>
+                      )
+                    })()}
+                  </div>
+                </div>
+
+                {/* Stock mode — inline input */}
+                {stockMode ? (
+                  <input
+                    value={stockDraft.get(item.id) ?? String(item.current_qty)}
+                    onChange={(e) => onStockDraftChange(item.id, e.target.value)}
+                    className="w-16 rounded-lg border border-[#006d5a] bg-[#f0f7f5] px-2 py-1.5 text-center text-sm font-bold tabular-nums text-[#006d5a] focus:outline-none focus:ring-2 focus:ring-[#006d5a]"
+                    inputMode="decimal"
+                  />
+                ) : isEditing ? (
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => onEditQtyChange(String(Math.max(0, (parseFloat(editQty) || 0) - 1)))} className="size-8 flex items-center justify-center rounded-lg bg-secondary">
+                      <Minus className="size-3" />
+                    </button>
+                    <input
+                      value={editQty}
+                      onChange={(e) => onEditQtyChange(e.target.value)}
+                      className="w-14 rounded-lg border bg-white px-2 py-1.5 text-center text-sm font-bold tabular-nums focus:border-[#006d5a] focus:outline-none"
+                      autoFocus
+                      onKeyDown={(e) => { if (e.key === 'Enter') onEditSave(item.id); if (e.key === 'Escape') onEditCancel() }}
+                    />
+                    <button onClick={() => onEditQtyChange(String((parseFloat(editQty) || 0) + 1))} className="size-8 flex items-center justify-center rounded-lg bg-secondary">
+                      <Plus className="size-3" />
+                    </button>
+                    <button onClick={() => onEditSave(item.id)} className="size-8 flex items-center justify-center rounded-lg bg-[#006d5a] text-white">
+                      <Check className="size-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    {/* Quantity + unit */}
+                    <button
+                      onClick={() => canEdit ? onEditStart(item.id, item.current_qty) : undefined}
+                      className={`flex items-baseline gap-0.5 rounded-lg px-2.5 py-1 ${canEdit ? 'hover:bg-[#f3efe9] active:scale-95 cursor-pointer' : ''}`}
+                      style={{ color: itemSemaphore.color }}
+                    >
+                      <span className="text-base font-bold tabular-nums">{item.current_qty}</span>
+                      {item.unit && (
+                        <span className="text-[10px] font-medium opacity-60">
+                          {UNIT_SHORT[item.unit] ?? item.unit}
+                        </span>
+                      )}
+                    </button>
+
+                    {/* Action: Pedir or order status */}
+                    {activeOrder ? (
+                      <span className="rounded-full px-2 py-0.5 text-[9px] font-bold bg-[#e8f5f1] text-[#006d5a]">
+                        {activeOrder.status === 'ordered' ? 'Pedido ✓' : 'Esperando'}
+                      </span>
+                    ) : color !== 'green' ? (
+                      <button
+                        onClick={() => onOrder(item.id)}
+                        className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[10px] font-bold text-white active:scale-95"
+                      >
+                        Pedir
+                      </button>
+                    ) : null}
+
+                    {/* History */}
+                    <button onClick={() => onHistory(item.id)} className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9]">
+                      <History className="size-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Order cart — qty input when selected */}
+              {orderMode && orderCart.has(item.id) && (
+                <div className="border-t bg-[#faf0e4] px-3 py-2.5 flex items-center gap-2">
+                  <span className="text-xs text-[#8b5e34] font-medium">Cantidad:</span>
+                  <input
+                    value={orderCart.get(item.id)?.qty ?? ''}
+                    onChange={(e) => onCartQtyChange(item.id, e.target.value)}
+                    placeholder="ej: 5 kg"
+                    className="flex-1 rounded-lg border border-[#8b5e34]/30 bg-white px-2.5 py-1.5 text-sm focus:border-[#8b5e34] focus:outline-none"
+                    autoFocus
+                  />
+                </div>
+              )}
+
+              {/* History panel */}
+              {showingHistory && (
+                <div className="border-t bg-[#faf8f5] px-3 py-2.5">
+                  {loadingHistory ? (
+                    <Loader2 className="size-4 animate-spin text-[#a39e97] mx-auto" />
+                  ) : historyLogs.length === 0 ? (
+                    <p className="text-[11px] text-[#a39e97] text-center">Sin movimientos</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {historyLogs.map(log => (
+                        <div key={log.id} className="flex items-center justify-between text-[11px]">
+                          <div>
+                            <span className="font-medium text-[#3d2c24]">
+                              {log.profiles?.first_name ?? '?'}
+                            </span>
+                            <span className="text-[#a39e97]">
+                              {' '}cambió {log.old_qty} → {log.new_qty}
+                            </span>
+                          </div>
+                          <span className="text-[#a39e97]">
+                            {format(new Date(log.created_at), 'd MMM HH:mm', { locale: es })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

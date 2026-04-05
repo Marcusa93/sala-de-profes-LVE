@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import Link from 'next/link'
-import { Bell, Plus } from 'lucide-react'
+import { Bell, Plus, CheckCheck } from 'lucide-react'
+import { toast } from 'sonner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
 import {
@@ -49,7 +50,7 @@ export default function NotificacionesPage() {
   const [activeTab, setActiveTab] = useState<FilterTab>('todos')
 
   const canCreate =
-    profile?.role === 'encargado' || profile?.role === 'chef'
+    profile?.role === 'socio' || profile?.role === 'encargado' || profile?.role === 'chef'
 
   // ------------------------------------------
   // Fetch notifications
@@ -127,6 +128,8 @@ export default function NotificacionesPage() {
     fetchNotifications()
   }, [fetchNotifications])
 
+  const [markingAll, setMarkingAll] = useState(false)
+
   // ------------------------------------------
   // Handle mark as read callback
   // ------------------------------------------
@@ -134,9 +137,41 @@ export default function NotificacionesPage() {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)),
     )
-    // Update the badge count in BottomNav immediately
     dispatchNotificationRead()
   }, [])
+
+  // ------------------------------------------
+  // Mark ALL as read
+  // ------------------------------------------
+  const handleMarkAllRead = useCallback(async () => {
+    if (!profile || markingAll) return
+    const unread = notifications.filter((n) => !n.is_read)
+    if (unread.length === 0) return
+
+    setMarkingAll(true)
+    try {
+      const rows = unread.map((n) => ({
+        announcement_id: n.id,
+        user_id: profile.id,
+      }))
+      const { error } = await supabase
+        .from('announcement_reads')
+        .upsert(rows, { onConflict: 'announcement_id,user_id' })
+
+      if (error) throw error
+
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
+      // Dispatch multiple times to zero out badge
+      for (let i = 0; i < unread.length; i++) dispatchNotificationRead()
+      toast.success(`${unread.length} marcadas como leídas`)
+    } catch (err) {
+      toast.error('Error al marcar como leídas')
+    } finally {
+      setMarkingAll(false)
+    }
+  }, [profile, notifications, supabase, markingAll])
+
+  const unreadCount = useMemo(() => notifications.filter((n) => !n.is_read).length, [notifications])
 
   // ------------------------------------------
   // Filter + sort notifications
@@ -190,13 +225,25 @@ export default function NotificacionesPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-28">
       {/* Header */}
-      <div>
-        <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">
-          Notificaciones
-        </h1>
-        <p className="section-label mt-2">
-          Avisos y comunicados del equipo
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">
+            Notificaciones
+          </h1>
+          <p className="section-label mt-1">
+            Avisos y comunicados del equipo
+          </p>
+        </div>
+        {unreadCount > 0 && (
+          <button
+            onClick={handleMarkAllRead}
+            disabled={markingAll}
+            className="flex items-center gap-1.5 rounded-xl bg-[#e8f5f1] px-3 py-2 text-xs font-semibold text-[#006d5a] transition-all hover:bg-[#c0e4da] active:scale-95 disabled:opacity-50"
+          >
+            <CheckCheck className="size-3.5" />
+            {markingAll ? 'Marcando...' : 'Leer todas'}
+          </button>
+        )}
       </div>
 
       {/* Filter pill tabs — horizontal scrollable */}
@@ -206,11 +253,7 @@ export default function NotificacionesPage() {
             key={tab.value}
             type="button"
             onClick={() => setActiveTab(tab.value)}
-            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all ${
-              activeTab === tab.value
-                ? 'bg-[#006d5a] text-white shadow-sm'
-                : 'border border-[#ebe6df] bg-[#fefcf9] text-[#a39e97] hover:border-[#006d5a]/30 hover:text-[#3d2c24]'
-            }`}
+            className={`pill ${activeTab === tab.value ? 'pill-active' : 'pill-inactive'}`}
           >
             {tab.label}
           </button>
@@ -222,7 +265,9 @@ export default function NotificacionesPage() {
         <EmptyState
           icon={Bell}
           title="Sin notificaciones"
-          description="No hay notificaciones para esta categoría. Vuelve más tarde."
+          description="¡Todo tranquilo por acá! No hay avisos pendientes."
+          actionLabel="Ir al inicio"
+          actionHref="/"
         />
       ) : (
         <div className="space-y-3.5">
@@ -242,7 +287,7 @@ export default function NotificacionesPage() {
       {canCreate && (
         <Link
           href="/notificaciones/nueva"
-          className="fixed bottom-20 right-5 z-40 flex size-14 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
+          className="fab"
           aria-label="Nueva notificación"
         >
           <Plus className="size-6" />

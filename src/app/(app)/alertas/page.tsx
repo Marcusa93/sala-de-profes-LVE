@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
+import { isManagerOrAbove } from '@/lib/roles'
 import Link from 'next/link'
 import {
   AlertTriangle,
@@ -57,7 +58,7 @@ export default function AlertasPage() {
   const [activeTab, setActiveTab] = useState<'active' | 'resolved'>('active')
   const [resolvingId, setResolvingId] = useState<string | null>(null)
 
-  const isEncargado = profile?.role === 'encargado'
+  const isEncargado = isManagerOrAbove(profile?.role)
 
   // -------------------------------------------------------------------------
   // Fetch alerts
@@ -89,15 +90,15 @@ export default function AlertasPage() {
         const { data: suppliers } = await supabase
           .from('suppliers')
           .select('id, name, phone, contact_name')
-          .in('id', supplierIds)
+          .in('id', supplierIds as unknown as number[])
 
         const supplierMap = new Map(
-          (suppliers ?? []).map((s) => [s.id, s as SupplierInfo]),
+          (suppliers ?? []).map((s) => [s.id, s as unknown as SupplierInfo]),
         )
 
         for (const alert of alertsData) {
           if (alert.stock_items?.supplier_id) {
-            alert.supplier = supplierMap.get(alert.stock_items.supplier_id) ?? null
+            alert.supplier = supplierMap.get(alert.stock_items.supplier_id as unknown as number) ?? null
           }
         }
       }

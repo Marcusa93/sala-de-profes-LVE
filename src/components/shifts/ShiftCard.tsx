@@ -1,6 +1,6 @@
 'use client'
 
-import { format } from 'date-fns'
+import { format, isToday } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import { Clock, StickyNote, User } from 'lucide-react'
 import { ROLES } from '@/lib/constants'
@@ -48,16 +48,26 @@ function formatTime(timeStr: string): string {
 
 export function ShiftCard({ shift, showPerson = false }: ShiftCardProps) {
   const roleConfig = ROLES[shift.shift_role]
+  const isTodayShift = isToday(new Date(shift.shift_date + 'T12:00:00'))
 
   return (
     <div
-      className="rounded-xl border border-border bg-card p-3.5 transition-shadow hover:shadow-sm"
+      className={`rounded-xl border bg-card p-3.5 transition-shadow hover:shadow-sm ${
+        isTodayShift ? 'border-[#006d5a]/30 bg-[#f0f7f5]/40 ring-1 ring-[#006d5a]/10' : 'border-border'
+      }`}
       style={{ borderLeftWidth: '3px', borderLeftColor: roleConfig.color }}
     >
       {/* Date */}
-      <p className="text-sm font-semibold capitalize text-foreground">
-        {formatShiftDate(shift.shift_date)}
-      </p>
+      <div className="flex items-center gap-2">
+        <p className="text-sm font-semibold capitalize text-foreground">
+          {formatShiftDate(shift.shift_date)}
+        </p>
+        {isTodayShift && (
+          <span className="rounded-full bg-[#006d5a] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+            Hoy
+          </span>
+        )}
+      </div>
 
       {/* Time range */}
       <div className="mt-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
