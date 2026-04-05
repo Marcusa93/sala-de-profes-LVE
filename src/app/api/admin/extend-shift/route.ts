@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
         clock_out_type: 'edited',
         edited_by: user.id,
         original_clock_out: originalClockOut,
+        status: 'closed',
         notes: `Extensión autorizada por ${authName}${reason ? ` — ${reason}` : ''}`,
       })
       .eq('id', attendance_id)

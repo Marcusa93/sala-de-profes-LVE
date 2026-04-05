@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
@@ -11,13 +11,14 @@ import {
   AlertCircle,
   Loader2,
   History,
+  Timer,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
-import { FadeIn, StaggerList, StaggerItem, ScalePress, PulseRing, AnimatePresence, motion } from '@/components/ui/motion'
+import { FadeIn, StaggerList, StaggerItem, AnimatePresence, motion } from '@/components/ui/motion'
 import { SuccessBurst } from '@/components/ui/success-burst'
 import { playSchoolBell } from '@/lib/sounds'
 
@@ -37,6 +38,45 @@ type AttendanceRecord = {
 type TodayStatus = 'not_clocked_in' | 'clocked_in' | 'completed'
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function getGreeting(date: Date): string {
+  const h = date.getHours()
+  if (h < 12) return 'Buenos días'
+  if (h < 19) return 'Buenas tardes'
+  return 'Buenas noches'
+}
+
+function formatDuration(start: string, end?: string | null): string {
+  const from = new Date(start)
+  const to = end ? new Date(end) : new Date()
+  const diffMs = Math.max(0, to.getTime() - from.getTime())
+  const totalMin = Math.floor(diffMs / 60000)
+  const hours = Math.floor(totalMin / 60)
+  const mins = totalMin % 60
+  if (hours === 0) return `${mins}m`
+  return `${hours}h ${mins}m`
+}
+
+function humanizeError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg.includes('already') || msg.includes('duplicate') || msg.includes('unique')) {
+    return 'Ya registraste tu ingreso hoy'
+  }
+  if (msg.includes('no open') || msg.includes('not found') || msg.includes('No hay turno')) {
+    return 'No hay ingreso abierto para cerrar'
+  }
+  if (msg.includes('auth') || msg.includes('JWT') || msg.includes('session')) {
+    return 'Sesión expirada. Por favor recargá la página'
+  }
+  if (msg.includes('network') || msg.includes('fetch')) {
+    return 'Sin conexión. Verificá tu red e intentá de nuevo'
+  }
+  return msg || 'Ocurrió un error inesperado'
+}
+
+// ---------------------------------------------------------------------------
 // Clock In/Out Page
 // ---------------------------------------------------------------------------
 
@@ -51,7 +91,18 @@ export default function MiTurnoPage() {
   const [actionLoading, setActionLoading] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
 
-  const todayStr = format(new Date(), 'yyyy-MM-dd')
+  // Stable todayStr that only changes at midnight
+  const [todayStr, setTodayStr] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+
+  useEffect(() => {
+    const now = new Date()
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+    const msUntilMidnight = nextMidnight.getTime() - now.getTime()
+    const timer = setTimeout(() => {
+      setTodayStr(format(new Date(), 'yyyy-MM-dd'))
+    }, msUntilMidnight)
+    return () => clearTimeout(timer)
+  }, [todayStr]) // re-arms after each midnight transition
 
   // ------------------------------------------
   // Live clock
@@ -72,7 +123,7 @@ export default function MiTurnoPage() {
 
     try {
       // Today's record
-      const { data: today } = await supabase
+      const { data: today, error: todayError } = await supabase
         .from('attendance_logs')
         .select('id, operative_date, clock_in_at, clock_out_at, status, notes')
         .eq('user_id', profile.id)
@@ -81,10 +132,12 @@ export default function MiTurnoPage() {
         .limit(1)
         .maybeSingle()
 
+      if (todayError) throw todayError
+
       setTodayRecord(today)
 
       // Last 7 records (history)
-      const { data: historyData } = await supabase
+      const { data: historyData, error: historyError } = await supabase
         .from('attendance_logs')
         .select('id, operative_date, clock_in_at, clock_out_at, status, notes')
         .eq('user_id', profile.id)
@@ -92,9 +145,12 @@ export default function MiTurnoPage() {
         .order('clock_in_at', { ascending: false })
         .limit(7)
 
+      if (historyError) throw historyError
+
       setHistory(historyData ?? [])
     } catch (err) {
       console.error('Error al cargar asistencia:', err)
+      toast.error('No se pudo cargar tu turno. Intentá de nuevo.')
     } finally {
       setLoading(false)
     }
@@ -116,6 +172,15 @@ export default function MiTurnoPage() {
 
   const status = getStatus()
 
+  // Live duration (re-computes every second via currentTime)
+  const liveDuration = useMemo(() => {
+    if (!todayRecord) return null
+    if (status === 'clocked_in') return formatDuration(todayRecord.clock_in_at)
+    if (status === 'completed') return formatDuration(todayRecord.clock_in_at, todayRecord.clock_out_at)
+    return null
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayRecord, status, currentTime])
+
   // ------------------------------------------
   // Clock In — direct, no GPS
   // ------------------------------------------
@@ -123,14 +188,14 @@ export default function MiTurnoPage() {
     if (!profile) return
     setActionLoading(true)
     try {
-      const { error } = await supabase.rpc('clock_in', { p_notes: undefined })
+      const { error } = await supabase.rpc('clock_in', { p_notes: null })
       if (error) throw error
       playSchoolBell()
       setShowSuccess(true)
       toast.success('¡Ingreso registrado!')
       await fetchAttendance()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al fichar')
+      toast.error(humanizeError(err))
     } finally {
       setActionLoading(false)
     }
@@ -143,14 +208,14 @@ export default function MiTurnoPage() {
     if (!profile || !todayRecord) return
     setActionLoading(true)
     try {
-      const { error } = await supabase.rpc('clock_out', { p_notes: undefined })
+      const { error } = await supabase.rpc('clock_out', { p_notes: null })
       if (error) throw error
       playSchoolBell()
       setShowSuccess(true)
       toast.success('¡Egreso registrado!')
       await fetchAttendance()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al fichar')
+      toast.error(humanizeError(err))
     } finally {
       setActionLoading(false)
     }
@@ -169,7 +234,6 @@ export default function MiTurnoPage() {
       )
     }
 
-    // Check if it's today
     if (record.operative_date === todayStr) {
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-[#fdf6ec] px-2.5 py-0.5 text-xs font-medium text-[#d4943a]">
@@ -218,7 +282,7 @@ export default function MiTurnoPage() {
     <div className="mx-auto max-w-lg space-y-8 pb-28">
       <SuccessBurst show={showSuccess} onComplete={() => setShowSuccess(false)} />
       {/* ============================================================= */}
-      {/* Hero Clock — Ceremonial, display-driven                        */}
+      {/* Hero Clock                                                      */}
       {/* ============================================================= */}
       <FadeIn className="pt-4 text-center">
         <p className="font-display text-5xl sm:text-7xl font-bold tabular-nums tracking-tight text-[#3d2c24]">
@@ -231,7 +295,7 @@ export default function MiTurnoPage() {
       </FadeIn>
 
       {/* ============================================================= */}
-      {/* Status Card — card-elevated-lg, accent bar                     */}
+      {/* Status Card                                                     */}
       {/* ============================================================= */}
       <FadeIn delay={0.1}>
       <div
@@ -254,7 +318,7 @@ export default function MiTurnoPage() {
             </div>
             <div className="text-center">
               <p className="font-display text-lg font-semibold text-[#3d2c24]">
-                Buenos dias
+                {getGreeting(currentTime)}
               </p>
               <p className="mt-1 text-sm text-[#a39e97]">
                 No has registrado ingreso hoy.
@@ -275,7 +339,7 @@ export default function MiTurnoPage() {
           </div>
         )}
 
-        {/* CLOCKED IN - needs clock out */}
+        {/* CLOCKED IN */}
         {status === 'clocked_in' && todayRecord && (
           <div className="flex flex-col items-center gap-6">
             <div className="flex size-20 items-center justify-center rounded-2xl bg-[#fdf6ec]">
@@ -286,6 +350,14 @@ export default function MiTurnoPage() {
               <p className="mt-2 font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
                 {format(new Date(todayRecord.clock_in_at), 'HH:mm')}
               </p>
+              {liveDuration && (
+                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#fdf6ec] px-3 py-1">
+                  <Timer className="size-3.5 text-[#d4943a]" />
+                  <span className="text-sm font-semibold tabular-nums text-[#d4943a]">
+                    {liveDuration} trabajando
+                  </span>
+                </div>
+              )}
             </div>
             <Button
               onClick={handleClockOut}
@@ -329,6 +401,14 @@ export default function MiTurnoPage() {
                   </p>
                 </div>
               </div>
+              {liveDuration && (
+                <div className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1">
+                  <Timer className="size-3.5 text-[#006d5a]" />
+                  <span className="text-sm font-semibold tabular-nums text-[#006d5a]">
+                    {liveDuration} trabajados
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -386,6 +466,12 @@ export default function MiTurnoPage() {
                         ? format(new Date(record.clock_out_at), 'HH:mm')
                         : '--:--'}
                     </span>
+                    {record.clock_out_at && (
+                      <>
+                        <span className="text-[#ebe6df]">·</span>
+                        <span>{formatDuration(record.clock_in_at, record.clock_out_at)}</span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -399,8 +485,6 @@ export default function MiTurnoPage() {
           </StaggerList>
         )}
       </FadeIn>
-
-      {/* GPS dialog removed — fichaje libre */}
     </div>
   )
 }
