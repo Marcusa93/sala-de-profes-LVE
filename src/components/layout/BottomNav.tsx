@@ -65,7 +65,7 @@ type ExpandableNavItem = {
 
 const BASE_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
-  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
+  { label: 'Mi Turno', href: '/fichaje', icon: Clock },
   { label: 'Horarios', href: '/mis-horarios', icon: Calendar },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
@@ -74,7 +74,7 @@ const BASE_NAV: NavItem[] = [
 const RUNNER_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
   { label: 'Salón', href: '/salon', icon: Armchair },
-  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
+  { label: 'Mi Turno', href: '/fichaje', icon: Clock },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 

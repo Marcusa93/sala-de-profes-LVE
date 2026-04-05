@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Loader2,
   History,
+  Timer,
   MapPin,
   Wifi,
   Camera,
@@ -70,6 +71,45 @@ type CheckStep = {
 type FlowState = 'idle' | 'security_check' | 'selfie' | 'submitting' | 'done'
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function getGreeting(date: Date): string {
+  const h = date.getHours()
+  if (h < 12) return 'Buenos días'
+  if (h < 19) return 'Buenas tardes'
+  return 'Buenas noches'
+}
+
+function formatDuration(start: string, end?: string | null): string {
+  const from = new Date(start)
+  const to = end ? new Date(end) : new Date()
+  const diffMs = Math.max(0, to.getTime() - from.getTime())
+  const totalMin = Math.floor(diffMs / 60000)
+  const hours = Math.floor(totalMin / 60)
+  const mins = totalMin % 60
+  if (hours === 0) return `${mins}m`
+  return `${hours}h ${mins}m`
+}
+
+function humanizeError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg.includes('already') || msg.includes('duplicate') || msg.includes('unique')) {
+    return 'Ya registraste tu ingreso hoy'
+  }
+  if (msg.includes('no open') || msg.includes('not found') || msg.includes('No hay turno')) {
+    return 'No hay ingreso abierto para cerrar'
+  }
+  if (msg.includes('auth') || msg.includes('JWT') || msg.includes('session')) {
+    return 'Sesión expirada. Por favor recargá la página'
+  }
+  if (msg.includes('network') || msg.includes('fetch')) {
+    return 'Sin conexión. Verificá tu red e intentá de nuevo'
+  }
+  return msg || 'Ocurrió un error inesperado'
+}
+
+// ---------------------------------------------------------------------------
 // Componente de paso de seguridad individual
 // ---------------------------------------------------------------------------
 
@@ -127,9 +167,19 @@ export default function MiTurnoPage() {
   const [steps, setSteps] = useState<CheckStep[]>([])
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
   const [geoResult, setGeoResult] = useState<GeoResult | null>(null)
-  const [canProceedWithWarnings, setCanProceedWithWarnings] = useState(false)
 
-  const todayStr = format(new Date(), 'yyyy-MM-dd')
+  // Stable todayStr that only changes at midnight
+  const [todayStr, setTodayStr] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+
+  useEffect(() => {
+    const now = new Date()
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+    const msUntilMidnight = nextMidnight.getTime() - now.getTime()
+    const timer = setTimeout(() => {
+      setTodayStr(format(new Date(), 'yyyy-MM-dd'))
+    }, msUntilMidnight)
+    return () => clearTimeout(timer)
+  }, [todayStr])
 
   // ------------------------------------------
   // Live clock
@@ -156,7 +206,7 @@ export default function MiTurnoPage() {
     if (!profile) return
     setLoading(true)
     try {
-      const { data: today } = await supabase
+      const { data: today, error: todayError } = await supabase
         .from('attendance_logs')
         .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, suspicious_reasons, geo_verified, geo_distance_m, wifi_verified, clock_in_photo_url, clock_out_photo_url')
         .eq('user_id', profile.id)
@@ -166,16 +216,22 @@ export default function MiTurnoPage() {
         .maybeSingle()
       setTodayRecord(today as unknown as AttendanceRecord | null)
 
-      const { data: historyData } = await supabase
+      if (todayError) throw todayError
+      setTodayRecord(today as unknown as AttendanceRecord | null)
+
+      const { data: historyData, error: historyError } = await supabase
         .from('attendance_logs')
         .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, geo_verified')
         .eq('user_id', profile.id)
         .order('operative_date', { ascending: false })
         .order('clock_in_at', { ascending: false })
         .limit(7)
+
+      if (historyError) throw historyError
       setHistory((historyData ?? []) as unknown as AttendanceRecord[])
     } catch (err) {
       console.error('Error al cargar asistencia:', err)
+      toast.error('No se pudo cargar tu turno. Intentá de nuevo.')
     } finally {
       setLoading(false)
     }
@@ -194,6 +250,15 @@ export default function MiTurnoPage() {
   }
   const status = getStatus()
 
+  // Live duration — re-computes every second via currentTime
+  const liveDuration = useMemo(() => {
+    if (!todayRecord) return null
+    if (status === 'clocked_in') return formatDuration(todayRecord.clock_in_at)
+    if (status === 'completed') return formatDuration(todayRecord.clock_in_at, todayRecord.clock_out_at)
+    return null
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayRecord, status, currentTime])
+
   function setStepStatus(id: string, st: CheckStep['status'], detail?: string) {
     setSteps(prev => prev.map(s => s.id === id ? { ...s, status: st, detail } : s))
   }
@@ -205,12 +270,11 @@ export default function MiTurnoPage() {
     setFlowAction(action)
     setPhotoUrl(null)
     setGeoResult(null)
-    setCanProceedWithWarnings(false)
     setSteps([
-      { id: 'geo',  label: 'Verificando ubicación',    status: 'pending' },
-      { id: 'wifi', label: 'Detectando red WiFi',       status: 'pending' },
-      { id: 'dev',  label: 'Registrando dispositivo',   status: 'pending' },
-      { id: 'photo',label: 'Selfie de verificación',    status: 'pending' },
+      { id: 'geo',   label: 'Verificando ubicación',  status: 'pending' },
+      { id: 'wifi',  label: 'Detectando red WiFi',     status: 'pending' },
+      { id: 'dev',   label: 'Registrando dispositivo', status: 'pending' },
+      { id: 'photo', label: 'Selfie de verificación',  status: 'pending' },
     ])
     setFlowState('security_check')
     runSecurityChecks()
@@ -222,17 +286,15 @@ export default function MiTurnoPage() {
   const runSecurityChecks = useCallback(async () => {
     // --- Geolocalización ---
     setStepStatus('geo', 'loading')
-    let geoOk = false
-    let geoData: GeoResult | null = null
     try {
-      geoData = await getGeolocation(10000)
+      const geoData = await getGeolocation(10000)
       setGeoResult(geoData)
       if (venueConfig) {
         const dist = haversineDistance(
           geoData.lat, geoData.lng,
           venueConfig.venue_lat, venueConfig.venue_lng,
         )
-        geoOk = dist <= venueConfig.geo_radius_m
+        const geoOk = dist <= venueConfig.geo_radius_m
         setStepStatus('geo', geoOk ? 'ok' : 'warn',
           geoOk
             ? `A ${dist}m del local ✓`
@@ -264,7 +326,6 @@ export default function MiTurnoPage() {
     // --- Foto (esperar en siguiente pantalla) ---
     setStepStatus('photo', 'pending', 'Pendiente')
 
-    // Mostrar pantalla de selfie después de pequeña pausa
     await new Promise(r => setTimeout(r, 600))
     setFlowState('selfie')
     setStepStatus('photo', 'loading', 'Pendiente tu selfie')
@@ -314,7 +375,7 @@ export default function MiTurnoPage() {
       const data = await response.json()
 
       if (!response.ok || data.error) {
-        toast.error(data.error ?? 'Error al fichar')
+        toast.error(humanizeError(data.error ?? 'Error al fichar'))
         setFlowState('idle')
         return
       }
@@ -324,7 +385,7 @@ export default function MiTurnoPage() {
       setFlowState('done')
 
       if (data.warnings?.length) {
-        toast.warning(`Fichaje registrado con advertencias`, { description: data.warnings[0] })
+        toast.warning('Fichaje registrado con advertencias', { description: data.warnings[0] })
       } else {
         toast.success(flowAction === 'in' ? '¡Ingreso registrado!' : '¡Egreso registrado!')
       }
@@ -503,7 +564,9 @@ export default function MiTurnoPage() {
                 <LogIn className="size-9 text-[#006d5a]" strokeWidth={1.5} />
               </div>
               <div className="text-center">
-                <p className="font-display text-lg font-semibold text-[#3d2c24]">Buenos días</p>
+                <p className="font-display text-lg font-semibold text-[#3d2c24]">
+                  {getGreeting(currentTime)}
+                </p>
                 <p className="mt-1 text-sm text-[#a39e97]">No has registrado ingreso hoy.</p>
               </div>
               {/* Seguridad activa badge */}
@@ -532,6 +595,14 @@ export default function MiTurnoPage() {
                 <p className="mt-2 font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
                   {format(new Date(todayRecord.clock_in_at), 'HH:mm')}
                 </p>
+                {liveDuration && (
+                  <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#fdf6ec] px-3 py-1">
+                    <Timer className="size-3.5 text-[#d4943a]" />
+                    <span className="text-sm font-semibold tabular-nums text-[#d4943a]">
+                      {liveDuration} trabajando
+                    </span>
+                  </div>
+                )}
                 {/* Indicadores de seguridad del ingreso */}
                 <div className="mt-3 flex items-center justify-center gap-2">
                   <span className={`flex items-center gap-1 text-xs ${todayRecord.geo_verified ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
@@ -589,6 +660,14 @@ export default function MiTurnoPage() {
                     </p>
                   </div>
                 </div>
+                {liveDuration && (
+                  <div className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1">
+                    <Timer className="size-3.5 text-[#006d5a]" />
+                    <span className="text-sm font-semibold tabular-nums text-[#006d5a]">
+                      {liveDuration} trabajados
+                    </span>
+                  </div>
+                )}
                 {/* Indicadores de verificación */}
                 <div className="mt-4 flex items-center justify-center gap-3">
                   {todayRecord.geo_verified && (
@@ -649,12 +728,18 @@ export default function MiTurnoPage() {
                       <p className="text-sm font-medium capitalize text-[#3d2c24]">
                         {format(new Date(record.operative_date + 'T12:00:00'), 'EEE d MMM', { locale: es })}
                       </p>
-                      <div className="mt-0.5 flex items-center gap-3 text-xs text-[#a39e97]">
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[#a39e97]">
                         <span className="tabular-nums">{format(new Date(record.clock_in_at), 'HH:mm')}</span>
                         <span className="text-[#ebe6df]">/</span>
                         <span className="tabular-nums">
                           {record.clock_out_at ? format(new Date(record.clock_out_at), 'HH:mm') : '--:--'}
                         </span>
+                        {record.clock_out_at && (
+                          <>
+                            <span className="text-[#ebe6df]">·</span>
+                            <span>{formatDuration(record.clock_in_at, record.clock_out_at)}</span>
+                          </>
+                        )}
                         {record.geo_verified && <MapPin className="size-3 text-[#006d5a]" />}
                       </div>
                     </div>

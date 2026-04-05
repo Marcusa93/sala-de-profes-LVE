@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   LogIn, LogOut, Camera, MapPin, Wifi, Shield,
   CheckCircle, AlertTriangle, XCircle, Loader2,
-  Clock, History, Smartphone, RefreshCw
+  Clock, History, Smartphone, RefreshCw, Timer,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,7 @@ import type { ClockEvent, AnomalyFlag } from '@/types/database'
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
 type ValidationState = 'idle' | 'checking' | 'ok' | 'warn' | 'error'
 
 type ValidationItem = {
@@ -29,8 +30,49 @@ type ValidationItem = {
 }
 
 // ---------------------------------------------------------------------------
-// Device fingerprint (browser)
+// Helpers
 // ---------------------------------------------------------------------------
+
+function getGreeting(date: Date): string {
+  const h = date.getHours()
+  if (h < 12) return 'Buenos días'
+  if (h < 19) return 'Buenas tardes'
+  return 'Buenas noches'
+}
+
+function formatDuration(start: string, end?: string | null): string {
+  const from = new Date(start)
+  const to = end ? new Date(end) : new Date()
+  const diffMs = Math.max(0, to.getTime() - from.getTime())
+  const totalMin = Math.floor(diffMs / 60000)
+  const hours = Math.floor(totalMin / 60)
+  const mins = totalMin % 60
+  if (hours === 0) return `${mins}m`
+  return `${hours}h ${mins}m`
+}
+
+function humanizeError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (!msg) return 'Ocurrió un error inesperado'
+  if (msg.includes('already') || msg.includes('duplicate') || msg.includes('unique')) {
+    return 'Ya registraste tu ingreso hoy'
+  }
+  if (msg.includes('no open') || msg.includes('not found') || msg.includes('No hay turno')) {
+    return 'No hay ingreso abierto para cerrar'
+  }
+  if (msg.includes('auth') || msg.includes('JWT') || msg.includes('session')) {
+    return 'Sesión expirada. Por favor recargá la página'
+  }
+  if (msg.includes('network') || msg.includes('fetch')) {
+    return 'Sin conexión. Verificá tu red e intentá de nuevo'
+  }
+  return msg
+}
+
+// ---------------------------------------------------------------------------
+// Device fingerprint (browser, async with SHA-256)
+// ---------------------------------------------------------------------------
+
 async function getDeviceFingerprint(): Promise<string> {
   const components = [
     navigator.userAgent,
@@ -55,8 +97,9 @@ async function getDeviceFingerprint(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Semaphore color helper
+// Semaphore helpers
 // ---------------------------------------------------------------------------
+
 function semaphoreColor(state: ValidationState) {
   switch (state) {
     case 'ok':       return '#006d5a'
@@ -78,6 +121,7 @@ function SemaphoreIcon({ state }: { state: ValidationState }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
+
 export default function FichajePage() {
   const { profile, loading: profileLoading } = useProfileContext()
 
@@ -93,10 +137,10 @@ export default function FichajePage() {
 
   // Validation states
   const [validations, setValidations] = useState<Record<string, ValidationItem>>({
-    gps: { label: 'GPS / Ubicación', state: 'idle' },
-    wifi: { label: 'Red WiFi', state: 'idle' },
-    device: { label: 'Dispositivo', state: 'idle' },
-    selfie: { label: 'Selfie', state: 'idle' },
+    gps:    { label: 'GPS / Ubicación', state: 'idle' },
+    wifi:   { label: 'Red WiFi',        state: 'idle' },
+    device: { label: 'Dispositivo',     state: 'idle' },
+    selfie: { label: 'Selfie',          state: 'idle' },
   })
 
   // Captured data
@@ -123,6 +167,15 @@ export default function FichajePage() {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000)
     return () => clearInterval(interval)
   }, [])
+
+  // -----------------------------------------------------------------------
+  // Live duration (re-computes every second via currentTime)
+  // -----------------------------------------------------------------------
+  const liveDuration = useMemo(() => {
+    if (status !== 'clocked_in' || !lastEvent) return null
+    return formatDuration(lastEvent.timestamp)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, lastEvent, currentTime])
 
   // -----------------------------------------------------------------------
   // Fetch status
@@ -169,15 +222,10 @@ export default function FichajePage() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setGpsData({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy })
-        const accuracy = pos.coords.accuracy
-        const state: ValidationState = accuracy > 100 ? 'warn' : 'ok'
+        const state: ValidationState = pos.coords.accuracy > 100 ? 'warn' : 'ok'
         setValidations(v => ({
           ...v,
-          gps: {
-            label: 'GPS / Ubicación',
-            state,
-            detail: `Precisión: ±${Math.round(accuracy)}m`,
-          },
+          gps: { label: 'GPS / Ubicación', state, detail: `Precisión: ±${Math.round(pos.coords.accuracy)}m` },
         }))
       },
       (err) => {
@@ -252,7 +300,7 @@ export default function FichajePage() {
   }
 
   // -----------------------------------------------------------------------
-  // WiFi input handler
+  // WiFi input
   // -----------------------------------------------------------------------
   function handleWifiInput(ssid: string) {
     setWifiSSID(ssid)
@@ -290,12 +338,12 @@ export default function FichajePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          event_type: eventType,
-          gps_lat: gpsData?.lat,
-          gps_lng: gpsData?.lng,
-          gps_accuracy: gpsData?.accuracy,
-          wifi_ssid: wifiSSID || undefined,
-          selfie_base64: selfieBase64 || undefined,
+          event_type:         eventType,
+          gps_lat:            gpsData?.lat,
+          gps_lng:            gpsData?.lng,
+          gps_accuracy:       gpsData?.accuracy,
+          wifi_ssid:          wifiSSID || undefined,
+          selfie_base64:      selfieBase64 || undefined,
           device_fingerprint: deviceFingerprint || undefined,
         }),
       })
@@ -303,7 +351,7 @@ export default function FichajePage() {
       const data = await res.json()
 
       if (!res.ok) {
-        toast.error(data.error ?? 'Error al fichar')
+        toast.error(humanizeError(data.error))
         return
       }
 
@@ -337,7 +385,11 @@ export default function FichajePage() {
   }
 
   if (!profile) {
-    return <div className="flex min-h-[60vh] items-center justify-center"><p className="text-muted-foreground">No se pudo cargar el perfil.</p></div>
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <p className="text-muted-foreground">No se pudo cargar el perfil.</p>
+      </div>
+    )
   }
 
   const overall = overallState()
@@ -389,10 +441,7 @@ export default function FichajePage() {
           <div className="flex items-center justify-between mb-1">
             <p className="section-label">Validaciones</p>
             <div className="flex items-center gap-1.5">
-              <div
-                className="h-2 w-2 rounded-full"
-                style={{ backgroundColor: semaphoreColor(overall) }}
-              />
+              <div className="h-2 w-2 rounded-full" style={{ backgroundColor: semaphoreColor(overall) }} />
               <span className="text-xs font-medium" style={{ color: semaphoreColor(overall) }}>
                 {overall === 'ok' ? 'Listo' : overall === 'checking' ? 'Verificando…' : overall === 'warn' ? 'Con advertencias' : 'Requiere atención'}
               </span>
@@ -452,8 +501,12 @@ export default function FichajePage() {
                 <LogIn className="size-9 text-[#006d5a]" strokeWidth={1.5} />
               </div>
               <div className="text-center">
-                <p className="font-display text-lg font-semibold text-[#3d2c24]">¡Buenos días, {profile.first_name}!</p>
-                <p className="mt-1 text-sm text-[#a39e97]">¿Listo para empezar?</p>
+                <p className="font-display text-lg font-semibold text-[#3d2c24]">
+                  {getGreeting(currentTime)}, {profile.first_name}
+                </p>
+                <p className="mt-1 text-sm text-[#a39e97]">
+                  {status === 'clocked_out' ? 'Tu último egreso fue registrado.' : '¿Listo para empezar?'}
+                </p>
               </div>
 
               {selfieBase64 && (
@@ -486,8 +539,16 @@ export default function FichajePage() {
                 <p className="mt-1 font-display text-4xl font-bold tabular-nums text-[#3d2c24]">
                   {format(new Date(lastEvent.timestamp), 'HH:mm')}
                 </p>
+                {liveDuration && (
+                  <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#fdf6ec] px-3 py-1">
+                    <Timer className="size-3.5 text-[#d4943a]" />
+                    <span className="text-sm font-semibold tabular-nums text-[#d4943a]">
+                      {liveDuration} trabajando
+                    </span>
+                  </div>
+                )}
                 {!lastEvent.verified && (
-                  <p className="mt-1 text-xs text-[#d4943a]">⚠️ Ingreso con advertencias de seguridad</p>
+                  <p className="mt-2 text-xs text-[#d4943a]">⚠️ Ingreso con advertencias de seguridad</p>
                 )}
               </div>
 
@@ -524,12 +585,12 @@ export default function FichajePage() {
             </div>
             {anomalyResult.map((f, i) => (
               <p key={i} className="text-xs text-[#a39e97]">
-                • {f.type === 'gps_out_of_range' ? 'GPS fuera del rango del local' :
-                   f.type === 'wifi_mismatch' ? 'Red WiFi no reconocida' :
-                   f.type === 'unknown_device' ? 'Dispositivo no registrado (pendiente aprobación)' :
-                   f.type === 'selfie_missing' ? 'No se adjuntó selfie' :
-                   f.type === 'rapid_succession' ? 'Fichaje muy rápido' :
-                   f.type === 'unusual_hour' ? 'Horario inusual' : f.type}
+                • {f.type === 'gps_out_of_range'  ? 'GPS fuera del rango del local' :
+                   f.type === 'wifi_mismatch'      ? 'Red WiFi no reconocida' :
+                   f.type === 'unknown_device'     ? 'Dispositivo no registrado (pendiente aprobación)' :
+                   f.type === 'selfie_missing'     ? 'No se adjuntó selfie' :
+                   f.type === 'rapid_succession'   ? 'Fichaje muy rápido' :
+                   f.type === 'unusual_hour'       ? 'Horario inusual' : f.type}
               </p>
             ))}
             <p className="text-[10px] text-[#a39e97]">El encargado revisará estas advertencias.</p>
@@ -571,8 +632,10 @@ export default function FichajePage() {
           <StaggerList className="space-y-2">
             {todayEvents.map(evt => (
               <StaggerItem key={evt.id}>
-                <div className="card-elevated flex items-center gap-3 rounded-xl px-4 py-3"
-                  style={{ borderLeftWidth: '3px', borderLeftColor: evt.event_type === 'clock_in' ? '#006d5a' : '#ea504c' }}>
+                <div
+                  className="card-elevated flex items-center gap-3 rounded-xl px-4 py-3"
+                  style={{ borderLeftWidth: '3px', borderLeftColor: evt.event_type === 'clock_in' ? '#006d5a' : '#ea504c' }}
+                >
                   <div className="flex-1">
                     <p className="text-sm font-medium text-[#3d2c24]">
                       {evt.event_type === 'clock_in' ? '🟢 Ingreso' : '🔴 Egreso'}
