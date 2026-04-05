@@ -91,6 +91,7 @@ async function getDeviceFingerprint(): Promise<string> {
       .map(b => b.toString(16).padStart(2, '0'))
       .join('')
   } catch {
+    // Fallback if crypto.subtle not available
     return btoa(components).replace(/[^a-z0-9]/gi, '').slice(0, 64)
   }
 }
@@ -337,13 +338,13 @@ export default function FichajePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          event_type:          eventType,
-          gps_lat:             gpsData?.lat,
-          gps_lng:             gpsData?.lng,
-          gps_accuracy:        gpsData?.accuracy,
-          wifi_ssid:           wifiSSID || undefined,
-          selfie_base64:       selfieBase64 || undefined,
-          device_fingerprint:  deviceFingerprint || undefined,
+          event_type:         eventType,
+          gps_lat:            gpsData?.lat,
+          gps_lng:            gpsData?.lng,
+          gps_accuracy:       gpsData?.accuracy,
+          wifi_ssid:          wifiSSID || undefined,
+          selfie_base64:      selfieBase64 || undefined,
+          device_fingerprint: deviceFingerprint || undefined,
         }),
       })
 
@@ -379,7 +380,9 @@ export default function FichajePage() {
   // -----------------------------------------------------------------------
   // Loading
   // -----------------------------------------------------------------------
-  if (profileLoading || loadingStatus) return <LoadingState message="Cargando fichaje..." />
+  if (profileLoading || loadingStatus) {
+    return <LoadingState message="Cargando fichaje..." />
+  }
 
   if (!profile) {
     return (
