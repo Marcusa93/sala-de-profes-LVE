@@ -307,6 +307,60 @@ export async function syncToFudo(
 }
 
 // ---------------------------------------------------------------------------
+// SYNC PRODUCTION: Push updated stock to Fudo after production completes
+// The RPC already updated stock_items — this only pushes to Fudo API
+// ---------------------------------------------------------------------------
+
+export async function syncProductionToFudo(
+  admin: SupabaseClient,
+  movements: { stock_item_id: number | string; change: number }[],
+  userId?: string,
+): Promise<{ synced: number; errors: string[] }> {
+  const result = { synced: 0, errors: [] as string[] }
+
+  // Unique stock item IDs from movements
+  const itemIds = [...new Set(movements.map((m) => m.stock_item_id))]
+
+  for (const itemId of itemIds) {
+    const { data: item } = await admin
+      .from('stock_items')
+      .select('id, name, fudo_ingredient_id, current_qty')
+      .eq('id', itemId)
+      .single()
+
+    if (!item?.fudo_ingredient_id) continue // No Fudo link — skip
+
+    const fudoResult = await writeFudoStock(item.fudo_ingredient_id, item.current_qty)
+
+    if (fudoResult.success) {
+      result.synced++
+      await admin.from('audit_trail').insert({
+        user_id: userId ?? null,
+        action: 'fudo_production_sync',
+        module: 'stock',
+        entity_type: 'stock_item',
+        entity_id: String(itemId),
+        description: `Producción: ${item.name} → ${item.current_qty} (sincronizado con Fudo)`,
+        metadata: { fudo_ingredient_id: item.fudo_ingredient_id, qty: item.current_qty },
+      }).catch(() => {})
+    } else {
+      result.errors.push(`${item.name}: ${fudoResult.error}`)
+      await admin.from('audit_trail').insert({
+        user_id: userId ?? null,
+        action: 'fudo_sync_error',
+        module: 'stock',
+        entity_type: 'stock_item',
+        entity_id: String(itemId),
+        description: `Error sync producción ${item.name} con Fudo: ${fudoResult.error}`,
+        metadata: { fudo_ingredient_id: item.fudo_ingredient_id, attempted_qty: item.current_qty },
+      }).catch(() => {})
+    }
+  }
+
+  return result
+}
+
+// ---------------------------------------------------------------------------
 // FULL BIDIRECTIONAL SYNC
 // Reads from Fudo first, then returns current state
 // ---------------------------------------------------------------------------

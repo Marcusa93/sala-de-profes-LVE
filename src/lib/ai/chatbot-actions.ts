@@ -24,8 +24,21 @@ export type ActionIntent =
   | 'ACTUALIZAR_STOCK'
   | 'REPORTE_PROBLEMA'
   | 'AVISO_ENCARGADO'
+  | 'PRODUCCION_COMPLETA'
   | 'CONSULTA'
   | 'NONE'
+
+export type QueryType =
+  | 'STOCK_DISPONIBILIDAD'
+  | 'STOCK_DURACION'
+  | 'RECETAS_RIESGO'
+  | 'PRODUCCION_HOY'
+  | 'PENDIENTES_LINKS'
+
+export type QueryData = {
+  type: QueryType
+  item?: string // nombre de insumo para STOCK_DISPONIBILIDAD y STOCK_DURACION
+}
 
 export type ExtractedItem = {
   rawName: string
@@ -53,6 +66,152 @@ export type ActionResult = {
 }
 
 // ---------------------------------------------------------------------------
+// 0. Execute Query — runs read-only queries for QUERY_JSON blocks
+// ---------------------------------------------------------------------------
+
+export async function executeQuery(
+  admin: SupabaseClient,
+  queryData: QueryData,
+): Promise<string> {
+  const norm = (s: string) =>
+    s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+
+  try {
+    if (queryData.type === 'STOCK_DISPONIBILIDAD') {
+      const itemName = queryData.item ?? ''
+      const { data: items } = await admin
+        .from('stock_items')
+        .select('name, current_qty, min_qty, unit')
+        .eq('is_active', true)
+
+      if (!items?.length) return 'No hay items de stock registrados.'
+
+      const n = norm(itemName)
+      const match = items.find(
+        (i) => norm(i.name) === n || norm(i.name).includes(n) || n.includes(norm(i.name))
+      )
+
+      if (!match) return `No encontré "${itemName}" en el stock. Verificá el nombre en la app.`
+
+      const semaphore =
+        match.current_qty <= 0 || match.current_qty <= match.min_qty
+          ? '🔴'
+          : match.current_qty <= match.min_qty * 1.5
+          ? '🟡'
+          : '🟢'
+      return `${semaphore} **${match.name}**: ${match.current_qty} ${match.unit} (mínimo: ${match.min_qty} ${match.unit})`
+    }
+
+    if (queryData.type === 'STOCK_DURACION') {
+      const itemName = queryData.item ?? ''
+      const { data: items } = await admin
+        .from('stock_items')
+        .select('id, name, current_qty, min_qty, unit')
+        .eq('is_active', true)
+
+      if (!items?.length) return 'No hay items de stock registrados.'
+
+      const n = norm(itemName)
+      const match = items.find(
+        (i) => norm(i.name) === n || norm(i.name).includes(n) || n.includes(norm(i.name))
+      )
+      if (!match) return `No encontré "${itemName}" en el stock.`
+
+      // Estimate daily usage from production outputs over last 30 days
+      const since = new Date()
+      since.setDate(since.getDate() - 30)
+
+      const { data: inputs } = await admin
+        .from('production_inputs')
+        .select('qty_used, production_orders!inner(created_at, status)')
+        .eq('stock_item_id', match.id)
+        .eq('production_orders.status', 'completed')
+        .gte('production_orders.created_at', since.toISOString())
+
+      const totalUsed = (inputs ?? []).reduce((acc, i) => acc + (i.qty_used ?? 0), 0)
+      const dailyAvg = totalUsed / 30
+
+      if (dailyAvg < 0.01) {
+        return `📦 **${match.name}**: ${match.current_qty} ${match.unit} en stock. Sin producción reciente registrada — no puedo estimar duración.`
+      }
+
+      const daysLeft = Math.floor(match.current_qty / dailyAvg)
+      const semaphore = daysLeft <= 2 ? '🔴' : daysLeft <= 5 ? '🟡' : '🟢'
+      return `${semaphore} **${match.name}**: ${match.current_qty} ${match.unit} en stock. Uso diario promedio: ${dailyAvg.toFixed(2)} ${match.unit}/día. Estimado: **${daysLeft} días**.`
+    }
+
+    if (queryData.type === 'RECETAS_RIESGO') {
+      // Find stock items in red
+      const { data: stockItems } = await admin
+        .from('stock_items')
+        .select('id, name, current_qty, min_qty')
+        .eq('is_active', true)
+
+      const redIds = new Set(
+        (stockItems ?? [])
+          .filter((i) => i.current_qty <= i.min_qty)
+          .map((i) => String(i.id))
+      )
+      if (redIds.size === 0) return '🟢 No hay recetas en riesgo — todos los insumos están en nivel normal o superior.'
+
+      // Check recipe_ingredients table for affected recipes
+      const { data: affected } = await admin
+        .from('recipe_ingredients')
+        .select('recipes(name), stock_item_id')
+        .in('stock_item_id', [...redIds])
+
+      if (!affected?.length) return '🟢 No hay recetas vinculadas a insumos en riesgo.'
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recipeNames = [...new Set((affected as any[]).map((r) => r.recipes?.name).filter(Boolean))]
+      if (!recipeNames.length) return '🟢 No hay recetas en riesgo.'
+
+      return `⚠️ **Recetas en riesgo** (${recipeNames.length}):\n${recipeNames.map((n) => `- ${n}`).join('\n')}`
+    }
+
+    if (queryData.type === 'PRODUCCION_HOY') {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+
+      const { data: orders } = await admin
+        .from('production_orders')
+        .select('name, status, chef_id, profiles!production_orders_chef_id_fkey(first_name)')
+        .gte('created_at', today.toISOString())
+        .order('created_at', { ascending: false })
+
+      if (!orders?.length) return 'No hay producciones registradas hoy.'
+
+      const completed = orders.filter((o) => o.status === 'completed')
+      const pending = orders.filter((o) => o.status !== 'completed' && o.status !== 'cancelled')
+
+      const lines = orders.map((o) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const chef = (o.profiles as any)?.first_name ?? '?'
+        const icon = o.status === 'completed' ? '✅' : o.status === 'in_progress' ? '🔄' : '📋'
+        return `${icon} ${o.name} — ${chef} (${o.status})`
+      })
+      return `📦 **Producción hoy** (${orders.length} total, ${completed.length} completadas, ${pending.length} pendientes):\n${lines.join('\n')}`
+    }
+
+    if (queryData.type === 'PENDIENTES_LINKS') {
+      const { count } = await admin
+        .from('recipe_ingredient_pending_links')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending')
+
+      if (!count) return '✅ No hay ingredientes pendientes de vincular al stock.'
+      return `🔗 Hay **${count} ingrediente${count !== 1 ? 's' : ''}** pendiente${count !== 1 ? 's' : ''} de vincular al stock. Entrá en **Admin → Recetas → Pending** para revisarlos.`
+    }
+
+  } catch (err) {
+    console.error('[executeQuery]', err)
+    return 'No pude obtener esa información en este momento.'
+  }
+
+  return 'Tipo de consulta no reconocido.'
+}
+
+// ---------------------------------------------------------------------------
 // 1. Detect Intent — called by the chatbot with the AI's structured response
 // ---------------------------------------------------------------------------
 
@@ -69,6 +228,9 @@ export function detectIntent(aiAnalysis: {
   }
   if (intent.includes('PEDIDO') || intent.includes('ORDER') || intent.includes('NECESITO') || intent.includes('FALTA')) {
     return 'PEDIDO_MERCADERIA'
+  }
+  if (intent.includes('PRODUCCION') || intent.includes('DESPIECE') || intent.includes('PRODUCCION_COMPLETA')) {
+    return 'PRODUCCION_COMPLETA'
   }
   if (intent.includes('REPORT') || intent.includes('PROBLEMA') || intent.includes('ROTO') || intent.includes('ROMPIÓ')) {
     return 'REPORTE_PROBLEMA'
@@ -213,6 +375,7 @@ const ACTION_PERMISSIONS: Record<ActionIntent, string[]> = {
   ACTUALIZAR_STOCK: ['socio', 'encargado', 'chef', 'cocina', 'barista'], // Who can count/update stock
   REPORTE_PROBLEMA: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can report
   AVISO_ENCARGADO: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can notify
+  PRODUCCION_COMPLETA: ['socio', 'encargado', 'chef', 'cocina'], // Only kitchen roles can register production
   CONSULTA: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can ask
   NONE: [],
 }
@@ -319,6 +482,46 @@ export async function buildProposal(
     return {
       intent,
       items: matched,
+      duplicateWarnings: [],
+      confirmationText: confirmText,
+      readyToExecute: false,
+    }
+  }
+
+  if (intent === 'PRODUCCION_COMPLETA') {
+    // message carries JSON-serialized { input: { name, qty, unit }, outputs: [{ name, qty, unit }] }
+    let prodData: { input?: { name: string; qty: number; unit?: string }; outputs?: { name: string; qty: number; unit?: string }[] } = {}
+    try { prodData = JSON.parse(message ?? '{}') } catch { /* keep empty */ }
+
+    const inp = prodData.input
+    const outs = prodData.outputs ?? []
+
+    if (!inp?.name || !inp.qty) {
+      return {
+        intent,
+        items: [],
+        message: message ?? '',
+        duplicateWarnings: [],
+        confirmationText: '❌ Falta información del insumo de entrada. Indicá qué procesaste y en qué cantidad.',
+        readyToExecute: false,
+      }
+    }
+
+    const totalOut = outs.reduce((acc, o) => acc + o.qty, 0)
+    const waste = Math.max(0, inp.qty - totalOut)
+    const efficiency = inp.qty > 0 ? Math.round(((inp.qty - waste) / inp.qty) * 1000) / 10 : 0
+
+    const inputLine = `📥 **Entrada:** ${inp.qty} ${inp.unit ?? 'kg'} de ${inp.name}`
+    const outputLines = outs.map((o) => `  • ${o.name}: ${o.qty} ${o.unit ?? 'kg'}`)
+    const wasteLine = waste > 0 ? `  • Merma: ${waste.toFixed(3)} kg` : ''
+    const effLine = `📊 **Eficiencia:** ${efficiency}%`
+
+    const confirmText = `🔪 **Registrar producción:**\n${inputLine}\n📤 **Salidas:**\n${outputLines.join('\n')}${wasteLine ? '\n' + wasteLine : ''}\n${effLine}\n\nEsto actualiza el stock inmediatamente. ¿Confirmo?`
+
+    return {
+      intent,
+      items: [],
+      message: message ?? '',
       duplicateWarnings: [],
       confirmationText: confirmText,
       readyToExecute: false,
@@ -472,6 +675,118 @@ export async function executeAction(
         entity_type: 'stock_item',
         description: `${userName} actualizó ${result.created} item(s) de stock vía chatbot: ${result.details.join(', ')}`,
         metadata: { items: proposal.items, channel: 'chatbot' },
+      }).catch(() => {})
+    }
+
+    if (proposal.intent === 'PRODUCCION_COMPLETA') {
+      let prodData: { input?: { name: string; qty: number; unit?: string }; outputs?: { name: string; qty: number; unit?: string }[] } = {}
+      try { prodData = JSON.parse(proposal.message ?? '{}') } catch { /* keep empty */ }
+
+      const inp = prodData.input
+      const outs = prodData.outputs ?? []
+
+      if (!inp?.name || !inp.qty) {
+        result.success = false
+        result.errors.push('Datos de producción incompletos')
+        return result
+      }
+
+      // Match input stock item
+      const { data: stockItems } = await admin.from('stock_items').select('id, name').eq('is_active', true)
+      const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+      const inputNorm = norm(inp.name)
+      const matchedInput = (stockItems ?? []).find(
+        (si) => norm(si.name) === inputNorm || norm(si.name).includes(inputNorm) || inputNorm.includes(norm(si.name))
+      )
+
+      if (!matchedInput) {
+        result.success = false
+        result.errors.push(`No encontré "${inp.name}" en el stock. Usá el nombre exacto del insumo.`)
+        return result
+      }
+
+      // Create production order
+      const { data: order, error: orderErr } = await admin
+        .from('production_orders')
+        .insert({
+          name: `Despiece ${inp.name} ${inp.qty}${inp.unit ?? 'kg'} (chat)`,
+          status: 'draft',
+          chef_id: userId,
+          notes: `Registrado vía chatbot por ${userName}`,
+        })
+        .select('id')
+        .single()
+
+      if (orderErr || !order) {
+        result.success = false
+        result.errors.push(`Error al crear la orden: ${orderErr?.message}`)
+        return result
+      }
+
+      // Add input
+      const { error: inputErr } = await admin.from('production_inputs').insert({
+        production_order_id: order.id,
+        stock_item_id: matchedInput.id,
+        qty_used: inp.qty,
+        unit: inp.unit ?? 'kg',
+      })
+
+      if (inputErr) {
+        result.errors.push(`Error al registrar entrada: ${inputErr.message}`)
+      }
+
+      // Add outputs (match stock items by name when possible)
+      for (const out of outs) {
+        const outNorm = norm(out.name)
+        const matchedOut = (stockItems ?? []).find(
+          (si) => norm(si.name) === outNorm || norm(si.name).includes(outNorm) || outNorm.includes(norm(si.name))
+        )
+        await admin.from('production_outputs').insert({
+          production_order_id: order.id,
+          stock_item_id: matchedOut?.id ?? null,
+          output_name: out.name,
+          qty_produced: out.qty,
+          unit: out.unit ?? 'kg',
+          is_waste: false,
+        })
+      }
+
+      // Complete the order (updates stock)
+      const { data: completed, error: completeErr } = await admin.rpc('complete_production_order', {
+        p_order_id: order.id,
+        p_user_id: userId,
+      })
+
+      if (completeErr) {
+        result.success = false
+        result.errors.push(`Error al completar: ${completeErr.message}`)
+        return result
+      }
+
+      const completedData = completed as { efficiency_pct?: number; movements?: { stock_item_id: number; change: number }[] }
+      const efficiency = completedData?.efficiency_pct ?? 0
+
+      // Sync affected stock items to Fudo
+      const movements = completedData?.movements ?? []
+      if (movements.length > 0) {
+        const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
+        const fudoResult = await syncProductionToFudo(admin, movements, userId)
+        const fudoTag = fudoResult.synced > 0 ? ` (Fudo ✓ ${fudoResult.synced} items)` : ''
+        result.created = 1
+        result.details.push(`Producción completada — ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name} → ${outs.length} productos, ${efficiency}% eficiencia${fudoTag}`)
+      } else {
+        result.created = 1
+        result.details.push(`Producción completada — ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name} → ${outs.length} productos, ${efficiency}% eficiencia`)
+      }
+
+      await admin.from('audit_trail').insert({
+        user_id: userId,
+        user_name: userName,
+        action: 'chatbot_produccion',
+        module: 'cocina',
+        entity_type: 'production_order',
+        description: `${userName} registró producción vía chatbot: ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name}`,
+        metadata: { order_id: order.id, input: inp, outputs: outs, efficiency, channel: 'chatbot' },
       }).catch(() => {})
     }
 

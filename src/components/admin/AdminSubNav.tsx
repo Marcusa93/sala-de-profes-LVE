@@ -9,12 +9,14 @@ import {
   Calendar,
   Calculator,
   Clock,
+  ShieldAlert,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
   { label: 'Control', href: '/admin', icon: LayoutDashboard },
   { label: 'Horas', href: '/admin/reportes/liquidacion', icon: Calculator },
   { label: 'Asistencia', href: '/admin/reportes/asistencia', icon: Users },
+  { label: 'Sospechosos', href: '/admin/reportes/fichajes-sospechosos', icon: ShieldAlert },
   { label: 'Turnos', href: '/admin/reportes/turnos', icon: Calendar },
   { label: 'Salón', href: '/admin/reportes/salon', icon: Clock },
 ]

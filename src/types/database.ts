@@ -461,6 +461,7 @@ export type Database = {
         Row: {
           id: number
           name: string
+          slug: string | null
           description: string | null
           portion_yield: number
           is_active: boolean
@@ -475,6 +476,7 @@ export type Database = {
         Insert: {
           id?: number
           name: string
+          slug?: string | null
           description?: string | null
           portion_yield?: number
           is_active?: boolean
@@ -489,6 +491,7 @@ export type Database = {
         Update: {
           id?: number
           name?: string
+          slug?: string | null
           description?: string | null
           portion_yield?: number
           is_active?: boolean
@@ -508,6 +511,8 @@ export type Database = {
           recipe_id: number
           stock_item_id: number
           qty_per_portion: number
+          ingredient_unit: string
+          notes: string | null
           created_at: string
           updated_at: string
         }
@@ -516,6 +521,8 @@ export type Database = {
           recipe_id: number
           stock_item_id: number
           qty_per_portion: number
+          ingredient_unit?: string
+          notes?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -524,6 +531,80 @@ export type Database = {
           recipe_id?: number
           stock_item_id?: number
           qty_per_portion?: number
+          ingredient_unit?: string
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      recipe_ingredient_pending_links: {
+        Row: {
+          id: number
+          recipe_id: number | null
+          recipe_name: string
+          recipe_slug: string
+          ingredient_name: string
+          normalized_name: string
+          cantidad: number | null
+          unidad: string | null
+          match_confidence: 'ambiguo' | 'sin_match'
+          match_score: number
+          suggested_stock_item_id: number | null
+          suggested_stock_item_name: string | null
+          match_reasons: string[]
+          status: 'pending' | 'approved' | 'rejected' | 'manual'
+          resolved_stock_item_id: number | null
+          resolved_qty_per_portion: number | null
+          resolved_unit: string | null
+          resolved_by: string | null
+          resolved_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          recipe_id?: number | null
+          recipe_name: string
+          recipe_slug: string
+          ingredient_name: string
+          normalized_name: string
+          cantidad?: number | null
+          unidad?: string | null
+          match_confidence: 'ambiguo' | 'sin_match'
+          match_score?: number
+          suggested_stock_item_id?: number | null
+          suggested_stock_item_name?: string | null
+          match_reasons?: string[]
+          status?: 'pending' | 'approved' | 'rejected' | 'manual'
+          resolved_stock_item_id?: number | null
+          resolved_qty_per_portion?: number | null
+          resolved_unit?: string | null
+          resolved_by?: string | null
+          resolved_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          recipe_id?: number | null
+          recipe_name?: string
+          recipe_slug?: string
+          ingredient_name?: string
+          normalized_name?: string
+          cantidad?: number | null
+          unidad?: string | null
+          match_confidence?: 'ambiguo' | 'sin_match'
+          match_score?: number
+          suggested_stock_item_id?: number | null
+          suggested_stock_item_name?: string | null
+          match_reasons?: string[]
+          status?: 'pending' | 'approved' | 'rejected' | 'manual'
+          resolved_stock_item_id?: number | null
+          resolved_qty_per_portion?: number | null
+          resolved_unit?: string | null
+          resolved_by?: string | null
+          resolved_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1106,6 +1187,149 @@ export type Database = {
         }
         Relationships: []
       }
+      production_templates: {
+        Row: {
+          id: number
+          name: string
+          description: string | null
+          input_stock_item_id: number | null
+          input_unit: string
+          is_active: boolean
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          name: string
+          description?: string | null
+          input_stock_item_id?: number | null
+          input_unit?: string
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          name?: string
+          description?: string | null
+          input_stock_item_id?: number | null
+          input_unit?: string
+          is_active?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      production_template_outputs: {
+        Row: {
+          id: number
+          template_id: number
+          stock_item_id: number | null
+          output_name: string
+          theoretical_yield_pct: number
+          output_unit: string
+          is_waste: boolean
+          sort_order: number
+          notes: string | null
+        }
+        Insert: {
+          id?: number
+          template_id: number
+          stock_item_id?: number | null
+          output_name: string
+          theoretical_yield_pct: number
+          output_unit: string
+          is_waste?: boolean
+          sort_order?: number
+          notes?: string | null
+        }
+        Update: {
+          id?: number
+          template_id?: number
+          stock_item_id?: number | null
+          output_name?: string
+          theoretical_yield_pct?: number
+          output_unit?: string
+          is_waste?: boolean
+          sort_order?: number
+          notes?: string | null
+        }
+        Relationships: []
+      }
+      production_orders: {
+        Row: {
+          id: number
+          name: string
+          parent_order_id: number | null
+          template_id: number | null
+          status: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+          chef_id: string | null
+          notes: string | null
+          started_at: string | null
+          completed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          name: string
+          parent_order_id?: number | null
+          template_id?: number | null
+          status?: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+          chef_id?: string | null
+          notes?: string | null
+          started_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          name?: string
+          parent_order_id?: number | null
+          template_id?: number | null
+          status?: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+          chef_id?: string | null
+          notes?: string | null
+          started_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      production_inputs: {
+        Row: {
+          id: number
+          production_order_id: number
+          stock_item_id: number
+          qty_used: number
+          unit: string
+          cost_per_unit: number | null
+          stock_movement_id: number | null
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          production_order_id: number
+          stock_item_id: number
+          qty_used: number
+          unit: string
+          cost_per_unit?: number | null
+          stock_movement_id?: number | null
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          production_order_id?: number
+          stock_item_id?: number
+          qty_used?: number
+          unit?: string
+          cost_per_unit?: number | null
+          stock_movement_id?: number | null
       attendance_audit: {
         Row: {
           id: string
@@ -1325,6 +1549,45 @@ export type Database = {
         }
         Relationships: []
       }
+      production_outputs: {
+        Row: {
+          id: number
+          production_order_id: number
+          stock_item_id: number | null
+          output_name: string
+          qty_produced: number
+          theoretical_qty: number | null
+          unit: string
+          is_waste: boolean
+          notes: string | null
+          stock_movement_id: number | null
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          production_order_id: number
+          stock_item_id?: number | null
+          output_name: string
+          qty_produced: number
+          theoretical_qty?: number | null
+          unit: string
+          is_waste?: boolean
+          notes?: string | null
+          stock_movement_id?: number | null
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          production_order_id?: number
+          stock_item_id?: number | null
+          output_name?: string
+          qty_produced?: number
+          theoretical_qty?: number | null
+          unit?: string
+          is_waste?: boolean
+          notes?: string | null
+          stock_movement_id?: number | null
+          created_at?: string
       wifi_access_points: {
         Row: {
           id: string
@@ -1450,6 +1713,39 @@ export type Database = {
         }
         Returns: Record<string, unknown>
       }
+      stock_availability: {
+        Args: {
+          p_recipe_id: number
+        }
+        Returns: Record<string, unknown>
+      }
+      stock_duration: {
+        Args: {
+          p_stock_item_id: number
+          p_days_lookback?: number
+        }
+        Returns: Record<string, unknown>
+      }
+      recipes_at_risk: {
+        Args: {
+          p_min_portions_threshold?: number
+        }
+        Returns: {
+          recipe_id: number
+          recipe_name: string
+          available_portions: number
+          limiting_ingredient: string | null
+          limiting_item_id: number | null
+          status: string
+        }[]
+      }
+      complete_production_order: {
+        Args: { p_order_id: number; p_user_id: string }
+        Returns: Record<string, unknown>
+      }
+      production_dashboard: {
+        Args: { p_days?: number }
+        Returns: Record<string, unknown>
       clock_in_secure: {
         Args: {
           p_photo_url?: string | null
@@ -1595,6 +1891,10 @@ export type RecipeIngredient = Database['public']['Tables']['recipe_ingredients'
 export type RecipeIngredientInsert = Database['public']['Tables']['recipe_ingredients']['Insert']
 export type RecipeIngredientUpdate = Database['public']['Tables']['recipe_ingredients']['Update']
 
+export type RecipeIngredientPendingLink = Database['public']['Tables']['recipe_ingredient_pending_links']['Row']
+export type RecipeIngredientPendingLinkInsert = Database['public']['Tables']['recipe_ingredient_pending_links']['Insert']
+export type RecipeIngredientPendingLinkUpdate = Database['public']['Tables']['recipe_ingredient_pending_links']['Update']
+
 export type MenuCategory = Database['public']['Tables']['menu_categories']['Row']
 export type MenuCategoryInsert = Database['public']['Tables']['menu_categories']['Insert']
 export type MenuCategoryUpdate = Database['public']['Tables']['menu_categories']['Update']
@@ -1659,6 +1959,152 @@ export type KitchenOrderInsert = Database['public']['Tables']['kitchen_orders'][
 export type KitchenOrderUpdate = Database['public']['Tables']['kitchen_orders']['Update']
 
 // ---------------------------------------------------------------------------
+// RPC return types (stock availability + duration calculations)
+// ---------------------------------------------------------------------------
+
+export type StockAvailabilityIngredient = {
+  stock_item_id: number
+  name: string
+  current_qty: number
+  qty_per_portion: number
+  unit: string
+  available_portions: number
+  is_limiting: boolean
+}
+
+export type StockAvailabilityResult = {
+  success: boolean
+  recipe_id: number
+  recipe_name: string
+  available_portions: number
+  limiting_ingredient: string | null
+  limiting_ingredient_id: number | null
+  ingredients_count: number
+  ingredients: StockAvailabilityIngredient[]
+  warning?: string
+  error?: string
+}
+
+export type StockDurationResult = {
+  success: boolean
+  stock_item_id: number
+  name: string
+  current_qty: number
+  unit: string
+  days_lookback: number
+  total_consumed: number
+  daily_avg_consumption: number
+  days_remaining: number | null
+  semaphore: 'critico' | 'bajo' | 'atención' | 'ok' | 'sin_historial'
+  note: string | null
+  error?: string
+}
+
+export type RecipeAtRisk = {
+  recipe_id: number
+  recipe_name: string
+  available_portions: number
+  limiting_ingredient: string | null
+  limiting_item_id: number | null
+  status: 'sin_stock' | 'bajo' | 'ok'
+}
+
+export type RecipeStockStatus = {
+  recipe_id: number
+  recipe_name: string
+  recipe_slug: string | null
+  portion_yield: number
+  cost_per_portion: number
+  cost_per_batch: number
+  linked_ingredients_count: number
+  out_of_stock_count: number
+  critical_stock_count: number
+}
+
+// ---------------------------------------------------------------------------
+// Production system types
+// ---------------------------------------------------------------------------
+
+export type ProductionTemplate = Database['public']['Tables']['production_templates']['Row']
+export type ProductionTemplateInsert = Database['public']['Tables']['production_templates']['Insert']
+export type ProductionTemplateUpdate = Database['public']['Tables']['production_templates']['Update']
+
+export type ProductionTemplateOutput = Database['public']['Tables']['production_template_outputs']['Row']
+export type ProductionTemplateOutputInsert = Database['public']['Tables']['production_template_outputs']['Insert']
+export type ProductionTemplateOutputUpdate = Database['public']['Tables']['production_template_outputs']['Update']
+
+export type ProductionOrder = Database['public']['Tables']['production_orders']['Row']
+export type ProductionOrderInsert = Database['public']['Tables']['production_orders']['Insert']
+export type ProductionOrderUpdate = Database['public']['Tables']['production_orders']['Update']
+
+export type ProductionInput = Database['public']['Tables']['production_inputs']['Row']
+export type ProductionInputInsert = Database['public']['Tables']['production_inputs']['Insert']
+export type ProductionInputUpdate = Database['public']['Tables']['production_inputs']['Update']
+
+export type ProductionOutput = Database['public']['Tables']['production_outputs']['Row']
+export type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
+export type ProductionOutputUpdate = Database['public']['Tables']['production_outputs']['Update']
+
+export type ProductionOrderStatus = 'draft' | 'in_progress' | 'completed' | 'cancelled'
+
+// Full order with nested inputs + outputs (returned by GET /api/produccion/orders/[id])
+export type ProductionOrderDetail = ProductionOrder & {
+  chef_name: string | null
+  template_name: string | null
+  inputs: (ProductionInput & { stock_item_name: string; stock_item_unit: string })[]
+  outputs: (ProductionOutput & { stock_item_name: string | null })[]
+  child_orders: Pick<ProductionOrder, 'id' | 'name' | 'status' | 'completed_at'>[]
+  summary: {
+    total_input_qty: number
+    total_output_qty: number
+    total_waste_qty: number
+    efficiency_pct: number | null
+  }
+}
+
+// Dashboard RPC result
+export type ProductionDashboard = {
+  period_days: number
+  total_completed: number
+  total_input_kg: number | null
+  total_waste_kg: number | null
+  avg_efficiency_pct: number | null
+  pending_orders: number
+  by_chef: {
+    chef_id: string | null
+    chef_name: string
+    total_orders: number
+    avg_efficiency: number | null
+    total_waste: number
+  }[]
+  daily: {
+    day: string
+    orders: number
+    avg_efficiency: number | null
+  }[]
+}
+
+// Summary row from v_production_summary view
+export type ProductionSummaryRow = {
+  id: number
+  name: string
+  status: ProductionOrderStatus
+  parent_order_id: number | null
+  template_id: number | null
+  chef_id: string | null
+  notes: string | null
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+  chef_name: string | null
+  chef_role: string | null
+  template_name: string | null
+  total_input_qty: number
+  total_output_qty: number
+  total_waste_qty: number
+  efficiency_pct: number | null
+  child_orders_count: number
 // Attendance Anti-Fraud System types
 // ---------------------------------------------------------------------------
 
