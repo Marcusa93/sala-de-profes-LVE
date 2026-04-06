@@ -489,7 +489,6 @@ export default function FichajePage() {
                 • {f.type === 'gps_out_of_range'  ? 'GPS fuera del rango del local' :
                    f.type === 'wifi_mismatch'      ? 'Red WiFi no reconocida' :
                    f.type === 'unknown_device'     ? 'Dispositivo no registrado (pendiente aprobación)' :
-                   f.type === 'selfie_missing'     ? 'No se adjuntó selfie' :
                    f.type === 'rapid_succession'   ? 'Fichaje muy rápido' :
                    f.type === 'unusual_hour'       ? 'Horario inusual' : f.type}
               </p>
