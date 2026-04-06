@@ -461,12 +461,8 @@ export default function RendimientoPage() {
     else setLoading(true)
 
     try {
-      const [availRes, atRiskRes, durationRes] = await Promise.all([
-        fetch('/api/stock/availability', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ threshold: 0 }),
-        }),
+      const [yieldRes, atRiskRes, durationRes] = await Promise.all([
+        fetch('/api/recipes/yield'),
         fetch('/api/stock/at-risk?threshold=10'),
         fetch('/api/stock/duration', {
           method: 'POST',
@@ -475,11 +471,44 @@ export default function RendimientoPage() {
         }),
       ])
 
-      const [availability, atRisk, duration] = await Promise.all([
-        availRes.json(),
+      const [yieldData, atRisk, duration] = await Promise.all([
+        yieldRes.json(),
         atRiskRes.json(),
         durationRes.json(),
       ])
+
+      // Transform stock_yield response to availability format
+      type YieldRow = {
+        recipe_id: string; recipe_name: string; max_portions: number
+        limiting_item: string | null; ingredients: Array<{
+          stock_item_id: string; name: string; current_qty: number
+          qty_per_portion: number; yield: number
+        }>
+      }
+      const yields = (yieldData?.yields ?? []) as YieldRow[]
+      const recipes = yields.map(r => ({
+        recipe_id: r.recipe_id,
+        recipe_name: r.recipe_name,
+        available_portions: r.max_portions,
+        limiting_ingredient: r.limiting_item,
+        warning: false,
+        ingredients: (r.ingredients ?? []).map(ing => ({
+          stock_item_id: ing.stock_item_id,
+          name: ing.name,
+          current_qty: ing.current_qty,
+          qty_per_portion: ing.qty_per_portion,
+          available_portions: ing.yield,
+          unit: '',
+          is_limiting: ing.name === r.limiting_item,
+        })),
+      }))
+      const atRiskRecipes = recipes.filter(r => r.available_portions < 10)
+      const availability = {
+        total_recipes: recipes.length,
+        at_risk_count: atRiskRecipes.length,
+        ok_count: recipes.length - atRiskRecipes.length,
+        recipes,
+      }
 
       setData({ availability, atRisk, duration })
     } catch {
