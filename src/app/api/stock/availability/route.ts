@@ -3,17 +3,98 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 // ---------------------------------------------------------------------------
-// GET /api/stock/availability
+// POST /api/stock/availability
 // ---------------------------------------------------------------------------
-// Calcula cuántas porciones de una receta se pueden preparar con el stock actual.
-// Llama a la RPC stock_availability(p_recipe_id).
+// Lista disponibilidad de TODAS las recetas activas con ingredientes vinculados.
+// Usa la RPC stock_yield() que devuelve todas las recetas de una sola vez.
 //
-// Query params:
-//   recipe_id (required) — ID de la receta
+// Body (opcional):
+//   threshold (number, default 0) — porciones mínimas para considerar "ok"
 //
-// Ejemplos:
-//   /api/stock/availability?recipe_id=3
-//   → { available_portions: 27.7, limiting_ingredient: "nalga", ... }
+// Response:
+//   { total_recipes, at_risk_count, ok_count, recipes: [...] }
+// ---------------------------------------------------------------------------
+
+export async function POST(request: NextRequest) {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    if (!profile || !['socio', 'encargado', 'chef', 'cocina'].includes(profile.role)) {
+      return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
+    }
+
+    const body = await request.json().catch(() => ({}))
+    const threshold: number = body?.threshold ?? 0
+
+    const admin = createAdminClient()
+
+    // stock_yield() returns all recipes with their max_portions and ingredients
+    const { data, error } = await (admin.rpc as any)('stock_yield')
+    if (error) throw error
+
+    type YieldRow = {
+      recipe_id: string
+      recipe_name: string
+      yield_portions: number
+      max_portions: number
+      limiting_item: string | null
+      limiting_qty: number | null
+      limiting_need: number | null
+      ingredients: Array<{
+        stock_item_id: string
+        name: string
+        current_qty: number
+        qty_per_portion: number
+        yield: number
+      }>
+    }
+
+    const rows = (data ?? []) as YieldRow[]
+
+    // Transform to the format the rendimiento page expects
+    const recipes = rows.map(r => ({
+      recipe_id: r.recipe_id,
+      recipe_name: r.recipe_name,
+      available_portions: r.max_portions,
+      limiting_ingredient: r.limiting_item,
+      warning: false,
+      ingredients: (r.ingredients ?? []).map(ing => ({
+        stock_item_id: ing.stock_item_id,
+        name: ing.name,
+        current_qty: ing.current_qty,
+        qty_per_portion: ing.qty_per_portion,
+        available_portions: ing.yield,
+        unit: '',
+        is_limiting: ing.name === r.limiting_item,
+      })),
+    }))
+
+    const atRisk = recipes.filter(r => r.available_portions <= threshold)
+    const ok = recipes.filter(r => r.available_portions > threshold)
+
+    return NextResponse.json({
+      success: true,
+      threshold,
+      total_recipes: recipes.length,
+      at_risk_count: atRisk.length,
+      ok_count: ok.length,
+      recipes,
+      generatedAt: new Date().toISOString(),
+    })
+  } catch (error) {
+    console.error('[/api/stock/availability POST]', error)
+    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/stock/availability?recipe_id=UUID
+// ---------------------------------------------------------------------------
+// Calcula disponibilidad de una sola receta.
+// Filtra del resultado de stock_yield() por recipe_id.
 // ---------------------------------------------------------------------------
 
 export async function GET(request: NextRequest) {
@@ -28,92 +109,28 @@ export async function GET(request: NextRequest) {
     }
 
     const recipeId = request.nextUrl.searchParams.get('recipe_id')
-    if (!recipeId || isNaN(Number(recipeId))) {
-      return NextResponse.json({ error: 'Parámetro recipe_id requerido (número)' }, { status: 400 })
+    if (!recipeId) {
+      return NextResponse.json({ error: 'Parámetro recipe_id requerido' }, { status: 400 })
     }
 
     const admin = createAdminClient()
-    const { data, error } = await admin.rpc('stock_availability', {
-      p_recipe_id: Number(recipeId),
-    })
-
+    const { data, error } = await (admin.rpc as any)('stock_yield')
     if (error) throw error
 
-    return NextResponse.json(data)
-  } catch (error) {
-    console.error('[/api/stock/availability]', error)
-    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
-  }
-}
-
-// ---------------------------------------------------------------------------
-// GET /api/stock/availability?all=true
-// Lista disponibilidad de TODAS las recetas activas con ingredientes vinculados.
-// ---------------------------------------------------------------------------
-
-// Note: handled within the GET above by checking all=true param
-// If all=true, calls recipes_at_risk with threshold 0 to get all recipes
-export async function POST(request: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
-
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-    if (!profile || !['socio', 'encargado', 'chef'].includes(profile.role)) {
-      return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
+    const match = (data ?? []).find((r: any) => r.recipe_id === recipeId)
+    if (!match) {
+      return NextResponse.json({ error: 'Receta no encontrada o sin ingredientes vinculados' }, { status: 404 })
     }
-
-    const body = await request.json().catch(() => ({}))
-    const threshold: number = body?.threshold ?? 0
-
-    const admin = createAdminClient()
-
-    // Get all recipes with linked ingredients
-    const { data: recipeIds } = await admin
-      .from('recipe_ingredients')
-      .select('recipe_id')
-
-    const uniqueIds = [...new Set((recipeIds ?? []).map(r => r.recipe_id))]
-
-    if (uniqueIds.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'No hay recetas con ingredientes vinculados. Ejecutá POST /api/recipes/ingest primero.',
-        recipes: [],
-      })
-    }
-
-    // Fetch availability for each recipe
-    const results = await Promise.all(
-      uniqueIds.map(async (recipeId) => {
-        const { data } = await admin.rpc('stock_availability', { p_recipe_id: recipeId })
-        return data
-      })
-    )
-
-    const valid = results.filter(Boolean)
-    const atRisk = valid.filter(r => (r as { available_portions: number }).available_portions <= threshold)
-    const ok = valid.filter(r => (r as { available_portions: number }).available_portions > threshold)
-
-    // Sort: at-risk first, then by available_portions ascending
-    const sorted = [...valid].sort((a, b) => {
-      const aa = (a as { available_portions: number }).available_portions
-      const bb = (b as { available_portions: number }).available_portions
-      return aa - bb
-    })
 
     return NextResponse.json({
-      success: true,
-      threshold,
-      total_recipes: valid.length,
-      at_risk_count: atRisk.length,
-      ok_count: ok.length,
-      recipes: sorted,
-      generatedAt: new Date().toISOString(),
+      recipe_id: match.recipe_id,
+      recipe_name: match.recipe_name,
+      available_portions: match.max_portions,
+      limiting_ingredient: match.limiting_item,
+      ingredients: match.ingredients,
     })
   } catch (error) {
-    console.error('[/api/stock/availability POST]', error)
+    console.error('[/api/stock/availability]', error)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })
   }
 }

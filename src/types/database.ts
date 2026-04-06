@@ -2214,7 +2214,7 @@ export type AttendanceDashboardRow = {
 // ---------------------------------------------------------------------------
 
 export type StockReconciliationRow = {
-  stock_item_id: number
+  stock_item_id: string
   name: string
   unit: string
   opening_qty: number
@@ -2230,7 +2230,7 @@ export type StockReconciliationRow = {
 }
 
 export type MenuItemReconciliationRow = {
-  menu_item_id: number
+  menu_item_id: string
   menu_item_name: string
   recipe_id: string
   recipe_name: string | null

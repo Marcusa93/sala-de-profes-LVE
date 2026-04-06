@@ -40,8 +40,8 @@ export async function GET(request: NextRequest) {
 
     const admin = createAdminClient()
 
-    const { data, error } = await admin.rpc('recipes_at_risk', {
-      p_min_portions_threshold: threshold,
+    const { data, error } = await (admin.rpc as any)('recipes_at_risk', {
+      p_min_portions: threshold,
     })
 
     if (error) throw error
