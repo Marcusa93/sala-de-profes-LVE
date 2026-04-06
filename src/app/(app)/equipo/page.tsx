@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { format } from 'date-fns'
+import { format, addDays } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   Users,
@@ -84,19 +84,19 @@ export default function EquipoPage() {
     if (!egresoTime || savingEgreso) return
     setSavingEgreso(true)
     try {
-      const clockOut = new Date(`${operativeDate}T${egresoTime}:00-03:00`)
-      // If time is before 06:00, it's next day (after midnight)
+      // If time is before 06:00, it crossed midnight — use next day's date
       const [h] = egresoTime.split(':').map(Number)
-      if (h < 6) {
-        clockOut.setDate(clockOut.getDate() + 1)
-      }
+      const baseDate = h < 6
+        ? format(addDays(new Date(operativeDate + 'T12:00:00'), 1), 'yyyy-MM-dd')
+        : operativeDate
+      const clockOutIso = `${baseDate}T${egresoTime}:00-03:00`
 
       const res = await fetch('/api/admin/extend-shift', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           attendance_id: attendanceId,
-          new_clock_out: clockOut.toISOString(),
+          new_clock_out: clockOutIso,
           reason: egresoReason.trim() || 'Ajuste de egreso por encargado',
         }),
       })
@@ -356,78 +356,81 @@ export default function EquipoPage() {
                 return (
                   <div
                     key={ea.profile.id}
-                    className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-[#ebe6df]"
+                    className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-[#ebe6df]"
                     style={{ borderLeftWidth: '3px', borderLeftColor: status.color }}
                   >
-                    {/* Avatar */}
-                    <div
-                      className="flex size-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-                      style={{ backgroundColor: ROLES[ea.profile.role]?.color ?? '#a39e97' }}
-                    >
-                      {getInitials(ea.profile)}
-                    </div>
-
-                    {/* Info */}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-semibold text-[#3d2c24]">
-                          {ea.profile.first_name} {ea.profile.last_name}
-                        </p>
-                        {getRoleBadge(ea.profile.role)}
+                    {/* Main row */}
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      {/* Avatar */}
+                      <div
+                        className="flex size-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+                        style={{ backgroundColor: ROLES[ea.profile.role]?.color ?? '#a39e97' }}
+                      >
+                        {getInitials(ea.profile)}
                       </div>
-                      <div className="mt-0.5 flex items-center gap-2 text-xs text-[#a39e97]">
-                        {ea.attendance ? (
-                          <>
-                            <span className="tabular-nums">
-                              {format(new Date(ea.attendance.clock_in_at), 'HH:mm')}
-                            </span>
-                            <span>→</span>
-                            <span className="tabular-nums">
-                              {ea.attendance.clock_out_at
-                                ? format(new Date(ea.attendance.clock_out_at), 'HH:mm')
-                                : '...'}
-                            </span>
-                          </>
-                        ) : (
-                          <span>Sin registro</span>
+
+                      {/* Info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-semibold text-[#3d2c24]">
+                            {ea.profile.first_name} {ea.profile.last_name}
+                          </p>
+                          {getRoleBadge(ea.profile.role)}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-2 text-xs text-[#a39e97]">
+                          {ea.attendance ? (
+                            <>
+                              <span className="tabular-nums">
+                                {format(new Date(ea.attendance.clock_in_at), 'HH:mm')}
+                              </span>
+                              <span>→</span>
+                              <span className="tabular-nums">
+                                {ea.attendance.clock_out_at
+                                  ? format(new Date(ea.attendance.clock_out_at), 'HH:mm')
+                                  : '...'}
+                              </span>
+                            </>
+                          ) : (
+                            <span>Sin registro</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Status badge + edit button */}
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold"
+                          style={{ color: status.color, backgroundColor: status.bg }}
+                        >
+                          <StatusIcon className="size-3" />
+                          {status.label}
+                        </span>
+                        {isManager && ea.attendance && (
+                          <button
+                            onClick={() => {
+                              if (editingEgresoId === ea.attendance!.id) {
+                                setEditingEgresoId(null)
+                              } else {
+                                setEditingEgresoId(ea.attendance!.id)
+                                setEgresoTime(ea.attendance!.clock_out_at
+                                  ? format(new Date(ea.attendance!.clock_out_at), 'HH:mm')
+                                  : ''
+                                )
+                                setEgresoReason('')
+                              }
+                            }}
+                            className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9] hover:text-[#3d2c24]"
+                            title="Editar egreso"
+                          >
+                            <Pencil className="size-3.5" />
+                          </button>
                         )}
                       </div>
                     </div>
 
-                    {/* Status badge + edit button */}
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <span
-                        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold"
-                        style={{ color: status.color, backgroundColor: status.bg }}
-                      >
-                        <StatusIcon className="size-3" />
-                        {status.label}
-                      </span>
-                      {isManager && ea.attendance && (
-                        <button
-                          onClick={() => {
-                            if (editingEgresoId === ea.attendance!.id) {
-                              setEditingEgresoId(null)
-                            } else {
-                              setEditingEgresoId(ea.attendance!.id)
-                              setEgresoTime(ea.attendance!.clock_out_at
-                                ? format(new Date(ea.attendance!.clock_out_at), 'HH:mm')
-                                : ''
-                              )
-                              setEgresoReason('')
-                            }
-                          }}
-                          className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9] hover:text-[#3d2c24]"
-                          title="Editar egreso"
-                        >
-                          <Pencil className="size-3.5" />
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Inline edit egreso */}
+                    {/* Inline edit egreso — below the flex row */}
                     {editingEgresoId === ea.attendance?.id && ea.attendance && (
-                      <div className="col-span-full mt-2 rounded-lg bg-[#faf8f5] p-3 space-y-2">
+                      <div className="border-t border-[#ebe6df] bg-[#faf8f5] p-3 space-y-2">
                         <div className="flex items-center gap-2">
                           <label className="text-xs font-medium text-[#3d2c24]">Egreso:</label>
                           <input

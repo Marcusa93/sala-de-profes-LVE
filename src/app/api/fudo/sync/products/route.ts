@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { fudo } from '@/lib/fudoClient'
 
@@ -11,12 +12,19 @@ import { fudo } from '@/lib/fudoClient'
 // - Upsert de productos en `menu_items` (match por fudo_product_id).
 // - Fudo es source of truth para nombre, precio y categoría.
 // - Sala de Profes mantiene recipe_id, costo interno, etc.
-//
-// TODO: Agregar middleware de auth para validar rol encargado/chef.
 // ---------------------------------------------------------------------------
 
 export async function POST() {
   try {
+    const userSupabase = await createClient()
+    const { data: { user } } = await userSupabase.auth.getUser()
+    if (!user) return NextResponse.json({ success: false, error: 'No autenticado' }, { status: 401 })
+
+    const { data: profile } = await userSupabase.from('profiles').select('role').eq('id', user.id).single()
+    if (!profile || !['encargado', 'socio', 'chef'].includes(profile.role)) {
+      return NextResponse.json({ success: false, error: 'Sin permisos' }, { status: 403 })
+    }
+
     const supabase = createAdminClient()
 
     // 1) Obtener datos de Fudo

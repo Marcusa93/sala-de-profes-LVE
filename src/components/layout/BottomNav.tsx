@@ -13,6 +13,7 @@ import {
   MessageCircle,
   Users,
   Shield,
+  ShieldAlert,
   Truck,
   ChefHat,
   UtensilsCrossed,
@@ -30,6 +31,7 @@ import {
   TrendingUp,
   ClipboardCheck,
   Hammer,
+  ScanFace,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
@@ -66,7 +68,7 @@ type ExpandableNavItem = {
 
 const BASE_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
-  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
+  { label: 'Mi Turno', href: '/fichaje', icon: Clock },
   { label: 'Horarios', href: '/mis-horarios', icon: Calendar },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
@@ -75,7 +77,7 @@ const BASE_NAV: NavItem[] = [
 const RUNNER_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
   { label: 'Salón', href: '/salon', icon: Armchair },
-  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
+  { label: 'Mi Turno', href: '/fichaje', icon: Clock },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
@@ -90,6 +92,7 @@ const SOCIO_MORE: ExpandableNavItem = {
         { label: 'Salón', href: '/salon', icon: Armchair },
         { label: 'Ventas', href: '/ventas', icon: BarChart3 },
         { label: 'Equipo', href: '/equipo', icon: Users },
+        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert },
         { label: 'Turnos', href: '/equipo/turnos', icon: Calendar },
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
@@ -111,6 +114,8 @@ const SOCIO_MORE: ExpandableNavItem = {
     {
       label: 'Gestión',
       items: [
+        { label: 'Asistencia', href: '/admin/asistencia', icon: ScanFace },
+        { label: 'Fichaje', href: '/fichaje', icon: Clock },
         { label: 'Auditoría', href: '/auditoria', icon: Shield },
       ],
     },
@@ -134,6 +139,8 @@ const ENCARGADO_MORE: ExpandableNavItem = {
         { label: 'Salón', href: '/salon', icon: Armchair },
         { label: 'Control', href: '/admin', icon: LayoutDashboard },
         { label: 'Equipo', href: '/equipo', icon: Users },
+        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert },
+        { label: 'Asistencia', href: '/admin/asistencia', icon: ScanFace },
         { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
         { label: 'Recetario', href: '/recetas', icon: BookOpen },
@@ -171,6 +178,12 @@ const CHEF_MORE: ExpandableNavItem = {
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
+    {
+      label: 'Mi asistencia',
+      items: [
+        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
+      ],
+    },
   ],
 }
 
@@ -189,6 +202,12 @@ const COCINA_MORE: ExpandableNavItem = {
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },
+    {
+      label: 'Mi asistencia',
+      items: [
+        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
+      ],
+    },
   ],
 }
 
@@ -202,6 +221,7 @@ const BARISTA_MORE: ExpandableNavItem = {
       items: [
         { label: 'Stock barra', href: '/cocina/barra', icon: Coffee },
         { label: 'Vajilla', href: '/vajilla', icon: Wine },
+        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
       ],
     },
     {
@@ -223,6 +243,7 @@ const RUNNER_MORE: ExpandableNavItem = {
       items: [
         { label: 'Vajilla', href: '/vajilla', icon: Wine },
         { label: 'Barra', href: '/cocina/barra', icon: Coffee },
+        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
       ],
     },
     {
@@ -243,6 +264,7 @@ const BACHA_MORE: ExpandableNavItem = {
       label: 'Herramientas',
       items: [
         { label: 'Vajilla', href: '/vajilla', icon: Wine },
+        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
         { label: 'La Vieja', href: '/asistente', icon: Bot },
       ],
     },

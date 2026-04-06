@@ -4,7 +4,7 @@
     {
       "name": "dev",
       "runtimeExecutable": "/opt/homebrew/Cellar/node@20/20.19.5/bin/node",
-      "runtimeArgs": ["node_modules/.bin/next", "dev", "-p", "3007"],
+      "runtimeArgs": ["node_modules/.bin/next", "dev", "-p", "3007", "--webpack"],
       "port": 3007
     }
   ]

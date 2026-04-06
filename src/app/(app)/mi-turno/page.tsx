@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
@@ -13,6 +13,7 @@ import {
   History,
   Timer,
   MapPin,
+  Wifi,
   Camera,
   Shield,
   ShieldAlert,
@@ -25,10 +26,10 @@ import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
-import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
+import { FadeIn, StaggerList, StaggerItem, AnimatePresence, motion } from '@/components/ui/motion'
 import { SuccessBurst } from '@/components/ui/success-burst'
 import { playSchoolBell } from '@/lib/sounds'
-import SelfieCapture from '@/components/attendance/SelfieCapture'
+import { SelfieCapture } from '@/components/attendance/SelfieCapture'
 import {
   getGeolocation,
   getDeviceFingerprint,
@@ -51,8 +52,11 @@ type AttendanceRecord = {
   notes: string | null
   is_suspicious?: boolean
   suspicious_reasons?: string[]
-  clock_in_selfie_url?: string | null
-  clock_out_selfie_url?: string | null
+  geo_verified?: boolean
+  geo_distance_m?: number
+  wifi_verified?: boolean
+  clock_in_photo_url?: string
+  clock_out_photo_url?: string
 }
 
 type TodayStatus = 'not_clocked_in' | 'clocked_in' | 'completed'
@@ -86,6 +90,23 @@ function formatDuration(start: string, end?: string | null): string {
   const mins = totalMin % 60
   if (hours === 0) return `${mins}m`
   return `${hours}h ${mins}m`
+}
+
+function humanizeError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg.includes('already') || msg.includes('duplicate') || msg.includes('unique')) {
+    return 'Ya registraste tu ingreso hoy'
+  }
+  if (msg.includes('no open') || msg.includes('not found') || msg.includes('No hay turno')) {
+    return 'No hay ingreso abierto para cerrar'
+  }
+  if (msg.includes('auth') || msg.includes('JWT') || msg.includes('session')) {
+    return 'Sesión expirada. Por favor recargá la página'
+  }
+  if (msg.includes('network') || msg.includes('fetch')) {
+    return 'Sin conexión. Verificá tu red e intentá de nuevo'
+  }
+  return msg || 'Ocurrió un error inesperado'
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +165,7 @@ export default function MiTurnoPage() {
   const [flowAction, setFlowAction] = useState<'in' | 'out' | null>(null)
   const [flowState, setFlowState] = useState<FlowState>('idle')
   const [steps, setSteps] = useState<CheckStep[]>([])
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null)
   const [geoResult, setGeoResult] = useState<GeoResult | null>(null)
 
   // Stable todayStr that only changes at midnight
@@ -168,21 +190,12 @@ export default function MiTurnoPage() {
   }, [])
 
   // ------------------------------------------
-  // Fetch venue config from settings
+  // Fetch venue config
   // ------------------------------------------
   useEffect(() => {
-    fetch('/api/attendance/settings')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data?.attendance_location) {
-          setVenueConfig({
-            venue_lat: data.attendance_location.lat,
-            venue_lng: data.attendance_location.lng,
-            geo_radius_m: data.attendance_location.radius_meters ?? 150,
-            require_photo: data.attendance_config?.require_selfie ?? true,
-          })
-        }
-      })
+    fetch('/api/attendance/clock')
+      .then(r => r.json())
+      .then(d => { if (d.config) setVenueConfig(d.config) })
       .catch(() => {})
   }, [])
 
@@ -193,9 +206,9 @@ export default function MiTurnoPage() {
     if (!profile) return
     setLoading(true)
     try {
-      const { data: today } = await supabase
+      const { data: today, error: todayError } = await supabase
         .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, suspicious_reasons, clock_in_selfie_url, clock_out_selfie_url')
+        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, suspicious_reasons, geo_verified, geo_distance_m, wifi_verified, clock_in_photo_url, clock_out_photo_url')
         .eq('user_id', profile.id)
         .eq('operative_date', todayStr)
         .order('clock_in_at', { ascending: false })
@@ -203,16 +216,22 @@ export default function MiTurnoPage() {
         .maybeSingle()
       setTodayRecord(today as unknown as AttendanceRecord | null)
 
-      const { data: historyData } = await supabase
+      if (todayError) throw todayError
+      setTodayRecord(today as unknown as AttendanceRecord | null)
+
+      const { data: historyData, error: historyError } = await supabase
         .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, suspicious_reasons')
+        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, geo_verified')
         .eq('user_id', profile.id)
         .order('operative_date', { ascending: false })
         .order('clock_in_at', { ascending: false })
         .limit(7)
+
+      if (historyError) throw historyError
       setHistory((historyData ?? []) as unknown as AttendanceRecord[])
     } catch (err) {
       console.error('Error al cargar asistencia:', err)
+      toast.error('No se pudo cargar tu turno. Intentá de nuevo.')
     } finally {
       setLoading(false)
     }
@@ -231,7 +250,7 @@ export default function MiTurnoPage() {
   }
   const status = getStatus()
 
-  // Live duration
+  // Live duration — re-computes every second via currentTime
   const liveDuration = useMemo(() => {
     if (!todayRecord) return null
     if (status === 'clocked_in') return formatDuration(todayRecord.clock_in_at)
@@ -249,10 +268,11 @@ export default function MiTurnoPage() {
   // ------------------------------------------
   const startFlow = (action: 'in' | 'out') => {
     setFlowAction(action)
+    setPhotoUrl(null)
     setGeoResult(null)
     setSteps([
       { id: 'geo',   label: 'Verificando ubicación',  status: 'pending' },
-      { id: 'wifi',  label: 'Detectando red',          status: 'pending' },
+      { id: 'wifi',  label: 'Detectando red WiFi',     status: 'pending' },
       { id: 'dev',   label: 'Registrando dispositivo', status: 'pending' },
       { id: 'photo', label: 'Selfie de verificación',  status: 'pending' },
     ])
@@ -277,7 +297,7 @@ export default function MiTurnoPage() {
         const geoOk = dist <= venueConfig.geo_radius_m
         setStepStatus('geo', geoOk ? 'ok' : 'warn',
           geoOk
-            ? `A ${dist}m del local`
+            ? `A ${dist}m del local ✓`
             : `A ${dist}m del local (máx. ${venueConfig.geo_radius_m}m)`,
         )
       } else {
@@ -287,14 +307,14 @@ export default function MiTurnoPage() {
       setStepStatus('geo', 'warn', err instanceof Error ? err.message : 'No se pudo obtener ubicación')
     }
 
-    // --- Red ---
+    // --- WiFi ---
     setStepStatus('wifi', 'loading')
     await new Promise(r => setTimeout(r, 400))
     const net = getNetworkInfo()
     if (net.effectiveType) {
-      setStepStatus('wifi', 'ok', `Conexión: ${net.effectiveType}`)
+      setStepStatus('wifi', 'ok', `Conexión: ${net.effectiveType ?? net.connectionType ?? 'detectada'}`)
     } else {
-      setStepStatus('wifi', 'warn', 'No se pudo detectar red')
+      setStepStatus('wifi', 'warn', 'No se pudo detectar red (normal en iOS/Chrome)')
     }
 
     // --- Dispositivo ---
@@ -312,42 +332,50 @@ export default function MiTurnoPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueConfig])
 
-  // ------------------------------------------
-  // Selfie capturada → enviar fichaje
-  // ------------------------------------------
-  const handleSelfieDone = useCallback(async (dataUrl: string) => {
+  // Cuando se complete la selfie, enviar fichaje
+  const handleSelfieDone = useCallback(async (url: string) => {
+    setPhotoUrl(url)
     setStepStatus('photo', 'ok', 'Selfie capturada')
-    await submitClock(dataUrl)
+    await submitClock(url)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [geoResult, flowAction])
 
   // ------------------------------------------
   // Enviar fichaje al servidor
   // ------------------------------------------
-  const submitClock = useCallback(async (selfieDataUrl?: string) => {
+  const submitClock = useCallback(async (overridePhotoUrl?: string) => {
     if (!flowAction) return
     setFlowState('submitting')
 
     try {
       const dev = getDeviceFingerprint()
+      const net = getNetworkInfo()
 
       const response = await fetch('/api/attendance/clock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: flowAction,
-          lat: geoResult?.lat ?? null,
-          lng: geoResult?.lng ?? null,
-          accuracy: geoResult?.accuracy ?? null,
-          selfie: selfieDataUrl ?? null,
-          deviceFingerprint: dev.id,
+          action:       flowAction,
+          photo_url:    overridePhotoUrl ?? photoUrl,
+          geo_lat:      geoResult?.lat,
+          geo_lng:      geoResult?.lng,
+          geo_accuracy: geoResult?.accuracy,
+          wifi_ssid:    net.effectiveType ?? null,
+          device_id:    dev.id,
+          device_info:  {
+            userAgent: dev.userAgent,
+            language:  dev.language,
+            timezone:  dev.timezone,
+            screen:    dev.screen,
+            platform:  dev.platform,
+          },
         }),
       })
 
       const data = await response.json()
 
-      if (!response.ok || !data.success) {
-        toast.error(data.error ?? 'Error al fichar')
+      if (!response.ok || data.error) {
+        toast.error(humanizeError(data.error ?? 'Error al fichar'))
         setFlowState('idle')
         return
       }
@@ -356,10 +384,8 @@ export default function MiTurnoPage() {
       setShowSuccess(true)
       setFlowState('done')
 
-      if (data.anomaly?.is_suspicious) {
-        toast.warning('Fichaje registrado con observaciones', {
-          description: (data.anomaly.reasons as string[]).map((r: string) => r.split(':')[0]).join(', '),
-        })
+      if (data.warnings?.length) {
+        toast.warning('Fichaje registrado con advertencias', { description: data.warnings[0] })
       } else {
         toast.success(flowAction === 'in' ? '¡Ingreso registrado!' : '¡Egreso registrado!')
       }
@@ -374,11 +400,12 @@ export default function MiTurnoPage() {
       setFlowState('idle')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flowAction, geoResult, fetchAttendance])
+  }, [flowAction, photoUrl, geoResult, fetchAttendance])
 
   const cancelFlow = () => {
     setFlowState('idle')
     setFlowAction(null)
+    setPhotoUrl(null)
   }
 
   // ------------------------------------------
@@ -455,8 +482,8 @@ export default function MiTurnoPage() {
 
         {/* Pasos de seguridad */}
         <FadeIn delay={0.1} className="card-elevated space-y-1 p-3">
-          {steps.map(s => (
-            <SecurityStep key={s.id} step={s} />
+          {steps.map(step => (
+            <SecurityStep key={step.id} step={step} />
           ))}
         </FadeIn>
 
@@ -542,6 +569,7 @@ export default function MiTurnoPage() {
                 </p>
                 <p className="mt-1 text-sm text-[#a39e97]">No has registrado ingreso hoy.</p>
               </div>
+              {/* Seguridad activa badge */}
               <div className="flex items-center gap-2 rounded-xl bg-[#e8f5f1] px-3 py-1.5 text-xs text-[#006d5a]">
                 <ShieldCheck className="size-3.5" />
                 <span>Fichaje verificado: ubicación + selfie</span>
@@ -575,11 +603,16 @@ export default function MiTurnoPage() {
                     </span>
                   </div>
                 )}
-                {/* Indicadores de seguridad */}
+                {/* Indicadores de seguridad del ingreso */}
                 <div className="mt-3 flex items-center justify-center gap-2">
-                  <span className={`flex items-center gap-1 text-xs ${todayRecord.clock_in_selfie_url ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
+                  <span className={`flex items-center gap-1 text-xs ${todayRecord.geo_verified ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
+                    <MapPin className="size-3" />
+                    {todayRecord.geo_verified ? 'GPS ✓' : 'GPS ⚠'}
+                  </span>
+                  <span className="text-[#ebe6df]">·</span>
+                  <span className={`flex items-center gap-1 text-xs ${todayRecord.clock_in_photo_url ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
                     <Camera className="size-3" />
-                    {todayRecord.clock_in_selfie_url ? 'Foto ✓' : 'Sin foto'}
+                    {todayRecord.clock_in_photo_url ? 'Foto ✓' : 'Sin foto'}
                   </span>
                   {todayRecord.is_suspicious && (
                     <>
@@ -637,7 +670,12 @@ export default function MiTurnoPage() {
                 )}
                 {/* Indicadores de verificación */}
                 <div className="mt-4 flex items-center justify-center gap-3">
-                  {todayRecord.clock_in_selfie_url && (
+                  {todayRecord.geo_verified && (
+                    <span className="flex items-center gap-1 text-xs text-[#006d5a]">
+                      <MapPin className="size-3" /> GPS verificado
+                    </span>
+                  )}
+                  {todayRecord.clock_in_photo_url && (
                     <span className="flex items-center gap-1 text-xs text-[#006d5a]">
                       <Camera className="size-3" /> Foto guardada
                     </span>
@@ -702,6 +740,7 @@ export default function MiTurnoPage() {
                             <span>{formatDuration(record.clock_in_at, record.clock_out_at)}</span>
                           </>
                         )}
+                        {record.geo_verified && <MapPin className="size-3 text-[#006d5a]" />}
                       </div>
                     </div>
                     <div className="shrink-0">{getRecordStatusBadge(record)}</div>
