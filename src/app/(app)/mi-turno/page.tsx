@@ -337,19 +337,12 @@ export default function MiTurnoPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action:       flowAction,
-          geo_lat:      geoResult?.lat,
-          geo_lng:      geoResult?.lng,
-          geo_accuracy: geoResult?.accuracy,
-          wifi_ssid:    net.effectiveType ?? null,
-          device_id:    dev.id,
-          device_info:  {
-            userAgent: dev.userAgent,
-            language:  dev.language,
-            timezone:  dev.timezone,
-            screen:    dev.screen,
-            platform:  dev.platform,
-          },
+          event_type:         flowAction === 'in' ? 'clock_in' : 'clock_out',
+          gps_lat:            geoResult?.lat,
+          gps_lng:            geoResult?.lng,
+          gps_accuracy:       geoResult?.accuracy,
+          wifi_ssid:          net.effectiveType ?? undefined,
+          device_fingerprint: dev.id,
         }),
       })
 
@@ -365,8 +358,8 @@ export default function MiTurnoPage() {
       setShowSuccess(true)
       setFlowState('done')
 
-      if (data.warnings?.length) {
-        toast.warning('Fichaje registrado con advertencias', { description: data.warnings[0] })
+      if (data.anomaly_count > 0) {
+        toast.warning(`Fichaje registrado con ${data.anomaly_count} advertencia${data.anomaly_count > 1 ? 's' : ''}`)
       } else {
         toast.success(flowAction === 'in' ? '¡Ingreso registrado!' : '¡Egreso registrado!')
       }
