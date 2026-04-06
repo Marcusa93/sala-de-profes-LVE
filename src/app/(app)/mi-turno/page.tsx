@@ -53,8 +53,6 @@ type AttendanceRecord = {
   geo_verified?: boolean
   geo_distance_m?: number
   wifi_verified?: boolean
-  clock_in_photo_url?: string
-  clock_out_photo_url?: string
 }
 
 type TodayStatus = 'not_clocked_in' | 'clocked_in' | 'completed'
@@ -163,7 +161,6 @@ export default function MiTurnoPage() {
   const [flowAction, setFlowAction] = useState<'in' | 'out' | null>(null)
   const [flowState, setFlowState] = useState<FlowState>('idle')
   const [steps, setSteps] = useState<CheckStep[]>([])
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null)
   const [geoResult, setGeoResult] = useState<GeoResult | null>(null)
 
   // Stable todayStr that only changes at midnight
@@ -206,7 +203,7 @@ export default function MiTurnoPage() {
     try {
       const { data: today, error: todayError } = await supabase
         .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, suspicious_reasons, geo_verified, geo_distance_m, wifi_verified, clock_in_photo_url, clock_out_photo_url')
+        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, suspicious_reasons, geo_verified, geo_distance_m, wifi_verified')
         .eq('user_id', profile.id)
         .eq('operative_date', todayStr)
         .order('clock_in_at', { ascending: false })
@@ -266,7 +263,6 @@ export default function MiTurnoPage() {
   // ------------------------------------------
   const startFlow = (action: 'in' | 'out') => {
     setFlowAction(action)
-    setPhotoUrl(null)
     setGeoResult(null)
     setSteps([
       { id: 'geo',   label: 'Verificando ubicación',  status: 'pending' },
@@ -385,12 +381,11 @@ export default function MiTurnoPage() {
       setFlowState('idle')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flowAction, photoUrl, geoResult, fetchAttendance])
+  }, [flowAction, geoResult, fetchAttendance])
 
   const cancelFlow = () => {
     setFlowState('idle')
     setFlowAction(null)
-    setPhotoUrl(null)
   }
 
   // ------------------------------------------
