@@ -2,67 +2,51 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
 // GET /api/attendance/status
-// Returns current clock status for the authenticated user (or ?employee_id for admins)
-export async function GET(request: Request) {
+// Returns current clock status for the authenticated user
+export async function GET() {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) {
     return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
   }
 
-  const { searchParams } = new URL(request.url)
-  const targetId = searchParams.get('employee_id') ?? user.id
+  const todayStr = new Date().toLocaleDateString('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+  })
 
-  // If requesting another employee's status, check admin role
-  if (targetId !== user.id) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-    if (!profile || !['socio', 'encargado'].includes(profile.role)) {
-      return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
-    }
-  }
-
-  // Get last event
-  const { data: lastEvent } = await supabase
-    .from('clock_events')
-    .select('id, event_type, timestamp, gps_lat, gps_lng, verified, anomaly_flags')
-    .eq('employee_id', targetId)
-    .order('timestamp', { ascending: false })
+  // Get today's record
+  const { data: todayRecord } = await supabase
+    .from('attendance_logs')
+    .select('id, operative_date, clock_in_at, clock_out_at, status, is_suspicious, suspicious_reasons, geo_verified, geo_distance_m, wifi_verified')
+    .eq('user_id', user.id)
+    .eq('operative_date', todayStr)
+    .order('clock_in_at', { ascending: false })
     .limit(1)
     .maybeSingle()
 
-  // Get today's events (local date)
-  const todayLocal = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Argentina/Buenos_Aires',
-  }).format(new Date())
-
-  const { data: todayEvents } = await supabase
-    .from('clock_events')
-    .select('id, event_type, timestamp, verified, anomaly_flags')
-    .eq('employee_id', targetId)
-    .gte('timestamp', `${todayLocal}T00:00:00-03:00`)
-    .order('timestamp', { ascending: true })
-
-  // Open anomalies count
-  const { count: openAnomalies } = await supabase
-    .from('attendance_anomalies')
-    .select('*', { count: 'exact', head: true })
-    .eq('employee_id', targetId)
-    .eq('resolved', false)
-
-  const status = !lastEvent
-    ? 'no_record'
-    : lastEvent.event_type === 'clock_in'
-      ? 'clocked_in'
-      : 'clocked_out'
+  let status: string
+  if (!todayRecord) {
+    status = 'not_clocked_in'
+  } else if (todayRecord.status === 'open') {
+    status = 'clocked_in'
+  } else {
+    status = 'completed'
+  }
 
   return NextResponse.json({
     status,
-    last_event: lastEvent,
-    today_events: todayEvents ?? [],
-    open_anomalies: openAnomalies ?? 0,
+    today_record: todayRecord,
+    // Legacy compat for /fichaje page
+    last_event: todayRecord ? {
+      id: todayRecord.id,
+      event_type: todayRecord.status === 'open' ? 'clock_in' : 'clock_out',
+      timestamp: todayRecord.status === 'open' ? todayRecord.clock_in_at : todayRecord.clock_out_at,
+      verified: !todayRecord.is_suspicious,
+    } : null,
+    today_events: todayRecord ? [
+      { id: todayRecord.id + '_in', event_type: 'clock_in', timestamp: todayRecord.clock_in_at, verified: !todayRecord.is_suspicious, gps_lat: null, device_fingerprint: null },
+      ...(todayRecord.clock_out_at ? [{ id: todayRecord.id + '_out', event_type: 'clock_out', timestamp: todayRecord.clock_out_at, verified: true, gps_lat: null, device_fingerprint: null }] : []),
+    ] : [],
+    open_anomalies: 0,
   })
 }
