@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
-  ShieldAlert, MapPin, Camera, Smartphone, Clock, Check,
+  ShieldAlert, MapPin, Smartphone, Clock, Check,
   AlertTriangle, ChevronDown, ChevronUp, RefreshCw,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -27,8 +27,6 @@ type SuspiciousItem = {
   clock_out_at: string | null
   status: string
   reasons: string[]
-  selfie_in: string | null
-  selfie_out: string | null
   lat: number | null
   lng: number | null
   device: string | null
@@ -44,8 +42,6 @@ const REASON_LABELS: Record<string, { label: string; color: string; icon: typeof
   geo_fuera_rango_egreso: { label: 'Egreso fuera de rango', color: 'bg-red-50 text-[#ea504c]', icon: MapPin },
   sin_geolocalizacion_ingreso: { label: 'Sin GPS', color: 'bg-amber-50 text-[#d4943a]', icon: MapPin },
   dispositivo_nuevo: { label: 'Dispositivo nuevo', color: 'bg-amber-50 text-[#d4943a]', icon: Smartphone },
-  sin_selfie_ingreso: { label: 'Sin selfie ingreso', color: 'bg-amber-50 text-[#d4943a]', icon: Camera },
-  sin_selfie_egreso: { label: 'Sin selfie egreso', color: 'bg-amber-50 text-[#d4943a]', icon: Camera },
   jornada_excedida: { label: 'Jornada excedida', color: 'bg-red-50 text-[#ea504c]', icon: Clock },
 }
 
@@ -184,14 +180,9 @@ export default function FichajesSospechososPage() {
                     onClick={() => toggleExpand(item.id)}
                     className="flex w-full items-center gap-3 px-4 py-3.5 text-left"
                   >
-                    {/* Selfie thumbnail */}
-                    {item.selfie_in ? (
-                      <img src={item.selfie_in} alt="" className="size-10 rounded-lg object-cover ring-1 ring-[#ebe6df]" />
-                    ) : (
-                      <div className="flex size-10 items-center justify-center rounded-lg bg-red-50">
-                        <Camera className="size-4 text-[#ea504c]" />
+                    <div className="flex size-10 items-center justify-center rounded-lg bg-red-50">
+                        <ShieldAlert className="size-4 text-[#ea504c]" />
                       </div>
-                    )}
 
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-[#3d2c24]">{item.employee_name}</p>

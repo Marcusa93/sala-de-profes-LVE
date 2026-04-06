@@ -14,7 +14,6 @@ import {
   Timer,
   MapPin,
   Wifi,
-  Camera,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -29,7 +28,6 @@ import { createClient } from '@/lib/supabase/client'
 import { FadeIn, StaggerList, StaggerItem, AnimatePresence, motion } from '@/components/ui/motion'
 import { SuccessBurst } from '@/components/ui/success-burst'
 import { playSchoolBell } from '@/lib/sounds'
-import { SelfieCapture } from '@/components/attendance/SelfieCapture'
 import {
   getGeolocation,
   getDeviceFingerprint,
@@ -68,7 +66,7 @@ type CheckStep = {
   detail?: string
 }
 
-type FlowState = 'idle' | 'security_check' | 'selfie' | 'submitting' | 'done'
+type FlowState = 'idle' | 'security_check' | 'submitting' | 'done'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -274,7 +272,6 @@ export default function MiTurnoPage() {
       { id: 'geo',   label: 'Verificando ubicación',  status: 'pending' },
       { id: 'wifi',  label: 'Detectando red WiFi',     status: 'pending' },
       { id: 'dev',   label: 'Registrando dispositivo', status: 'pending' },
-      { id: 'photo', label: 'Selfie de verificación',  status: 'pending' },
     ])
     setFlowState('security_check')
     runSecurityChecks()
@@ -323,27 +320,16 @@ export default function MiTurnoPage() {
     const dev = getDeviceFingerprint()
     setStepStatus('dev', 'ok', `ID: ${dev.id}`)
 
-    // --- Foto (esperar en siguiente pantalla) ---
-    setStepStatus('photo', 'pending', 'Pendiente')
-
+    // Todas las verificaciones pasaron — enviar fichaje
     await new Promise(r => setTimeout(r, 600))
-    setFlowState('selfie')
-    setStepStatus('photo', 'loading', 'Pendiente tu selfie')
+    await submitClock()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueConfig])
-
-  // Cuando se complete la selfie, enviar fichaje
-  const handleSelfieDone = useCallback(async (url: string) => {
-    setPhotoUrl(url)
-    setStepStatus('photo', 'ok', 'Selfie capturada')
-    await submitClock(url)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geoResult, flowAction])
 
   // ------------------------------------------
   // Enviar fichaje al servidor
   // ------------------------------------------
-  const submitClock = useCallback(async (overridePhotoUrl?: string) => {
+  const submitClock = useCallback(async () => {
     if (!flowAction) return
     setFlowState('submitting')
 
@@ -356,7 +342,6 @@ export default function MiTurnoPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action:       flowAction,
-          photo_url:    overridePhotoUrl ?? photoUrl,
           geo_lat:      geoResult?.lat,
           geo_lng:      geoResult?.lng,
           geo_accuracy: geoResult?.accuracy,
@@ -487,20 +472,6 @@ export default function MiTurnoPage() {
           ))}
         </FadeIn>
 
-        {/* Selfie */}
-        {flowState === 'selfie' && (
-          <FadeIn delay={0.2} className="card-elevated p-5">
-            <h3 className="mb-4 font-display text-base font-semibold text-[#3d2c24]">
-              Selfie de verificación
-            </h3>
-            <SelfieCapture
-              onCapture={handleSelfieDone}
-              required={venueConfig?.require_photo ?? true}
-              onSkip={venueConfig?.require_photo ? undefined : () => submitClock()}
-            />
-          </FadeIn>
-        )}
-
         {flowState === 'submitting' && (
           <FadeIn className="flex flex-col items-center gap-3 py-6">
             <Loader2 className="size-8 animate-spin text-[#006d5a]" />
@@ -572,7 +543,7 @@ export default function MiTurnoPage() {
               {/* Seguridad activa badge */}
               <div className="flex items-center gap-2 rounded-xl bg-[#e8f5f1] px-3 py-1.5 text-xs text-[#006d5a]">
                 <ShieldCheck className="size-3.5" />
-                <span>Fichaje verificado: ubicación + selfie</span>
+                <span>Fichaje verificado: ubicación + dispositivo</span>
               </div>
               <Button
                 onClick={() => startFlow('in')}
@@ -608,11 +579,6 @@ export default function MiTurnoPage() {
                   <span className={`flex items-center gap-1 text-xs ${todayRecord.geo_verified ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
                     <MapPin className="size-3" />
                     {todayRecord.geo_verified ? 'GPS ✓' : 'GPS ⚠'}
-                  </span>
-                  <span className="text-[#ebe6df]">·</span>
-                  <span className={`flex items-center gap-1 text-xs ${todayRecord.clock_in_photo_url ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
-                    <Camera className="size-3" />
-                    {todayRecord.clock_in_photo_url ? 'Foto ✓' : 'Sin foto'}
                   </span>
                   {todayRecord.is_suspicious && (
                     <>
@@ -673,11 +639,6 @@ export default function MiTurnoPage() {
                   {todayRecord.geo_verified && (
                     <span className="flex items-center gap-1 text-xs text-[#006d5a]">
                       <MapPin className="size-3" /> GPS verificado
-                    </span>
-                  )}
-                  {todayRecord.clock_in_photo_url && (
-                    <span className="flex items-center gap-1 text-xs text-[#006d5a]">
-                      <Camera className="size-3" /> Foto guardada
                     </span>
                   )}
                   {todayRecord.is_suspicious && (

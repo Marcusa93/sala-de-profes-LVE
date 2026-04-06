@@ -66,7 +66,7 @@ export type KitchenDailyItem = {
 
 // Attendance Anti-Fraud enums (needed inside Database type)
 export type ClockEventType = 'clock_in' | 'clock_out'
-export type AnomalyType = 'wifi_mismatch' | 'gps_out_of_range' | 'unknown_device' | 'selfie_missing' | 'rapid_succession' | 'unusual_hour'
+export type AnomalyType = 'wifi_mismatch' | 'gps_out_of_range' | 'unknown_device' | 'rapid_succession' | 'unusual_hour'
 export type AnomalySeverity = 'low' | 'medium' | 'high' | 'critical'
 export type CorrectionType = 'add_missing' | 'change_time' | 'remove_event'
 export type CorrectionStatus = 'pending' | 'approved' | 'rejected'

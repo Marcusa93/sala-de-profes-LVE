@@ -8,7 +8,6 @@ import {
   ShieldCheck,
   MapPin,
   Wifi,
-  Camera,
   Smartphone,
   Clock,
   AlertTriangle,
@@ -170,45 +169,6 @@ function AlertRow({ alert }: { alert: AlertRecord }) {
               </div>
             </div>
 
-            {/* Foto ingreso */}
-            <div className={`flex items-center gap-2 rounded-xl p-3 ${alert.clock_in_photo_url ? 'bg-[#e8f5f1]' : 'bg-red-100'}`}>
-              <Camera className={`size-4 ${alert.clock_in_photo_url ? 'text-[#006d5a]' : 'text-red-600'}`} />
-              <div>
-                <p className="text-xs font-medium text-[#3d2c24]">
-                  Foto entrada {alert.clock_in_photo_url ? '✓' : '✗'}
-                </p>
-                {alert.clock_in_photo_url && (
-                  <a
-                    href={alert.clock_in_photo_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-[#006d5a] underline"
-                  >
-                    Ver foto
-                  </a>
-                )}
-              </div>
-            </div>
-
-            {/* Foto egreso */}
-            <div className={`flex items-center gap-2 rounded-xl p-3 ${alert.clock_out_photo_url ? 'bg-[#e8f5f1]' : 'bg-gray-100'}`}>
-              <Camera className={`size-4 ${alert.clock_out_photo_url ? 'text-[#006d5a]' : 'text-[#a39e97]'}`} />
-              <div>
-                <p className="text-xs font-medium text-[#3d2c24]">
-                  Foto salida {alert.clock_out_photo_url ? '✓' : '—'}
-                </p>
-                {alert.clock_out_photo_url && (
-                  <a
-                    href={alert.clock_out_photo_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-[#006d5a] underline"
-                  >
-                    Ver foto
-                  </a>
-                )}
-              </div>
-            </div>
           </div>
 
           {/* Device ID */}

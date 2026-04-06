@@ -460,7 +460,6 @@ export default function AdminAsistenciaPage() {
                         {a.anomaly_type === 'gps_out_of_range' && '📍 GPS fuera del rango'}
                         {a.anomaly_type === 'wifi_mismatch' && '📶 Red WiFi no reconocida'}
                         {a.anomaly_type === 'unknown_device' && '📱 Dispositivo no registrado'}
-                        {a.anomaly_type === 'selfie_missing' && '📷 Sin selfie'}
                         {a.anomaly_type === 'rapid_succession' && '⚡ Fichaje muy rápido'}
                         {a.anomaly_type === 'unusual_hour' && '🕐 Horario inusual'}
                       </p>

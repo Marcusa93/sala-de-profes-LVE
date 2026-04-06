@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     const admin = createAdminClient()
     const { data: logs, error } = await admin
       .from('attendance_logs')
-      .select('id, user_id, operative_date, clock_in_at, clock_out_at, status, is_suspicious, suspicious_reasons, clock_in_selfie_url, clock_out_selfie_url, clock_in_lat, clock_in_lng, device_fingerprint, network_ip, profiles!attendance_logs_user_id_fkey(first_name, last_name, role)')
+      .select('id, user_id, operative_date, clock_in_at, clock_out_at, status, is_suspicious, suspicious_reasons, clock_in_lat, clock_in_lng, device_fingerprint, network_ip, profiles!attendance_logs_user_id_fkey(first_name, last_name, role)')
       .eq('is_suspicious', true)
       .gte('operative_date', since.toISOString().split('T')[0])
       .order('operative_date', { ascending: false })
@@ -45,8 +45,6 @@ export async function GET(request: NextRequest) {
       clock_out_at: l.clock_out_at,
       status: l.status,
       reasons: l.suspicious_reasons ?? [],
-      selfie_in: l.clock_in_selfie_url,
-      selfie_out: l.clock_out_selfie_url,
       lat: l.clock_in_lat,
       lng: l.clock_in_lng,
       device: l.device_fingerprint,

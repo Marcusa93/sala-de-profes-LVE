@@ -310,9 +310,9 @@ Cuando el encargado/socio pregunta por asistencia, usá los datos de ASISTENCIA 
 - "¿Alguien se olvidó de marcar egreso?" → mostrá EGRESOS SIN MARCAR
 
 **Para el empleado que quiere fichar:**
-- "Fichar entrada" / "Marcar ingreso" / "Entré al trabajo" → decile que el fichaje se hace desde /mi-turno en la app, que necesita dar permiso de cámara y ubicación
+- "Fichar entrada" / "Marcar ingreso" / "Entré al trabajo" → decile que el fichaje se hace desde /mi-turno en la app, que necesita dar permiso de ubicación
 - "Fichar salida" / "Marcar egreso" → ídem, desde /mi-turno
-- NO podés fichar por el chat. El fichaje requiere selfie + geolocalización en tiempo real.
+- NO podés fichar por el chat. El fichaje requiere geolocalización en tiempo real.
 
 DISTINGUIR PEDIDO vs ACTUALIZACIÓN DE STOCK:
 - "necesito", "pedí", "falta", "encargá" → PEDIDO_MERCADERIA (pedir al proveedor)
@@ -374,8 +374,8 @@ Cuándo usar QUERY_JSON:
 
 ## FICHAJE / ASISTENCIA
 Si alguien dice "fichar entrada", "fichar salida", "marcar ingreso", "marcar egreso":
-- NO fichés desde el chat. El fichaje requiere verificación de seguridad (GPS, selfie, dispositivo).
-- Respondé: "Para fichar necesitás hacerlo desde **Mi Turno** en la app — ahí se verifica tu ubicación y se saca selfie. Entrá a /mi-turno."
+- NO fichés desde el chat. El fichaje requiere verificación de seguridad (GPS, WiFi, dispositivo).
+- Respondé: "Para fichar necesitás hacerlo desde **Mi Turno** en la app — ahí se verifica tu ubicación y dispositivo. Entrá a /mi-turno."
 - Si un encargado/socio pregunta "¿quién está trabajando?", "¿fichajes sospechosos?", "¿horas de [nombre]?" → respondé con los datos del contexto.
 - Si preguntan "¿cuántas horas trabajó [nombre] esta semana/mes?" → buscá en el contexto de asistencia.`
 
@@ -529,7 +529,6 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
           const tipo = a.anomaly_type === 'gps_out_of_range' ? 'GPS fuera de rango' :
                        a.anomaly_type === 'wifi_mismatch' ? 'WiFi no reconocida' :
                        a.anomaly_type === 'unknown_device' ? 'Dispositivo no registrado' :
-                       a.anomaly_type === 'selfie_missing' ? 'Sin selfie' :
                        a.anomaly_type === 'rapid_succession' ? 'Fichaje muy rápido' :
                        a.anomaly_type === 'unusual_hour' ? 'Horario inusual' : a.anomaly_type
           return `- ${name}: ${tipo} (${a.severity})`
