@@ -180,31 +180,63 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
   try {
     // 1. Read all Fudo ingredients
     const fudoItems = await readFudoStock()
-    result.total = fudoItems.length
 
-    // 2. Get all stock_items with fudo_ingredient_id
+    // 2. Read Fudo products (for finished goods like empanadas)
+    let fudoProducts: { id: string; stock: number; stockControl: boolean }[] = []
+    try {
+      const { fudo } = await import('@/lib/fudoClient')
+      const products = await fudo.getProducts()
+      fudoProducts = products
+        .filter(p => p.stockControl && p.stock != null)
+        .map(p => ({ id: p.id, stock: p.stock!, stockControl: true }))
+    } catch {
+      result.errors.push('Warning: no se pudieron traer productos de Fudo')
+    }
+
+    result.total = fudoItems.length + fudoProducts.length
+
+    // 3. Get all stock_items (ingredient-linked AND product-linked)
     const { data: stockItems } = await admin
       .from('stock_items')
-      .select('id, fudo_ingredient_id, current_qty')
-      .not('fudo_ingredient_id', 'is', null)
+      .select('id, fudo_ingredient_id, fudo_product_id, current_qty')
       .eq('is_active', true)
 
     if (!stockItems) return result
 
-    // 3. Build Fudo map
-    const fudoMap = new Map<string, FudoIngredient>()
+    // 4. Build Fudo maps
+    const fudoIngMap = new Map<string, FudoIngredient>()
     for (const fi of fudoItems) {
-      fudoMap.set(fi.id, fi)
+      fudoIngMap.set(fi.id, fi)
     }
 
-    // 4. Update each stock_item with Fudo's current stock
+    const fudoProdMap = new Map<string, { stock: number }>()
+    for (const fp of fudoProducts) {
+      fudoProdMap.set(fp.id, fp)
+    }
+
+    // 5. Update each stock_item with Fudo's current stock
     for (const si of stockItems) {
-      const fudoItem = fudoMap.get(si.fudo_ingredient_id!)
-      if (!fudoItem) continue
-      if (!fudoItem.stockControl) continue
+      let fudoQty: number | null = null
+
+      // Check ingredient link first
+      if (si.fudo_ingredient_id) {
+        const fudoItem = fudoIngMap.get(si.fudo_ingredient_id)
+        if (fudoItem?.stockControl) {
+          fudoQty = Math.round(fudoItem.stock * 100) / 100
+        }
+      }
+
+      // Then check product link (product takes precedence for finished goods)
+      if (si.fudo_product_id) {
+        const fudoProd = fudoProdMap.get(si.fudo_product_id)
+        if (fudoProd) {
+          fudoQty = Math.round(fudoProd.stock * 100) / 100
+        }
+      }
+
+      if (fudoQty === null) continue
 
       // Only update if different (avoid unnecessary writes)
-      const fudoQty = Math.round(fudoItem.stock * 100) / 100
       if (Math.abs(si.current_qty - fudoQty) < 0.01) {
         result.synced++
         continue
@@ -242,10 +274,10 @@ export async function syncToFudo(
   newQty: number,
   userId?: string,
 ): Promise<{ success: boolean; fudoSynced: boolean; error?: string }> {
-  // 1. Get the stock_item to find fudo_ingredient_id
+  // 1. Get the stock_item to find fudo link
   const { data: item } = await admin
     .from('stock_items')
-    .select('id, name, fudo_ingredient_id, current_qty')
+    .select('id, name, fudo_ingredient_id, fudo_product_id, current_qty')
     .eq('id', stockItemId)
     .single()
 
@@ -268,12 +300,25 @@ export async function syncToFudo(
     new_qty: newQty,
   }).catch(() => {}) // Non-blocking
 
-  // 4. If has Fudo ID, push to Fudo
-  if (item.fudo_ingredient_id) {
-    const fudoResult = await writeFudoStock(item.fudo_ingredient_id, newQty)
+  // 4. If has Fudo link (ingredient or product), push to Fudo
+  const fudoLink = item.fudo_ingredient_id || item.fudo_product_id
+  if (fudoLink) {
+    let fudoResult: { success: boolean; error?: string }
+
+    if (item.fudo_ingredient_id) {
+      fudoResult = await writeFudoStock(item.fudo_ingredient_id, newQty)
+    } else {
+      // Product-linked item
+      try {
+        const { fudo: fudoClient } = await import('@/lib/fudoClient')
+        await fudoClient.updateProductStock(item.fudo_product_id!, newQty)
+        fudoResult = { success: true }
+      } catch (err) {
+        fudoResult = { success: false, error: err instanceof Error ? err.message : 'Error' }
+      }
+    }
 
     if (!fudoResult.success) {
-      // Supabase updated but Fudo failed — log the desync
       console.error(`[FudoSync] Write failed for ${item.name}: ${fudoResult.error}`)
       await admin.from('audit_trail').insert({
         user_id: userId ?? null,
@@ -282,13 +327,12 @@ export async function syncToFudo(
         entity_type: 'stock_item',
         entity_id: stockItemId,
         description: `Error al sincronizar ${item.name} con Fudo: ${fudoResult.error}`,
-        metadata: { fudo_ingredient_id: item.fudo_ingredient_id, attempted_qty: newQty },
+        metadata: { fudo_id: fudoLink, attempted_qty: newQty },
       }).catch(() => {})
 
       return { success: true, fudoSynced: false, error: fudoResult.error }
     }
 
-    // Audit success
     await admin.from('audit_trail').insert({
       user_id: userId ?? null,
       action: 'fudo_stock_sync',
@@ -296,7 +340,7 @@ export async function syncToFudo(
       entity_type: 'stock_item',
       entity_id: stockItemId,
       description: `${item.name}: ${item.current_qty} → ${newQty} (sincronizado con Fudo)`,
-      metadata: { fudo_ingredient_id: item.fudo_ingredient_id, old_qty: item.current_qty, new_qty: newQty, synced: true },
+      metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: newQty, synced: true },
     }).catch(() => {})
 
     return { success: true, fudoSynced: true }
@@ -324,13 +368,26 @@ export async function syncProductionToFudo(
   for (const itemId of itemIds) {
     const { data: item } = await admin
       .from('stock_items')
-      .select('id, name, fudo_ingredient_id, current_qty')
+      .select('id, name, fudo_ingredient_id, fudo_product_id, current_qty')
       .eq('id', itemId)
       .single()
 
-    if (!item?.fudo_ingredient_id) continue // No Fudo link — skip
+    if (!item?.fudo_ingredient_id && !item?.fudo_product_id) continue // No Fudo link — skip
 
-    const fudoResult = await writeFudoStock(item.fudo_ingredient_id, item.current_qty)
+    let fudoResult: { success: boolean; error?: string }
+
+    if (item.fudo_ingredient_id) {
+      fudoResult = await writeFudoStock(item.fudo_ingredient_id, item.current_qty)
+    } else {
+      // Product-linked item — push via product endpoint
+      try {
+        const { fudo: fudoClient } = await import('@/lib/fudoClient')
+        await fudoClient.updateProductStock(item.fudo_product_id!, item.current_qty)
+        fudoResult = { success: true }
+      } catch (err) {
+        fudoResult = { success: false, error: err instanceof Error ? err.message : 'Error' }
+      }
+    }
 
     if (fudoResult.success) {
       result.synced++

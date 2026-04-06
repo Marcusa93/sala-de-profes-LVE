@@ -5,14 +5,15 @@ import { fudo } from '@/lib/fudoClient'
 // ---------------------------------------------------------------------------
 // POST /api/fudo/sync/stock
 // ---------------------------------------------------------------------------
-// Sync bidireccional de ingredientes Fudo ↔ stock_items.
+// Sync bidireccional de ingredientes Y productos Fudo ↔ stock_items.
 //
-// 1) Trae ingredientes de Fudo (181 items con stock real).
-// 2) Para cada ingrediente:
-//    - Si ya existe un stock_item con ese fudo_ingredient_id → actualiza qty
-//      en la dirección indicada por `direction` param.
+// 1) Trae ingredientes de Fudo (materias primas con stock real).
+// 2) Trae productos de Fudo (productos terminados con stock — empanadas, etc).
+// 3) Para cada item:
+//    - Si ya existe un stock_item con ese fudo_ingredient_id o fudo_product_id
+//      → actualiza qty en la dirección indicada.
 //    - Si no existe → crea un stock_item nuevo con los datos de Fudo.
-// 3) `direction`:
+// 4) `direction`:
 //    - "fudo_to_app" (default): Fudo es source of truth → actualiza stock_items
 //    - "app_to_fudo": Webapp es source of truth → PATCH stock en Fudo
 //    - "both": Trae nuevos de Fudo, pero no sobreescribe qty existentes
@@ -25,32 +26,41 @@ export async function POST(request: Request) {
 
     const supabase = createAdminClient()
 
-    // 1) Fetch Fudo ingredients
-    const fudoIngredients = await fudo.getIngredients()
+    // 1) Fetch Fudo ingredients AND products in parallel
+    const [fudoIngredients, fudoProducts] = await Promise.all([
+      fudo.getIngredients(),
+      fudo.getProducts(),
+    ])
 
-    // 2) Fetch existing stock_items with fudo_ingredient_id
+    // 2) Fetch existing stock_items (both ingredient-linked and product-linked)
     const { data: existingItems } = await supabase
       .from('stock_items')
-      .select('id, name, current_qty, fudo_ingredient_id')
+      .select('id, name, current_qty, fudo_ingredient_id, fudo_product_id')
 
-    const existingMap = new Map(
+    const byIngredientId = new Map(
       (existingItems ?? [])
         .filter((i) => i.fudo_ingredient_id)
         .map((i) => [i.fudo_ingredient_id!, i]),
+    )
+
+    const byProductId = new Map(
+      (existingItems ?? [])
+        .filter((i) => i.fudo_product_id)
+        .map((i) => [i.fudo_product_id!, i]),
     )
 
     let synced = 0
     let created = 0
     let pushed = 0
     let errors = 0
+    let productsSynced = 0
 
+    // ── Sync ingredients (materias primas) ──
     for (const ingredient of fudoIngredients) {
-      const existing = existingMap.get(ingredient.id)
+      const existing = byIngredientId.get(ingredient.id)
 
       if (existing) {
-        // Item already linked
         if (direction === 'fudo_to_app') {
-          // Update webapp from Fudo
           if (ingredient.stock != null) {
             const { error } = await supabase
               .from('stock_items')
@@ -60,7 +70,6 @@ export async function POST(request: Request) {
             else synced++
           }
         } else if (direction === 'app_to_fudo') {
-          // Push webapp qty to Fudo
           try {
             await fudo.updateIngredientStock(ingredient.id, existing.current_qty)
             pushed++
@@ -68,7 +77,6 @@ export async function POST(request: Request) {
             errors++
           }
         }
-        // direction === 'both': skip existing, only create new
       } else {
         // New ingredient — create stock_item
         const categoryGuess = guessCategory(ingredient.name)
@@ -93,11 +101,47 @@ export async function POST(request: Request) {
       }
     }
 
+    // ── Sync products (productos terminados: empanadas, etc.) ──
+    // Solo sincroniza productos que tienen stockControl habilitado en Fudo
+    for (const product of fudoProducts) {
+      if (!product.stockControl || product.stock == null) continue
+
+      const existing = byProductId.get(product.id)
+
+      if (existing) {
+        if (direction === 'fudo_to_app') {
+          // Fudo es source of truth → sobreescribir qty
+          const fudoQty = Math.round((product.stock ?? 0) * 100) / 100
+          if (Math.abs(existing.current_qty - fudoQty) < 0.01) {
+            productsSynced++
+            continue
+          }
+          const { error } = await supabase
+            .from('stock_items')
+            .update({ current_qty: fudoQty })
+            .eq('id', existing.id)
+          if (error) errors++
+          else productsSynced++
+        } else if (direction === 'app_to_fudo') {
+          try {
+            await fudo.updateProductStock(product.id, existing.current_qty)
+            pushed++
+          } catch {
+            errors++
+          }
+        }
+      }
+      // No creamos stock_items para productos nuevos automáticamente
+      // — eso se hace via /api/fudo/sync/products → menu_items
+    }
+
     return NextResponse.json({
       success: true,
       direction,
       totalIngredients: fudoIngredients.length,
+      totalProducts: fudoProducts.filter(p => p.stockControl).length,
       synced,
+      productsSynced,
       created,
       pushed,
       errors,

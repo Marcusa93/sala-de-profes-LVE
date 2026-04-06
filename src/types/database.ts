@@ -2208,3 +2208,33 @@ export type AttendanceDashboardRow = {
   total_hours: number
   open_anomalies: number
 }
+
+// ---------------------------------------------------------------------------
+// Stock Reconciliation
+// ---------------------------------------------------------------------------
+
+export type StockReconciliationRow = {
+  stock_item_id: number
+  name: string
+  unit: string
+  opening_qty: number
+  received: number
+  prod_in: number
+  prod_out: number
+  sales: number
+  waste: number
+  manual_adj: number
+  expected_closing: number
+  actual_closing: number
+  variance: number
+}
+
+export type MenuItemReconciliationRow = {
+  menu_item_id: number
+  menu_item_name: string
+  recipe_id: string
+  recipe_name: string | null
+  qty_produced: number
+  qty_sold: number
+  expected_remaining: number
+}
