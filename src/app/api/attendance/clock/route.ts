@@ -9,7 +9,6 @@ import { createAdminClient } from '@/lib/supabase/admin'
 export async function POST(request: Request) {
   const supabase = await createClient()
 
-  // Auth
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) {
     return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
@@ -30,34 +29,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Body inválido' }, { status: 400 })
   }
 
-  const { event_type, gps_lat, gps_lng, gps_accuracy, wifi_ssid, device_fingerprint } = body
+  const { event_type, gps_lat, gps_lng, gps_accuracy, device_fingerprint } = body
 
   if (event_type !== 'clock_in' && event_type !== 'clock_out') {
     return NextResponse.json({ error: 'event_type inválido' }, { status: 400 })
   }
 
   const admin = createAdminClient()
-  const now = new Date()
-  const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
+  const nowISO = new Date().toISOString()
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
 
   const hdrs = await headers()
   const ip = hdrs.get('x-forwarded-for')?.split(',')[0] ?? hdrs.get('x-real-ip') ?? null
-
-  // Suspicious reasons
-  const suspiciousReasons: string[] = []
-
-  // GPS check
-  const geoVerified = gps_lat != null && gps_lng != null
-  let geoDistance: number | null = null
-  if (!geoVerified) {
-    suspiciousReasons.push('sin_geolocalizacion_ingreso')
-  }
 
   // -----------------------------------------------------------------------
   // CLOCK IN
   // -----------------------------------------------------------------------
   if (event_type === 'clock_in') {
-    // Check no open record today
+    // Check no open record
     const { data: existing } = await admin
       .from('attendance_logs')
       .select('id')
@@ -75,18 +64,14 @@ export async function POST(request: Request) {
       .insert({
         user_id: user.id,
         operative_date: todayStr,
-        clock_in_at: now.toISOString(),
+        clock_in_at: nowISO,
+        clock_in_lat: gps_lat ?? null,
+        clock_in_lng: gps_lng ?? null,
+        clock_in_accuracy: gps_accuracy ?? null,
+        clock_in_type: 'normal',
+        device_fingerprint: device_fingerprint ?? null,
+        network_ip: ip,
         status: 'open',
-        geo_lat: gps_lat ?? null,
-        geo_lng: gps_lng ?? null,
-        geo_accuracy: gps_accuracy ?? null,
-        geo_verified: geoVerified,
-        geo_distance_m: geoDistance,
-        wifi_ssid: wifi_ssid ?? null,
-        device_id: device_fingerprint ?? null,
-        ip_address: ip,
-        is_suspicious: suspiciousReasons.length > 0,
-        suspicious_reasons: suspiciousReasons.length > 0 ? suspiciousReasons : null,
       })
       .select()
       .single()
@@ -99,19 +84,18 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       event: record,
-      anomaly_count: suspiciousReasons.length,
-      anomaly_flags: suspiciousReasons,
-      verified: suspiciousReasons.length === 0,
+      anomaly_count: 0,
+      anomaly_flags: [],
+      verified: true,
     })
   }
 
   // -----------------------------------------------------------------------
   // CLOCK OUT
   // -----------------------------------------------------------------------
-  // Find open record for today
   const { data: openRecord } = await admin
     .from('attendance_logs')
-    .select('id, clock_in_at')
+    .select('id')
     .eq('user_id', user.id)
     .eq('status', 'open')
     .order('clock_in_at', { ascending: false })
@@ -125,9 +109,12 @@ export async function POST(request: Request) {
   const { data: updated, error: updateError } = await admin
     .from('attendance_logs')
     .update({
-      clock_out_at: now.toISOString(),
-      status: 'closed',
+      clock_out_at: nowISO,
+      clock_out_lat: gps_lat ?? null,
+      clock_out_lng: gps_lng ?? null,
+      clock_out_accuracy: gps_accuracy ?? null,
       clock_out_type: 'normal',
+      status: 'closed',
     })
     .eq('id', openRecord.id)
     .select()

@@ -30,7 +30,7 @@ type AttendanceRecord = {
   status: 'open' | 'closed' | 'missing_checkout'
   notes: string | null
   is_suspicious?: boolean
-  geo_verified?: boolean
+  clock_in_lat?: number | null
 }
 type TodayStatus = 'not_clocked_in' | 'clocked_in' | 'completed'
 type FlowState = 'idle' | 'working' | 'done'
@@ -87,7 +87,7 @@ export default function MiTurnoPage() {
     try {
       const { data: today } = await supabase
         .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, geo_verified')
+        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, clock_in_lat')
         .eq('user_id', profile.id)
         .eq('operative_date', todayStr)
         .order('clock_in_at', { ascending: false })
@@ -97,7 +97,7 @@ export default function MiTurnoPage() {
 
       const { data: hist } = await supabase
         .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, geo_verified')
+        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, clock_in_lat')
         .eq('user_id', profile.id)
         .order('operative_date', { ascending: false })
         .limit(7)
@@ -282,9 +282,9 @@ export default function MiTurnoPage() {
                   </div>
                 )}
                 <div className="mt-3 flex items-center justify-center gap-2">
-                  <span className={`flex items-center gap-1 text-xs ${todayRecord.geo_verified ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
+                  <span className={`flex items-center gap-1 text-xs ${todayRecord.clock_in_lat ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
                     <MapPin className="size-3" />
-                    {todayRecord.geo_verified ? 'GPS ✓' : 'GPS ⚠'}
+                    {todayRecord.clock_in_lat ? 'GPS ✓' : 'GPS ⚠'}
                   </span>
                   {todayRecord.is_suspicious && (
                     <>
