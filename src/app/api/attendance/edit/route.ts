@@ -35,14 +35,6 @@ export async function PATCH(request: NextRequest) {
     }
     if (!reason || typeof reason !== 'string' || reason.trim().length < 3) {
       return NextResponse.json({ error: 'Motivo de corrección obligatorio (mín 3 caracteres)' }, { status: 400 })
-    if (!reason || reason.trim().length < 5) {
-      return NextResponse.json(
-        { error: 'El motivo es obligatorio y debe tener al menos 5 caracteres' },
-        { status: 400 },
-      )
-    }
-    if (!clockOut && !clockIn) {
-      return NextResponse.json({ error: 'Debe indicar clockOut o clockIn' }, { status: 400 })
     }
 
     // Obtener registro original
