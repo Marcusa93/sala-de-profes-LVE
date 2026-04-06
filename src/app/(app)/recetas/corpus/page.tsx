@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   ArrowLeft, BookOpen, Check, AlertTriangle, HelpCircle,
-  ChevronDown, ChevronUp, Package, Truck, Link2,
+  ChevronDown, ChevronUp, Package, Truck, Link2, Upload, Loader2,
+  TrendingDown,
 } from 'lucide-react'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -48,11 +49,55 @@ const MATCH_COLORS: Record<string, { bg: string; text: string }> = {
   sin_match: { bg: 'bg-[#f3efe9]', text: 'text-[#a39e97]' },
 }
 
+type IngestResult = {
+  ok: boolean
+  dry_run: boolean
+  summary: {
+    recipes_created: number
+    recipes_existing: number
+    ingredients_linked: number
+    ingredients_skipped: number
+    menu_items_linked: number
+  }
+  details: Array<{
+    recipe: string
+    recipe_id: number | null
+    action: 'created' | 'existing'
+    ingredients: Array<{
+      name: string
+      stock_item: string | null
+      qty_per_portion: number | null
+      unit: string | null
+      action: 'linked' | 'skipped' | 'override'
+      reason: string
+    }>
+    menu_link: { menu_item_id: number; menu_item_name: string } | null
+  }>
+}
+
+type YieldData = {
+  recipe_id: number
+  recipe_name: string
+  max_portions: number
+  limiting_item: string
+  limiting_qty: number
+  limiting_need: number
+}
+
 export default function CorpusPage() {
   const [data, setData] = useState<CorpusData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'recetas' | 'ingredientes' | 'fudo'>('recetas')
+  const [tab, setTab] = useState<'recetas' | 'ingredientes' | 'fudo' | 'rendimiento'>('recetas')
   const [expandedRecipe, setExpandedRecipe] = useState<string | null>(null)
+
+  // Ingest state
+  const [ingestPreview, setIngestPreview] = useState<IngestResult | null>(null)
+  const [ingesting, setIngesting] = useState(false)
+  const [ingestDone, setIngestDone] = useState<IngestResult | null>(null)
+
+  // Yield state
+  const [yields, setYields] = useState<YieldData[] | null>(null)
+  const [loadingYields, setLoadingYields] = useState(false)
 
   useEffect(() => {
     fetch('/api/recipes/ingest')
@@ -61,6 +106,41 @@ export default function CorpusPage() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  const runIngest = async (dryRun: boolean) => {
+    setIngesting(true)
+    try {
+      const res = await fetch('/api/recipes/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dry_run: dryRun, min_confidence: 'probable' }),
+      })
+      const result = await res.json()
+      if (dryRun) {
+        setIngestPreview(result)
+      } else {
+        setIngestDone(result)
+        setIngestPreview(null)
+      }
+    } catch {
+      // noop
+    } finally {
+      setIngesting(false)
+    }
+  }
+
+  const loadYields = async () => {
+    setLoadingYields(true)
+    try {
+      const res = await fetch('/api/recipes/yield')
+      const result = await res.json()
+      setYields(result.yields ?? [])
+    } catch {
+      // noop
+    } finally {
+      setLoadingYields(false)
+    }
+  }
 
   if (loading) return <LoadingState />
   if (!data) return <div className="p-4 text-center text-muted-foreground">Error al cargar corpus</div>
@@ -104,12 +184,115 @@ export default function CorpusPage() {
         </div>
       </div>
 
+      {/* Ingest Action */}
+      {!ingestDone && (
+        <div className="rounded-xl border border-dashed border-[#006d5a]/30 bg-[#e8f5f1]/30 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Upload className="size-4 text-[#006d5a]" />
+            <span className="text-sm font-semibold text-[#006d5a]">Poblar recetas en el sistema</span>
+          </div>
+          <p className="text-[10px] text-[#a39e97]">
+            Escribe las recetas del corpus al sistema: crea recetas, vincula ingredientes con stock,
+            y conecta con productos de FUDO. Solo ingredientes con match probable o exacto.
+          </p>
+          {!ingestPreview ? (
+            <button
+              onClick={() => runIngest(true)}
+              disabled={ingesting}
+              className="w-full rounded-xl bg-[#006d5a] py-2.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {ingesting ? <Loader2 className="inline size-3.5 animate-spin mr-1" /> : null}
+              {ingesting ? 'Analizando...' : 'Vista previa (dry run)'}
+            </button>
+          ) : (
+            <div className="space-y-3">
+              {/* Preview summary */}
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-lg bg-white p-2">
+                  <p className="font-display text-lg font-bold text-[#006d5a]">{ingestPreview.summary.recipes_created}</p>
+                  <p className="text-[8px] uppercase tracking-wider text-[#a39e97]">Recetas nuevas</p>
+                </div>
+                <div className="rounded-lg bg-white p-2">
+                  <p className="font-display text-lg font-bold text-[#006d5a]">{ingestPreview.summary.ingredients_linked}</p>
+                  <p className="text-[8px] uppercase tracking-wider text-[#a39e97]">Ingredientes</p>
+                </div>
+                <div className="rounded-lg bg-white p-2">
+                  <p className="font-display text-lg font-bold text-[#d4943a]">{ingestPreview.summary.ingredients_skipped}</p>
+                  <p className="text-[8px] uppercase tracking-wider text-[#a39e97]">Sin vincular</p>
+                </div>
+              </div>
+
+              {/* Detail preview */}
+              <div className="max-h-60 overflow-y-auto space-y-1.5 rounded-lg bg-white p-2">
+                {ingestPreview.details.map((d, i) => (
+                  <div key={i} className="rounded-lg bg-[#faf8f5] px-3 py-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-[#3d2c24]">{d.recipe}</span>
+                      <span className={`text-[9px] font-bold ${d.action === 'created' ? 'text-[#006d5a]' : 'text-[#a39e97]'}`}>
+                        {d.action === 'created' ? 'NUEVA' : 'YA EXISTE'}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {d.ingredients.map((ing, j) => (
+                        <span key={j} className={`rounded px-1.5 py-0.5 text-[9px] ${
+                          ing.action === 'linked' ? 'bg-[#e8f5f1] text-[#006d5a]'
+                          : 'bg-[#f3efe9] text-[#a39e97]'
+                        }`}>
+                          {ing.name} {ing.action === 'linked' ? '→ ' + ing.stock_item : '✗'}
+                        </span>
+                      ))}
+                    </div>
+                    {d.menu_link && (
+                      <p className="mt-1 text-[9px] text-[#4a90d9]">
+                        FUDO → {d.menu_link.menu_item_name}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setIngestPreview(null)}
+                  className="flex-1 rounded-xl bg-secondary py-2.5 text-xs font-semibold text-muted-foreground"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => runIngest(false)}
+                  disabled={ingesting}
+                  className="flex-1 rounded-xl bg-[#006d5a] py-2.5 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  {ingesting ? <Loader2 className="inline size-3.5 animate-spin mr-1" /> : null}
+                  {ingesting ? 'Escribiendo...' : 'Confirmar y escribir'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {ingestDone && (
+        <div className="rounded-xl border border-[#006d5a]/30 bg-[#e8f5f1] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <Check className="size-4 text-[#006d5a]" />
+            <span className="text-sm font-semibold text-[#006d5a]">Ingesta completada</span>
+          </div>
+          <div className="flex gap-4 text-xs text-[#006d5a]">
+            <span>{ingestDone.summary.recipes_created} recetas creadas</span>
+            <span>{ingestDone.summary.ingredients_linked} ingredientes vinculados</span>
+            <span>{ingestDone.summary.menu_items_linked} links FUDO</span>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-1.5">
         {[
           { key: 'recetas' as const, label: 'Recetas', icon: BookOpen },
           { key: 'ingredientes' as const, label: 'Ingredientes', icon: Package },
           { key: 'fudo' as const, label: 'FUDO Bridge', icon: Link2 },
+          { key: 'rendimiento' as const, label: 'Rendimiento', icon: TrendingDown },
         ].map(t => (
           <button
             key={t.key}
@@ -239,8 +422,55 @@ export default function CorpusPage() {
         </div>
       )}
 
+      {tab === 'rendimiento' && (
+        <div className="space-y-3">
+          {!yields ? (
+            <button
+              onClick={loadYields}
+              disabled={loadingYields}
+              className="w-full rounded-xl bg-[#006d5a] py-2.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {loadingYields ? <Loader2 className="inline size-3.5 animate-spin mr-1" /> : null}
+              {loadingYields ? 'Calculando...' : 'Calcular rendimiento con stock actual'}
+            </button>
+          ) : yields.length === 0 ? (
+            <div className="rounded-xl bg-[#faf8f5] p-4 text-center">
+              <p className="text-xs text-[#a39e97]">No hay recetas con ingredientes vinculados al stock.</p>
+              <p className="mt-1 text-[10px] text-[#a39e97]">Ejecuta la ingesta primero.</p>
+            </div>
+          ) : (
+            <StaggerList>
+              {yields.map(y => {
+                const color = y.max_portions <= 0 ? '#ea504c'
+                  : y.max_portions < 5 ? '#d4943a'
+                  : '#006d5a'
+                return (
+                  <StaggerItem key={y.recipe_id}>
+                    <div className="rounded-xl border bg-card px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-[#3d2c24]">{y.recipe_name}</span>
+                        <span className="font-display text-lg font-bold" style={{ color }}>
+                          {y.max_portions}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between text-[10px]">
+                        <span className="text-[#a39e97]">porciones posibles</span>
+                        <span className="text-[#a39e97]">
+                          Limitante: <span className="font-semibold text-[#3d2c24]">{y.limiting_item}</span>
+                          {' '}({y.limiting_qty} disponible, necesita {y.limiting_need}/porción)
+                        </span>
+                      </div>
+                    </div>
+                  </StaggerItem>
+                )
+              })}
+            </StaggerList>
+          )}
+        </div>
+      )}
+
       <p className="text-center text-[9px] text-[#a39e97]">
-        Corpus del chef · {data.stats.uniqueIngredients} ingredientes únicos · Descuento automático NO activado
+        Corpus del chef · {data.stats.uniqueIngredients} ingredientes únicos
       </p>
     </FadeIn>
   )

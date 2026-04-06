@@ -30,7 +30,6 @@ function severityForType(type: AnomalyType): 'low' | 'medium' | 'high' | 'critic
     case 'wifi_mismatch':      return 'medium'
     case 'rapid_succession':   return 'critical'
     case 'unusual_hour':       return 'low'
-    case 'selfie_missing':     return 'low'
   }
 }
 
@@ -53,7 +52,6 @@ export async function POST(request: Request) {
     gps_accuracy?: number
     wifi_bssid?: string
     wifi_ssid?: string
-    selfie_base64?: string
     device_fingerprint?: string
   }
 
@@ -63,7 +61,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Body inválido' }, { status: 400 })
   }
 
-  const { event_type, gps_lat, gps_lng, gps_accuracy, wifi_bssid, wifi_ssid, selfie_base64, device_fingerprint } = body
+  const { event_type, gps_lat, gps_lng, gps_accuracy, wifi_bssid, wifi_ssid, device_fingerprint } = body
 
   if (event_type !== 'clock_in' && event_type !== 'clock_out') {
     return NextResponse.json({ error: 'event_type inválido' }, { status: 400 })
@@ -163,12 +161,7 @@ export async function POST(request: Request) {
     }
   }
 
-  // 4. Selfie missing
-  if (!selfie_base64) {
-    anomalyFlags.push({ type: 'selfie_missing', reason: 'No se capturó selfie' })
-  }
-
-  // 5. Rapid succession
+  // 4. Rapid succession
   if (lastEvent && anomalyChecks?.rapid_succession_seconds) {
     const elapsed = (Date.now() - new Date(lastEvent.timestamp).getTime()) / 1000
     const minSeconds = (anomalyChecks.rapid_succession_seconds as number) ?? 60
@@ -177,7 +170,7 @@ export async function POST(request: Request) {
     }
   }
 
-  // 6. Unusual hour
+  // 5. Unusual hour
   const wh = cfg['working_hours']
   if (wh && anomalyChecks?.unusual_hour) {
     const now = new Date()
@@ -188,27 +181,6 @@ export async function POST(request: Request) {
     const unusualAfter = parseTimeToMinutes(wh.unusual_after as string ?? '23:30')
     if (currentMinutes < unusualBefore || currentMinutes > unusualAfter) {
       anomalyFlags.push({ type: 'unusual_hour', current_time: localHour, normal_range: `${wh.unusual_before}-${wh.unusual_after}` })
-    }
-  }
-
-  // Upload selfie if provided
-  let selfie_url: string | null = null
-  if (selfie_base64) {
-    try {
-      const base64Data = selfie_base64.includes(',') ? selfie_base64.split(',')[1]! : selfie_base64
-      const buffer = Buffer.from(base64Data, 'base64')
-      const now = new Date()
-      const path = `${now.getFullYear()}/${now.getMonth() + 1}/${user.id}/${Date.now()}.jpg`
-      const { error: uploadError } = await supabase.storage
-        .from('attendance-selfies')
-        .upload(path, buffer, { contentType: 'image/jpeg', upsert: false })
-
-      if (!uploadError) {
-        const { data: urlData } = supabase.storage.from('attendance-selfies').getPublicUrl(path)
-        selfie_url = urlData.publicUrl
-      }
-    } catch {
-      // Selfie upload failed — not critical, already flagged as missing if needed
     }
   }
 
@@ -228,7 +200,7 @@ export async function POST(request: Request) {
       gps_lat: gps_lat ?? null,
       gps_lng: gps_lng ?? null,
       gps_accuracy: gps_accuracy ?? null,
-      selfie_url,
+      selfie_url: null,
       device_fingerprint: device_fingerprint ?? null,
       user_agent: ua,
       ip_address: ip,

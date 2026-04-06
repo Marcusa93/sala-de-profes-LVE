@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
-  LogIn, LogOut, Camera, MapPin, Wifi, Shield,
+  LogIn, LogOut, MapPin, Wifi, Shield,
   CheckCircle, AlertTriangle, XCircle, Loader2,
   Clock, History, Smartphone, RefreshCw, Timer,
 } from 'lucide-react'
@@ -140,20 +140,12 @@ export default function FichajePage() {
     gps:    { label: 'GPS / Ubicación', state: 'idle' },
     wifi:   { label: 'Red WiFi',        state: 'idle' },
     device: { label: 'Dispositivo',     state: 'idle' },
-    selfie: { label: 'Selfie',          state: 'idle' },
   })
 
   // Captured data
   const [gpsData, setGpsData] = useState<{ lat: number; lng: number; accuracy: number } | null>(null)
   const [wifiSSID, setWifiSSID] = useState('')
   const [deviceFingerprint, setDeviceFingerprint] = useState('')
-  const [selfieBase64, setSelfieBase64] = useState<string | null>(null)
-
-  // Camera
-  const [cameraOpen, setCameraOpen] = useState(false)
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
 
   // Action
   const [actionLoading, setActionLoading] = useState(false)
@@ -256,50 +248,6 @@ export default function FichajePage() {
   }
 
   // -----------------------------------------------------------------------
-  // Camera
-  // -----------------------------------------------------------------------
-  async function openCamera() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-      setCameraStream(stream)
-      setCameraOpen(true)
-      setValidations(v => ({ ...v, selfie: { label: 'Selfie', state: 'checking', detail: 'Cámara activa' } }))
-    } catch {
-      toast.error('No se pudo acceder a la cámara')
-      setValidations(v => ({ ...v, selfie: { label: 'Selfie', state: 'error', detail: 'Cámara denegada' } }))
-    }
-  }
-
-  useEffect(() => {
-    if (cameraOpen && videoRef.current && cameraStream) {
-      videoRef.current.srcObject = cameraStream
-    }
-  }, [cameraOpen, cameraStream])
-
-  function capturePhoto() {
-    if (!videoRef.current || !canvasRef.current) return
-    const video = videoRef.current
-    const canvas = canvasRef.current
-    canvas.width = video.videoWidth || 640
-    canvas.height = video.videoHeight || 480
-    const ctx = canvas.getContext('2d')!
-    ctx.drawImage(video, 0, 0)
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.8)
-    setSelfieBase64(dataUrl)
-    setCameraOpen(false)
-    cameraStream?.getTracks().forEach(t => t.stop())
-    setCameraStream(null)
-    setValidations(v => ({ ...v, selfie: { label: 'Selfie', state: 'ok', detail: 'Foto capturada' } }))
-    toast.success('¡Selfie tomada!')
-  }
-
-  function closeCamera() {
-    setCameraOpen(false)
-    cameraStream?.getTracks().forEach(t => t.stop())
-    setCameraStream(null)
-  }
-
-  // -----------------------------------------------------------------------
   // WiFi input
   // -----------------------------------------------------------------------
   function handleWifiInput(ssid: string) {
@@ -343,7 +291,6 @@ export default function FichajePage() {
           gps_lng:            gpsData?.lng,
           gps_accuracy:       gpsData?.accuracy,
           wifi_ssid:          wifiSSID || undefined,
-          selfie_base64:      selfieBase64 || undefined,
           device_fingerprint: deviceFingerprint || undefined,
         }),
       })
@@ -364,10 +311,6 @@ export default function FichajePage() {
       } else {
         toast.success(eventType === 'clock_in' ? '¡Ingreso registrado correctamente!' : '¡Egreso registrado correctamente!')
       }
-
-      // Reset selfie for next time
-      setSelfieBase64(null)
-      setValidations(v => ({ ...v, selfie: { label: 'Selfie', state: 'idle' } }))
 
       await fetchStatus()
     } catch {
@@ -402,28 +345,6 @@ export default function FichajePage() {
     <div className="mx-auto max-w-lg space-y-6 pb-28">
       <SuccessBurst show={showSuccess} onComplete={() => setShowSuccess(false)} />
 
-      {/* Camera modal */}
-      <AnimatePresence>
-        {cameraOpen && (
-          <motion.div
-            className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          >
-            <video ref={videoRef} autoPlay playsInline muted className="w-full max-w-sm rounded-xl" />
-            <canvas ref={canvasRef} className="hidden" />
-            <div className="mt-6 flex gap-4">
-              <Button onClick={capturePhoto} className="h-16 w-16 rounded-full bg-white text-black shadow-lg">
-                <Camera className="size-7" />
-              </Button>
-              <Button onClick={closeCamera} variant="outline" className="h-16 w-16 rounded-full border-white/30 text-white">
-                <XCircle className="size-7" />
-              </Button>
-            </div>
-            <p className="mt-4 text-sm text-white/70">Mirá a la cámara y presioná el botón blanco</p>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Hero clock */}
       <FadeIn className="pt-4 text-center">
         <p className="font-display text-5xl font-bold tabular-nums tracking-tight text-[#3d2c24]">
@@ -455,11 +376,6 @@ export default function FichajePage() {
                 <p className="text-xs font-medium text-[#3d2c24]">{v.label}</p>
                 {v.detail && <p className="text-[10px] text-[#a39e97] truncate">{v.detail}</p>}
               </div>
-              {key === 'selfie' && v.state !== 'ok' && (
-                <button onClick={openCamera} className="text-[10px] font-medium text-[#006d5a] underline">
-                  Sacar foto
-                </button>
-              )}
               {key === 'gps' && v.state === 'error' && (
                 <button onClick={initGPS} className="text-[10px] font-medium text-[#006d5a]">
                   <RefreshCw className="size-3" />
@@ -509,14 +425,6 @@ export default function FichajePage() {
                 </p>
               </div>
 
-              {selfieBase64 && (
-                <div className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={selfieBase64} alt="Selfie" className="h-16 w-16 rounded-full object-cover border-2 border-[#006d5a]" />
-                  <CheckCircle className="absolute -bottom-1 -right-1 size-5 text-[#006d5a] bg-white rounded-full" />
-                </div>
-              )}
-
               <Button
                 onClick={() => handleClockAction('clock_in')}
                 disabled={!canClock}
@@ -551,13 +459,6 @@ export default function FichajePage() {
                   <p className="mt-2 text-xs text-[#d4943a]">⚠️ Ingreso con advertencias de seguridad</p>
                 )}
               </div>
-
-              {selfieBase64 && (
-                <div className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={selfieBase64} alt="Selfie" className="h-16 w-16 rounded-full object-cover border-2 border-[#d4943a]" />
-                </div>
-              )}
 
               <Button
                 onClick={() => handleClockAction('clock_out')}
@@ -615,7 +516,7 @@ export default function FichajePage() {
           <div>
             <p className="text-xs font-medium text-[#3d2c24]">Sistema anti-trampa activo</p>
             <p className="text-[10px] text-[#a39e97]">
-              Se registra: ubicación GPS, red WiFi, dispositivo y selfie.
+              Se registra: ubicación GPS, red WiFi y dispositivo.
               Cualquier inconsistencia queda registrada para revisión del encargado.
             </p>
           </div>
