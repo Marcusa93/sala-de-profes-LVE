@@ -365,12 +365,43 @@ respondé con texto normal Y embebé un bloque QUERY_JSON. El sistema lo reempla
 {"type":"PENDIENTES_LINKS"}
 \`\`\`
 
+\`\`\`QUERY_JSON
+{"type":"VENTAS_HOY"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"COSTO_PLATO","item":"nombre de la receta"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"BRIEFING_DIARIO"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"FICHAJES_ANOMALIAS"}
+\`\`\`
+
 Cuándo usar QUERY_JSON:
 - "¿Cuánta nalga hay?" / "¿Hay stock de pollo?" → STOCK_DISPONIBILIDAD
 - "¿Cuánto me dura?" / "¿Para cuántos días alcanza?" → STOCK_DURACION
 - "¿Qué recetas están en riesgo?" / "¿Qué platos no puedo hacer?" → RECETAS_RIESGO
 - "¿Qué producciones hubo hoy?" / "¿Qué se hizo hoy?" → PRODUCCION_HOY
 - "¿Cuántos links pendientes hay?" / "¿Hay ingredientes sin vincular?" → PENDIENTES_LINKS
+- "¿Cuánto facturamos?" / "¿Cómo van las ventas?" / "¿Qué se vendió más?" → VENTAS_HOY
+- "¿Cuánto cuesta hacer una milanesa?" / "¿Qué margen tiene la hamburguesa?" → COSTO_PLATO
+- "Dame el resumen del día" / "¿Cómo estamos?" / "Briefing" → BRIEFING_DIARIO
+- "¿Hay fichajes sospechosos?" / "¿Quién llegó tarde?" / "Anomalías" → FICHAJES_ANOMALIAS
+
+## MISE EN PLACE
+Si alguien dice "listo salsas", "terminé los vegetales", "mise en place listo", "preparé las masas":
+- Detectá los items mencionados y proponé una acción MISE_EN_PLACE.
+- Formato del ACTION_JSON:
+\`\`\`ACTION_JSON
+{"intent":"MISE_EN_PLACE","items":[{"name":"salsas","quantity":"1"},{"name":"vegetales cortados","quantity":"1"}]}
+\`\`\`
+- El sistema matchea los nombres contra mise_en_place_items del turno activo.
+- Si incluyen cantidad ("hice 50 empanadas"), usala en quantity.
+- Si no hay turno activo, avisá que abran uno primero.
 
 ## FICHAJE / ASISTENCIA
 Si alguien dice "fichar entrada", "fichar salida", "marcar ingreso", "marcar egreso":
@@ -636,6 +667,44 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
         if (pending.length > 0) {
           const lines = pending.slice(0, 10).map((i) => `- ⬜ ${i.title}`)
           sections.push(`TAREAS PENDIENTES COCINA:\n${lines.join('\n')}`)
+        }
+
+        // 6b. Mise en place status for this shift
+        const { data: miseItems } = await supabase
+          .from('mise_en_place_items')
+          .select('id, name, family, target_quantity, unit')
+          .eq('is_active', true)
+          .in('shift', [activeShift.shift_type, 'both'])
+
+        if (miseItems && miseItems.length > 0) {
+          const { data: miseRecords } = await supabase
+            .from('mise_en_place_records')
+            .select('mise_en_place_item_id, status, quantity_produced')
+            .eq('kitchen_shift_id', activeShift.id)
+
+          const recordMap = new Map(
+            (miseRecords ?? []).map(r => [r.mise_en_place_item_id, r])
+          )
+
+          const misePending = miseItems.filter(m => {
+            const rec = recordMap.get(m.id)
+            return !rec || rec.status !== 'done'
+          })
+          const miseDone = miseItems.filter(m => {
+            const rec = recordMap.get(m.id)
+            return rec?.status === 'done'
+          })
+
+          sections.push(`MISE EN PLACE — ${miseDone.length}/${miseItems.length} completados, ${misePending.length} pendientes`)
+
+          if (misePending.length > 0) {
+            const miseLines = misePending.slice(0, 15).map(m => {
+              const rec = recordMap.get(m.id)
+              const status = rec?.status === 'in_progress' ? '🔄' : rec?.status === 'low' ? '🟡' : rec?.status === 'missing' ? '🔴' : '⬜'
+              return `- ${status} ${m.name} (objetivo: ${m.target_quantity} ${m.unit})`
+            })
+            sections.push(`MISE EN PLACE PENDIENTE:\n${miseLines.join('\n')}`)
+          }
         }
       }
     }

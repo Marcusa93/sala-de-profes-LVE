@@ -25,6 +25,7 @@ export type ActionIntent =
   | 'REPORTE_PROBLEMA'
   | 'AVISO_ENCARGADO'
   | 'PRODUCCION_COMPLETA'
+  | 'MISE_EN_PLACE'
   | 'CONSULTA'
   | 'NONE'
 
@@ -34,6 +35,10 @@ export type QueryType =
   | 'RECETAS_RIESGO'
   | 'PRODUCCION_HOY'
   | 'PENDIENTES_LINKS'
+  | 'VENTAS_HOY'
+  | 'COSTO_PLATO'
+  | 'BRIEFING_DIARIO'
+  | 'FICHAJES_ANOMALIAS'
 
 export type QueryData = {
   type: QueryType
@@ -203,6 +208,258 @@ export async function executeQuery(
       return `🔗 Hay **${count} ingrediente${count !== 1 ? 's' : ''}** pendiente${count !== 1 ? 's' : ''} de vincular al stock. Entrá en **Admin → Recetas → Pending** para revisarlos.`
     }
 
+    // ── VENTAS_HOY — resumen de ventas del día desde Fudo ──
+    if (queryData.type === 'VENTAS_HOY') {
+      try {
+        const { fudo } = await import('@/lib/fudoClient')
+        const today = new Date().toISOString().split('T')[0]
+        const sales = await fudo.getSales({ from: today })
+
+        if (!sales.length) return '📊 Sin ventas registradas hoy en Fudo.'
+
+        const closed = sales.filter(s => s.saleState === 'CLOSED')
+        const inCourse = sales.filter(s => s.saleState === 'IN-COURSE')
+        const totalClosed = closed.reduce((s, v) => s + (v.total ?? 0), 0)
+        const totalInCourse = inCourse.reduce((s, v) => s + (v.total ?? 0), 0)
+
+        // Get items to find top products
+        const productCounts: Record<string, number> = {}
+        for (const sale of closed.slice(0, 50)) {
+          try {
+            const items = await fudo.getSaleItems(sale.id)
+            for (const item of items) {
+              const name = (item as any).name ?? 'Desconocido'
+              productCounts[name] = (productCounts[name] ?? 0) + (item.quantity ?? 1)
+            }
+          } catch { /* skip */ }
+        }
+
+        const topProducts = Object.entries(productCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([name, qty], i) => `${i + 1}. ${name} (${qty})`)
+
+        let result = `📊 **Ventas hoy**\n`
+        result += `- 💰 Cerradas: **$${totalClosed.toLocaleString('es-AR')}** (${closed.length} tickets)\n`
+        if (inCourse.length > 0) {
+          result += `- 🔄 En curso: **$${totalInCourse.toLocaleString('es-AR')}** (${inCourse.length} mesas)\n`
+        }
+        result += `- 📝 Total: **$${(totalClosed + totalInCourse).toLocaleString('es-AR')}**`
+
+        if (topProducts.length > 0) {
+          result += `\n\n🏆 **Más vendidos:**\n${topProducts.join('\n')}`
+        }
+
+        return result
+      } catch (err) {
+        return `No pude obtener las ventas de Fudo: ${err instanceof Error ? err.message : 'Error'}`
+      }
+    }
+
+    // ── COSTO_PLATO — costo de producción por receta ──
+    if (queryData.type === 'COSTO_PLATO') {
+      const recipeName = queryData.item ?? ''
+
+      const { data: recipes } = await admin
+        .from('recipes')
+        .select('id, name, portion_yield')
+        .eq('is_active', true)
+
+      if (!recipes?.length) return 'No hay recetas cargadas.'
+
+      // Find match
+      const n = norm(recipeName)
+      let match = recipes.find(r => norm(r.name) === n)
+      if (!match) match = recipes.find(r => norm(r.name).includes(n) || n.includes(norm(r.name)))
+
+      if (!match) {
+        // List all recipes
+        const list = recipes.map(r => `- ${r.name}`).join('\n')
+        return `No encontré "${recipeName}". Recetas disponibles:\n${list}`
+      }
+
+      // Get ingredients with costs
+      const { data: ingredients } = await admin
+        .from('recipe_ingredients')
+        .select('qty_per_portion, stock_items(name, cost_per_unit, unit)')
+        .eq('recipe_id', match.id)
+
+      if (!ingredients?.length) return `📋 **${match.name}** no tiene ingredientes vinculados al stock todavía.`
+
+      let totalCost = 0
+      const lines: string[] = []
+
+      for (const ing of ingredients) {
+        const si = (ing as any).stock_items
+        if (!si) continue
+        const cost = (si.cost_per_unit ?? 0) * (ing.qty_per_portion ?? 0)
+        totalCost += cost
+        lines.push(`- ${si.name}: ${ing.qty_per_portion} ${si.unit} × $${si.cost_per_unit?.toFixed(0) ?? '?'} = **$${cost.toFixed(0)}**`)
+      }
+
+      // Get sale price from menu_items
+      const { data: menuItem } = await admin
+        .from('menu_items')
+        .select('sale_price')
+        .eq('recipe_id', match.id)
+        .limit(1)
+        .maybeSingle()
+
+      const salePrice = menuItem?.sale_price ?? 0
+      const margin = salePrice > 0 ? ((salePrice - totalCost) / salePrice * 100).toFixed(0) : null
+
+      let result = `💰 **Costo: ${match.name}**\n${lines.join('\n')}\n\n`
+      result += `📦 **Costo total por porción: $${totalCost.toFixed(0)}**`
+      if (salePrice > 0) {
+        result += `\n🏷️ Precio de venta: $${salePrice.toFixed(0)}`
+        result += `\n📈 Margen: **${margin}%** ($${(salePrice - totalCost).toFixed(0)} de ganancia)`
+      }
+
+      return result
+    }
+
+    // ── BRIEFING_DIARIO — resumen ejecutivo del día ──
+    if (queryData.type === 'BRIEFING_DIARIO') {
+      const todayDate = new Date().toISOString().split('T')[0]
+      const lines: string[] = ['📋 **Briefing del día**\n']
+
+      // Stock alerts
+      const { data: stockItems } = await admin
+        .from('stock_items')
+        .select('name, current_qty, min_qty')
+        .eq('is_active', true)
+
+      const critical = (stockItems ?? []).filter(i => i.current_qty <= 0)
+      const low = (stockItems ?? []).filter(i => i.current_qty > 0 && i.current_qty <= i.min_qty)
+
+      if (critical.length > 0) {
+        lines.push(`🔴 **${critical.length} insumos agotados:** ${critical.slice(0, 5).map(i => i.name).join(', ')}${critical.length > 5 ? ` (+${critical.length - 5} más)` : ''}`)
+      }
+      if (low.length > 0) {
+        lines.push(`🟡 **${low.length} insumos bajos:** ${low.slice(0, 5).map(i => i.name).join(', ')}${low.length > 5 ? ` (+${low.length - 5} más)` : ''}`)
+      }
+      if (critical.length === 0 && low.length === 0) {
+        lines.push('🟢 Stock: todo en niveles normales')
+      }
+
+      // Pending orders
+      const { data: pendingOrders } = await admin
+        .from('kitchen_orders')
+        .select('id')
+        .eq('status', 'pending')
+
+      if ((pendingOrders ?? []).length > 0) {
+        lines.push(`📦 **${pendingOrders!.length} pedidos pendientes** de mercadería`)
+      }
+
+      // Attendance
+      const { data: clockedIn } = await admin
+        .from('clock_events')
+        .select('employee_id, profiles!clock_events_employee_id_fkey(first_name)')
+        .eq('event_type', 'clock_in')
+        .gte('timestamp', todayDate)
+
+      const presentCount = new Set((clockedIn ?? []).map(c => c.employee_id)).size
+      lines.push(`👥 **${presentCount} personas** ficharon hoy`)
+
+      // Open anomalies
+      const { count: anomalyCount } = await admin
+        .from('attendance_anomalies')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'open')
+
+      if (anomalyCount && anomalyCount > 0) {
+        lines.push(`⚠️ **${anomalyCount} anomalías** de fichaje pendientes`)
+      }
+
+      // Active announcements
+      const { data: urgentAnnouncements } = await admin
+        .from('announcements')
+        .select('title')
+        .in('priority', ['alta', 'critica'])
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+        .limit(3)
+
+      if ((urgentAnnouncements ?? []).length > 0) {
+        lines.push(`🚨 **Avisos urgentes:** ${urgentAnnouncements!.map(a => a.title).join(', ')}`)
+      }
+
+      // Pending recipe links
+      const { count: pendingLinks } = await admin
+        .from('recipe_ingredient_pending_links')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending')
+
+      if (pendingLinks && pendingLinks > 0) {
+        lines.push(`🔗 **${pendingLinks} ingredientes** pendientes de vincular al stock`)
+      }
+
+      return lines.join('\n')
+    }
+
+    // ── FICHAJES_ANOMALIAS — anomalías de fichaje recientes ──
+    if (queryData.type === 'FICHAJES_ANOMALIAS') {
+      const sevenDaysAgo = new Date()
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+
+      // Open anomalies
+      const { data: anomalies } = await admin
+        .from('attendance_anomalies')
+        .select('anomaly_type, severity, status, created_at, employee_id, profiles!attendance_anomalies_employee_id_fkey(first_name, last_name)')
+        .gte('created_at', sevenDaysAgo.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(15)
+
+      // Suspicious logs
+      const { data: suspicious } = await admin
+        .from('attendance_logs')
+        .select('operative_date, suspicious_reasons, profiles!attendance_logs_user_id_fkey(first_name)')
+        .eq('is_suspicious', true)
+        .gte('operative_date', sevenDaysAgo.toISOString().split('T')[0])
+        .order('operative_date', { ascending: false })
+        .limit(10)
+
+      const anomRows = anomalies ?? []
+      const suspRows = suspicious ?? []
+
+      if (anomRows.length === 0 && suspRows.length === 0) {
+        return '✅ Sin anomalías ni fichajes sospechosos en los últimos 7 días.'
+      }
+
+      const lines: string[] = ['🔍 **Anomalías de fichaje (últimos 7 días)**\n']
+
+      if (anomRows.length > 0) {
+        const openCount = anomRows.filter(a => a.status === 'open').length
+        lines.push(`📊 ${anomRows.length} anomalías (${openCount} abiertas)\n`)
+
+        for (const a of anomRows.slice(0, 8)) {
+          const name = (a as any).profiles?.first_name ?? '?'
+          const tipo =
+            a.anomaly_type === 'gps_out_of_range' ? '📍 GPS fuera de rango' :
+            a.anomaly_type === 'wifi_mismatch' ? '📶 WiFi no reconocida' :
+            a.anomaly_type === 'unknown_device' ? '📱 Dispositivo no registrado' :
+            a.anomaly_type === 'rapid_succession' ? '⚡ Fichaje muy rápido' :
+            a.anomaly_type === 'unusual_hour' ? '🕐 Horario inusual' :
+            `❓ ${a.anomaly_type}`
+          const severity = a.severity === 'high' ? '🔴' : a.severity === 'medium' ? '🟡' : '⚪'
+          const date = new Date(a.created_at).toLocaleDateString('es-AR')
+          lines.push(`${severity} ${name}: ${tipo} (${date}) — ${a.status}`)
+        }
+      }
+
+      if (suspRows.length > 0) {
+        lines.push(`\n⚠️ **Fichajes sospechosos:** ${suspRows.length}`)
+        for (const s of suspRows.slice(0, 5)) {
+          const name = (s as any).profiles?.first_name ?? '?'
+          const reasons = ((s.suspicious_reasons as string[]) ?? []).map(r => r.split(':')[0]).join(', ')
+          lines.push(`- ${name} (${s.operative_date}): ${reasons}`)
+        }
+      }
+
+      lines.push('\nVer detalle completo en **Admin → Reportes → Sospechosos**')
+      return lines.join('\n')
+    }
+
   } catch (err) {
     console.error('[executeQuery]', err)
     return 'No pude obtener esa información en este momento.'
@@ -231,6 +488,9 @@ export function detectIntent(aiAnalysis: {
   }
   if (intent.includes('PRODUCCION') || intent.includes('DESPIECE') || intent.includes('PRODUCCION_COMPLETA')) {
     return 'PRODUCCION_COMPLETA'
+  }
+  if (intent.includes('MISE') || intent.includes('MISE_EN_PLACE') || intent.includes('PREPARACION_LISTA')) {
+    return 'MISE_EN_PLACE'
   }
   if (intent.includes('REPORT') || intent.includes('PROBLEMA') || intent.includes('ROTO') || intent.includes('ROMPIÓ')) {
     return 'REPORTE_PROBLEMA'
@@ -376,6 +636,7 @@ const ACTION_PERMISSIONS: Record<ActionIntent, string[]> = {
   REPORTE_PROBLEMA: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can report
   AVISO_ENCARGADO: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can notify
   PRODUCCION_COMPLETA: ['socio', 'encargado', 'chef', 'cocina'], // Only kitchen roles can register production
+  MISE_EN_PLACE: ['socio', 'encargado', 'chef', 'cocina'], // Kitchen roles can update mise en place
   CONSULTA: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can ask
   NONE: [],
 }
@@ -548,6 +809,17 @@ export async function buildProposal(
       urgency: (urgency as 'normal' | 'alta' | 'urgente') ?? 'normal',
       duplicateWarnings: [],
       confirmationText: `📢 **Aviso para encargados:**\n"${message}"\n\n¿Lo envío?`,
+      readyToExecute: false,
+    }
+  }
+
+  if (intent === 'MISE_EN_PLACE') {
+    const itemsList = matchedItems.map(i => `- ✅ ${i.matchedStockName ?? i.rawName}: ${i.quantity}`).join('\n')
+    return {
+      intent,
+      items: matchedItems,
+      duplicateWarnings: [],
+      confirmationText: `👨‍🍳 **Mise en place completado:**\n${itemsList}\n\n¿Marco como listo?`,
       readyToExecute: false,
     }
   }
@@ -763,7 +1035,7 @@ export async function executeAction(
         return result
       }
 
-      const completedData = completed as { efficiency_pct?: number; movements?: { stock_item_id: number; change: number }[] }
+      const completedData = completed as { efficiency_pct?: number; movements?: { stock_item_id: string; change: number }[] }
       const efficiency = completedData?.efficiency_pct ?? 0
 
       // Sync affected stock items to Fudo
@@ -850,6 +1122,80 @@ export async function executeAction(
         description: `${userName} envió aviso vía chatbot: ${(proposal.message ?? '').slice(0, 100)}`,
         metadata: { message: proposal.message, channel: 'chatbot' },
       }).catch(() => {})
+    }
+
+    // ── MISE_EN_PLACE — mark items as done in current shift ──
+    if (proposal.intent === 'MISE_EN_PLACE') {
+      const todayStr = new Date().toISOString().split('T')[0]
+
+      // Find active kitchen shift
+      const { data: activeShift } = await admin
+        .from('kitchen_shifts')
+        .select('id, shift_type')
+        .eq('date', todayStr)
+        .in('status', ['pending', 'in_progress'])
+        .limit(1)
+        .maybeSingle()
+
+      if (!activeShift) {
+        result.errors.push('No hay turno de cocina activo hoy. Abrí un turno primero.')
+        result.success = false
+      } else {
+        // Get all mise en place items for this shift
+        const { data: miseItems } = await admin
+          .from('mise_en_place_items')
+          .select('id, name')
+          .eq('is_active', true)
+          .in('shift', [activeShift.shift_type, 'both'])
+
+        const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+
+        for (const item of proposal.items) {
+          const itemName = norm(item.rawName)
+          const match = (miseItems ?? []).find(m =>
+            norm(m.name) === itemName ||
+            norm(m.name).includes(itemName) ||
+            itemName.includes(norm(m.name))
+          )
+
+          if (!match) {
+            result.errors.push(`No encontré "${item.rawName}" en mise en place`)
+            continue
+          }
+
+          // Upsert mise_en_place_records
+          const qty = parseFloat(item.quantity) || 0
+          const { error } = await admin
+            .from('mise_en_place_records')
+            .upsert({
+              kitchen_shift_id: activeShift.id,
+              mise_en_place_item_id: match.id,
+              status: 'done',
+              quantity_produced: qty > 0 ? qty : null,
+              produced_by: userId,
+              note: 'Registrado vía chatbot',
+            }, { onConflict: 'kitchen_shift_id,mise_en_place_item_id' })
+
+          if (error) {
+            result.errors.push(`Error al registrar ${match.name}: ${error.message}`)
+          } else {
+            result.created++
+            result.details.push(`✅ ${match.name}${qty > 0 ? ` (${qty})` : ''} marcado como listo`)
+          }
+        }
+
+        result.success = result.errors.length === 0
+
+        await admin.from('audit_trail').insert({
+          user_id: userId,
+          user_name: userName,
+          action: 'chatbot_mise_en_place',
+          module: 'cocina',
+          entity_type: 'mise_en_place_record',
+          description: `${userName} completó ${result.created} items de mise en place vía chatbot`,
+          metadata: { items: proposal.items.map(i => i.rawName), shift_id: activeShift.id },
+        }).catch(() => {})
+      }
     }
 
   } catch (err) {
