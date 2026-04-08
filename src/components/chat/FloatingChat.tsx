@@ -154,6 +154,7 @@ export function FloatingChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [isListening, setIsListening] = useState(false)
+  const isListeningRef = useRef(false)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const [isThinking, setIsThinking] = useState(false)
   const [hasUnread, setHasUnread] = useState(false)
@@ -309,8 +310,17 @@ export function FloatingChat() {
 
   const toggleVoice = useCallback(() => {
     if (isListening) {
+      // User pressed mic button to STOP → stop recognition and send
+      isListeningRef.current = false
       recognitionRef.current?.stop()
       setIsListening(false)
+      // Send whatever was transcribed
+      setInput(prev => {
+        if (prev.trim()) {
+          setTimeout(() => handleSend(prev.trim()), 100)
+        }
+        return prev
+      })
       return
     }
 
@@ -325,54 +335,61 @@ export function FloatingChat() {
     try {
       const recognition = new SpeechRecognition()
       recognition.lang = 'es-AR'
-      recognition.continuous = false
-      recognition.interimResults = true
+      recognition.continuous = true      // Keep listening until user stops
+      recognition.interimResults = true   // Show words as they're spoken
       recognition.maxAlternatives = 1
       recognitionRef.current = recognition
 
       recognition.onstart = () => {
+        isListeningRef.current = true
         setIsListening(true)
         setInput('')
       }
 
       recognition.onresult = (event: SpeechRecognitionEvent) => {
+        // Build full transcript from all results (continuous mode accumulates)
         const transcript = Array.from(event.results)
           .map(r => r[0].transcript)
           .join('')
 
         setInput(transcript)
-
-        // If final result, auto-send
-        if (event.results[event.results.length - 1].isFinal) {
-          setIsListening(false)
-          if (transcript.trim()) {
-            setTimeout(() => handleSend(transcript.trim()), 500)
-          }
-        }
+        // Don't auto-send — user controls when to stop via mic button
       }
 
       recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        setIsListening(false)
         if (event.error === 'not-allowed') {
+          setIsListening(false)
           setInput('⚠️ Permití el micrófono en tu navegador')
         } else if (event.error === 'no-speech') {
-          setInput('No escuché nada, intentá de nuevo')
+          // In continuous mode, no-speech is normal during pauses — keep listening
+        } else if (event.error === 'aborted') {
+          // User stopped — normal
+          setIsListening(false)
         } else {
+          setIsListening(false)
           setInput(`Error de voz: ${event.error}`)
         }
       }
 
       recognition.onend = () => {
-        setIsListening(false)
+        // In continuous mode, browser may stop recognition after silence.
+        // If user hasn't explicitly stopped, restart automatically.
+        // Use ref (not state) to avoid stale closure.
+        if (isListeningRef.current) {
+          try {
+            recognition.start()
+          } catch {
+            isListeningRef.current = false
+            setIsListening(false)
+          }
+        }
       }
 
       recognition.start()
-    } catch (err) {
+    } catch {
       setIsListening(false)
       setInput('Error al iniciar el micrófono')
     }
-
-    recognition.start()
   }, [isListening, handleSend])
 
   // Cleanup on unmount
