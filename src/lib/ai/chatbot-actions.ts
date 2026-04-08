@@ -262,10 +262,10 @@ export async function executeQuery(
 
       const { data: recipes } = await admin
         .from('recipes')
-        .select('id, name, portion_yield')
+        .select('id, name')
         .eq('is_active', true)
 
-      if (!recipes?.length) return 'No hay recetas cargadas.'
+      if (!recipes?.length) return 'No hay recetas cargadas en el sistema.'
 
       // Find match
       const n = norm(recipeName)
