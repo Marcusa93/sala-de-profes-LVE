@@ -463,7 +463,7 @@ export default function RendimientoPage() {
     try {
       const [yieldRes, atRiskRes, durationRes] = await Promise.all([
         fetch('/api/recipes/yield'),
-        fetch('/api/stock/at-risk?threshold=10'),
+        fetch('/api/stock/availability?threshold=10'),
         fetch('/api/stock/duration', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -570,9 +570,29 @@ export default function RendimientoPage() {
         </div>
 
         <button
-          onClick={() => fetchData(true)}
+          onClick={async () => {
+            setRefreshing(true)
+            try {
+              // Sync from Fudo first, then refresh data
+              const syncRes = await fetch('/api/fudo/sync/stock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ direction: 'fudo_to_app' }),
+              })
+              const syncData = await syncRes.json()
+              if (syncData.success) {
+                toast.success(`Fudo sync: ${syncData.synced} items actualizados`)
+              } else {
+                toast.error('Error al sincronizar con Fudo')
+              }
+            } catch {
+              toast.error('Error de conexión con Fudo')
+            }
+            fetchData(true)
+          }}
           disabled={refreshing}
           className="flex size-9 items-center justify-center rounded-xl bg-secondary text-[#a39e97] hover:text-[#3d2c24] disabled:opacity-50"
+          title="Sincronizar con Fudo y refrescar"
         >
           <RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />
         </button>
