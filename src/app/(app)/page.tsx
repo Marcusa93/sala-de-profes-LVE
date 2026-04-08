@@ -87,6 +87,7 @@ export default function DashboardPage() {
   const [fudoLastSync, setFudoLastSync] = useState<string | null>(null)
   const [barUrgent, setBarUrgent] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
 
   // Report dialog state
   const [reportOpen, setReportOpen] = useState(false)
@@ -244,6 +245,7 @@ export default function DashboardPage() {
         }
       } catch (err) {
         console.error('Error al cargar datos del dashboard:', err)
+        setLoadError(true)
       } finally {
         setLoading(false)
       }
@@ -257,7 +259,7 @@ export default function DashboardPage() {
   // ------------------------------------------
   // Skeleton while loading
   // ------------------------------------------
-  if (profileLoading || loading) {
+  if (profileLoading || (loading && !loadError)) {
     return <DashboardSkeleton />
   }
 
@@ -265,6 +267,18 @@ export default function DashboardPage() {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="text-[#a39e97]">No se pudo cargar el perfil.</p>
+      </div>
+    )
+  }
+
+  if (loadError && !todayAttendance && criticalStockCount === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
+        <p className="text-lg">😕</p>
+        <p className="text-sm text-muted-foreground">No se pudieron cargar los datos</p>
+        <button onClick={() => { setLoadError(false); setLoading(true) }} className="rounded-xl bg-[#006d5a] px-4 py-2 text-sm font-medium text-white">
+          Reintentar
+        </button>
       </div>
     )
   }

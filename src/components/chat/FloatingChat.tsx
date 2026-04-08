@@ -151,7 +151,15 @@ function getGreeting(role?: string): string {
 export function FloatingChat() {
   const { profile } = useProfileContext()
   const [open, setOpen] = useState(false)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (typeof window === 'undefined') return []
+    try {
+      const saved = sessionStorage.getItem('chat-messages')
+      if (!saved) return []
+      const parsed = JSON.parse(saved) as ChatMessage[]
+      return parsed.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))
+    } catch { return [] }
+  })
   const [input, setInput] = useState('')
   const [isListening, setIsListening] = useState(false)
   const isListeningRef = useRef(false)
@@ -161,6 +169,13 @@ export function FloatingChat() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Persist messages to sessionStorage
+  useEffect(() => {
+    if (messages.length > 0) {
+      try { sessionStorage.setItem('chat-messages', JSON.stringify(messages.slice(-20))) } catch { /* full storage */ }
+    }
+  }, [messages])
 
   // Auto-scroll
   useEffect(() => {

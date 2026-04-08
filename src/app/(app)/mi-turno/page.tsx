@@ -203,6 +203,12 @@ export default function MiTurnoPage() {
         <h2 className="font-display text-xl font-bold text-[#3d2c24]">Registrando fichaje</h2>
         <Loader2 className="size-10 animate-spin text-[#006d5a]" />
         <p className="text-sm text-[#a39e97]">{flowMsg}</p>
+        <button
+          onClick={() => { setFlowState('idle'); toast.error('Fichaje cancelado') }}
+          className="mt-4 rounded-xl border border-[#ebe6df] px-5 py-2 text-sm font-medium text-[#a39e97] hover:bg-[#faf8f5]"
+        >
+          Cancelar
+        </button>
       </div>
     )
   }

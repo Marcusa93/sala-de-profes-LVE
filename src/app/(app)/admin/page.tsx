@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
@@ -60,11 +61,12 @@ export default function AdminDashboard() {
   const [now] = useState(() => new Date())
   const [kpis, setKpis] = useState<DashboardKpis | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
 
   useEffect(() => {
     if (!profile) return
 
-    async function fetch() {
+    async function loadKpis() {
       setLoading(true)
       const supabase = createClient()
 
@@ -107,23 +109,37 @@ export default function AdminDashboard() {
         })
 
         // Fudo sync — background, non-blocking
-        fetch('/api/stock/sync').then(r => r.json()).then(d => {
+        window.fetch('/api/stock/sync').then(r => r.json()).then(d => {
           if (d.success) {
             setKpis(prev => prev ? { ...prev, fudo_synced: d.read?.synced ?? 0, fudo_last_sync: d.timestamp } : prev)
           }
         }).catch(() => {})
       } catch (err) {
         console.error('Error loading admin KPIs:', err)
+        setLoadError(true)
+        toast.error('Error al cargar el panel. Tirá hacia abajo para reintentar.')
       } finally {
         setLoading(false)
       }
     }
 
-    fetch()
+    loadKpis()
   }, [profile])
 
-  if (profileLoading || loading || !kpis) {
+  if (profileLoading || (loading && !loadError)) {
     return <DashboardSkeleton />
+  }
+
+  if (loadError || !kpis) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
+        <AlertTriangle className="h-10 w-10 text-amber-500" />
+        <p className="text-sm text-muted-foreground">No se pudo cargar el panel</p>
+        <button onClick={() => { setLoadError(false); setLoading(true) }} className="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white">
+          Reintentar
+        </button>
+      </div>
+    )
   }
 
   const hasIssues = kpis.stock_red > 0 || kpis.missing_checkouts > 0 || kpis.announcements_urgent > 0

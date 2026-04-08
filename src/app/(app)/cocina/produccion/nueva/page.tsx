@@ -280,6 +280,8 @@ export default function NuevaProduccionPage() {
 
   // ── Submit ──
   async function handleConfirm() {
+    const ok = window.confirm('Esto va a actualizar el stock. ¿Confirmar producción?')
+    if (!ok) return
     setSaving(true)
     setError(null)
     try {

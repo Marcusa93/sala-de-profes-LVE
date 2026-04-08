@@ -329,25 +329,43 @@ export default function MiBarraPage() {
     setStockMode(true)
   }
 
-  // Save all stock changes at once
+  // Save all stock changes at once (batch)
   const handleSaveStock = async () => {
     setSavingStock(true)
-    let updated = 0
     try {
+      const changes: { itemId: number; qty: number }[] = []
       for (const [itemId, qtyStr] of stockDraft) {
         const newQty = parseFloat(qtyStr) || 0
         const item = items.find(i => i.id === itemId)
         if (!item || item.current_qty === newQty) continue
-
-        const res = await fetch('/api/kitchen/bar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'update_stock', itemId, qty: newQty }),
-        })
-        if (res.ok) updated++
+        changes.push({ itemId, qty: newQty })
       }
 
-      toast.success(`Stock actualizado — ${updated} item${updated !== 1 ? 's' : ''} modificado${updated !== 1 ? 's' : ''}`)
+      if (changes.length === 0) {
+        toast('No hay cambios para guardar')
+        setSavingStock(false)
+        return
+      }
+
+      // Send all updates in parallel
+      const results = await Promise.allSettled(
+        changes.map(({ itemId, qty }) =>
+          fetch('/api/kitchen/bar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update_stock', itemId, qty }),
+          })
+        )
+      )
+
+      const updated = results.filter(r => r.status === 'fulfilled' && (r.value as Response).ok).length
+      const failed = changes.length - updated
+
+      if (failed > 0) {
+        toast.error(`${updated} actualizados, ${failed} fallaron`)
+      } else {
+        toast.success(`Stock actualizado — ${updated} item${updated !== 1 ? 's' : ''}`)
+      }
       setStockMode(false)
       fetchData()
     } catch {
@@ -368,32 +386,37 @@ export default function MiBarraPage() {
     setOrderCart(cart)
   }
 
-  // Send all orders at once
+  // Send all orders at once (batch)
   const handleSendOrders = async () => {
     if (orderCart.size === 0 || sendingOrders) return
     setSendingOrders(true)
-    let sent = 0
     try {
+      const orders: { itemId: number; item: typeof items[0]; qty: string; note: string }[] = []
       for (const [itemId, { qty, note }] of orderCart) {
         const item = items.find(i => i.id === itemId)
         if (!item || !qty.trim()) continue
-
-        const res = await fetch('/api/kitchen/bar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'create_order',
-            barStockItemId: itemId,
-            productName: item.name,
-            category: item.category,
-            quantity: qty.trim(),
-            urgency: getSemaphore(item) === 'red' ? 'urgente' : 'normal',
-            note: note.trim() || null,
-          }),
-        })
-        if (res.ok) sent++
+        orders.push({ itemId, item, qty: qty.trim(), note: note.trim() })
       }
 
+      const results = await Promise.allSettled(
+        orders.map(({ itemId, item, qty, note }) =>
+          fetch('/api/kitchen/bar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'create_order',
+              barStockItemId: itemId,
+              productName: item.name,
+              category: item.category,
+              quantity: qty,
+              urgency: getSemaphore(item) === 'red' ? 'urgente' : 'normal',
+              note: note || null,
+            }),
+          })
+        )
+      )
+
+      const sent = results.filter(r => r.status === 'fulfilled' && (r.value as Response).ok).length
       toast.success(`${sent} pedido${sent !== 1 ? 's' : ''} enviado${sent !== 1 ? 's' : ''} al encargado`)
       setOrderMode(false)
       setOrderCart(new Map())
@@ -612,17 +635,7 @@ export default function MiBarraPage() {
         </div>
       )}
 
-      {/* CLOSE SHIFT button — visible and prominent */}
-      {canEdit && !stockMode && !orderMode && (
-        <button
-          onClick={handleCloseShift}
-          disabled={closingShift}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[#ebe6df] py-3 text-xs font-semibold text-[#a39e97] transition-colors hover:border-[#006d5a] hover:text-[#006d5a]"
-        >
-          {closingShift ? <Loader2 className="size-3.5 animate-spin" /> : <Clock className="size-3.5" />}
-          Cerrar turno y guardar stock para el siguiente
-        </button>
-      )}
+      {/* Close shift button moved to bottom of page — single location */}
 
       {/* ============================================================= */}
       {/* SECTION: Mercadería recibida — needs stock update */}
@@ -773,48 +786,17 @@ export default function MiBarraPage() {
       )}
 
       {/* ============================================================= */}
-      {/* HANDOVER — cerrar turno + ver turno anterior */}
+      {/* CLOSE SHIFT — single button at bottom */}
       {/* ============================================================= */}
-      {canEdit && (
-        <div className="space-y-2">
-          {/* Previous handover */}
-          {lastHandover && (
-            <div className="rounded-xl border bg-[#faf8f5] p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Clock className="size-3.5 text-[#8b5e34]" />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8b5e34]">
-                  Turno anterior dejó
-                </span>
-                <span className="text-[10px] text-[#a39e97]">
-                  {lastHandover.shift_type === 'morning' ? 'Mañana' : 'Noche'} · {lastHandover.date}
-                </span>
-              </div>
-              {lastHandover.notes && (
-                <p className="text-xs text-[#3d2c24] mb-1">📝 {lastHandover.notes}</p>
-              )}
-              <div className="flex flex-wrap gap-1.5">
-                {(lastHandover.items as Array<{ name: string; qty: number; unit: string }>).slice(0, 8).map((item, i) => (
-                  <span key={i} className="rounded-lg bg-white px-2 py-1 text-[10px] text-[#3d2c24]">
-                    {item.name} <strong>{item.qty}</strong> {item.unit || ''}
-                  </span>
-                ))}
-                {(lastHandover.items as unknown[]).length > 8 && (
-                  <span className="text-[10px] text-[#a39e97]">+{(lastHandover.items as unknown[]).length - 8} más</span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Close shift button */}
-          <button
-            onClick={handleCloseShift}
-            disabled={closingShift}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#8b5e34] py-3 text-sm font-bold text-white transition-all hover:bg-[#7a5230] active:scale-[0.98] disabled:opacity-50"
-          >
-            {closingShift ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            Cerrar turno — Guardar estado para el siguiente
-          </button>
-        </div>
+      {canEdit && !stockMode && !orderMode && (
+        <button
+          onClick={handleCloseShift}
+          disabled={closingShift}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#8b5e34] py-3 text-sm font-bold text-white transition-all hover:bg-[#7a5230] active:scale-[0.98] disabled:opacity-50"
+        >
+          {closingShift ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+          Cerrar turno — Guardar estado para el siguiente
+        </button>
       )}
 
       {/* ============================================================= */}
