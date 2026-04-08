@@ -16,17 +16,24 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [showSplash, setShowSplash] = useState(true)
+  const [showSplash, setShowSplash] = useState(() => {
+    if (typeof window === 'undefined') return true
+    return !sessionStorage.getItem('splash-shown')
+  })
   const [showReset, setShowReset] = useState(false)
   const [resetEmail, setResetEmail] = useState('')
   const [resetLoading, setResetLoading] = useState(false)
   const [resetSent, setResetSent] = useState(false)
 
-  // Splash screen → login form transition
+  // Splash screen → login form transition (only first visit per session)
   useEffect(() => {
-    const timer = setTimeout(() => setShowSplash(false), 1200)
+    if (!showSplash) return
+    const timer = setTimeout(() => {
+      setShowSplash(false)
+      sessionStorage.setItem('splash-shown', '1')
+    }, 1200)
     return () => clearTimeout(timer)
-  }, [])
+  }, [showSplash])
 
   async function handleResetPassword(e: React.FormEvent) {
     e.preventDefault()
@@ -72,7 +79,7 @@ export default function LoginPage() {
 
       if (error) {
         if (error.message === 'Invalid login credentials') {
-          toast.error('Credenciales incorrectas. Revisa tu email y contrasena.')
+          toast.error('Credenciales incorrectas. Revisa tu email y contraseña.')
         } else {
           toast.error(error.message)
         }
@@ -190,7 +197,7 @@ export default function LoginPage() {
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="email" className="text-sm font-medium text-[#3d2c24]">
                     <Mail className="size-4 text-[#a39e97]" />
-                    Correo electronico
+                    Correo electrónico
                   </Label>
                   <Input
                     id="email"
@@ -208,12 +215,12 @@ export default function LoginPage() {
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="password" className="text-sm font-medium text-[#3d2c24]">
                     <Lock className="size-4 text-[#a39e97]" />
-                    Contrasena
+                    Contraseña
                   </Label>
                   <Input
                     id="password"
                     type="password"
-                    placeholder="Tu contrasena"
+                    placeholder="Tu contraseña"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete="current-password"
@@ -237,7 +244,7 @@ export default function LoginPage() {
                   ) : (
                     <>
                       <Coffee className="size-4" />
-                      Iniciar sesion
+                      Iniciar sesión
                     </>
                   )}
                 </Button>

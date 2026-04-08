@@ -67,6 +67,7 @@ export default function MiTurnoPage() {
   const [loading, setLoading] = useState(true)
   const [showSuccess, setShowSuccess] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [historyLimit, setHistoryLimit] = useState(7)
   const [flowState, setFlowState] = useState<FlowState>('idle')
   const [flowMsg, setFlowMsg] = useState('')
 
@@ -100,7 +101,7 @@ export default function MiTurnoPage() {
         .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, clock_in_lat')
         .eq('user_id', profile.id)
         .order('operative_date', { ascending: false })
-        .limit(7)
+        .limit(historyLimit)
       setHistory((hist ?? []) as AttendanceRecord[])
     } catch {
       toast.error('No se pudo cargar tu turno')
@@ -108,7 +109,7 @@ export default function MiTurnoPage() {
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, todayStr])
+  }, [profile, todayStr, historyLimit])
 
   useEffect(() => { fetchAttendance() }, [fetchAttendance])
 
@@ -376,43 +377,53 @@ export default function MiTurnoPage() {
               <p className="text-sm font-medium text-[#a39e97]">Aún no hay registros</p>
             </div>
           ) : (
-            <StaggerList className="space-y-2.5">
-              {history.map(r => (
-                <StaggerItem key={r.id}>
-                  <div
-                    className="card-elevated flex items-center gap-4 rounded-xl px-4 py-3.5"
-                    style={{
-                      borderLeftWidth: '3px',
-                      borderLeftColor: r.is_suspicious ? '#d4943a' : r.clock_out_at ? '#006d5a' : '#ea504c',
-                    }}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium capitalize text-[#3d2c24]">
-                        {format(new Date(r.operative_date + 'T12:00:00'), 'EEE d MMM', { locale: es })}
-                      </p>
-                      <div className="mt-0.5 flex items-center gap-x-3 text-xs text-[#a39e97]">
-                        <span className="tabular-nums">{format(new Date(r.clock_in_at), 'HH:mm')}</span>
-                        <span className="text-[#ebe6df]">/</span>
-                        <span className="tabular-nums">{r.clock_out_at ? format(new Date(r.clock_out_at), 'HH:mm') : '--:--'}</span>
-                        {r.clock_out_at && (
-                          <>
-                            <span className="text-[#ebe6df]">·</span>
-                            <span>{fmtDuration(r.clock_in_at, r.clock_out_at)}</span>
-                          </>
-                        )}
+            <>
+              <StaggerList className="space-y-2.5">
+                {history.map(r => (
+                  <StaggerItem key={r.id}>
+                    <div
+                      className="card-elevated flex items-center gap-4 rounded-xl px-4 py-3.5"
+                      style={{
+                        borderLeftWidth: '3px',
+                        borderLeftColor: r.is_suspicious ? '#d4943a' : r.clock_out_at ? '#006d5a' : '#ea504c',
+                      }}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium capitalize text-[#3d2c24]">
+                          {format(new Date(r.operative_date + 'T12:00:00'), 'EEE d MMM', { locale: es })}
+                        </p>
+                        <div className="mt-0.5 flex items-center gap-x-3 text-xs text-[#a39e97]">
+                          <span className="tabular-nums">{format(new Date(r.clock_in_at), 'HH:mm')}</span>
+                          <span className="text-[#ebe6df]">/</span>
+                          <span className="tabular-nums">{r.clock_out_at ? format(new Date(r.clock_out_at), 'HH:mm') : '--:--'}</span>
+                          {r.clock_out_at && (
+                            <>
+                              <span className="text-[#ebe6df]">·</span>
+                              <span>{fmtDuration(r.clock_in_at, r.clock_out_at)}</span>
+                            </>
+                          )}
+                        </div>
                       </div>
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                        r.is_suspicious ? 'bg-amber-50 text-amber-700' :
+                        r.clock_out_at ? 'bg-[#e8f5f1] text-[#006d5a]' :
+                        'bg-red-50 text-[#ea504c]'
+                      }`}>
+                        {r.is_suspicious ? '⚠ Sospechoso' : r.clock_out_at ? '✓ Completo' : 'Sin egreso'}
+                      </span>
                     </div>
-                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                      r.is_suspicious ? 'bg-amber-50 text-amber-700' :
-                      r.clock_out_at ? 'bg-[#e8f5f1] text-[#006d5a]' :
-                      'bg-red-50 text-[#ea504c]'
-                    }`}>
-                      {r.is_suspicious ? '⚠ Sospechoso' : r.clock_out_at ? '✓ Completo' : 'Sin egreso'}
-                    </span>
-                  </div>
-                </StaggerItem>
-              ))}
-            </StaggerList>
+                  </StaggerItem>
+                ))}
+              </StaggerList>
+              {history.length >= historyLimit && (
+                <button
+                  onClick={() => setHistoryLimit(prev => prev + 15)}
+                  className="mt-3 w-full rounded-xl border border-[#ebe6df] py-2 text-xs font-medium text-[#a39e97] hover:bg-[#faf8f5]"
+                >
+                  Ver más registros
+                </button>
+              )}
+            </>
           )
         )}
       </FadeIn>

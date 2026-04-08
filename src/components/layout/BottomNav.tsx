@@ -276,11 +276,11 @@ function getAllMoreItems(more?: ExpandableNavItem): NavItem[] {
   return more.groups.flatMap((g) => g.items)
 }
 
-// Socios: Inicio, Control, Expedientes, Avisos + Más
+// Socios: Inicio, Mi Turno, Control, Avisos + Más
 const SOCIO_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Mi Turno', href: '/fichaje', icon: Clock },
   { label: 'Control', href: '/admin', icon: LayoutDashboard },
-  { label: 'Expedientes', href: '/expedientes', icon: FolderOpen },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
