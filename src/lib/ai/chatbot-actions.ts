@@ -903,16 +903,18 @@ export async function executeAction(
         })
       }
 
-      // Audit trail
-      await admin.from('audit_trail').insert({
-        user_id: userId,
-        user_name: userName,
-        action: 'chatbot_order',
-        module: source === 'barra' ? 'barra' : 'cocina',
-        entity_type: source === 'barra' ? 'bar_order' : 'kitchen_order',
-        description: `${userName} creó ${result.created} pedido(s) vía chatbot: ${result.details.join(', ')}`,
-        metadata: { items: proposal.items, source, channel: 'chatbot' },
-      }).catch(() => {}) // Audit is non-blocking
+      // Audit trail (non-blocking)
+      try {
+        await admin.from('audit_trail').insert({
+          user_id: userId,
+          user_name: userName,
+          action: 'chatbot_order',
+          module: source === 'barra' ? 'barra' : 'cocina',
+          entity_type: source === 'barra' ? 'bar_order' : 'kitchen_order',
+          description: `${userName} creó ${result.created} pedido(s) vía chatbot: ${result.details.join(', ')}`,
+          metadata: { items: proposal.items, source, channel: 'chatbot' },
+        })
+      } catch { /* audit is non-blocking */ }
     }
 
     if (proposal.intent === 'ACTUALIZAR_STOCK') {
@@ -938,16 +940,18 @@ export async function executeAction(
         }
       }
 
-      // Audit
-      await admin.from('audit_trail').insert({
-        user_id: userId,
-        user_name: userName,
-        action: 'chatbot_stock_update',
-        module: 'stock',
-        entity_type: 'stock_item',
-        description: `${userName} actualizó ${result.created} item(s) de stock vía chatbot: ${result.details.join(', ')}`,
-        metadata: { items: proposal.items, channel: 'chatbot' },
-      }).catch(() => {})
+      // Audit (non-blocking)
+      try {
+        await admin.from('audit_trail').insert({
+          user_id: userId,
+          user_name: userName,
+          action: 'chatbot_stock_update',
+          module: 'stock',
+          entity_type: 'stock_item',
+          description: `${userName} actualizó ${result.created} item(s) de stock vía chatbot: ${result.details.join(', ')}`,
+          metadata: { items: proposal.items, channel: 'chatbot' },
+        })
+      } catch { /* audit is non-blocking */ }
     }
 
     if (proposal.intent === 'PRODUCCION_COMPLETA') {
@@ -1051,15 +1055,17 @@ export async function executeAction(
         result.details.push(`Producción completada — ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name} → ${outs.length} productos, ${efficiency}% eficiencia`)
       }
 
-      await admin.from('audit_trail').insert({
-        user_id: userId,
-        user_name: userName,
-        action: 'chatbot_produccion',
-        module: 'cocina',
-        entity_type: 'production_order',
-        description: `${userName} registró producción vía chatbot: ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name}`,
-        metadata: { order_id: order.id, input: inp, outputs: outs, efficiency, channel: 'chatbot' },
-      }).catch(() => {})
+      try {
+        await admin.from('audit_trail').insert({
+          user_id: userId,
+          user_name: userName,
+          action: 'chatbot_produccion',
+          module: 'cocina',
+          entity_type: 'production_order',
+          description: `${userName} registró producción vía chatbot: ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name}`,
+          metadata: { order_id: order.id, input: inp, outputs: outs, efficiency, channel: 'chatbot' },
+        })
+      } catch { /* audit is non-blocking */ }
     }
 
     if (proposal.intent === 'REPORTE_PROBLEMA') {
@@ -1082,15 +1088,17 @@ export async function executeAction(
         result.details.push('Reporte enviado a encargados')
       }
 
-      await admin.from('audit_trail').insert({
-        user_id: userId,
-        user_name: userName,
-        action: 'chatbot_report',
-        module: 'avisos',
-        entity_type: 'announcement',
-        description: `${userName} reportó problema vía chatbot: ${(proposal.message ?? '').slice(0, 100)}`,
-        metadata: { message: proposal.message, channel: 'chatbot' },
-      }).catch(() => {})
+      try {
+        await admin.from('audit_trail').insert({
+          user_id: userId,
+          user_name: userName,
+          action: 'chatbot_report',
+          module: 'avisos',
+          entity_type: 'announcement',
+          description: `${userName} reportó problema vía chatbot: ${(proposal.message ?? '').slice(0, 100)}`,
+          metadata: { message: proposal.message, channel: 'chatbot' },
+        })
+      } catch { /* audit is non-blocking */ }
     }
 
     if (proposal.intent === 'AVISO_ENCARGADO') {
@@ -1113,15 +1121,17 @@ export async function executeAction(
         result.details.push('Aviso enviado a encargados')
       }
 
-      await admin.from('audit_trail').insert({
-        user_id: userId,
-        user_name: userName,
-        action: 'chatbot_notice',
-        module: 'avisos',
-        entity_type: 'announcement',
-        description: `${userName} envió aviso vía chatbot: ${(proposal.message ?? '').slice(0, 100)}`,
-        metadata: { message: proposal.message, channel: 'chatbot' },
-      }).catch(() => {})
+      try {
+        await admin.from('audit_trail').insert({
+          user_id: userId,
+          user_name: userName,
+          action: 'chatbot_notice',
+          module: 'avisos',
+          entity_type: 'announcement',
+          description: `${userName} envió aviso vía chatbot: ${(proposal.message ?? '').slice(0, 100)}`,
+          metadata: { message: proposal.message, channel: 'chatbot' },
+        })
+      } catch { /* audit is non-blocking */ }
     }
 
     // ── MISE_EN_PLACE — mark items as done in current shift ──
@@ -1186,15 +1196,17 @@ export async function executeAction(
 
         result.success = result.errors.length === 0
 
-        await admin.from('audit_trail').insert({
-          user_id: userId,
-          user_name: userName,
-          action: 'chatbot_mise_en_place',
-          module: 'cocina',
-          entity_type: 'mise_en_place_record',
-          description: `${userName} completó ${result.created} items de mise en place vía chatbot`,
-          metadata: { items: proposal.items.map(i => i.rawName), shift_id: activeShift.id },
-        }).catch(() => {})
+        try {
+          await admin.from('audit_trail').insert({
+            user_id: userId,
+            user_name: userName,
+            action: 'chatbot_mise_en_place',
+            module: 'cocina',
+            entity_type: 'mise_en_place_record',
+            description: `${userName} completó ${result.created} items de mise en place vía chatbot`,
+            metadata: { items: proposal.items.map(i => i.rawName), shift_id: activeShift.id },
+          })
+        } catch { /* audit is non-blocking */ }
       }
     }
 
