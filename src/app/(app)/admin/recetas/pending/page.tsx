@@ -24,7 +24,7 @@ type PendingData = {
   counts: { pending: number; approved: number; rejected: number; manual: number }
 }
 
-type StockItemOption = { id: number; name: string; unit: string }
+type StockItemOption = { id: string; name: string; unit: string }
 
 type StatusTab = 'pending' | 'approved' | 'rejected' | 'manual'
 

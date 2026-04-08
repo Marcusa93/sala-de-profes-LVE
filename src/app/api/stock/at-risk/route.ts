@@ -3,6 +3,9 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 // ---------------------------------------------------------------------------
+// DEPRECATED: Use /api/stock/availability?threshold=N instead.
+// This endpoint is kept for backwards compatibility only.
+// ---------------------------------------------------------------------------
 // GET /api/stock/at-risk
 // ---------------------------------------------------------------------------
 // Lista todas las recetas con stock insuficiente para producción.

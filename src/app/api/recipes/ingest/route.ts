@@ -13,7 +13,7 @@ type StockItemForMatch = { id: string; name: string; category: string; unit: str
 type IngestResult = {
   recipe_slug: string
   recipe_name: string
-  recipe_id: number | null
+  recipe_id: string | null
   action: 'created' | 'found' | 'error'
   ingredients_inserted: number
   ingredients_pending: number
@@ -283,7 +283,7 @@ export async function POST(request: Request) {
           .eq('slug', corpusRecipe.slug)
           .single()
 
-        let recipeId: number
+        let recipeId: string
 
         if (existingRecipe) {
           recipeId = existingRecipe.id
@@ -327,9 +327,9 @@ export async function POST(request: Request) {
                   slug: corpusRecipe.slug,
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   category: (categoryMap[corpusRecipe.categoria] ?? 'platos') as any,
-                  description: corpusRecipe.notas.join(' ') || null,
+                  notes: corpusRecipe.notas.join(' ') || null,
                   preparation: corpusRecipe.pasos.join('\n'),
-                  portion_yield: 1,
+                  yield_portions: 1,
                   is_active: true,
                   ingredients: corpusRecipe.ingredientes.map(i => ({
                     name: i.producto,
@@ -347,7 +347,7 @@ export async function POST(request: Request) {
 
               recipeId = newRecipe.id
             } else {
-              recipeId = -1 // dry run placeholder
+              recipeId = '' // dry run placeholder
             }
             result.recipe_id = recipeId
             result.action = 'created'
@@ -355,7 +355,7 @@ export async function POST(request: Request) {
         }
 
         // --- 2. Clear existing recipe_ingredients if overwrite ---
-        if (overwrite && !dryRun && recipeId > 0) {
+        if (overwrite && !dryRun && recipeId) {
           await admin.from('recipe_ingredients').delete().eq('recipe_id', recipeId)
           // Also clear pending links for this recipe
           await admin
@@ -409,7 +409,7 @@ export async function POST(request: Request) {
               ? 'Sin ningún match en stock_items'
               : `Match ${match.confidence} (score ${match.confidence_score}): "${match.suggested_stock_item_name}" — requiere confirmación`
 
-            if (!dryRun && recipeId > 0) {
+            if (!dryRun && recipeId) {
               await admin
                 .from('recipe_ingredient_pending_links')
                 .upsert({
@@ -424,9 +424,7 @@ export async function POST(request: Request) {
                     ? match.confidence
                     : 'ambiguo',
                   match_score: match.confidence_score,
-                  suggested_stock_item_id: match.suggested_stock_item_id
-                    ? Number(match.suggested_stock_item_id)
-                    : null,
+                  suggested_stock_item_id: match.suggested_stock_item_id ?? null,
                   suggested_stock_item_name: match.suggested_stock_item_name,
                   match_reasons: match.reasons,
                   status: 'pending',
@@ -460,7 +458,7 @@ export async function POST(request: Request) {
               ? `Sin cantidad definida en el corpus — requiere valor manual`
               : `No se puede convertir "${ingredient.unidad}" a "${stockUnit}" — revisión manual`
 
-            if (!dryRun && recipeId > 0) {
+            if (!dryRun && recipeId) {
               await admin
                 .from('recipe_ingredient_pending_links')
                 .upsert({
@@ -473,7 +471,7 @@ export async function POST(request: Request) {
                   unidad: ingredient.unidad,
                   match_confidence: 'ambiguo',
                   match_score: match.confidence_score,
-                  suggested_stock_item_id: Number(match.suggested_stock_item_id),
+                  suggested_stock_item_id: match.suggested_stock_item_id,
                   suggested_stock_item_name: match.suggested_stock_item_name,
                   match_reasons: [convReason, ...match.reasons],
                   status: 'pending',
@@ -496,8 +494,6 @@ export async function POST(request: Request) {
             continue
           }
 
-          const stockItemIdNum = Number(match.suggested_stock_item_id)
-
           // Skip if already linked
           if (existingStockIds.has(match.suggested_stock_item_id)) {
             result.details.push({
@@ -516,12 +512,12 @@ export async function POST(request: Request) {
           }
 
           // → INSERT into recipe_ingredients
-          if (!dryRun && recipeId > 0) {
+          if (!dryRun && recipeId) {
             const { error: insertError } = await admin
               .from('recipe_ingredients')
               .upsert({
                 recipe_id: recipeId,
-                stock_item_id: stockItemIdNum,
+                stock_item_id: match.suggested_stock_item_id,
                 qty_per_portion: converted.qty,
                 ingredient_unit: converted.unit,
                 notes: converted.converted

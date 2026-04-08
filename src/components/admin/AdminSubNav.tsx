@@ -10,6 +10,8 @@ import {
   Calculator,
   Clock,
   ShieldAlert,
+  Link2,
+  ChefHat,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -19,6 +21,8 @@ const NAV_ITEMS = [
   { label: 'Sospechosos', href: '/admin/reportes/fichajes-sospechosos', icon: ShieldAlert },
   { label: 'Turnos', href: '/admin/reportes/turnos', icon: Calendar },
   { label: 'Salón', href: '/admin/reportes/salon', icon: Clock },
+  { label: 'Stock↔Fudo', href: '/admin/stock/mapeo', icon: Link2 },
+  { label: 'Recetas', href: '/admin/recetas/pending', icon: ChefHat },
 ]
 
 export function AdminSubNav() {

@@ -179,7 +179,7 @@ export async function PATCH(
         .from('production_inputs')
         .insert({
           production_order_id: id,
-          stock_item_id: Number(body.stock_item_id),
+          stock_item_id: body.stock_item_id,
           qty_used: Number(body.qty_used),
           unit: body.unit,
           cost_per_unit: body.cost_per_unit ? Number(body.cost_per_unit) : null,
@@ -211,7 +211,7 @@ export async function PATCH(
         .from('production_outputs')
         .insert({
           production_order_id: id,
-          stock_item_id: body.stock_item_id ? Number(body.stock_item_id) : null,
+          stock_item_id: body.stock_item_id || null,
           output_name: body.output_name,
           qty_produced: Number(body.qty_produced),
           theoretical_qty: body.theoretical_qty ? Number(body.theoretical_qty) : null,
@@ -244,7 +244,7 @@ export async function PATCH(
       }
       const patch: Record<string, unknown> = { qty_produced: Number(body.qty_produced) }
       if (body.notes !== undefined) patch.notes = body.notes
-      if (body.stock_item_id !== undefined) patch.stock_item_id = body.stock_item_id ? Number(body.stock_item_id) : null
+      if (body.stock_item_id !== undefined) patch.stock_item_id = body.stock_item_id || null
       if (body.output_name !== undefined) patch.output_name = body.output_name
       const { error } = await admin
         .from('production_outputs')

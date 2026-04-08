@@ -164,13 +164,13 @@ export async function PATCH(
 
     // --- MANUAL ---
     if (action === 'manual') {
-      const stockItemId: number = body?.stock_item_id
+      const stockItemId: string = body?.stock_item_id
       const qtyPerPortion: number = body?.qty_per_portion
       const unit: string = body?.unit
 
       if (!stockItemId || !qtyPerPortion || !unit) {
         return NextResponse.json({
-          error: 'Manual requiere: stock_item_id (number), qty_per_portion (number), unit (string)',
+          error: 'Manual requiere: stock_item_id, qty_per_portion (number), unit (string)',
         }, { status: 400 })
       }
 

@@ -14,7 +14,7 @@ import { FadeIn } from '@/components/ui/motion'
 // ---------------------------------------------------------------------------
 
 type StockItem = {
-  id: number
+  id: string
   name: string
   unit: string
   current_qty: number
@@ -24,12 +24,12 @@ type Template = {
   id: number
   name: string
   description: string | null
-  input_stock_item_id: number | null
+  input_stock_item_id: string | null
   input_unit: string
-  input_stock_item: { id: number; name: string; unit: string } | null
+  input_stock_item: { id: string; name: string; unit: string } | null
   outputs: {
     id: number
-    stock_item_id: number | null
+    stock_item_id: string | null
     output_name: string
     theoretical_yield_pct: number
     output_unit: string
@@ -40,7 +40,7 @@ type Template = {
 
 type OutputRow = {
   localId: string
-  stock_item_id: number | null
+  stock_item_id: string | null
   stock_item_name: string
   output_name: string
   qty_produced: string
@@ -177,31 +177,25 @@ export default function NuevaProduccionPage() {
   useEffect(() => {
     const load = async () => {
       const [stockRes, tmplRes] = await Promise.all([
-        fetch('/api/stock/availability'),  // reuse existing endpoint or we can call stock directly
+        fetch('/api/stock/items'),
         fetch('/api/produccion/templates'),
       ])
 
-      // stock items — fetch directly from stock API
-      try {
-        // We'll fetch stock items via a simple stock list
-        const stockList = await fetch('/api/stock/snapshot').then((r) => r.json())
+      if (stockRes.ok) {
+        const stockList = await stockRes.json()
         const items: StockItem[] = (stockList.items ?? []).map((i: Record<string, unknown>) => ({
-          id: Number(i.id),
+          id: String(i.id),
           name: String(i.name),
           unit: String(i.unit),
           current_qty: Number(i.current_qty ?? 0),
         }))
         setStockItems(items)
-      } catch {
-        // fallback: empty
       }
 
       if (tmplRes.ok) {
         const tj = await tmplRes.json()
         setTemplates(tj.templates ?? [])
       }
-
-      void stockRes // not used directly
     }
     load()
   }, [])
@@ -289,62 +283,35 @@ export default function NuevaProduccionPage() {
     setSaving(true)
     setError(null)
     try {
-      // 1. Create order
-      const orderRes = await fetch('/api/produccion/orders', {
+      // Single request: create order + add inputs/outputs + complete
+      const res = await fetch('/api/produccion/orders/quick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: orderName,
           template_id: selectedTemplate?.id ?? null,
           notes: notes || null,
+          input: {
+            stock_item_id: inputItem!.id,
+            qty_used: parseFloat(inputQty),
+            unit: inputUnit,
+          },
+          outputs: outputs
+            .filter((o) => o.output_name && !isNaN(parseFloat(o.qty_produced)))
+            .map((o) => ({
+              stock_item_id: o.stock_item_id,
+              output_name: o.output_name,
+              qty_produced: parseFloat(o.qty_produced),
+              theoretical_qty: o.theoretical_qty,
+              unit: o.unit,
+              is_waste: o.is_waste,
+              notes: o.notes || null,
+            })),
         }),
       })
-      if (!orderRes.ok) throw new Error((await orderRes.json()).error)
-      const { order } = await orderRes.json()
-      const orderId: number = order.id
-
-      // 2. Add input
-      const inputRes = await fetch(`/api/produccion/orders/${orderId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'add_input',
-          stock_item_id: inputItem!.id,
-          qty_used: parseFloat(inputQty),
-          unit: inputUnit,
-        }),
-      })
-      if (!inputRes.ok) throw new Error((await inputRes.json()).error)
-
-      // 3. Add all outputs
-      for (const o of outputs) {
-        const qty = parseFloat(o.qty_produced)
-        if (isNaN(qty)) continue
-        const outRes = await fetch(`/api/produccion/orders/${orderId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'add_output',
-            stock_item_id: o.stock_item_id,
-            output_name: o.output_name,
-            qty_produced: qty,
-            theoretical_qty: o.theoretical_qty,
-            unit: o.unit,
-            is_waste: o.is_waste,
-            notes: o.notes || null,
-          }),
-        })
-        if (!outRes.ok) throw new Error((await outRes.json()).error)
-      }
-
-      // 4. Complete the order (apply stock movements)
-      const completeRes = await fetch(`/api/produccion/orders/${orderId}/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      })
-      const completeJson = await completeRes.json()
-      if (!completeRes.ok || !completeJson.success) {
-        throw new Error(completeJson.error ?? 'Error al completar la orden')
+      const json = await res.json()
+      if (!res.ok || !json.success) {
+        throw new Error(json.error ?? 'Error al procesar la producción')
       }
 
       // Success — navigate to list

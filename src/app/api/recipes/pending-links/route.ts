@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
       query = query.eq('status', status)
     }
     if (recipeId) {
-      query = query.eq('recipe_id', Number(recipeId))
+      query = query.eq('recipe_id', recipeId)
     }
 
     const { data, error } = await query

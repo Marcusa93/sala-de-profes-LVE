@@ -159,7 +159,7 @@ export async function POST(request: NextRequest) {
       // Add input
       await admin.from('production_inputs').insert({
         production_order_id: order.id,
-        stock_item_id: Number(body.input_stock_item_id),
+        stock_item_id: body.input_stock_item_id,
         qty_used: inputQty,
         unit: inputUnit,
       })

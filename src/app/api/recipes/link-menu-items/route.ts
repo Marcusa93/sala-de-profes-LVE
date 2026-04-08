@@ -47,8 +47,8 @@ function scoreNames(recipeName: string, menuItemName: string): number {
 type LinkResult = {
   recipe_slug: string
   recipe_name: string
-  recipe_id: number | null
-  menu_item_id: number | null
+  recipe_id: string | null
+  menu_item_id: string | null
   menu_item_name: string | null
   score: number
   action: 'linked' | 'already_linked' | 'no_match' | 'skipped' | 'dry_run' | 'error'
