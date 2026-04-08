@@ -341,7 +341,7 @@ export async function syncToFudo(
     action: 'update',
     old_qty: item.current_qty,
     new_qty: newQty,
-  }).catch(() => {}) // Non-blocking
+  })
 
   // 4. If has Fudo link (ingredient or product), push to Fudo
   const fudoLink = item.fudo_ingredient_id || item.fudo_product_id
@@ -371,7 +371,7 @@ export async function syncToFudo(
         entity_id: stockItemId,
         description: `Error al sincronizar ${item.name} con Fudo: ${fudoResult.error}`,
         metadata: { fudo_id: fudoLink, attempted_qty: newQty },
-      }).catch(() => {})
+      })
 
       return { success: true, fudoSynced: false, error: fudoResult.error }
     }
@@ -384,7 +384,7 @@ export async function syncToFudo(
       entity_id: stockItemId,
       description: `${item.name}: ${item.current_qty} → ${newQty} (sincronizado con Fudo)`,
       metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: newQty, synced: true },
-    }).catch(() => {})
+    })
 
     return { success: true, fudoSynced: true }
   }
@@ -442,7 +442,7 @@ export async function syncProductionToFudo(
         entity_id: String(itemId),
         description: `Producción: ${item.name} → ${item.current_qty} (sincronizado con Fudo)`,
         metadata: { fudo_ingredient_id: item.fudo_ingredient_id, qty: item.current_qty },
-      }).catch(() => {})
+      })
     } else {
       result.errors.push(`${item.name}: ${fudoResult.error}`)
       await admin.from('audit_trail').insert({
@@ -453,7 +453,7 @@ export async function syncProductionToFudo(
         entity_id: String(itemId),
         description: `Error sync producción ${item.name} con Fudo: ${fudoResult.error}`,
         metadata: { fudo_ingredient_id: item.fudo_ingredient_id, attempted_qty: item.current_qty },
-      }).catch(() => {})
+      })
     }
   }
 

@@ -110,7 +110,7 @@ export async function PATCH(request: Request) {
       entity_type: 'attendance_log',
       entity_id: body.logId,
       description: `${profile.first_name} descartó alerta sospechosa`,
-    }).catch(() => {})
+    })
 
     return NextResponse.json({ success: true })
   } catch (error) {

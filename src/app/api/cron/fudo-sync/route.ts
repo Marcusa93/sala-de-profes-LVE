@@ -105,18 +105,20 @@ export async function GET(request: NextRequest) {
     const elapsedMs = Date.now() - startTime
 
     // ── 3) Log to audit_trail ──
-    await admin.from('audit_trail').insert({
-      action: 'fudo_cron_sync',
-      module: 'stock',
-      entity_type: 'cron',
-      entity_id: 'fudo-sync',
-      description: `Cron sync: ${stockResult.synced} stock, ${salesImported} ventas (${elapsedMs}ms)`,
-      metadata: {
-        stock: stockResult,
-        sales: { imported: salesImported, errors: salesErrors },
-        elapsed_ms: elapsedMs,
-      },
-    }).catch(() => {}) // Non-blocking
+    try {
+      await admin.from('audit_trail').insert({
+        action: 'fudo_cron_sync',
+        module: 'stock',
+        entity_type: 'cron',
+        entity_id: 'fudo-sync',
+        description: `Cron sync: ${stockResult.synced} stock, ${salesImported} ventas (${elapsedMs}ms)`,
+        metadata: {
+          stock: stockResult,
+          sales: { imported: salesImported, errors: salesErrors },
+          elapsed_ms: elapsedMs,
+        },
+      })
+    } catch { /* audit is non-blocking */ }
 
     return NextResponse.json({
       success: true,
@@ -142,7 +144,7 @@ export async function GET(request: NextRequest) {
       entity_type: 'cron',
       entity_id: 'fudo-sync',
       description: `Cron sync failed: ${error instanceof Error ? error.message : 'Error'}`,
-    }).catch(() => {})
+    })
 
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Error' },

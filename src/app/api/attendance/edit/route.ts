@@ -91,23 +91,25 @@ export async function PATCH(request: NextRequest) {
     const editorName = editorProfile ? `${editorProfile.first_name} ${editorProfile.last_name}` : '?'
     const empName = empProfile ? `${empProfile.first_name} ${empProfile.last_name}` : '?'
 
-    await admin.from('audit_trail').insert({
-      user_id: user.id,
-      user_name: editorName,
-      action: 'attendance_edit',
-      module: 'asistencia',
-      entity_type: 'attendance_log',
-      entity_id: logId,
-      description: `${editorName} corrigió fichaje de ${empName}: ${reason.trim()}`,
-      metadata: {
-        employee_id: log.user_id,
-        original_clock_in: log.clock_in_at,
-        original_clock_out: log.clock_out_at,
-        new_clock_in: clockIn ?? null,
-        new_clock_out: clockOut ?? null,
-        reason: reason.trim(),
-      },
-    }).catch(() => {})
+    try {
+      await admin.from('audit_trail').insert({
+        user_id: user.id,
+        user_name: editorName,
+        action: 'attendance_edit',
+        module: 'asistencia',
+        entity_type: 'attendance_log',
+        entity_id: logId,
+        description: `${editorName} corrigió fichaje de ${empName}: ${reason.trim()}`,
+        metadata: {
+          employee_id: log.user_id,
+          original_clock_in: log.clock_in_at,
+          original_clock_out: log.clock_out_at,
+          new_clock_in: clockIn ?? null,
+          new_clock_out: clockOut ?? null,
+          reason: reason.trim(),
+        },
+      })
+    } catch { /* audit is non-blocking */ }
 
     return NextResponse.json({ success: true })
   } catch (err) {
