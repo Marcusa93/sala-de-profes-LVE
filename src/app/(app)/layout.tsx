@@ -8,6 +8,7 @@ import { FloatingChat } from '@/components/chat/FloatingChat'
 import { ForcePasswordChange } from '@/components/auth/ForcePasswordChange'
 import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
 import { KitchenAlarms } from '@/components/kitchen/KitchenAlarms'
+import { InstallPrompt } from '@/components/pwa/InstallPrompt'
 
 export default async function AppLayout({
   children,
@@ -35,6 +36,7 @@ export default async function AppLayout({
         <ForcePasswordChange />
         <AnnouncementPopup />
         <KitchenAlarms />
+        <InstallPrompt />
       </div>
     </ProfileProvider>
   )
