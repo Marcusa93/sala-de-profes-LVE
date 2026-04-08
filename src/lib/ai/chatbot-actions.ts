@@ -74,10 +74,31 @@ export type ActionResult = {
 // 0. Execute Query — runs read-only queries for QUERY_JSON blocks
 // ---------------------------------------------------------------------------
 
+// Which roles can access each query type
+const QUERY_PERMISSIONS: Record<string, string[]> = {
+  STOCK_DISPONIBILIDAD: ['socio', 'encargado', 'chef', 'cocina', 'barista'],
+  STOCK_DURACION: ['socio', 'encargado', 'chef', 'cocina'],
+  RECETAS_RIESGO: ['socio', 'encargado', 'chef', 'cocina'],
+  PRODUCCION_HOY: ['socio', 'encargado', 'chef', 'cocina'],
+  PENDIENTES_LINKS: ['socio', 'encargado'],
+  VENTAS_HOY: ['socio', 'encargado'],
+  COSTO_PLATO: ['socio', 'encargado', 'chef'],
+  BRIEFING_DIARIO: ['socio', 'encargado'],
+  FICHAJES_ANOMALIAS: ['socio', 'encargado'],
+}
+
 export async function executeQuery(
   admin: SupabaseClient,
   queryData: QueryData,
+  userRole?: string,
 ): Promise<string> {
+  // Role-based access control for queries
+  if (userRole && queryData.type) {
+    const allowed = QUERY_PERMISSIONS[queryData.type]
+    if (allowed && !allowed.includes(userRole)) {
+      return 'No tenés acceso a esta información. Consultá con tu encargado.'
+    }
+  }
   const norm = (s: string) =>
     s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
 
@@ -814,10 +835,11 @@ export async function buildProposal(
   }
 
   if (intent === 'MISE_EN_PLACE') {
-    const itemsList = matchedItems.map(i => `- ✅ ${i.matchedStockName ?? i.rawName}: ${i.quantity}`).join('\n')
+    const matched = await matchItems(admin, rawItems, source)
+    const itemsList = matched.map(i => `- ✅ ${i.matchedStockName ?? i.rawName}: ${i.quantity}`).join('\n')
     return {
       intent,
-      items: matchedItems,
+      items: matched,
       duplicateWarnings: [],
       confirmationText: `👨‍🍳 **Mise en place completado:**\n${itemsList}\n\n¿Marco como listo?`,
       readyToExecute: false,

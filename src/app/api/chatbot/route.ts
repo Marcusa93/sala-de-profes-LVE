@@ -854,7 +854,7 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
     }
 
     // 13. Protocolo de atención — always available for runners and baristas
-    if (['runner', 'barista', 'socio', 'encargado'].includes(role)) {
+    if (['runner', 'barista', 'bacha', 'socio', 'encargado'].includes(role)) {
       sections.push(`PROTOCOLO DE ATENCIÓN — LA VIEJA ESCUELA:
 
 **SALUDO Y BIENVENIDA:**
@@ -1031,7 +1031,7 @@ async function processAIResponse(
       const { createAdminClient } = await import('@/lib/supabase/admin')
       const admin = createAdminClient()
 
-      const queryResult = await executeQuery(admin, queryData)
+      const queryResult = await executeQuery(admin, queryData, userRole)
       const finalText = responseText.replace(/```QUERY_JSON[\s\S]*?```/, queryResult).trim()
       return NextResponse.json({ response: finalText })
     } catch {
