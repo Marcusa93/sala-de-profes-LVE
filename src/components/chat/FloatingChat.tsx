@@ -412,7 +412,7 @@ export function FloatingChat() {
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 25 }}
             onClick={() => setOpen(true)}
-            className="fixed bottom-[5.5rem] left-4 z-50 flex size-12 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-transform hover:scale-105 active:scale-95 sm:bottom-28 sm:left-6"
+            className="fixed bottom-20 left-4 z-50 flex size-12 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-transform hover:scale-105 active:scale-95 sm:bottom-28 sm:left-6"
             aria-label="Abrir asistente"
           >
             <Coffee className="size-5" />
@@ -435,11 +435,11 @@ export function FloatingChat() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 40, scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            className="fixed inset-x-0 bottom-0 z-50 flex flex-col bg-white sm:inset-x-auto sm:bottom-6 sm:left-6 sm:w-[380px] sm:rounded-2xl sm:shadow-2xl sm:shadow-black/10 sm:border sm:border-[#ebe6df]"
-            style={{ height: 'min(85svh, 600px)' }}
+            className="fixed inset-x-0 bottom-0 z-50 flex flex-col rounded-t-2xl border-t border-[#ebe6df] bg-white shadow-[0_-4px_20px_rgba(0,0,0,0.08)] sm:inset-x-auto sm:bottom-6 sm:left-6 sm:w-[380px] sm:rounded-2xl sm:border sm:shadow-2xl sm:shadow-black/10"
+            style={{ height: 'min(calc(100svh - 5rem), 600px)' }}
           >
             {/* Header */}
-            <div className="flex items-center gap-3 border-b border-[#ebe6df] bg-[#006d5a] px-4 py-3 sm:rounded-t-2xl">
+            <div className="flex items-center gap-3 border-b border-[#ebe6df] bg-[#006d5a] px-4 py-3 rounded-t-2xl">
               <div className="flex size-8 items-center justify-center rounded-lg bg-white/15">
                 <Coffee className="size-4 text-white" />
               </div>
@@ -584,7 +584,7 @@ export function FloatingChat() {
             </div>
 
             {/* Input */}
-            <div className="flex items-center gap-2 border-t border-[#ebe6df] bg-white p-3 sm:rounded-b-2xl">
+            <div className="flex items-center gap-2 border-t border-[#ebe6df] bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:rounded-b-2xl sm:pb-3">
               <input
                 ref={inputRef}
                 value={input}
