@@ -614,14 +614,14 @@ export default function DashboardPage() {
       {/* Report Problem Dialog                                            */}
       {/* ---------------------------------------------------------------- */}
       {reportOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby="report-dialog-title" onKeyDown={(e) => { if (e.key === 'Escape') setReportOpen(false) }}>
           <div
             className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
             onClick={() => setReportOpen(false)}
           />
           <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-4 sm:p-5 shadow-xl sm:mx-auto sm:mb-0">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
+              <h3 id="report-dialog-title" className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
               <button
                 onClick={() => setReportOpen(false)}
                 className="icon-btn flex items-center justify-center rounded-full text-[#a39e97] hover:bg-[#f3efe9]"
@@ -634,7 +634,8 @@ export default function DashboardPage() {
               value={reportMsg}
               onChange={(e) => setReportMsg(e.target.value)}
               placeholder="¿Qué problema hay? Ej: Se rompió la máquina de café, falta leche urgente..."
-              rows={2}
+              rows={4}
+              autoFocus
               className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] p-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
             />
 

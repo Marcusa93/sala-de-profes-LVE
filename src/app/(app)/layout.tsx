@@ -9,6 +9,7 @@ import { ForcePasswordChange } from '@/components/auth/ForcePasswordChange'
 import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
 import { KitchenAlarms } from '@/components/kitchen/KitchenAlarms'
 import { InstallPrompt } from '@/components/pwa/InstallPrompt'
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 
 export default async function AppLayout({
   children,
@@ -29,7 +30,9 @@ export default async function AppLayout({
       <div className="flex min-h-svh flex-col bg-background">
         <TopBar />
         <main className="flex-1 overflow-y-auto px-4 pb-24 pt-5 sm:px-6">
-          <PageTransition>{children}</PageTransition>
+          <ErrorBoundary>
+            <PageTransition>{children}</PageTransition>
+          </ErrorBoundary>
         </main>
         <BottomNav />
         <FloatingChat />

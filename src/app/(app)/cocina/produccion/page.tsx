@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { cn } from '@/lib/utils'
+import { LoadingState } from '@/components/ui/LoadingState'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,6 +72,8 @@ export default function ProduccionPage() {
         const json = await res.json()
         setOrders(json.orders ?? [])
       }
+    } catch {
+      // Silently handle — empty list shown
     } finally {
       setLoading(false)
     }
@@ -150,10 +153,7 @@ export default function ProduccionPage() {
 
       <div className="mx-auto max-w-2xl space-y-3 px-4 pt-4">
         {loading ? (
-          <div className="flex items-center justify-center py-16 text-muted-foreground">
-            <Clock className="mr-2 size-4 animate-spin" />
-            Cargando...
-          </div>
+          <LoadingState message="Cargando producciones..." />
         ) : filtered.length === 0 ? (
           <FadeIn>
             <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-[#ebe6df] px-6 py-12 text-center">
