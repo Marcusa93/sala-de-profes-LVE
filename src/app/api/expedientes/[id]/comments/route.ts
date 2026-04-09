@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // GET  /api/expedientes/[id]/comments — listar historial
@@ -104,6 +105,17 @@ export async function POST(
         is_active: true,
       })
     }
+
+    // Audit trail (non-blocking)
+    logAudit(admin, {
+      userId: user.id,
+      userName: authorName,
+      action: 'create_expediente_comment',
+      module: 'expedientes',
+      entityType: 'expediente_comment',
+      entityId: id,
+      description: `${authorName} comentó en expediente ${expediente.code}`,
+    }).catch(() => {})
 
     return NextResponse.json({ success: true })
   } catch (error) {

@@ -1116,6 +1116,7 @@ export type Database = {
           urgency: BarOrderUrgencyValue
           status: BarOrderStatusValue
           note: string | null
+          supplier_id: number | null
           created_by: string | null
           created_at: string
           updated_at: string
@@ -1129,6 +1130,7 @@ export type Database = {
           urgency?: BarOrderUrgencyValue
           status?: BarOrderStatusValue
           note?: string | null
+          supplier_id?: number | null
           created_by?: string | null
           created_at?: string
           updated_at?: string
@@ -1142,6 +1144,7 @@ export type Database = {
           urgency?: BarOrderUrgencyValue
           status?: BarOrderStatusValue
           note?: string | null
+          supplier_id?: number | null
           created_by?: string | null
           created_at?: string
           updated_at?: string
@@ -1157,6 +1160,7 @@ export type Database = {
           urgency: KitchenOrderUrgencyValue
           status: KitchenOrderStatusValue
           note: string | null
+          supplier_id: number | null
           created_by: string | null
           created_at: string
           updated_at: string
@@ -1169,6 +1173,7 @@ export type Database = {
           urgency?: KitchenOrderUrgencyValue
           status?: KitchenOrderStatusValue
           note?: string | null
+          supplier_id?: number | null
           created_by?: string | null
           created_at?: string
           updated_at?: string
@@ -1181,6 +1186,7 @@ export type Database = {
           urgency?: KitchenOrderUrgencyValue
           status?: KitchenOrderStatusValue
           note?: string | null
+          supplier_id?: number | null
           created_by?: string | null
           created_at?: string
           updated_at?: string

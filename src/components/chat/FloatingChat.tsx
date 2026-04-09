@@ -169,6 +169,7 @@ export function FloatingChat() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   // Persist messages to sessionStorage
   useEffect(() => {
@@ -190,9 +191,32 @@ export function FloatingChat() {
     }
   }, [open])
 
+  const handleCancel = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+    }
+    setIsThinking(false)
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: 'Mensaje cancelado.',
+        timestamp: new Date(),
+      },
+    ])
+    setTimeout(() => inputRef.current?.focus(), 100)
+  }, [])
+
   const handleSend = useCallback(async (text?: string) => {
     const messageText = (text ?? input).trim()
     if (!messageText || isThinking) return
+
+    // Abort any previous in-flight request
+    if (abortRef.current) abortRef.current.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -214,6 +238,7 @@ export function FloatingChat() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: messageText, history }),
+        signal: controller.signal,
       })
 
       if (!res.ok) throw new Error('Error')
@@ -233,7 +258,10 @@ export function FloatingChat() {
       ])
 
       if (!open) setHasUnread(true)
-    } catch {
+    } catch (err) {
+      // If aborted by user, don't add error message (handleCancel already did)
+      if (err instanceof DOMException && err.name === 'AbortError') return
+
       setMessages((prev) => [
         ...prev,
         {
@@ -244,14 +272,23 @@ export function FloatingChat() {
         },
       ])
     } finally {
-      setIsThinking(false)
-      setTimeout(() => inputRef.current?.focus(), 100)
+      if (!controller.signal.aborted) {
+        setIsThinking(false)
+        setTimeout(() => inputRef.current?.focus(), 100)
+      }
+      if (abortRef.current === controller) abortRef.current = null
     }
   }, [input, isThinking, messages, open])
 
   // Confirm an action proposal
   const handleConfirmAction = useCallback(async (proposal: ActionProposal) => {
     if (isThinking) return
+
+    // Abort any previous in-flight request
+    if (abortRef.current) abortRef.current.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
     setIsThinking(true)
 
     // Add user confirmation message
@@ -270,6 +307,7 @@ export function FloatingChat() {
           message: 'confirmar acción',
           confirmAction: proposal,
         }),
+        signal: controller.signal,
       })
 
       const data = await res.json()
@@ -281,7 +319,9 @@ export function FloatingChat() {
         timestamp: new Date(),
         actionExecuted: data.actionExecuted ?? true,
       }])
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -289,7 +329,10 @@ export function FloatingChat() {
         timestamp: new Date(),
       }])
     } finally {
-      setIsThinking(false)
+      if (!controller.signal.aborted) {
+        setIsThinking(false)
+      }
+      if (abortRef.current === controller) abortRef.current = null
     }
   }, [isThinking])
 
@@ -409,7 +452,10 @@ export function FloatingChat() {
 
   // Cleanup on unmount
   useEffect(() => {
-    return () => { recognitionRef.current?.stop() }
+    return () => {
+      recognitionRef.current?.stop()
+      abortRef.current?.abort()
+    }
   }, [])
 
   if (!profile) return null
@@ -576,6 +622,13 @@ export function FloatingChat() {
                     <span className="size-1.5 animate-bounce rounded-full bg-[#006d5a] [animation-delay:0ms]" />
                     <span className="size-1.5 animate-bounce rounded-full bg-[#006d5a] [animation-delay:150ms]" />
                     <span className="size-1.5 animate-bounce rounded-full bg-[#006d5a] [animation-delay:300ms]" />
+                    <button
+                      onClick={handleCancel}
+                      className="ml-2 flex items-center gap-1 rounded-full border border-[#ebe6df] bg-white px-2 py-0.5 text-[10px] font-medium text-[#a39e97] transition-colors hover:border-[#ea504c]/40 hover:text-[#ea504c]"
+                    >
+                      <X className="size-2.5" />
+                      Cancelar
+                    </button>
                   </div>
                 </div>
               )}

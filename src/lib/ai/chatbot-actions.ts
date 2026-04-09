@@ -113,11 +113,27 @@ export async function executeQuery(
       if (!items?.length) return 'No hay items de stock registrados.'
 
       const n = norm(itemName)
-      const match = items.find(
-        (i) => norm(i.name) === n || norm(i.name).includes(n) || n.includes(norm(i.name))
-      )
 
-      if (!match) return `No encontré "${itemName}" en el stock. Verificá el nombre en la app.`
+      // Strict matching: exact → unique contains → ambiguous → not found
+      let match = items.find((i) => norm(i.name) === n)
+      if (!match) {
+        const candidates = items.filter((i) => norm(i.name).includes(n) || n.includes(norm(i.name)))
+        if (candidates.length === 1) {
+          match = candidates[0]
+        } else if (candidates.length > 1) {
+          const options = candidates.slice(0, 6).map(c => `• **${c.name}**: ${c.current_qty} ${c.unit}`).join('\n')
+          return `"${itemName}" coincide con varios items:\n${options}\n\n¿Cuál necesitás? Decime el nombre exacto.`
+        }
+      }
+
+      if (!match) {
+        const mainWord = n.split(/\s+/).filter(w => w.length > 2)[0]
+        const suggestions = mainWord
+          ? items.filter(i => norm(i.name).includes(mainWord)).slice(0, 5).map(i => i.name)
+          : []
+        const suggestStr = suggestions.length > 0 ? ` ¿Quisiste decir: ${suggestions.join(', ')}?` : ' Verificá el nombre en la app.'
+        return `No encontré "${itemName}" en el stock.${suggestStr}`
+      }
 
       const semaphore =
         match.current_qty <= 0 || match.current_qty <= match.min_qty
@@ -138,10 +154,26 @@ export async function executeQuery(
       if (!items?.length) return 'No hay items de stock registrados.'
 
       const n = norm(itemName)
-      const match = items.find(
-        (i) => norm(i.name) === n || norm(i.name).includes(n) || n.includes(norm(i.name))
-      )
-      if (!match) return `No encontré "${itemName}" en el stock.`
+
+      // Strict matching: exact → unique contains → ambiguous → not found
+      let match = items.find((i) => norm(i.name) === n)
+      if (!match) {
+        const candidates = items.filter((i) => norm(i.name).includes(n) || n.includes(norm(i.name)))
+        if (candidates.length === 1) {
+          match = candidates[0]
+        } else if (candidates.length > 1) {
+          const options = candidates.slice(0, 6).map(c => `• **${c.name}**`).join('\n')
+          return `"${itemName}" coincide con varios items:\n${options}\n\n¿De cuál querés saber la duración? Decime el nombre exacto.`
+        }
+      }
+      if (!match) {
+        const mainWord = n.split(/\s+/).filter(w => w.length > 2)[0]
+        const suggestions = mainWord
+          ? items.filter(i => norm(i.name).includes(mainWord)).slice(0, 5).map(i => i.name)
+          : []
+        const suggestStr = suggestions.length > 0 ? ` ¿Quisiste decir: ${suggestions.join(', ')}?` : ''
+        return `No encontré "${itemName}" en el stock.${suggestStr}`
+      }
 
       // Estimate daily usage from production outputs over last 30 days
       const since = new Date()
@@ -288,13 +320,20 @@ export async function executeQuery(
 
       if (!recipes?.length) return 'No hay recetas cargadas en el sistema.'
 
-      // Find match
+      // Strict matching: exact → unique contains → ambiguous → not found
       const n = norm(recipeName)
       let match = recipes.find(r => norm(r.name) === n)
-      if (!match) match = recipes.find(r => norm(r.name).includes(n) || n.includes(norm(r.name)))
+      if (!match) {
+        const candidates = recipes.filter(r => norm(r.name).includes(n) || n.includes(norm(r.name)))
+        if (candidates.length === 1) {
+          match = candidates[0]
+        } else if (candidates.length > 1) {
+          const options = candidates.slice(0, 6).map(c => `• **${c.name}**`).join('\n')
+          return `"${recipeName}" coincide con varias recetas:\n${options}\n\n¿De cuál querés saber el costo? Decime el nombre exacto.`
+        }
+      }
 
       if (!match) {
-        // List all recipes
         const list = recipes.map(r => `- ${r.name}`).join('\n')
         return `No encontré "${recipeName}". Recetas disponibles:\n${list}`
       }
@@ -559,7 +598,7 @@ export async function matchItems(
   return rawItems.map(raw => {
     const n = norm(raw.name)
 
-    // Exact match
+    // 1. Exact match — safest
     if (stockByNorm.has(n)) {
       const match = stockByNorm.get(n)!
       return {
@@ -571,32 +610,63 @@ export async function matchItems(
       }
     }
 
-    // Contains match (both directions)
+    // 2. Contains match — check for ambiguity (multiple matches = reject)
+    const containsMatches: { key: string; si: typeof stockItems[0] }[] = []
     for (const [key, si] of stockByNorm) {
       if (key.includes(n) || n.includes(key)) {
-        return {
-          rawName: raw.name,
-          quantity: raw.quantity,
-          matchedStockId: si.id,
-          matchedStockName: si.name,
-          matchConfidence: 'probable' as const,
-        }
+        containsMatches.push({ key, si })
       }
     }
 
-    // First significant word match
+    if (containsMatches.length === 1) {
+      const { si } = containsMatches[0]
+      return {
+        rawName: raw.name,
+        quantity: raw.quantity,
+        matchedStockId: si.id,
+        matchedStockName: si.name,
+        matchConfidence: 'probable' as const,
+      }
+    }
+
+    if (containsMatches.length > 1) {
+      // Ambiguous — multiple items match, return as 'none' with suggestions
+      const suggestions = containsMatches.slice(0, 5).map(m => m.si.name)
+      return {
+        rawName: raw.name,
+        quantity: raw.quantity,
+        matchConfidence: 'none' as const,
+        _ambiguous: true,
+        _suggestions: suggestions,
+      } as ExtractedItem & { _ambiguous?: boolean; _suggestions?: string[] }
+    }
+
+    // 3. First significant word match — also check ambiguity
     const mainWord = n.split(/\s+/).filter(w => w.length > 3)[0]
     if (mainWord) {
+      const wordMatches: typeof stockItems[0][] = []
       for (const [key, si] of stockByNorm) {
         if (key.startsWith(mainWord) || mainWord.startsWith(key.split(/\s+/)[0])) {
-          return {
-            rawName: raw.name,
-            quantity: raw.quantity,
-            matchedStockId: si.id,
-            matchedStockName: si.name,
-            matchConfidence: 'probable' as const,
-          }
+          wordMatches.push(si)
         }
+      }
+      if (wordMatches.length === 1) {
+        return {
+          rawName: raw.name,
+          quantity: raw.quantity,
+          matchedStockId: wordMatches[0].id,
+          matchedStockName: wordMatches[0].name,
+          matchConfidence: 'probable' as const,
+        }
+      }
+      if (wordMatches.length > 1) {
+        return {
+          rawName: raw.name,
+          quantity: raw.quantity,
+          matchConfidence: 'none' as const,
+          _ambiguous: true,
+          _suggestions: wordMatches.slice(0, 5).map(m => m.name),
+        } as ExtractedItem & { _ambiguous?: boolean; _suggestions?: string[] }
       }
     }
 
@@ -715,6 +785,23 @@ export async function buildProposal(
 
   if (intent === 'PEDIDO_MERCADERIA') {
     const matched = await matchItems(admin, rawItems, source)
+
+    // Check for ambiguous matches — ask user to clarify instead of guessing
+    const ambiguous = matched.filter(i => (i as any)._ambiguous)
+    if (ambiguous.length > 0) {
+      const ambigLines = ambiguous.map(i => {
+        const suggestions = ((i as any)._suggestions as string[]) ?? []
+        return `• "${i.rawName}" podría ser: ${suggestions.map(s => `**${s}**`).join(', ')}`
+      })
+      return {
+        intent,
+        items: [],
+        duplicateWarnings: [],
+        confirmationText: `⚠️ **Nombres ambiguos — necesito que aclares:**\n${ambigLines.join('\n')}\n\nDecime el nombre exacto de cada producto para continuar.`,
+        readyToExecute: false,
+      }
+    }
+
     const duplicates = await checkDuplicates(admin, matched, source)
 
     const itemLines = matched.map(i => {
@@ -746,24 +833,107 @@ export async function buildProposal(
     const source: 'cocina' | 'barra' = userRole === 'barista' ? 'barra' : 'cocina'
     const matched = await matchItems(admin, rawItems, source)
 
-    const itemLines = matched.map(i => {
+    // ── AMBIGUITY CHECK — ask user to clarify before proceeding ──
+    const ambiguous = matched.filter(i => (i as any)._ambiguous)
+    if (ambiguous.length > 0) {
+      const ambigLines = ambiguous.map(i => {
+        const suggestions = ((i as any)._suggestions as string[]) ?? []
+        return `• "${i.rawName}" podría ser: ${suggestions.map(s => `**${s}**`).join(', ')}`
+      })
+      return {
+        intent,
+        items: [],
+        duplicateWarnings: [],
+        confirmationText: `⚠️ **Nombres ambiguos — necesito que aclares:**\n${ambigLines.join('\n')}\n\nDecime el nombre exacto de cada producto para continuar.`,
+        readyToExecute: false,
+      }
+    }
+
+    // ── STRICT VALIDATION ──
+    // 1. Reject ALL unmatched items — don't allow blind writes
+    const unmatched = matched.filter(i => i.matchConfidence === 'none')
+    if (unmatched.length > 0 && unmatched.length === matched.length) {
+      // Try to provide suggestions from the stock list
+      const { data: allStock } = await admin.from(source === 'barra' ? 'bar_stock_items' : 'stock_items')
+        .select('name').eq('is_active', true)
+      const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+      const unmatchedLines = unmatched.map(i => {
+        const n = norm(i.rawName)
+        const mainWord = n.split(/\s+/).filter(w => w.length > 2)[0]
+        const similar = (allStock ?? [])
+          .filter(si => mainWord && norm(si.name).includes(mainWord))
+          .slice(0, 3)
+          .map(si => si.name)
+        const suggestStr = similar.length > 0 ? ` → ¿Quisiste decir: ${similar.join(', ')}?` : ''
+        return `• "${i.rawName}"${suggestStr}`
+      })
+      return {
+        intent,
+        items: [],
+        duplicateWarnings: [],
+        confirmationText: `❌ No encontré estos items en el stock:\n${unmatchedLines.join('\n')}\n\nUsá los nombres exactos como aparecen en la app. Podés preguntar "¿qué hay en stock?" para ver la lista completa.`,
+        readyToExecute: false,
+      }
+    }
+
+    // 2. Filter out unmatched items (only process those we can identify)
+    const validItems = matched.filter(i => i.matchConfidence !== 'none')
+    const rejectedNames = unmatched.map(i => `"${i.rawName}"`).join(', ')
+
+    // 3. Validate quantities — no negatives, no absurd values, must be numeric
+    const qtyErrors: string[] = []
+    for (const item of validItems) {
+      const qty = parseFloat(item.quantity.replace(/[^\d.,-]/g, ''))
+      if (isNaN(qty)) {
+        qtyErrors.push(`${item.matchedStockName ?? item.rawName}: cantidad "${item.quantity}" no es un número válido`)
+      } else if (qty < 0) {
+        qtyErrors.push(`${item.matchedStockName ?? item.rawName}: no se puede cargar cantidad negativa (${qty})`)
+      } else if (qty > 99999) {
+        qtyErrors.push(`${item.matchedStockName ?? item.rawName}: cantidad ${qty} parece demasiado alta — verificá`)
+      }
+    }
+
+    if (qtyErrors.length > 0) {
+      return {
+        intent,
+        items: [],
+        duplicateWarnings: [],
+        confirmationText: `❌ **Cantidades inválidas:**\n${qtyErrors.map(e => `• ${e}`).join('\n')}\n\nCorregí y probá de nuevo.`,
+        readyToExecute: false,
+      }
+    }
+
+    // 4. Fetch current quantities for change preview
+    const currentQtys = new Map<string | number, { qty: number; unit: string }>()
+    if (source === 'barra') {
+      const { data: barItems } = await admin.from('bar_stock_items').select('id, current_qty, unit').eq('is_active', true)
+      for (const bi of barItems ?? []) currentQtys.set(bi.id, { qty: bi.current_qty, unit: bi.unit ?? '' })
+    } else {
+      const ids = validItems.map(i => String(i.matchedStockId)).filter(Boolean)
+      if (ids.length > 0) {
+        const { data: siItems } = await admin.from('stock_items').select('id, current_qty, unit').in('id', ids)
+        for (const si of siItems ?? []) currentQtys.set(si.id, { qty: si.current_qty, unit: si.unit ?? '' })
+      }
+    }
+
+    const itemLines = validItems.map(i => {
       const name = i.matchedStockName ?? i.rawName
-      const confidence = i.matchConfidence === 'exact' ? '' :
-        i.matchConfidence === 'probable' ? ' (coincidencia probable)' : ' ⚠️ no encontrado en stock'
-      return `• **${name}** → ${i.quantity}${confidence}`
+      const confidence = i.matchConfidence === 'probable' ? ' ⚠️ (coincidencia probable — verificá)' : ''
+      const cur = currentQtys.get(i.matchedStockId!)
+      const newQty = parseFloat(i.quantity.replace(/[^\d.,-]/g, ''))
+      const changeStr = cur ? ` (actual: ${cur.qty} ${cur.unit} → ${newQty} ${cur.unit})` : ''
+      return `• **${name}** → ${i.quantity}${changeStr}${confidence}`
     })
 
-    const unmatchedCount = matched.filter(i => i.matchConfidence === 'none').length
-
     let confirmText = `📦 **Actualizar stock:**\n${itemLines.join('\n')}`
-    if (unmatchedCount > 0) {
-      confirmText += `\n\n⚠️ ${unmatchedCount} item${unmatchedCount > 1 ? 's' : ''} no encontrado${unmatchedCount > 1 ? 's' : ''} en el sistema`
+    if (rejectedNames) {
+      confirmText += `\n\n⚠️ Ignorados (no encontrados): ${rejectedNames}`
     }
     confirmText += `\n\nEsto actualiza las cantidades en la webapp y en Fudo. ¿Confirmo?`
 
     return {
       intent,
-      items: matched,
+      items: validItems, // Only valid items — unmatched are excluded
       duplicateWarnings: [],
       confirmationText: confirmText,
       readyToExecute: false,
@@ -773,32 +943,180 @@ export async function buildProposal(
   if (intent === 'PRODUCCION_COMPLETA') {
     // message carries JSON-serialized { input: { name, qty, unit }, outputs: [{ name, qty, unit }] }
     let prodData: { input?: { name: string; qty: number; unit?: string }; outputs?: { name: string; qty: number; unit?: string }[] } = {}
-    try { prodData = JSON.parse(message ?? '{}') } catch { /* keep empty */ }
-
-    const inp = prodData.input
-    const outs = prodData.outputs ?? []
-
-    if (!inp?.name || !inp.qty) {
+    try { prodData = JSON.parse(message ?? '{}') } catch {
       return {
         intent,
         items: [],
         message: message ?? '',
         duplicateWarnings: [],
-        confirmationText: '❌ Falta información del insumo de entrada. Indicá qué procesaste y en qué cantidad.',
+        confirmationText: '❌ Los datos de producción no tienen el formato correcto. Indicá: qué procesaste, cuánto, y qué salió.',
         readyToExecute: false,
       }
     }
 
+    const inp = prodData.input
+    const outs = prodData.outputs ?? []
+
+    // ── STRICT VALIDATION ──
+    if (!inp?.name || typeof inp.name !== 'string' || !inp.name.trim()) {
+      return {
+        intent, items: [], message: message ?? '', duplicateWarnings: [],
+        confirmationText: '❌ Falta el nombre del insumo de entrada. Indicá qué procesaste (ej: "nalga", "mozzarella").',
+        readyToExecute: false,
+      }
+    }
+
+    if (!inp.qty || typeof inp.qty !== 'number' || inp.qty <= 0) {
+      return {
+        intent, items: [], message: message ?? '', duplicateWarnings: [],
+        confirmationText: `❌ La cantidad de entrada debe ser un número positivo. Recibí: "${inp.qty}".`,
+        readyToExecute: false,
+      }
+    }
+
+    if (inp.qty > 9999) {
+      return {
+        intent, items: [], message: message ?? '', duplicateWarnings: [],
+        confirmationText: `❌ La cantidad de entrada (${inp.qty}) parece demasiado alta. Verificá y probá de nuevo.`,
+        readyToExecute: false,
+      }
+    }
+
+    if (outs.length === 0) {
+      return {
+        intent, items: [], message: message ?? '', duplicateWarnings: [],
+        confirmationText: '❌ Falta indicar qué productos salieron de la producción. Ej: "7kg de milanesas y 2kg de bife".',
+        readyToExecute: false,
+      }
+    }
+
+    // Validate each output
+    const outErrors: string[] = []
+    for (let i = 0; i < outs.length; i++) {
+      const o = outs[i]
+      if (!o.name || typeof o.name !== 'string' || !o.name.trim()) {
+        outErrors.push(`Salida ${i + 1}: falta nombre`)
+      }
+      if (!o.qty || typeof o.qty !== 'number' || o.qty <= 0) {
+        outErrors.push(`${o.name ?? `Salida ${i + 1}`}: cantidad inválida (${o.qty})`)
+      }
+      if (o.qty > 99999) {
+        outErrors.push(`${o.name}: cantidad ${o.qty} parece demasiado alta`)
+      }
+    }
+
+    if (outErrors.length > 0) {
+      return {
+        intent, items: [], message: message ?? '', duplicateWarnings: [],
+        confirmationText: `❌ **Errores en las salidas:**\n${outErrors.map(e => `• ${e}`).join('\n')}`,
+        readyToExecute: false,
+      }
+    }
+
+    // Validate total output doesn't exceed input (sanity)
     const totalOut = outs.reduce((acc, o) => acc + o.qty, 0)
+    if (totalOut > inp.qty * 1.1) {
+      return {
+        intent, items: [], message: message ?? '', duplicateWarnings: [],
+        confirmationText: `❌ Las salidas (${totalOut.toFixed(2)} ${inp.unit ?? 'kg'}) superan la entrada (${inp.qty} ${inp.unit ?? 'kg'}). Revisá las cantidades.`,
+        readyToExecute: false,
+      }
+    }
+
+    // Pre-validate input stock item exists — with ambiguity detection
+    const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+    const { data: stockCheck } = await admin.from('stock_items').select('id, name, current_qty, unit').eq('is_active', true)
+    const inputNorm = norm(inp.name)
+
+    // First try exact match
+    let matchedInput = (stockCheck ?? []).find((si) => norm(si.name) === inputNorm)
+
+    // If no exact, try contains — but check for ambiguity
+    if (!matchedInput) {
+      const containsMatches = (stockCheck ?? []).filter(
+        (si) => norm(si.name).includes(inputNorm) || inputNorm.includes(norm(si.name))
+      )
+      if (containsMatches.length === 1) {
+        matchedInput = containsMatches[0]
+      } else if (containsMatches.length > 1) {
+        // Ambiguous input — ask user to clarify
+        const options = containsMatches.slice(0, 5).map(si => `**${si.name}** (${si.current_qty} ${si.unit})`).join(', ')
+        return {
+          intent, items: [], message: message ?? '', duplicateWarnings: [],
+          confirmationText: `⚠️ "${inp.name}" coincide con varios items:\n${options}\n\n¿Cuál es? Decime el nombre exacto.`,
+          readyToExecute: false,
+        }
+      }
+    }
+
+    if (!matchedInput) {
+      const suggestions = (stockCheck ?? [])
+        .filter(si => {
+          const n = norm(si.name)
+          const mainWord = inputNorm.split(/\s+/).filter(w => w.length > 2)[0]
+          return mainWord && n.includes(mainWord)
+        })
+        .slice(0, 5)
+        .map(si => si.name)
+      const suggestStr = suggestions.length > 0
+        ? `\n\n¿Quisiste decir?: ${suggestions.join(', ')}`
+        : '\n\nRevisá el nombre exacto en la sección de Stock de la app.'
+      return {
+        intent, items: [], message: message ?? '', duplicateWarnings: [],
+        confirmationText: `❌ No encontré "${inp.name}" en el stock activo.${suggestStr}`,
+        readyToExecute: false,
+      }
+    }
+
+    // Check current stock is sufficient for the declared input
+    if (matchedInput.current_qty < inp.qty) {
+      const diff = inp.qty - matchedInput.current_qty
+      return {
+        intent, items: [], message: message ?? '', duplicateWarnings: [],
+        confirmationText: `⚠️ **${matchedInput.name}** tiene solo ${matchedInput.current_qty} ${matchedInput.unit} en stock, pero querés procesar ${inp.qty} ${inp.unit ?? 'kg'}. Faltan ${diff.toFixed(2)}.\n\n¿Querés actualizar el stock primero?`,
+        readyToExecute: false,
+      }
+    }
+
     const waste = Math.max(0, inp.qty - totalOut)
     const efficiency = inp.qty > 0 ? Math.round(((inp.qty - waste) / inp.qty) * 1000) / 10 : 0
 
-    const inputLine = `📥 **Entrada:** ${inp.qty} ${inp.unit ?? 'kg'} de ${inp.name}`
-    const outputLines = outs.map((o) => `  • ${o.name}: ${o.qty} ${o.unit ?? 'kg'}`)
-    const wasteLine = waste > 0 ? `  • Merma: ${waste.toFixed(3)} kg` : ''
-    const effLine = `📊 **Eficiencia:** ${efficiency}%`
+    // Check outputs match stock items — with ambiguity detection
+    const outputWarnings: string[] = []
+    const resolvedOutputNames: string[] = []
+    for (const o of outs) {
+      const outNorm = norm(o.name)
+      // Exact match first
+      const exactOut = (stockCheck ?? []).find(si => norm(si.name) === outNorm)
+      if (exactOut) {
+        resolvedOutputNames.push(exactOut.name)
+        continue
+      }
+      // Contains match — check ambiguity
+      const containsOut = (stockCheck ?? []).filter(
+        si => norm(si.name).includes(outNorm) || outNorm.includes(norm(si.name))
+      )
+      if (containsOut.length === 1) {
+        resolvedOutputNames.push(containsOut[0].name)
+      } else if (containsOut.length > 1) {
+        const options = containsOut.slice(0, 4).map(si => si.name).join(', ')
+        outputWarnings.push(`"${o.name}" coincide con varios items (${options}) — se registra con el nombre dado, verificá`)
+        resolvedOutputNames.push(o.name)
+      } else {
+        outputWarnings.push(`"${o.name}" no está en stock — se registra pero no actualiza stock automáticamente`)
+        resolvedOutputNames.push(o.name)
+      }
+    }
 
-    const confirmText = `🔪 **Registrar producción:**\n${inputLine}\n📤 **Salidas:**\n${outputLines.join('\n')}${wasteLine ? '\n' + wasteLine : ''}\n${effLine}\n\nEsto actualiza el stock inmediatamente. ¿Confirmo?`
+    const inputLine = `📥 **Entrada:** ${inp.qty} ${inp.unit ?? 'kg'} de **${matchedInput.name}** (stock actual: ${matchedInput.current_qty} ${matchedInput.unit})`
+    const outputLines = outs.map((o, idx) => `  • ${resolvedOutputNames[idx] ?? o.name}: ${o.qty} ${o.unit ?? 'kg'}`)
+    const wasteLine = waste > 0 ? `  • Merma: ${waste.toFixed(3)} ${inp.unit ?? 'kg'}` : ''
+    const effLine = `📊 **Eficiencia:** ${efficiency}%`
+    const warningLines = outputWarnings.length > 0
+      ? `\n\n⚠️ **Avisos:**\n${outputWarnings.map(w => `• ${w}`).join('\n')}`
+      : ''
+
+    const confirmText = `🔪 **Registrar producción:**\n${inputLine}\n📤 **Salidas:**\n${outputLines.join('\n')}${wasteLine ? '\n' + wasteLine : ''}\n${effLine}${warningLines}\n\nEsto actualiza el stock inmediatamente. ¿Confirmo?`
 
     return {
       intent,
@@ -835,13 +1153,93 @@ export async function buildProposal(
   }
 
   if (intent === 'MISE_EN_PLACE') {
-    const matched = await matchItems(admin, rawItems, source)
-    const itemsList = matched.map(i => `- ✅ ${i.matchedStockName ?? i.rawName}: ${i.quantity}`).join('\n')
+    // Mise en place matches against mise_en_place_items, not stock — do a dedicated match
+    const todayStr = new Date().toISOString().split('T')[0]
+    const { data: activeShift } = await admin
+      .from('kitchen_shifts')
+      .select('id, shift_type')
+      .eq('date', todayStr)
+      .in('status', ['pending', 'in_progress'])
+      .limit(1)
+      .maybeSingle()
+
+    if (!activeShift) {
+      return {
+        intent, items: [], duplicateWarnings: [],
+        confirmationText: '❌ No hay turno de cocina activo hoy. Abrí un turno primero en la app.',
+        readyToExecute: false,
+      }
+    }
+
+    const { data: miseItems } = await admin
+      .from('mise_en_place_items')
+      .select('id, name')
+      .eq('is_active', true)
+      .in('shift', [activeShift.shift_type, 'both'])
+
+    if (!miseItems?.length) {
+      return {
+        intent, items: [], duplicateWarnings: [],
+        confirmationText: '❌ No hay items de mise en place configurados para este turno.',
+        readyToExecute: false,
+      }
+    }
+
+    const norm2 = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+    const itemLines: string[] = []
+    const validItems: ExtractedItem[] = []
+    const errors: string[] = []
+
+    for (const raw of rawItems) {
+      const n = norm2(raw.name)
+      // Exact match
+      let found = miseItems.find(m => norm2(m.name) === n)
+      if (!found) {
+        // Contains — check ambiguity
+        const candidates = miseItems.filter(m => norm2(m.name).includes(n) || n.includes(norm2(m.name)))
+        if (candidates.length === 1) {
+          found = candidates[0]
+        } else if (candidates.length > 1) {
+          errors.push(`"${raw.name}" coincide con varios: ${candidates.map(c => `**${c.name}**`).join(', ')}. ¿Cuál es?`)
+          continue
+        }
+      }
+      if (!found) {
+        const allNames = miseItems.map(m => m.name).join(', ')
+        errors.push(`"${raw.name}" no está en mise en place. Items disponibles: ${allNames}`)
+        continue
+      }
+      itemLines.push(`- ✅ ${found.name}: ${raw.quantity}`)
+      validItems.push({
+        rawName: raw.name,
+        quantity: raw.quantity,
+        matchedStockId: found.id,
+        matchedStockName: found.name,
+        matchConfidence: 'exact',
+      })
+    }
+
+    if (errors.length > 0) {
+      return {
+        intent, items: [], duplicateWarnings: [],
+        confirmationText: `⚠️ **Necesito que aclares:**\n${errors.map(e => `• ${e}`).join('\n')}`,
+        readyToExecute: false,
+      }
+    }
+
+    if (validItems.length === 0) {
+      return {
+        intent, items: [], duplicateWarnings: [],
+        confirmationText: '❌ No pude identificar ningún item de mise en place. Revisá los nombres.',
+        readyToExecute: false,
+      }
+    }
+
     return {
       intent,
-      items: matched,
+      items: validItems,
       duplicateWarnings: [],
-      confirmationText: `👨‍🍳 **Mise en place completado:**\n${itemsList}\n\n¿Marco como listo?`,
+      confirmationText: `👨‍🍳 **Mise en place completado:**\n${itemLines.join('\n')}\n\n¿Marco como listo?`,
       readyToExecute: false,
     }
   }
@@ -943,23 +1341,49 @@ export async function executeAction(
       const { syncToFudo } = await import('@/lib/fudo/stock-sync')
 
       for (const item of proposal.items) {
+        // Double-check: skip unmatched items (should be filtered in buildProposal but defensive)
         if (!item.matchedStockId || item.matchConfidence === 'none') {
-          result.errors.push(`${item.rawName}: no encontrado en stock`)
+          result.errors.push(`${item.rawName}: no encontrado en stock — ignorado`)
           continue
         }
 
-        const newQty = parseFloat(item.quantity.replace(/[^\d.,]/g, '')) || 0
+        const rawQty = item.quantity.replace(/[^\d.,-]/g, '')
+        const newQty = parseFloat(rawQty)
+
+        // Defensive validation at execution time (belt + suspenders)
+        if (isNaN(newQty)) {
+          result.errors.push(`${item.matchedStockName ?? item.rawName}: cantidad "${item.quantity}" no es numérica`)
+          continue
+        }
+        if (newQty < 0) {
+          result.errors.push(`${item.matchedStockName ?? item.rawName}: cantidad negativa no permitida`)
+          continue
+        }
+        if (newQty > 99999) {
+          result.errors.push(`${item.matchedStockName ?? item.rawName}: cantidad ${newQty} excede el máximo`)
+          continue
+        }
+
         const stockItemId = String(item.matchedStockId)
 
-        const syncResult = await syncToFudo(admin, stockItemId, newQty, userId)
+        try {
+          const syncResult = await syncToFudo(admin, stockItemId, newQty, userId)
 
-        if (syncResult.success) {
-          result.created++
-          const fudoTag = syncResult.fudoSynced ? ' (+ Fudo ✓)' : ''
-          result.details.push(`${item.matchedStockName ?? item.rawName} → ${item.quantity}${fudoTag}`)
-        } else {
-          result.errors.push(`${item.matchedStockName ?? item.rawName}: ${syncResult.error}`)
+          if (syncResult.success) {
+            result.created++
+            const fudoTag = syncResult.fudoSynced ? ' (+ Fudo ✓)' : syncResult.fudoSynced === false ? ' (webapp OK, Fudo ⚠️)' : ''
+            result.details.push(`${item.matchedStockName ?? item.rawName} → ${newQty}${fudoTag}`)
+          } else {
+            result.errors.push(`${item.matchedStockName ?? item.rawName}: ${syncResult.error ?? 'Error al sincronizar'}`)
+          }
+        } catch (err) {
+          result.errors.push(`${item.matchedStockName ?? item.rawName}: ${err instanceof Error ? err.message : 'Error inesperado'}`)
         }
+      }
+
+      // If nothing was updated, mark as failure
+      if (result.created === 0 && result.errors.length > 0) {
+        result.success = false
       }
 
       // Audit (non-blocking)
@@ -970,36 +1394,82 @@ export async function executeAction(
           action: 'chatbot_stock_update',
           module: 'stock',
           entity_type: 'stock_item',
-          description: `${userName} actualizó ${result.created} item(s) de stock vía chatbot: ${result.details.join(', ')}`,
-          metadata: { items: proposal.items, channel: 'chatbot' },
+          description: `${userName} actualizó ${result.created} item(s) de stock vía chatbot: ${result.details.join(', ')}${result.errors.length > 0 ? ` | Errores: ${result.errors.join(', ')}` : ''}`,
+          metadata: { items: proposal.items, errors: result.errors, channel: 'chatbot' },
         })
       } catch { /* audit is non-blocking */ }
     }
 
     if (proposal.intent === 'PRODUCCION_COMPLETA') {
       let prodData: { input?: { name: string; qty: number; unit?: string }; outputs?: { name: string; qty: number; unit?: string }[] } = {}
-      try { prodData = JSON.parse(proposal.message ?? '{}') } catch { /* keep empty */ }
+      try { prodData = JSON.parse(proposal.message ?? '{}') } catch {
+        result.success = false
+        result.errors.push('Datos de producción con formato inválido')
+        return result
+      }
 
       const inp = prodData.input
       const outs = prodData.outputs ?? []
 
-      if (!inp?.name || !inp.qty) {
+      // ── STRICT RE-VALIDATION at execution time (belt + suspenders) ──
+      if (!inp?.name?.trim() || !inp.qty || typeof inp.qty !== 'number' || inp.qty <= 0) {
         result.success = false
-        result.errors.push('Datos de producción incompletos')
+        result.errors.push('Datos de producción incompletos o inválidos')
         return result
       }
 
-      // Match input stock item
-      const { data: stockItems } = await admin.from('stock_items').select('id, name').eq('is_active', true)
+      if (outs.length === 0) {
+        result.success = false
+        result.errors.push('Faltan las salidas de producción')
+        return result
+      }
+
+      // Validate each output
+      for (const o of outs) {
+        if (!o.name?.trim() || !o.qty || typeof o.qty !== 'number' || o.qty <= 0) {
+          result.success = false
+          result.errors.push(`Salida "${o.name ?? '?'}" tiene datos inválidos`)
+          return result
+        }
+      }
+
+      // Validate total output vs input
+      const totalOut = outs.reduce((acc, o) => acc + o.qty, 0)
+      if (totalOut > inp.qty * 1.1) {
+        result.success = false
+        result.errors.push(`Las salidas (${totalOut.toFixed(2)}) superan la entrada (${inp.qty}). Operación rechazada.`)
+        return result
+      }
+
+      // Match input stock item — strict: exact first, then unique contains, reject ambiguous
+      const { data: stockItems } = await admin.from('stock_items').select('id, name, current_qty, unit').eq('is_active', true)
       const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
       const inputNorm = norm(inp.name)
-      const matchedInput = (stockItems ?? []).find(
-        (si) => norm(si.name) === inputNorm || norm(si.name).includes(inputNorm) || inputNorm.includes(norm(si.name))
-      )
+
+      let matchedInput = (stockItems ?? []).find((si) => norm(si.name) === inputNorm)
+      if (!matchedInput) {
+        const containsMatches = (stockItems ?? []).filter(
+          (si) => norm(si.name).includes(inputNorm) || inputNorm.includes(norm(si.name))
+        )
+        if (containsMatches.length === 1) {
+          matchedInput = containsMatches[0]
+        } else if (containsMatches.length > 1) {
+          result.success = false
+          result.errors.push(`"${inp.name}" coincide con varios items: ${containsMatches.slice(0, 5).map(si => si.name).join(', ')}. Usá el nombre exacto.`)
+          return result
+        }
+      }
 
       if (!matchedInput) {
         result.success = false
-        result.errors.push(`No encontré "${inp.name}" en el stock. Usá el nombre exacto del insumo.`)
+        result.errors.push(`No encontré "${inp.name}" en el stock activo. Usá el nombre exacto.`)
+        return result
+      }
+
+      // Re-check stock availability at execution time (could've changed since proposal)
+      if (matchedInput.current_qty < inp.qty) {
+        result.success = false
+        result.errors.push(`Stock insuficiente: ${matchedInput.name} tiene ${matchedInput.current_qty} ${matchedInput.unit} pero querés procesar ${inp.qty}. Actualizá el stock primero.`)
         return result
       }
 
@@ -1007,7 +1477,7 @@ export async function executeAction(
       const { data: order, error: orderErr } = await admin
         .from('production_orders')
         .insert({
-          name: `Despiece ${inp.name} ${inp.qty}${inp.unit ?? 'kg'} (chat)`,
+          name: `Despiece ${matchedInput.name} ${inp.qty}${inp.unit ?? 'kg'} (chat)`,
           status: 'draft',
           chef_id: userId,
           notes: `Registrado vía chatbot por ${userName}`,
@@ -1017,7 +1487,7 @@ export async function executeAction(
 
       if (orderErr || !order) {
         result.success = false
-        result.errors.push(`Error al crear la orden: ${orderErr?.message}`)
+        result.errors.push(`Error al crear la orden: ${orderErr?.message ?? 'respuesta vacía'}`)
         return result
       }
 
@@ -1030,16 +1500,28 @@ export async function executeAction(
       })
 
       if (inputErr) {
+        // Rollback: delete the order since input failed
+        await admin.from('production_orders').delete().eq('id', order.id)
+        result.success = false
         result.errors.push(`Error al registrar entrada: ${inputErr.message}`)
+        return result
       }
 
-      // Add outputs (match stock items by name when possible)
+      // Add outputs (match stock items by name — strict: exact first, unique contains, reject ambiguous)
+      let outputsFailed = false
       for (const out of outs) {
         const outNorm = norm(out.name)
-        const matchedOut = (stockItems ?? []).find(
-          (si) => norm(si.name) === outNorm || norm(si.name).includes(outNorm) || outNorm.includes(norm(si.name))
-        )
-        await admin.from('production_outputs').insert({
+        // Exact match first
+        let matchedOut = (stockItems ?? []).find((si) => norm(si.name) === outNorm)
+        if (!matchedOut) {
+          // Contains match — only if unambiguous
+          const outContains = (stockItems ?? []).filter(
+            (si) => norm(si.name).includes(outNorm) || outNorm.includes(norm(si.name))
+          )
+          if (outContains.length === 1) matchedOut = outContains[0]
+          // If ambiguous (>1), leave as null — won't link to stock
+        }
+        const { error: outErr } = await admin.from('production_outputs').insert({
           production_order_id: order.id,
           stock_item_id: matchedOut?.id ?? null,
           output_name: out.name,
@@ -1047,9 +1529,20 @@ export async function executeAction(
           unit: out.unit ?? 'kg',
           is_waste: false,
         })
+        if (outErr) {
+          result.errors.push(`Error al registrar salida "${out.name}": ${outErr.message}`)
+          outputsFailed = true
+        }
       }
 
-      // Complete the order (updates stock)
+      if (outputsFailed) {
+        // Don't complete — leave as draft so it can be fixed in the UI
+        result.success = false
+        result.errors.push('Orden dejada como borrador por errores. Completala desde la app en Producción.')
+        return result
+      }
+
+      // Complete the order (updates stock via RPC)
       const { data: completed, error: completeErr } = await admin.rpc('complete_production_order', {
         p_order_id: order.id,
         p_user_id: userId,
@@ -1057,7 +1550,7 @@ export async function executeAction(
 
       if (completeErr) {
         result.success = false
-        result.errors.push(`Error al completar: ${completeErr.message}`)
+        result.errors.push(`Error al completar producción: ${completeErr.message}. La orden quedó como borrador.`)
         return result
       }
 
@@ -1066,16 +1559,19 @@ export async function executeAction(
 
       // Sync affected stock items to Fudo
       const movements = completedData?.movements ?? []
+      let fudoTag = ''
       if (movements.length > 0) {
-        const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
-        const fudoResult = await syncProductionToFudo(admin, movements, userId)
-        const fudoTag = fudoResult.synced > 0 ? ` (Fudo ✓ ${fudoResult.synced} items)` : ''
-        result.created = 1
-        result.details.push(`Producción completada — ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name} → ${outs.length} productos, ${efficiency}% eficiencia${fudoTag}`)
-      } else {
-        result.created = 1
-        result.details.push(`Producción completada — ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name} → ${outs.length} productos, ${efficiency}% eficiencia`)
+        try {
+          const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
+          const fudoResult = await syncProductionToFudo(admin, movements, userId)
+          fudoTag = fudoResult.synced > 0 ? ` (Fudo ✓ ${fudoResult.synced} items)` : ' (Fudo: sin items vinculados)'
+        } catch (err) {
+          fudoTag = ` (Fudo ⚠️ ${err instanceof Error ? err.message : 'error de sync'})`
+        }
       }
+
+      result.created = 1
+      result.details.push(`Producción completada — ${inp.qty}${inp.unit ?? 'kg'} de ${matchedInput.name} → ${outs.length} productos, ${efficiency}% eficiencia${fudoTag}`)
 
       try {
         await admin.from('audit_trail').insert({
@@ -1084,8 +1580,8 @@ export async function executeAction(
           action: 'chatbot_produccion',
           module: 'cocina',
           entity_type: 'production_order',
-          description: `${userName} registró producción vía chatbot: ${inp.qty}${inp.unit ?? 'kg'} de ${inp.name}`,
-          metadata: { order_id: order.id, input: inp, outputs: outs, efficiency, channel: 'chatbot' },
+          description: `${userName} registró producción vía chatbot: ${inp.qty}${inp.unit ?? 'kg'} de ${matchedInput.name}`,
+          metadata: { order_id: order.id, input: inp, outputs: outs, efficiency, movements_count: movements.length, channel: 'chatbot' },
         })
       } catch { /* audit is non-blocking */ }
     }
@@ -1184,11 +1680,20 @@ export async function executeAction(
 
         for (const item of proposal.items) {
           const itemName = norm(item.rawName)
-          const match = (miseItems ?? []).find(m =>
-            norm(m.name) === itemName ||
-            norm(m.name).includes(itemName) ||
-            itemName.includes(norm(m.name))
-          )
+
+          // Strict matching: exact first, then unique contains, reject ambiguous
+          let match = (miseItems ?? []).find(m => norm(m.name) === itemName)
+          if (!match) {
+            const candidates = (miseItems ?? []).filter(m =>
+              norm(m.name).includes(itemName) || itemName.includes(norm(m.name))
+            )
+            if (candidates.length === 1) {
+              match = candidates[0]
+            } else if (candidates.length > 1) {
+              result.errors.push(`"${item.rawName}" coincide con varios items: ${candidates.map(c => c.name).join(', ')}. Usá el nombre exacto.`)
+              continue
+            }
+          }
 
           if (!match) {
             result.errors.push(`No encontré "${item.rawName}" en mise en place`)

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyOrderToEncargados, notifyOrderStatusChange } from '@/lib/email/send'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // POST /api/kitchen/bar
@@ -43,12 +44,36 @@ export async function POST(request: NextRequest) {
         .eq('id', itemId)
 
       if (error) throw error
+
+      logAudit(admin, {
+        userId: user.id,
+        userName: null,
+        action: 'update_bar_stock',
+        module: 'barra',
+        entityType: 'bar_stock_item',
+        entityId: String(itemId),
+        description: `Stock de barra item #${itemId} actualizado a ${qty ?? 0}`,
+        metadata: { itemId, qty, detail, isUrgent },
+      }).catch(() => {})
+
       return NextResponse.json({ success: true })
     }
 
     // ----- CREATE ORDER -----
     if (body.action === 'create_order') {
       const { barStockItemId, productName, category, quantity, urgency, note } = body
+
+      // Role check: only barista, cocina, encargado, socio can create bar orders
+      const { data: creatorProfile } = await admin
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      const allowedBarRoles = ['barista', 'cocina', 'encargado', 'socio']
+      if (!creatorProfile || !allowedBarRoles.includes(creatorProfile.role)) {
+        return NextResponse.json({ success: false, error: 'No tenés permiso para crear pedidos de barra' }, { status: 403 })
+      }
 
       // 1) Insert bar_order
       // Table columns: id, product_name, category, quantity, urgency, status, note, requested_by, created_at, updated_at
@@ -70,6 +95,16 @@ export async function POST(request: NextRequest) {
         requested_by: user.id,
       })
       if (orderError) throw orderError
+
+      logAudit(admin, {
+        userId: user.id,
+        userName: null,
+        action: 'create_bar_order',
+        module: 'barra',
+        entityType: 'bar_order',
+        description: `Pedido de barra creado: ${productName} x ${quantity}`,
+        metadata: { productName, category, quantity, urgency, note },
+      }).catch(() => {})
 
       // 2) Create announcement for encargado
       const urgencyLabels: Record<string, string> = {
@@ -131,6 +166,17 @@ export async function POST(request: NextRequest) {
 
       if (error) throw error
 
+      logAudit(admin, {
+        userId: user.id,
+        userName: null,
+        action: 'update_bar_order_status',
+        module: 'barra',
+        entityType: 'bar_order',
+        entityId: String(orderId),
+        description: `Pedido de barra #${orderId} cambiado a "${status}"`,
+        metadata: { orderId, status },
+      }).catch(() => {})
+
       // Notify the order creator about status change
       if (status === 'ordered' || status === 'received' || status === 'cancelled') {
         const { data: order } = await admin
@@ -190,6 +236,18 @@ export async function POST(request: NextRequest) {
         .eq('id', itemId)
 
       if (error) throw error
+
+      logAudit(admin, {
+        userId: user.id,
+        userName: null,
+        action: 'update_bar_item_supplier',
+        module: 'barra',
+        entityType: 'bar_stock_item',
+        entityId: String(itemId),
+        description: `Proveedor de item de barra #${itemId} actualizado a ${supplierId || 'ninguno'}`,
+        metadata: { itemId, supplierId },
+      }).catch(() => {})
+
       return NextResponse.json({ success: true })
     }
 

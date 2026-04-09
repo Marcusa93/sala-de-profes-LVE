@@ -36,14 +36,14 @@ type Order = {
   urgency: string
   status: string
   note: string | null
-  supplier_id: string | null
+  supplier_id: number | null
   created_by: string | null
   created_at: string
   source: 'barra' | 'cocina'
 }
 
 type Supplier = {
-  id: string
+  id: number
   name: string
   phone: string | null
   contact_name: string | null
@@ -84,7 +84,7 @@ export default function PedidosPage() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [filter, setFilter] = useState<'all' | 'barra' | 'cocina'>('all')
   const [assignDialog, setAssignDialog] = useState<{ order: Order } | null>(null)
-  const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null)
+  const [expandedSupplier, setExpandedSupplier] = useState<number | null>(null)
 
   const canManage = isManagerOrAbove(profile?.role)
 
@@ -97,8 +97,8 @@ export default function PedidosPage() {
       supabase.from('profiles').select('id, first_name, last_name').eq('is_active', true),
     ])
 
-    const bar = (barRes.data ?? []).map((o) => ({ ...o, source: 'barra' as const, supplier_id: null })) as unknown as Order[]
-    const kitchen = (kitchenRes.data ?? []).map((o) => ({ ...o, source: 'cocina' as const })) as unknown as Order[]
+    const bar = (barRes.data ?? []).map((o) => ({ ...o, source: 'barra' as const, supplier_id: (o as Record<string, unknown>).supplier_id as number | null ?? null })) as unknown as Order[]
+    const kitchen = (kitchenRes.data ?? []).map((o) => ({ ...o, source: 'cocina' as const, supplier_id: (o as Record<string, unknown>).supplier_id as number | null ?? null })) as unknown as Order[]
     setBarOrders(bar)
     setKitchenOrders(kitchen)
     setSuppliers((suppRes.data ?? []) as unknown as Supplier[])
@@ -118,7 +118,7 @@ export default function PedidosPage() {
 
   // Group by supplier
   const grouped = useMemo(() => {
-    const supplierMap = new Map<string, { supplier: Supplier; orders: Order[] }>()
+    const supplierMap = new Map<number, { supplier: Supplier; orders: Order[] }>()
     const noSupplier: Order[] = []
 
     for (const order of allOrders) {
@@ -172,14 +172,19 @@ export default function PedidosPage() {
     }
   }
 
-  async function assignSupplier(order: Order, supplierId: string) {
+  async function assignSupplier(order: Order, supplierId: number) {
     const table = order.source === 'barra' ? 'bar_orders' : 'kitchen_orders'
     const supabase = createClient()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.from(table) as any).update({ supplier_id: supplierId }).eq('id', order.id)
-    setAssignDialog(null)
-    toast.success('Proveedor asignado')
-    fetchData()
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await (supabase.from(table) as any).update({ supplier_id: supplierId }).eq('id', order.id)
+      if (error) throw error
+      setAssignDialog(null)
+      toast.success('Proveedor asignado')
+      fetchData()
+    } catch {
+      toast.error('Error al asignar proveedor')
+    }
   }
 
   // Build WhatsApp message for a supplier group

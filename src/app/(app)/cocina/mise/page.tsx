@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/motion'
 import { KITCHEN_SHIFT_TYPES, KITCHEN_FAMILIES, MISE_RECORD_STATUSES } from '@/lib/constants'
 import type { KitchenShiftTypeValue, KitchenFamilyValue, MiseRecordStatusValue } from '@/types/database'
+import { logAuditClient } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -138,10 +139,12 @@ export default function MisePage() {
     const supabase = createClient()
     const existing = records.get(itemId)
 
+    const itemName = items.find((i) => i.id === itemId)?.name ?? String(itemId)
     if (existing) {
       await supabase.from('mise_en_place_records')
         .update({ status, quantity_produced: qty ?? existing.quantity_produced, produced_by: profile?.id })
         .eq('id', existing.id)
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'update_mise_status', module: 'cocina', entityType: 'mise_en_place', description: `User actualizó mise: ${itemName} -> ${status}` })
       setRecords((prev) => {
         const next = new Map(prev)
         next.set(itemId, { ...existing, status, quantity_produced: qty ?? existing.quantity_produced })
@@ -153,6 +156,7 @@ export default function MisePage() {
         .select('id, mise_en_place_item_id, status, quantity_produced, note')
         .single()
       if (data) {
+        logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'update_mise_status', module: 'cocina', entityType: 'mise_en_place', description: `User actualizó mise: ${itemName} -> ${status}` })
         setRecords((prev) => {
           const next = new Map(prev)
           next.set(itemId, data)

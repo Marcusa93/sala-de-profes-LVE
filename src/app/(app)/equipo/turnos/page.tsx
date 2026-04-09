@@ -55,6 +55,7 @@ import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
 import { ROLES, ROLE_OPTIONS } from '@/lib/constants'
 import type { AppRole, ShiftInsert } from '@/types/database'
+import { logAuditClient } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -379,7 +380,9 @@ export default function EquipoTurnosPage() {
           .eq('id', editingShift.id)
 
         if (error) throw error
+        const emp = employees.find(e => e.id === formUserId)
         toast.success('Turno actualizado correctamente')
+        logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'update_shift', module: 'turnos', entityType: 'shift', description: `Admin editó turno de: ${emp?.first_name ?? formUserId}` })
       } else {
         // Create
         const insertData: ShiftInsert = {
@@ -395,7 +398,9 @@ export default function EquipoTurnosPage() {
         const { error } = await supabase.from('shifts').insert(insertData)
 
         if (error) throw error
+        const emp = employees.find(e => e.id === formUserId)
         toast.success('Turno creado correctamente')
+        logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'create_shift', module: 'turnos', entityType: 'shift', description: `Admin creó turno para: ${emp?.first_name ?? formUserId}` })
       }
 
       setDialogOpen(false)
@@ -428,6 +433,7 @@ export default function EquipoTurnosPage() {
 
       if (error) throw error
       toast.success('Turno eliminado correctamente')
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'delete_shift', module: 'turnos', entityType: 'shift', description: `Admin eliminó turno de: ${deletingShift.profile?.first_name ?? deletingShift.user_id}` })
       setDeleteDialogOpen(false)
       setDeletingShift(null)
       await fetchShifts()

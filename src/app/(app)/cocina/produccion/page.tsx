@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import {
   Plus, ChefHat, CheckCircle2, Clock, XCircle, ChevronRight,
@@ -9,27 +9,7 @@ import {
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { cn } from '@/lib/utils'
 import { LoadingState } from '@/components/ui/LoadingState'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type OrderSummary = {
-  id: number
-  name: string
-  status: 'draft' | 'in_progress' | 'completed' | 'cancelled'
-  parent_order_id: number | null
-  template_name: string | null
-  chef_name: string | null
-  created_at: string
-  completed_at: string | null
-  summary: {
-    total_input_qty: number
-    total_output_qty: number
-    total_waste_qty: number
-    efficiency_pct: number | null
-  }
-}
+import { useProduccionOrders, type OrderSummary } from '@/lib/hooks/use-produccion'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,26 +40,8 @@ function formatDate(iso: string) {
 // ---------------------------------------------------------------------------
 
 export default function ProduccionPage() {
-  const [orders, setOrders] = useState<OrderSummary[]>([])
-  const [loading, setLoading] = useState(true)
+  const { orders, isLoading: loading } = useProduccionOrders(30)
   const [statusFilter, setStatusFilter] = useState<string>('all')
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/produccion/orders?days=30')
-      if (res.ok) {
-        const json = await res.json()
-        setOrders(json.orders ?? [])
-      }
-    } catch {
-      // Silently handle — empty list shown
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
 
   const filtered = statusFilter === 'all'
     ? orders

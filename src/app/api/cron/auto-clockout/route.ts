@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/auto-clockout
@@ -120,6 +121,18 @@ export async function GET(request: NextRequest) {
         closed++
         details.push(`${empName}: ${closingTime.slice(0, 5)} (${source})`)
       }
+    }
+
+    // Audit trail (non-blocking)
+    if (closed > 0) {
+      logAudit(admin, {
+        userId: null,
+        userName: 'Sistema',
+        action: 'auto_clockout',
+        module: 'asistencia',
+        entityType: 'attendance_log',
+        description: `Auto-egreso de ${closed} empleados`,
+      })
     }
 
     return NextResponse.json({

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { logAudit } from '@/lib/audit'
 import * as XLSX from 'xlsx'
 import { startOfWeek, addDays, format } from 'date-fns'
 
@@ -133,6 +134,16 @@ export async function POST(request: NextRequest) {
         if ((count ?? 0) > 0) {
           await admin.from('shifts').delete()
             .gte('shift_date', weekStartParam).lte('shift_date', weekEnd)
+
+          // Audit trail (non-blocking)
+          logAudit(admin, {
+            userId: user.id,
+            userName: null,
+            action: 'delete_shifts_week',
+            module: 'turnos',
+            entityType: 'shift',
+            description: `Admin borró turnos de semana ${weekStartParam} para reemplazar`,
+          })
         }
       }
       return processWeeklyGrid(rows, headers, employees, user.id, weekStartParam, admin)
@@ -259,6 +270,18 @@ async function processWeeklyGrid(
         created.push(`${match.first_name} ${match.last_name} — ${date} ${timeRange.start}-${timeRange.end}`)
       }
     }
+  }
+
+  // Audit trail (non-blocking)
+  if (created.length > 0) {
+    logAudit(admin, {
+      userId: createdBy,
+      userName: null,
+      action: 'upload_shifts',
+      module: 'turnos',
+      entityType: 'shift',
+      description: `Admin subió ${created.length} turnos para semana ${format(weekMonday, 'yyyy-MM-dd')}`,
+    })
   }
 
   return NextResponse.json({
@@ -397,6 +420,18 @@ async function processRowPerShift(
     } else {
       created.push(`${match.first_name} ${match.last_name} — ${date} ${start}-${end}`)
     }
+  }
+
+  // Audit trail (non-blocking)
+  if (created.length > 0) {
+    logAudit(admin, {
+      userId: createdBy,
+      userName: null,
+      action: 'upload_shifts',
+      module: 'turnos',
+      entityType: 'shift',
+      description: `Admin subió ${created.length} turnos (formato fila por turno)`,
+    })
   }
 
   return NextResponse.json({

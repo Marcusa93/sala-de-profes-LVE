@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyExpedienteToResponsible } from '@/lib/email/send'
 import { STATUS_TRANSITIONS, EXPEDIENTE_STATUSES } from '@/lib/constants/expedientes'
 import type { ExpedienteStatus } from '@/types/expedientes'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/expedientes/[id]/status — transición de estado
@@ -135,6 +136,18 @@ export async function PATCH(
       action: `Cambio de estado: ${fromLabel} → ${toLabel}`,
       authorName,
       detail: closeReason || undefined,
+    }).catch(() => {})
+
+    // Audit trail (non-blocking)
+    logAudit(admin, {
+      userId: user.id,
+      userName: authorName,
+      action: 'update_expediente_status',
+      module: 'expedientes',
+      entityType: 'expediente',
+      entityId: id,
+      description: `${authorName} cambió estado de expediente a ${toLabel}`,
+      metadata: { from_status: currentStatus, to_status: newStatus },
     }).catch(() => {})
 
     return NextResponse.json({ success: true })

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // POST /api/kitchen/produce
@@ -62,6 +63,17 @@ export async function POST(request: NextRequest) {
         { status: 500 },
       )
     }
+
+    logAudit(supabase, {
+      userId: user.id,
+      userName: null,
+      action: 'produce_recipe',
+      module: 'produccion',
+      entityType: 'production',
+      entityId: String(recipeId),
+      description: `Producción de receta #${recipeId}: ${portions} porciones`,
+      metadata: { recipeId, portions, referenceId },
+    }).catch(() => {})
 
     // data es el JSONB que devuelve la función
     return NextResponse.json(data)

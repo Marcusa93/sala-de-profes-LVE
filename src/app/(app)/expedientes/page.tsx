@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import Link from 'next/link'
 import { Plus, Search, FolderOpen, X } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
+import { useExpedientes } from '@/lib/hooks/use-expedientes'
 import { ExpedienteCard } from '@/components/expedientes/ExpedienteCard'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -11,7 +12,6 @@ import { ActionBanner } from '@/components/ui/ActionBanner'
 import { deriveExpedienteActions, sortActions } from '@/lib/actions/operational'
 import { EXPEDIENTE_TYPES } from '@/lib/constants/expedientes'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
-import type { ExpedienteWithPeople } from '@/types/expedientes'
 
 const STATUS_TABS = [
   { key: 'activos', label: 'Activos' },
@@ -21,8 +21,6 @@ const STATUS_TABS = [
 
 export default function ExpedientesPage() {
   const { profile } = useProfileContext()
-  const [expedientes, setExpedientes] = useState<ExpedienteWithPeople[]>([])
-  const [loading, setLoading] = useState(true)
   const [statusTab, setStatusTab] = useState<string>('activos')
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [search, setSearch] = useState('')
@@ -35,25 +33,12 @@ export default function ExpedientesPage() {
     return () => clearTimeout(debounceRef.current)
   }, [search])
 
-  const fetchExpedientes = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params = new URLSearchParams()
-      if (statusTab) params.set('status', statusTab)
-      if (typeFilter) params.set('type', typeFilter)
-      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim())
-
-      const res = await fetch(`/api/expedientes?${params}`)
-      const json = await res.json()
-      setExpedientes(json.data ?? [])
-    } catch {
-      setExpedientes([])
-    } finally {
-      setLoading(false)
-    }
-  }, [statusTab, typeFilter, debouncedSearch])
-
-  useEffect(() => { fetchExpedientes() }, [fetchExpedientes])
+  // SWR hook
+  const { expedientes, isLoading: loading, mutate } = useExpedientes({
+    status: statusTab,
+    type: typeFilter,
+    search: debouncedSearch,
+  })
 
   const isSocioOrEncargado = profile?.role === 'socio' || profile?.role === 'encargado'
   const hasActiveFilters = typeFilter || debouncedSearch

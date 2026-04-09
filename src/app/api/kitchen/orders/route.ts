@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyOrderToEncargados } from '@/lib/email/send'
+import { logAudit } from '@/lib/audit'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -63,6 +64,20 @@ export async function POST(request: NextRequest) {
 
       const { error: orderError } = await admin.from('kitchen_orders').insert(inserts)
       if (orderError) throw orderError
+
+      const creatorName = profile
+        ? `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'Cocina'
+        : 'Cocina'
+      const itemsSummary = items.map((i) => `${i.product_name} x ${i.quantity}`).join(', ')
+      logAudit(admin, {
+        userId: user.id,
+        userName: creatorName,
+        action: 'create_kitchen_order',
+        module: 'pedidos',
+        entityType: 'kitchen_order',
+        description: `${creatorName} creó pedido de cocina: ${itemsSummary}`,
+        metadata: { items, urgency: orderUrgency, note },
+      }).catch(() => {})
 
       // Create announcement for encargados
       const authorName = profile
@@ -149,6 +164,17 @@ export async function POST(request: NextRequest) {
         .eq('id', orderId)
 
       if (error) throw error
+
+      logAudit(admin, {
+        userId: user.id,
+        userName: null,
+        action: 'update_kitchen_order_status',
+        module: 'pedidos',
+        entityType: 'kitchen_order',
+        entityId: String(orderId),
+        description: `Pedido de cocina #${orderId} cambiado a "${status}"`,
+        metadata: { orderId, status },
+      }).catch(() => {})
 
       // Notify the order creator about status change
       if (status === 'ordered' || status === 'received' || status === 'cancelled') {

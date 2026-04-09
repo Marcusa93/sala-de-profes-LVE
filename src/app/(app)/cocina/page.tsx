@@ -51,6 +51,7 @@ import type {
   ChecklistTimingValue,
   KitchenFamilyValue,
 } from '@/types/database'
+import { logAuditClient } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -265,6 +266,8 @@ export default function CocinaHubPage() {
       // Revert on failure
       setItems((prev) => prev.map((i) => i.id === itemId ? { ...i, status: 'pending' } : i))
       console.error('Error al completar tarea:', error)
+    } else {
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'update_checklist_item', module: 'cocina', entityType: 'checklist_item', description: 'User marcó checklist item' })
     }
   }
 

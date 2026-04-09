@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
@@ -12,7 +12,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { createClient } from '@/lib/supabase/client'
+import { useMyAttendance, useAttendanceHistory } from '@/lib/hooks/use-attendance'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { SuccessBurst } from '@/components/ui/success-burst'
 import { playSchoolBell } from '@/lib/sounds'
@@ -20,18 +20,9 @@ import {
   getGeolocation, getDeviceFingerprint, getNetworkInfo,
   type GeoResult,
 } from '@/lib/attendance/security'
+import { logAuditClient } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
-type AttendanceRecord = {
-  id: string
-  operative_date: string
-  clock_in_at: string
-  clock_out_at: string | null
-  status: 'open' | 'closed' | 'missing_checkout'
-  notes: string | null
-  is_suspicious?: boolean
-  clock_in_lat?: number | null
-}
 type TodayStatus = 'not_clocked_in' | 'clocked_in' | 'completed'
 type FlowState = 'idle' | 'working' | 'done'
 
@@ -59,12 +50,8 @@ function humanErr(e: unknown) {
 // ---------------------------------------------------------------------------
 export default function MiTurnoPage() {
   const { profile, loading: profileLoading } = useProfileContext()
-  const supabase = createClient()
 
   const [now, setNow] = useState(new Date())
-  const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null)
-  const [history, setHistory] = useState<AttendanceRecord[]>([])
-  const [loading, setLoading] = useState(true)
   const [showSuccess, setShowSuccess] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [historyLimit, setHistoryLimit] = useState(7)
@@ -75,43 +62,17 @@ export default function MiTurnoPage() {
     new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }),
   [])
 
+  // SWR hooks
+  const { record: todayRecord, isLoading: loadingToday, mutate: mutateToday } = useMyAttendance(profile?.id, todayStr)
+  const { history, isLoading: loadingHistory, mutate: mutateHistory } = useAttendanceHistory(profile?.id, historyLimit)
+
+  const loading = loadingToday || loadingHistory
+
   // Live clock
   useEffect(() => {
     const i = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(i)
   }, [])
-
-  // Fetch attendance
-  const fetchAttendance = useCallback(async () => {
-    if (!profile) return
-    setLoading(true)
-    try {
-      const { data: today } = await supabase
-        .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, clock_in_lat')
-        .eq('user_id', profile.id)
-        .eq('operative_date', todayStr)
-        .order('clock_in_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      setTodayRecord(today as AttendanceRecord | null)
-
-      const { data: hist } = await supabase
-        .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, clock_in_lat')
-        .eq('user_id', profile.id)
-        .order('operative_date', { ascending: false })
-        .limit(historyLimit)
-      setHistory((hist ?? []) as AttendanceRecord[])
-    } catch {
-      toast.error('No se pudo cargar tu turno')
-    } finally {
-      setLoading(false)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, todayStr, historyLimit])
-
-  useEffect(() => { fetchAttendance() }, [fetchAttendance])
 
   // Status
   const status: TodayStatus = !todayRecord
@@ -174,7 +135,18 @@ export default function MiTurnoPage() {
       setShowSuccess(true)
       setFlowState('done')
       toast.success(action === 'in' ? '¡Ingreso registrado!' : '¡Egreso registrado!')
-      await fetchAttendance()
+
+      logAuditClient({
+        action: action === 'in' ? 'clock_in' : 'clock_out',
+        module: 'asistencia',
+        entityType: 'clock_event',
+        description: action === 'in' ? 'User fichó entrada' : 'User fichó salida',
+      })
+
+      // Revalidate both SWR caches
+      mutateToday()
+      mutateHistory()
+
       setTimeout(() => setFlowState('idle'), 2000)
     } catch {
       toast.error('Error de conexión')

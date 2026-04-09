@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
+import { logAuditClient } from '@/lib/audit'
 import { createClient } from '@/lib/supabase/client'
 import { RECIPE_CATEGORY_OPTIONS } from '@/lib/constants'
 import type { RecipeCategory } from '@/lib/constants'
@@ -200,6 +201,15 @@ export default function RecetasPage() {
           .eq('id', editingRecipe.id)
 
         if (error) throw error
+        logAuditClient({
+          userId: profile?.id ?? null,
+          userName: profile?.first_name ?? null,
+          action: 'update_recipe',
+          module: 'recetas',
+          entityType: 'recipe',
+          entityId: String(editingRecipe.id),
+          description: `${profile?.first_name ?? 'User'} editó receta: ${formName.trim()}`,
+        })
         toast.success('Receta actualizada')
       } else {
         const insertData: RecipeInsert = {
@@ -213,6 +223,14 @@ export default function RecetasPage() {
 
         const { error } = await supabase.from('recipes').insert(insertData)
         if (error) throw error
+        logAuditClient({
+          userId: profile?.id ?? null,
+          userName: profile?.first_name ?? null,
+          action: 'create_recipe',
+          module: 'recetas',
+          entityType: 'recipe',
+          description: `${profile?.first_name ?? 'User'} creó receta: ${formName.trim()}`,
+        })
         toast.success('Receta creada')
       }
 
@@ -245,6 +263,15 @@ export default function RecetasPage() {
         .eq('id', deletingRecipe.id)
 
       if (error) throw error
+      logAuditClient({
+        userId: profile?.id ?? null,
+        userName: profile?.first_name ?? null,
+        action: 'delete_recipe',
+        module: 'recetas',
+        entityType: 'recipe',
+        entityId: String(deletingRecipe.id),
+        description: `${profile?.first_name ?? 'User'} desactivó receta: ${deletingRecipe.name}`,
+      })
       toast.success('Receta eliminada')
       setDeleteDialogOpen(false)
       setDeletingRecipe(null)

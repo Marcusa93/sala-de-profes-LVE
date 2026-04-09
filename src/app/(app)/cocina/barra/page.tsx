@@ -11,6 +11,7 @@ import {
   ChevronUp, History, Pencil, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { logAuditClient } from '@/lib/audit'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
 import { FadeIn } from '@/components/ui/motion'
@@ -263,6 +264,7 @@ export default function MiBarraPage() {
         new_qty: newQty,
       })
 
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'bar_stock_log', module: 'barra', entityType: 'bar_stock_log', description: 'User registró actividad barra' })
       setEditingId(null)
       toast.success(`${item.name} → ${newQty}`)
       fetchData()
@@ -455,6 +457,7 @@ export default function MiBarraPage() {
       })
 
       if (error) throw error
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'bar_handover', module: 'barra', entityType: 'bar_shift_handover', description: 'User registró traspaso de barra' })
       toast.success('Turno cerrado — stock guardado para el siguiente')
       fetchData()
     } catch (err) {

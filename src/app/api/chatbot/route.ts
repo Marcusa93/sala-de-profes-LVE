@@ -293,9 +293,17 @@ REGLAS DE ACCIONES:
 - NO ejecutes la acción directamente — el sistema mostrará un botón de confirmación
 - Si el usuario dice "sí", "dale", "mandalo", "confirmo" después de una propuesta, incluí el JSON de nuevo para ejecutar
 - Si el usuario dice "no", "cancelar", "mejor no", respondé amablemente sin JSON
-- Para pedidos, normalizá los nombres de productos lo mejor posible
 - Extraé cantidad y unidad por separado (ej: "5 kg", "3 cajas", "10 unidades")
 - Si no entendés la cantidad, preguntá antes de proponer
+
+## REGLA ANTI-ALUCINACIÓN — NOMBRES DE PRODUCTOS (CRÍTICO)
+- **NUNCA inventes nombres de productos.** Usá EXCLUSIVAMENTE los nombres que aparecen en STOCK_ITEMS_LISTA o BAR_STOCK_ITEMS_LISTA del contexto.
+- Si el usuario dice un nombre informal (ej: "nalga", "leche"), mapealo al nombre EXACTO de la lista (ej: "Nalga de ternera", "Leche entera").
+- Si no estás seguro de a qué item se refiere, **preguntá antes de generar el ACTION_JSON**. Ej: "¿Te referís a 'Nalga de ternera' o a 'Nalga de cerdo'?"
+- Si el item que menciona el usuario NO existe en la lista, **decíselo claramente** y mostrá los items más parecidos de la lista para que elija.
+- En el ACTION_JSON, el campo "name" debe contener el nombre EXACTO como aparece en la lista del contexto, no una versión abreviada ni inventada.
+- Para PRODUCCION_COMPLETA, tanto el input.name como cada output.name deben usar nombres de la lista cuando sea posible. Si un output es un producto nuevo (no existe en stock), indicalo con "(nuevo)" al final del nombre.
+- **NUNCA asumas un producto.** Si hay duda, preguntá.
 
 ## CONSULTAS DE ASISTENCIA Y FICHAJES
 
@@ -598,6 +606,10 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
 
       const greenCount = stockRows.length - redItems.length - yellowItems.length
       sections.push(`RESUMEN STOCK GENERAL: ${stockRows.length} items — 🔴 ${redItems.length} críticos, 🟡 ${yellowItems.length} en atención, 🟢 ${greenCount} normales`)
+
+      // ── ANTI-HALLUCINATION: inject full item name list for ACTION_JSON ──
+      const stockNameList = stockRows.map(i => `- ${i.name} (${i.unit})`).join('\n')
+      sections.push(`STOCK_ITEMS_LISTA (usá SOLO estos nombres en ACTION_JSON para stock general, pedidos y producción):\n${stockNameList}`)
     }
 
     // 4. Stock de Barra / Cafetería (encargados, baristas)
@@ -619,6 +631,10 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       }
 
       sections.push(`RESUMEN BARRA: ${barRows.length} items — ${barLow.length} bajos/urgentes, ${barRows.length - barLow.length} normales`)
+
+      // ── ANTI-HALLUCINATION: inject full bar item name list ──
+      const barNameList = barRows.map(b => `- ${b.name} (${b.unit})`).join('\n')
+      sections.push(`BAR_STOCK_ITEMS_LISTA (usá SOLO estos nombres en ACTION_JSON para barra):\n${barNameList}`)
     }
 
     // 5. Pedidos de barra pendientes (encargados, baristas)
@@ -705,6 +721,10 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
             })
             sections.push(`MISE EN PLACE PENDIENTE:\n${miseLines.join('\n')}`)
           }
+
+          // ── ANTI-HALLUCINATION: inject full mise en place item name list ──
+          const miseNameList = miseItems.map(m => `- ${m.name}`).join('\n')
+          sections.push(`MISE_EN_PLACE_ITEMS_LISTA (usá SOLO estos nombres para MISE_EN_PLACE):\n${miseNameList}`)
         }
       }
     }

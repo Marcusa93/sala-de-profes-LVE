@@ -3,16 +3,14 @@
 import {
   createContext,
   useContext,
-  useEffect,
-  useState,
-  useCallback,
   type ReactNode,
 } from 'react'
+import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
 import type { Profile } from '@/types/database'
 
 // ---------------------------------------------------------------------------
-// Hook
+// Hook — now backed by SWR for caching + dedup + background revalidation
 // ---------------------------------------------------------------------------
 
 type UseProfileReturn = {
@@ -22,62 +20,48 @@ type UseProfileReturn = {
   refresh: () => Promise<void>
 }
 
+async function fetchProfile(): Promise<Profile | null> {
+  const supabase = createClient()
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser()
+
+  if (userError) throw userError
+  if (!user) return null
+
+  const { data, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, first_name, last_name, role, avatar_url, phone, is_active, settings, created_at, updated_at')
+    .eq('id', user.id)
+    .single()
+
+  if (profileError) throw profileError
+  return data
+}
+
 export function useProfile(): UseProfileReturn {
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data, error, isLoading, mutate } = useSWR(
+    'profile',
+    fetchProfile,
+    {
+      revalidateOnFocus: true,
+      dedupingInterval: 60_000,
+      errorRetryCount: 2,
+    },
+  )
 
-  const fetchProfile = useCallback(async () => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      const supabase = createClient()
-
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser()
-
-      if (userError) {
-        throw userError
-      }
-
-      if (!user) {
-        setProfile(null)
-        return
-      }
-
-      const { data, error: profileError } = await supabase
-        .from('profiles')
-        .select('id, first_name, last_name, role, avatar_url, phone, is_active, settings, created_at, updated_at')
-        .eq('id', user.id)
-        .single()
-
-      if (profileError) {
-        throw profileError
-      }
-
-      setProfile(data)
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Error al cargar el perfil'
-      setError(message)
-      setProfile(null)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchProfile()
-  }, [fetchProfile])
-
-  return { profile, loading, error, refresh: fetchProfile }
+  return {
+    profile: data ?? null,
+    loading: isLoading,
+    error: error ? (error instanceof Error ? error.message : 'Error al cargar el perfil') : null,
+    refresh: async () => { await mutate() },
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Context
+// Context — same API surface, zero breaking changes across 15+ consumers
 // ---------------------------------------------------------------------------
 
 type ProfileContextValue = UseProfileReturn

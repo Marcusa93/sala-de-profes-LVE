@@ -27,6 +27,7 @@ import type {
   MenuItem,
   AnnouncementInsert,
 } from '@/types/database'
+import { logAuditClient } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -370,6 +371,13 @@ export default function CocinaPage() {
 
       setLog(data)
       setItems(validItems)
+
+      logAuditClient({
+        action: 'update_carta',
+        module: 'cocina',
+        entityType: 'kitchen_shift_schedule',
+        description: 'User actualizó carta/agenda de cocina',
+      })
 
       if (submit) {
         await sendSubmitAnnouncement(validItems)

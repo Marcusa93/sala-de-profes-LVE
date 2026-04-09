@@ -47,6 +47,7 @@ import type {
   KitchenFamilyValue,
 } from '@/types/database'
 import Link from 'next/link'
+import { logAuditClient } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -160,6 +161,7 @@ export default function TurnoPage() {
           return
         }
         shiftData = newShift
+        logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'create_kitchen_shift', module: 'cocina', entityType: 'kitchen_shift', description: `User abrió turno de cocina: ${shiftType}` })
 
         // Get templates for this shift
         const { data: templates } = await supabase
@@ -251,6 +253,7 @@ export default function TurnoPage() {
     } else {
       setShift({ ...shift, status: 'in_progress' })
       toast.success('Turno iniciado')
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'start_kitchen_shift', module: 'cocina', entityType: 'kitchen_shift', description: 'User inició turno de cocina' })
     }
     setSaving(false)
   }
@@ -272,6 +275,7 @@ export default function TurnoPage() {
       toast.error('Error al cerrar turno')
     } else {
       toast.success('Turno cerrado')
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'close_kitchen_shift', module: 'cocina', entityType: 'kitchen_shift', description: 'User cerró turno de cocina' })
       router.push('/cocina')
     }
     setSaving(false)
@@ -295,6 +299,8 @@ export default function TurnoPage() {
       .eq('id', itemId)
 
     if (!error) {
+      const item = items.find((i) => i.id === itemId)
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'update_checklist_item', module: 'cocina', entityType: 'checklist_item', description: `User actualizó checklist: ${item?.title ?? itemId} -> ${newStatus}` })
       setItems((prev) =>
         prev.map((i) => (i.id === itemId ? {
           ...i,
