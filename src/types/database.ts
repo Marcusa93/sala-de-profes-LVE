@@ -1117,7 +1117,7 @@ export type Database = {
           status: BarOrderStatusValue
           note: string | null
           supplier_id: number | null
-          created_by: string | null
+          requested_by: string | null
           created_at: string
           updated_at: string
         }
@@ -1131,7 +1131,7 @@ export type Database = {
           status?: BarOrderStatusValue
           note?: string | null
           supplier_id?: number | null
-          created_by?: string | null
+          requested_by?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1145,7 +1145,7 @@ export type Database = {
           status?: BarOrderStatusValue
           note?: string | null
           supplier_id?: number | null
-          created_by?: string | null
+          requested_by?: string | null
           created_at?: string
           updated_at?: string
         }

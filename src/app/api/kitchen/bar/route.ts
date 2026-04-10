@@ -87,6 +87,7 @@ export async function POST(request: NextRequest) {
       const dbUrgency = urgencyMap[urgency] || urgency || 'normal'
 
       const { error: orderError } = await admin.from('bar_orders').insert({
+        bar_stock_item_id: barStockItemId ?? null,
         product_name: productName,
         category: category,
         quantity: quantity,

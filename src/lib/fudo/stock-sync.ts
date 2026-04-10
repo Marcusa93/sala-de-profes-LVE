@@ -199,10 +199,12 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     result.total = fudoItems.length + fudoProducts.length
 
     // 3. Get all stock_items (ingredient-linked AND product-linked)
+    //    Exclude items marked as fudo_skip — those are local-only
     const { data: stockItems } = await admin
       .from('stock_items')
       .select('id, fudo_ingredient_id, fudo_product_id, current_qty, cost_per_unit, supplier_id')
       .eq('is_active', true)
+      .neq('fudo_skip', true)
 
     if (!stockItems) return result
 
@@ -320,11 +322,14 @@ export async function syncToFudo(
   // 1. Get the stock_item to find fudo link
   const { data: item } = await admin
     .from('stock_items')
-    .select('id, name, fudo_ingredient_id, fudo_product_id, current_qty')
+    .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty')
     .eq('id', stockItemId)
     .single()
 
   if (!item) return { success: false, fudoSynced: false, error: 'Item no encontrado' }
+
+  // If item is marked as fudo_skip, treat as local-only
+  const skipFudo = (item as Record<string, unknown>).fudo_skip === true
 
   // 2. Update in Supabase first
   const { error: dbError } = await admin
@@ -343,9 +348,9 @@ export async function syncToFudo(
     new_qty: newQty,
   })
 
-  // 4. If has Fudo link (ingredient or product), push to Fudo
+  // 4. If has Fudo link (ingredient or product) AND not skipped, push to Fudo
   const fudoLink = item.fudo_ingredient_id || item.fudo_product_id
-  if (fudoLink) {
+  if (fudoLink && !skipFudo) {
     let fudoResult: { success: boolean; error?: string }
 
     if (item.fudo_ingredient_id) {
