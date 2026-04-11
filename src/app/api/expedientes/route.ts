@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null)
     if (!body) return NextResponse.json({ error: 'Body requerido' }, { status: 400 })
 
-    const { title, description, reason, type, areas, urgency, target_date, impact_categories } = body
+    const { title, description, reason, type, areas, urgency, target_date, impact_categories, responsible_id } = body
 
     if (!title?.trim() || !type) {
       return NextResponse.json({ error: 'Título y tipo son requeridos' }, { status: 400 })

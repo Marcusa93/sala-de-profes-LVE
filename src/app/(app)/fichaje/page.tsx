@@ -180,9 +180,31 @@ export default function FichajePage() {
       if (res.ok) {
         const data = await res.json()
         setStatus(data.status)
-        setLastEvent(data.last_event)
-        setTodayEvents(data.today_events ?? [])
-        setOpenAnomalies(data.open_anomalies ?? 0)
+        // Map today_record (attendance_logs) to ClockEvent shape
+        if (data.today_record) {
+          setLastEvent({
+            id: data.today_record.id,
+            employee_id: '',
+            event_type: data.today_record.clock_out_at ? 'clock_out' : 'clock_in',
+            timestamp: data.today_record.clock_out_at ?? data.today_record.clock_in_at,
+            wifi_bssid: null,
+            wifi_ssid: null,
+            gps_lat: data.today_record.clock_in_lat ?? null,
+            gps_lng: data.today_record.clock_in_lng ?? null,
+            gps_accuracy: null,
+            selfie_url: null,
+            device_fingerprint: null,
+            user_agent: null,
+            ip_address: null,
+            verified: !data.today_record.is_suspicious,
+            anomaly_flags: [],
+            created_at: data.today_record.clock_in_at,
+          })
+        } else {
+          setLastEvent(null)
+        }
+        setTodayEvents([])
+        setOpenAnomalies(0)
       }
     } catch { /* silent */ }
     finally { setLoadingStatus(false) }

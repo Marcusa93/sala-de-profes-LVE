@@ -31,7 +31,7 @@ export async function PATCH(
     // Get current expediente and user profile
     const [{ data: expediente }, { data: profile }] = await Promise.all([
       admin.from('expedientes')
-        .select('id, code, status, author_id, responsible_id, urgency')
+        .select('id, code, title, status, author_id, responsible_id, urgency')
         .eq('id', id)
         .single(),
       admin.from('profiles')
