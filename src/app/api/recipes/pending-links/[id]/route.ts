@@ -164,8 +164,8 @@ export async function PATCH(
 
     // --- MANUAL ---
     if (action === 'manual') {
-      const stockItemId: string = body?.stock_item_id
-      const qtyPerPortion: number = body?.qty_per_portion
+      const stockItemId = body?.stock_item_id != null ? Number(body.stock_item_id) : null
+      const qtyPerPortion: number = body?.qty_per_portion != null ? Number(body.qty_per_portion) : 0
       const unit: string = body?.unit
 
       if (!stockItemId || !qtyPerPortion || !unit) {

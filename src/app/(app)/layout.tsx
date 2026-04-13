@@ -10,6 +10,7 @@ import { ForcePasswordChange } from '@/components/auth/ForcePasswordChange'
 import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
 import { KitchenAlarms } from '@/components/kitchen/KitchenAlarms'
 import { InstallPrompt } from '@/components/pwa/InstallPrompt'
+import { PushSubscriber } from '@/components/pwa/PushSubscriber'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 
 export default async function AppLayout({
@@ -42,6 +43,7 @@ export default async function AppLayout({
           <AnnouncementPopup />
           <KitchenAlarms />
           <InstallPrompt />
+          <PushSubscriber />
         </div>
       </ProfileProvider>
     </SWRProvider>

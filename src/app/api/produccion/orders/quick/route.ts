@@ -160,7 +160,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Sync to Fudo
-      const movements = (rpcResult.movements ?? []) as { stock_item_id: string; change: number }[]
+      const movements = (rpcResult.movements ?? []) as { stock_item_id: number; change: number }[]
       if (movements.length > 0) {
         try {
           const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')

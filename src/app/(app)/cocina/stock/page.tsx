@@ -192,6 +192,7 @@ export default function CocinaStockPage() {
       const supabase = createClient()
       for (const [itemId, qtyStr] of stockDraft) {
         const newQty = parseFloat(qtyStr) || 0
+        if (newQty < 0) { toast.error('No se permiten cantidades negativas'); continue }
         const item = items.find(i => i.id === itemId)
         if (!item || item.current_qty === newQty) continue
         const { error } = await supabase.from('stock_items').update({ current_qty: newQty }).eq('id', itemId)
@@ -210,6 +211,7 @@ export default function CocinaStockPage() {
   // Update single item
   const handleUpdateSingle = async (itemId: string) => {
     const newQty = parseFloat(editQty) || 0
+    if (newQty < 0) { toast.error('No se permiten cantidades negativas'); return }
     try {
       const supabase = createClient()
       await supabase.from('stock_items').update({ current_qty: newQty }).eq('id', itemId)

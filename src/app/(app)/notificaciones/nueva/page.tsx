@@ -152,6 +152,19 @@ export default function NuevaNotificacionPage() {
 
       if (error) throw error
 
+      // Trigger push notifications (non-blocking)
+      fetch('/api/push/send-announcement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title.trim(),
+          message: body.trim(),
+          scope: dbScope,
+          target_role: dbTargetRole,
+          target_user_id: dbTargetUserId,
+        }),
+      }).catch(() => {})
+
       logAuditClient({
         action: 'create_announcement',
         module: 'avisos',

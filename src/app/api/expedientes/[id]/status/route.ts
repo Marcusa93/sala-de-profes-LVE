@@ -5,6 +5,7 @@ import { notifyExpedienteToResponsible } from '@/lib/email/send'
 import { STATUS_TRANSITIONS, EXPEDIENTE_STATUSES } from '@/lib/constants/expedientes'
 import type { ExpedienteStatus } from '@/types/expedientes'
 import { logAudit } from '@/lib/audit'
+import { sendPushToUser } from '@/lib/push/send'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/expedientes/[id]/status — transición de estado
@@ -126,6 +127,13 @@ export async function PATCH(
         target_user_id: expediente.author_id,
         is_active: true,
       })
+
+      // Push notification to author
+      sendPushToUser(expediente.author_id, {
+        title: `📋 ${expediente.title} → ${toLabel}`,
+        body: `${authorName} cambió el estado del expediente ${expediente.code}`,
+        url: `/expedientes/${id}`,
+      }).catch(() => {})
     }
 
     // Email only to the responsible person

@@ -421,7 +421,7 @@ export type Database = {
       stock_alerts: {
         Row: {
           id: string
-          stock_item_id: string
+          stock_item_id: number
           alert_type: AlertTypeValue
           priority: PriorityValue
           message: string
@@ -433,7 +433,7 @@ export type Database = {
         }
         Insert: {
           id?: string
-          stock_item_id: string
+          stock_item_id: number
           alert_type: AlertTypeValue
           priority?: PriorityValue
           message: string
@@ -445,7 +445,7 @@ export type Database = {
         }
         Update: {
           id?: string
-          stock_item_id?: string
+          stock_item_id?: number
           alert_type?: AlertTypeValue
           priority?: PriorityValue
           message?: string

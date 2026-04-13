@@ -416,11 +416,14 @@ export async function syncProductionToFudo(
   for (const itemId of itemIds) {
     const { data: item } = await admin
       .from('stock_items')
-      .select('id, name, fudo_ingredient_id, fudo_product_id, current_qty')
+      .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty')
       .eq('id', itemId)
       .single()
 
     if (!item?.fudo_ingredient_id && !item?.fudo_product_id) continue // No Fudo link — skip
+
+    // Skip items flagged as local-only
+    if ((item as Record<string, unknown>).fudo_skip === true) continue
 
     let fudoResult: { success: boolean; error?: string }
 

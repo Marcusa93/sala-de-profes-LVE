@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
         .eq('id', user.id)
         .single()
 
-      if (!profile || profile.role !== 'encargado' && profile.role !== 'socio') {
+      if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
         return NextResponse.json({ success: false, error: 'Solo encargados pueden cambiar estado' }, { status: 403 })
       }
 
