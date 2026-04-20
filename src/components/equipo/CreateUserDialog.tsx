@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Loader2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
+import { errorToast } from '@/lib/toast-helpers'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -92,7 +93,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: CreateUserDi
       onOpenChange(false)
       onCreated()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al crear usuario')
+      errorToast('No se pudo crear el usuario', err)
     } finally {
       setSaving(false)
     }

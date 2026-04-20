@@ -86,6 +86,7 @@ export async function POST(request: NextRequest) {
     const weekStartParam = formData.get('weekStart') as string | null // yyyy-MM-dd
     const replaceMode = formData.get('replace') === 'true'
     const checkOnly = formData.get('checkOnly') === 'true' // Just check if shifts exist
+    const dryRun = formData.get('dryRun') === 'true' // Parse but no insert
 
     if (!file && !checkOnly) {
       return NextResponse.json({ error: 'No se recibió archivo' }, { status: 400 })
@@ -126,7 +127,8 @@ export async function POST(request: NextRequest) {
 
     if (isWeeklyGrid(headers)) {
       // If replace mode, delete existing shifts for the week first
-      if (replaceMode && weekStartParam) {
+      // (no delete en dryRun — es solo preview)
+      if (replaceMode && weekStartParam && !dryRun) {
         const weekEnd = format(addDays(new Date(weekStartParam + 'T12:00:00'), 6), 'yyyy-MM-dd')
         const { count } = await admin.from('shifts').select('id', { count: 'exact', head: true })
           .gte('shift_date', weekStartParam).lte('shift_date', weekEnd)
@@ -135,9 +137,9 @@ export async function POST(request: NextRequest) {
             .gte('shift_date', weekStartParam).lte('shift_date', weekEnd)
         }
       }
-      return processWeeklyGrid(rows, headers, employees, user.id, weekStartParam, admin)
+      return processWeeklyGrid(rows, headers, employees, user.id, weekStartParam, admin, dryRun)
     } else {
-      return processRowPerShift(rows, headers, employees, user.id, admin)
+      return processRowPerShift(rows, headers, employees, user.id, admin, dryRun)
     }
   } catch (error) {
     console.error('[/api/shifts/upload] Error:', error)
@@ -158,6 +160,7 @@ async function processWeeklyGrid(
   createdBy: string,
   weekStartParam: string | null,
   admin: ReturnType<typeof createAdminClient>,
+  dryRun: boolean = false,
 ) {
   // Determine which columns map to which days
   const dayColumns: { dayIndex: number; colIndex: number }[] = []
@@ -244,25 +247,30 @@ async function processWeeklyGrid(
         continue
       }
 
-      const { error: insertError } = await admin.from('shifts').insert({
-        user_id: match.id,
-        shift_date: date,
-        start_time: timeRange.start,
-        end_time: timeRange.end,
-        shift_role: shiftRole,
-        created_by: createdBy,
-      })
-
-      if (insertError) {
-        errors.push(`${match.first_name} ${date}: ${insertError.message}`)
-      } else {
+      if (dryRun) {
         created.push(`${match.first_name} ${match.last_name} — ${date} ${timeRange.start}-${timeRange.end}`)
+      } else {
+        const { error: insertError } = await admin.from('shifts').insert({
+          user_id: match.id,
+          shift_date: date,
+          start_time: timeRange.start,
+          end_time: timeRange.end,
+          shift_role: shiftRole,
+          created_by: createdBy,
+        })
+
+        if (insertError) {
+          errors.push(`${match.first_name} ${date}: ${insertError.message}`)
+        } else {
+          created.push(`${match.first_name} ${match.last_name} — ${date} ${timeRange.start}-${timeRange.end}`)
+        }
       }
     }
   }
 
   return NextResponse.json({
     success: true,
+    dryRun,
     format: 'weekly_grid',
     weekStart: format(weekMonday, 'yyyy-MM-dd'),
     created: created.length,
@@ -281,6 +289,7 @@ async function processRowPerShift(
   employees: { id: string; first_name: string; last_name: string; role: string }[],
   createdBy: string,
   admin: ReturnType<typeof createAdminClient>,
+  dryRun: boolean = false,
 ) {
   function findCol(...candidates: string[]): number {
     for (const c of candidates) {
@@ -383,24 +392,29 @@ async function processRowPerShift(
       continue
     }
 
-    const { error: insertError } = await admin.from('shifts').insert({
-      user_id: match.id,
-      shift_date: date,
-      start_time: start,
-      end_time: end,
-      shift_role: role,
-      created_by: createdBy,
-    })
-
-    if (insertError) {
-      errors.push(`Fila ${i + 1}: ${insertError.message}`)
-    } else {
+    if (dryRun) {
       created.push(`${match.first_name} ${match.last_name} — ${date} ${start}-${end}`)
+    } else {
+      const { error: insertError } = await admin.from('shifts').insert({
+        user_id: match.id,
+        shift_date: date,
+        start_time: start,
+        end_time: end,
+        shift_role: role,
+        created_by: createdBy,
+      })
+
+      if (insertError) {
+        errors.push(`Fila ${i + 1}: ${insertError.message}`)
+      } else {
+        created.push(`${match.first_name} ${match.last_name} — ${date} ${start}-${end}`)
+      }
     }
   }
 
   return NextResponse.json({
     success: true,
+    dryRun,
     format: 'row_per_shift',
     created: created.length,
     skipped: skipped.length,

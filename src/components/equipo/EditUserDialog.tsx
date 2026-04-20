@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Loader2, UserCog } from 'lucide-react'
 import { toast } from 'sonner'
+import { errorToast } from '@/lib/toast-helpers'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -68,7 +69,7 @@ export function EditUserDialog({ open, onOpenChange, user, onUpdated }: EditUser
       onOpenChange(false)
       onUpdated()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al actualizar')
+      errorToast(`No se pudo actualizar a ${user.first_name}`, err)
     } finally {
       setSaving(false)
     }

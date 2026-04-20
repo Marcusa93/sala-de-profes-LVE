@@ -108,17 +108,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No se pudo crear el usuario' }, { status: 500 })
     }
 
-    // 4) Crear perfil en profiles
+    // 4) Upsert del perfil — hay un trigger que puede haberlo creado ya
+    //    con defaults; sobreescribimos con los datos correctos.
     const { data: profile, error: profileError } = await adminClient
       .from('profiles')
-      .insert({
-        id: authData.user.id,
-        first_name: firstName.trim(),
-        last_name: lastName.trim(),
-        role,
-        phone: phone?.trim() || null,
-        is_active: true,
-      })
+      .upsert(
+        {
+          id: authData.user.id,
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          role,
+          phone: phone?.trim() || null,
+          is_active: true,
+        },
+        { onConflict: 'id' },
+      )
       .select()
       .single()
 

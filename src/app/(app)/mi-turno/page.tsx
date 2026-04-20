@@ -13,9 +13,11 @@ import {
   History,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { errorToast } from '@/lib/toast-helpers'
 import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
+import { mustClockIn } from '@/lib/roles'
 import { createClient } from '@/lib/supabase/client'
 import { FadeIn, StaggerList, StaggerItem, ScalePress, PulseRing, AnimatePresence, motion } from '@/components/ui/motion'
 import { SuccessBurst } from '@/components/ui/success-burst'
@@ -54,13 +56,32 @@ export default function MiTurnoPage() {
   const todayStr = format(new Date(), 'yyyy-MM-dd')
 
   // ------------------------------------------
-  // Live clock
+  // Live clock — pausa cuando la pestaña no está visible
+  //              (evita drenar batería si la app queda abierta).
   // ------------------------------------------
   useEffect(() => {
-    const interval = setInterval(() => {
+    let interval: ReturnType<typeof setInterval> | null = null
+
+    const start = () => {
+      if (interval) return
       setCurrentTime(new Date())
-    }, 1000)
-    return () => clearInterval(interval)
+      interval = setInterval(() => setCurrentTime(new Date()), 1000)
+    }
+    const stop = () => {
+      if (interval) clearInterval(interval)
+      interval = null
+    }
+    const onVisibility = () => {
+      if (document.hidden) stop()
+      else start()
+    }
+
+    start()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [])
 
   // ------------------------------------------
@@ -117,40 +138,60 @@ export default function MiTurnoPage() {
   const status = getStatus()
 
   // ------------------------------------------
-  // Clock In — direct, no GPS
+  // Clock In — optimistic UI
   // ------------------------------------------
   const handleClockIn = async () => {
     if (!profile) return
+    const previous = todayRecord
+    // Optimistic update
+    const optimistic: AttendanceRecord = {
+      id: '__optimistic__',
+      operative_date: todayStr,
+      clock_in_at: new Date().toISOString(),
+      clock_out_at: null,
+      status: 'open',
+      notes: null,
+    }
+    setTodayRecord(optimistic)
+    playSchoolBell()
+    setShowSuccess(true)
     setActionLoading(true)
     try {
       const { error } = await supabase.rpc('clock_in', { p_notes: undefined })
       if (error) throw error
-      playSchoolBell()
-      setShowSuccess(true)
       toast.success('¡Ingreso registrado!')
       await fetchAttendance()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al fichar')
+      setTodayRecord(previous)
+      errorToast('No pudimos registrar tu ingreso', err, { retry: handleClockIn })
     } finally {
       setActionLoading(false)
     }
   }
 
   // ------------------------------------------
-  // Clock Out — direct, no GPS
+  // Clock Out — optimistic UI
   // ------------------------------------------
   const handleClockOut = async () => {
     if (!profile || !todayRecord) return
+    const previous = todayRecord
+    const optimistic: AttendanceRecord = {
+      ...todayRecord,
+      clock_out_at: new Date().toISOString(),
+      status: 'closed',
+    }
+    setTodayRecord(optimistic)
+    playSchoolBell()
+    setShowSuccess(true)
     setActionLoading(true)
     try {
       const { error } = await supabase.rpc('clock_out', { p_notes: undefined })
       if (error) throw error
-      playSchoolBell()
-      setShowSuccess(true)
       toast.success('¡Egreso registrado!')
       await fetchAttendance()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al fichar')
+      setTodayRecord(previous)
+      errorToast('No pudimos registrar tu egreso', err, { retry: handleClockOut })
     } finally {
       setActionLoading(false)
     }
@@ -207,6 +248,25 @@ export default function MiTurnoPage() {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="text-muted-foreground">No se pudo cargar el perfil.</p>
+      </div>
+    )
+  }
+
+  // Socios (excepto Ricardo) no fichan
+  if (!mustClockIn(profile)) {
+    return (
+      <div className="mx-auto max-w-lg pb-28 pt-10 text-center">
+        <div className="card-elevated-lg mx-auto max-w-sm px-6 py-12">
+          <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-2xl bg-[#f0f7f5]">
+            <CheckCircle className="size-8 text-[#006d5a]" strokeWidth={1.5} />
+          </div>
+          <p className="font-display text-xl font-semibold text-[#3d2c24]">
+            Sin fichaje
+          </p>
+          <p className="mt-2 text-sm text-[#a39e97]">
+            Tu rol no requiere marcar ingreso ni egreso.
+          </p>
+        </div>
       </div>
     )
   }

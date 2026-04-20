@@ -27,6 +27,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { errorToast } from '@/lib/toast-helpers'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -109,6 +110,15 @@ export default function EquipoTurnosPage() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [existingCount, setExistingCount] = useState(0)
 
+  // Preview step
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewResult, setPreviewResult] = useState<{
+    created: string[]
+    skipped: string[]
+    errors: string[]
+    replace: boolean
+  } | null>(null)
+
   const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -133,8 +143,42 @@ export default function EquipoTurnosPage() {
       // If check fails, proceed with upload anyway
     }
 
-    // No existing shifts — upload directly
-    await doUpload(file, false)
+    // No existing shifts — run preview (dry-run) first
+    await doPreview(file, false)
+  }
+
+  // Step 1: parse sin escribir — muestra lo que se va a crear
+  const doPreview = async (file: File, replace: boolean) => {
+    setUploading(true)
+    setReplaceDialogOpen(false)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('weekStart', format(currentWeekStart, 'yyyy-MM-dd'))
+      formData.append('dryRun', 'true')
+      const res = await fetch('/api/shifts/upload', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setPendingFile(file)
+      setPreviewResult({
+        created: data.details?.created ?? [],
+        skipped: data.details?.skipped ?? [],
+        errors: data.details?.errors ?? [],
+        replace,
+      })
+      setPreviewOpen(true)
+    } catch (err) {
+      errorToast('No pudimos parsear el archivo', err)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const confirmPreviewUpload = async () => {
+    if (!pendingFile || !previewResult) return
+    setPreviewOpen(false)
+    await doUpload(pendingFile, previewResult.replace)
+    setPreviewResult(null)
   }
 
   const doUpload = async (file: File, replace: boolean) => {
@@ -165,7 +209,7 @@ export default function EquipoTurnosPage() {
         toast.error(`${data.errors} fila${data.errors > 1 ? 's' : ''} con error`)
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al procesar archivo')
+      errorToast('No pudimos procesar el archivo Excel', err)
     } finally {
       setUploading(false)
       setPendingFile(null)
@@ -226,7 +270,7 @@ export default function EquipoTurnosPage() {
       setShifts(mapped)
     } catch (err) {
       console.error('Error al cargar turnos:', err)
-      toast.error('Error al cargar los turnos de la semana')
+      errorToast('No pudimos cargar los turnos de la semana', err)
     } finally {
       setLoading(false)
     }
@@ -347,9 +391,7 @@ export default function EquipoTurnosPage() {
       setDialogOpen(false)
       await fetchShifts()
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Error al guardar el turno'
-      toast.error('Error', { description: message })
+      errorToast('No se pudo guardar el turno', err)
     } finally {
       setSaving(false)
     }
@@ -378,9 +420,7 @@ export default function EquipoTurnosPage() {
       setDeletingShift(null)
       await fetchShifts()
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Error al eliminar el turno'
-      toast.error('Error', { description: message })
+      errorToast('No se pudo eliminar el turno', err)
     } finally {
       setDeleting(false)
     }
@@ -795,7 +835,26 @@ export default function EquipoTurnosPage() {
                 onValueChange={(v) => v && setFormUserId(v)}
               >
                 <SelectTrigger className="w-full rounded-xl border-[#ebe6df] bg-[#faf8f5]" id="shift-employee">
-                  <SelectValue placeholder="Seleccionar empleado" />
+                  <SelectValue placeholder="Seleccionar empleado">
+                    {(() => {
+                      const emp = employees.find((e) => e.id === formUserId)
+                      if (!emp) return null
+                      return (
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+                            style={{
+                              backgroundColor: ROLES[emp.role].bg,
+                              color: ROLES[emp.role].color,
+                            }}
+                          >
+                            {ROLES[emp.role].emoji}
+                          </span>
+                          {emp.first_name} {emp.last_name}
+                        </span>
+                      )
+                    })()}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="rounded-xl border-[#ebe6df]">
                   {employees.map((emp) => (
@@ -967,14 +1026,14 @@ export default function EquipoTurnosPage() {
           <div className="space-y-2 pt-2">
             <Button
               className="w-full rounded-xl bg-[#ea504c] text-white hover:bg-[#d4413e]"
-              onClick={() => pendingFile && doUpload(pendingFile, true)}
+              onClick={() => pendingFile && doPreview(pendingFile, true)}
             >
               Reemplazar todos los turnos de la semana
             </Button>
             <Button
               variant="outline"
               className="w-full rounded-xl border-[#ebe6df] text-[#3d2c24]"
-              onClick={() => pendingFile && doUpload(pendingFile, false)}
+              onClick={() => pendingFile && doPreview(pendingFile, false)}
             >
               Agregar sin borrar los existentes
             </Button>
@@ -986,6 +1045,91 @@ export default function EquipoTurnosPage() {
               Cancelar
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================================== */}
+      {/* Preview Dialog                             */}
+      {/* ========================================== */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-display text-lg font-bold text-[#3d2c24]">
+              Previsualización
+            </DialogTitle>
+            <DialogDescription className="text-[#a39e97]">
+              Revisá lo que se va a {previewResult?.replace ? 'reemplazar' : 'cargar'} antes de confirmar.
+            </DialogDescription>
+          </DialogHeader>
+          {previewResult && (
+            <div className="space-y-4 pt-2">
+              <div className="flex flex-wrap gap-2">
+                <span className="rounded-full bg-[#e8f5f1] px-3 py-1 text-xs font-semibold text-[#006d5a]">
+                  {previewResult.created.length} a crear
+                </span>
+                {previewResult.skipped.length > 0 && (
+                  <span className="rounded-full bg-[#fdf6ec] px-3 py-1 text-xs font-semibold text-[#d4943a]">
+                    {previewResult.skipped.length} duplicado{previewResult.skipped.length > 1 ? 's' : ''}
+                  </span>
+                )}
+                {previewResult.errors.length > 0 && (
+                  <span className="rounded-full bg-[#fef2f2] px-3 py-1 text-xs font-semibold text-[#ea504c]">
+                    {previewResult.errors.length} sin matchear
+                  </span>
+                )}
+              </div>
+
+              {previewResult.errors.length > 0 && (
+                <div className="rounded-xl bg-[#fef2f2] p-3">
+                  <p className="text-xs font-semibold text-[#ea504c]">Filas con problema:</p>
+                  <ul className="mt-1 max-h-28 space-y-0.5 overflow-y-auto text-xs text-[#3d2c24]">
+                    {previewResult.errors.map((e, i) => (
+                      <li key={i}>• {e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {previewResult.created.length > 0 && (
+                <div className="rounded-xl bg-white p-3 ring-1 ring-[#ebe6df]">
+                  <p className="text-xs font-semibold text-[#006d5a]">Se crearán:</p>
+                  <ul className="mt-1 max-h-48 space-y-0.5 overflow-y-auto text-xs text-[#3d2c24]">
+                    {previewResult.created.map((c, i) => (
+                      <li key={i} className="tabular-nums">• {c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {previewResult.skipped.length > 0 && (
+                <div className="rounded-xl bg-white p-3 ring-1 ring-[#ebe6df]">
+                  <p className="text-xs font-semibold text-[#d4943a]">Ya existen (se saltarán):</p>
+                  <ul className="mt-1 max-h-28 space-y-0.5 overflow-y-auto text-xs text-[#a39e97]">
+                    {previewResult.skipped.map((s, i) => (
+                      <li key={i}>• {s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2 pt-4">
+            <Button
+              variant="outline"
+              className="flex-1 rounded-xl border-[#ebe6df]"
+              onClick={() => { setPreviewOpen(false); setPendingFile(null); setPreviewResult(null) }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={!previewResult?.created.length || uploading}
+              className="flex-1 rounded-xl bg-[#006d5a] text-white hover:bg-[#005a4a]"
+              onClick={confirmPreviewUpload}
+            >
+              {uploading ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              Confirmar ({previewResult?.created.length ?? 0})
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

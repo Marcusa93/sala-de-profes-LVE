@@ -30,6 +30,16 @@ export async function GET(request: NextRequest) {
       .is('clock_out_at', null)
       .eq('status', 'open')
 
+    // Helper: hour (0-23) of a UTC timestamp in Buenos Aires time
+    const hourInBA = (iso: string): number => {
+      const str = new Date(iso).toLocaleString('en-GB', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        hour: '2-digit',
+        hour12: false,
+      })
+      return parseInt(str, 10)
+    }
+
     if (!openLogs?.length) {
       return NextResponse.json({ message: 'No open shifts to close', closed: 0 })
     }
@@ -73,10 +83,21 @@ export async function GET(request: NextRequest) {
 
       // Priority 2: Closing hours override for this date
       // Priority 3: Default closing hours for this day of week
-      const closingTime = shiftEnd
+      let closingTime = shiftEnd
         ?? overrideClosing.get(logDate)
         ?? defaultClosing.get(logDow)
         ?? '00:00'
+
+      // Regla turno mañana: ingreso antes de las 12:00 BA → cierra a las 16:00
+      // salvo que el shift explícito termine más tarde en el mismo día
+      const clockInHourBA = hourInBA(log.clock_in_at)
+      if (clockInHourBA < 12) {
+        const [endH] = closingTime.split(':').map(Number)
+        const endsLaterSameDay = endH > 16 && endH <= 23
+        if (!endsLaterSameDay) {
+          closingTime = '16:00'
+        }
+      }
 
       // Parse the end time
       const [endH, endM] = closingTime.split(':').map(Number)
@@ -104,7 +125,12 @@ export async function GET(request: NextRequest) {
         .single()
 
       const empName = profile ? `${profile.first_name} ${profile.last_name}` : '?'
-      const source = shiftEnd ? 'turno individual' : 'horario de cierre'
+      const morningRule = clockInHourBA < 12 && closingTime === '16:00'
+      const source = morningRule
+        ? 'turno mañana (16:00)'
+        : shiftEnd
+          ? 'turno individual'
+          : 'horario de cierre'
 
       const { error } = await admin
         .from('attendance_logs')

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { isManagerOrAbove } from '@/lib/roles'
+import { isManagerOrAbove, mustClockIn } from '@/lib/roles'
 import { isStockCritical } from '@/lib/contracts/stock'
 import { DailyBriefing } from '@/components/ai/DailyBriefing'
 import { ActionCenter } from '@/components/ai/ActionCenter'
@@ -288,18 +288,31 @@ export default function DashboardPage() {
               {format(today, "EEEE d 'de' MMMM", { locale: es })}
             </p>
           </div>
-          {/* Compact attendance status — right aligned */}
-          <Link href="/mi-turno" className="flex items-center gap-2 rounded-xl px-3 py-2 transition-colors hover:bg-[#f3efe9]">
-            <div className="size-2.5 rounded-full" style={{ backgroundColor: statusColor }} />
-            <span className="text-xs font-semibold text-[#3d2c24]">
-              {isCompleted ? 'Turno OK' : isInProgress ? 'En turno' : 'Sin fichar'}
-            </span>
-            {todayAttendance && (
-              <span className="text-[10px] tabular-nums text-[#a39e97]">
-                {format(new Date(todayAttendance.clock_in_at), 'HH:mm')}
-              </span>
-            )}
-          </Link>
+          {/* Compact attendance status / CTA — right aligned */}
+          {mustClockIn(profile) && (
+            !todayAttendance ? (
+              <Link
+                href="/mi-turno"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#005a4a] active:scale-[0.98]"
+              >
+                <LogIn className="size-3.5" />
+                Fichar ahora
+              </Link>
+            ) : (
+              <Link
+                href="/mi-turno"
+                className="flex items-center gap-2 rounded-xl px-3 py-2 transition-colors hover:bg-[#f3efe9]"
+              >
+                <div className="size-2.5 rounded-full" style={{ backgroundColor: statusColor }} />
+                <span className="text-xs font-semibold text-[#3d2c24]">
+                  {isCompleted ? 'Turno OK' : 'En turno'}
+                </span>
+                <span className="text-[10px] tabular-nums text-[#a39e97]">
+                  {format(new Date(todayAttendance.clock_in_at), 'HH:mm')}
+                </span>
+              </Link>
+            )
+          )}
         </div>
       </FadeIn>
 
@@ -386,7 +399,10 @@ export default function DashboardPage() {
                     </p>
                   </>
                 ) : (
-                  <p className="mt-2 text-sm text-[#a39e97]">Sin turnos</p>
+                  <>
+                    <p className="mt-2 text-sm text-[#a39e97]">Sin turnos</p>
+                    <p className="text-[10px] font-semibold text-[#006d5a]">Ver semana →</p>
+                  </>
                 )}
               </div>
             </Link>
@@ -491,6 +507,9 @@ export default function DashboardPage() {
                   <p className="text-[10px] text-[#a39e97]">
                     {teamToday.length === 0 ? 'Nadie fichó' : 'presentes'}
                   </p>
+                  {teamToday.length === 0 && (
+                    <p className="text-[10px] font-semibold text-[#006d5a]">Ver asistencia →</p>
+                  )}
                 </div>
               </Link>
             </ScalePress>
@@ -500,14 +519,7 @@ export default function DashboardPage() {
         {/* Stock Critico — already in grid above for encargado/socio */}
       </StaggerList>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* Unified Action Center                                            */}
-      {/* ---------------------------------------------------------------- */}
-      {isEncargado && (
-        <FadeIn delay={0.2}>
-          <ActionCenter compact maxItems={4} />
-        </FadeIn>
-      )}
+      {/* Action Center deshabilitado temporalmente */}
 
       {/* ---------------------------------------------------------------- */}
       {/* Quick Actions                                                    */}

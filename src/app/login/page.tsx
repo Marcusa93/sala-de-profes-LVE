@@ -16,16 +16,39 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [showSplash, setShowSplash] = useState(true)
+  // Splash solo la primera vez por dispositivo
+  const [showSplash, setShowSplash] = useState(() => {
+    if (typeof window === 'undefined') return true
+    return !window.localStorage.getItem('lve_splash_seen')
+  })
   const [showReset, setShowReset] = useState(false)
   const [resetEmail, setResetEmail] = useState('')
   const [resetLoading, setResetLoading] = useState(false)
   const [resetSent, setResetSent] = useState(false)
 
-  // Splash screen → login form transition
+  // Splash screen → login form transition (solo primera vez)
   useEffect(() => {
-    const timer = setTimeout(() => setShowSplash(false), 1200)
+    if (!showSplash) return
+    const timer = setTimeout(() => {
+      setShowSplash(false)
+      try { window.localStorage.setItem('lve_splash_seen', '1') } catch {}
+    }, 900)
     return () => clearTimeout(timer)
+  }, [showSplash])
+
+  // Kicked by middleware for being inactive
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('inactive') === '1') {
+      const supabase = createClient()
+      supabase.auth.signOut().finally(() => {
+        toast.error('Tu cuenta está desactivada. Contactá al encargado.')
+        const url = new URL(window.location.href)
+        url.searchParams.delete('inactive')
+        window.history.replaceState({}, '', url.toString())
+      })
+    }
   }, [])
 
   async function handleResetPassword(e: React.FormEvent) {

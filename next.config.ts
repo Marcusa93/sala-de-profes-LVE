@@ -1,6 +1,10 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  turbopack: {
+    root: path.resolve(__dirname),
+  },
   // TODO: Remove once database.ts types are regenerated from Supabase schema.
   // Current types are missing columns added after initial generation:
   // - bar_stock_items.supplier_id, kitchen_orders.supplier_id

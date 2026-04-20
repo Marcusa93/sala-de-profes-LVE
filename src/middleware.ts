@@ -4,11 +4,20 @@ import { updateSession } from '@/lib/supabase/middleware'
 // Routes that don't require authentication
 const PUBLIC_ROUTES = ['/login']
 
-// Routes that require the 'encargado' role
-const ENCARGADO_ROUTES = ['/encargado', '/equipo', '/stock', '/proveedores']
+// Routes that require socio/encargado
+const MANAGER_ROUTES = [
+  '/encargado',
+  '/equipo',
+  '/stock',
+  '/proveedores',
+  '/admin',
+  '/auditoria',
+]
+
+const MANAGER_ROLES = new Set(['socio', 'encargado'])
 
 export async function middleware(request: NextRequest) {
-  const { supabaseResponse, user } = await updateSession(request)
+  const { supabaseResponse, user, role, isActive } = await updateSession(request)
   const { pathname } = request.nextUrl
 
   // API routes handle their own auth — skip middleware redirect
@@ -28,10 +37,32 @@ export async function middleware(request: NextRequest) {
   }
 
   // Authenticated user trying to access /login → redirect to dashboard
-  if (user && isPublicRoute) {
+  // (but keep them on /login if middleware just kicked them for being inactive)
+  const inactiveFlag = request.nextUrl.searchParams.get('inactive') === '1'
+  if (user && isPublicRoute && !inactiveFlag) {
     const url = request.nextUrl.clone()
     url.pathname = '/'
     return NextResponse.redirect(url)
+  }
+
+  // Inactive user: force logout by redirecting to login with flag
+  if (user && !isActive && !isPublicRoute) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    url.searchParams.set('inactive', '1')
+    return NextResponse.redirect(url)
+  }
+
+  // Manager-only routes: block non-managers
+  if (user && !isPublicRoute) {
+    const needsManager = MANAGER_ROUTES.some(
+      (route) => pathname === route || pathname.startsWith(route + '/'),
+    )
+    if (needsManager && !MANAGER_ROLES.has(role ?? '')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/'
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse

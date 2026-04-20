@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   Pencil,
   Loader2,
+  Search,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Link from 'next/link'
@@ -25,6 +26,8 @@ import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
+import { mustClockIn } from '@/lib/roles'
+import { errorToast } from '@/lib/toast-helpers'
 import { createClient } from '@/lib/supabase/client'
 import { ROLES } from '@/lib/constants'
 import type { Profile, AppRole } from '@/types/database'
@@ -49,6 +52,9 @@ type AttendanceRecord = {
 type EmployeeAttendance = {
   profile: Profile
   attendance: AttendanceRecord | null
+  hasShiftToday: boolean
+  shiftStart?: string
+  shiftEnd?: string
 }
 
 type TabValue = 'asistencia' | 'equipo'
@@ -67,6 +73,7 @@ export default function EquipoPage() {
   const [allProfiles, setAllProfiles] = useState<Profile[]>([])
   const [showInactive, setShowInactive] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
 
   // Dialogs
   const [createOpen, setCreateOpen] = useState(false)
@@ -109,7 +116,7 @@ export default function EquipoPage() {
       // Refresh
       fetchAttendance()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error')
+      errorToast('No se pudo guardar el egreso', err)
     } finally {
       setSavingEgreso(false)
     }
@@ -140,19 +147,37 @@ export default function EquipoPage() {
         .select('id, user_id, clock_in_at, clock_out_at, status, clock_out_type, edited_by')
         .eq('operative_date', dateStr)
 
+      // Fetch shifts for the selected date (para saber quién tenía turno)
+      const { data: shifts } = await supabase
+        .from('shifts')
+        .select('user_id, start_time, end_time')
+        .eq('shift_date', dateStr)
+
       const attendanceMap = new Map(
         (attendance ?? []).map((a) => [a.user_id, a as AttendanceRecord]),
       )
+      const shiftMap = new Map(
+        (shifts ?? []).map((s) => [s.user_id, s]),
+      )
 
-      const result: EmployeeAttendance[] = (profiles ?? []).map((p) => ({
-        profile: p as Profile,
-        attendance: attendanceMap.get(p.id) ?? null,
-      }))
+      // Excluir perfiles que no fichan (socios salvo Ricardo)
+      const result: EmployeeAttendance[] = (profiles ?? [])
+        .filter((p) => mustClockIn(p as Profile))
+        .map((p) => {
+          const shift = shiftMap.get(p.id)
+          return {
+            profile: p as Profile,
+            attendance: attendanceMap.get(p.id) ?? null,
+            hasShiftToday: !!shift,
+            shiftStart: shift?.start_time,
+            shiftEnd: shift?.end_time,
+          }
+        })
 
       setEmployees(result)
     } catch (err) {
       console.error('Error fetching attendance:', err)
-      toast.error('Error al cargar asistencia')
+      errorToast('No pudimos cargar la asistencia', err, { retry: () => fetchAttendance() })
     } finally {
       setLoading(false)
     }
@@ -195,7 +220,11 @@ export default function EquipoPage() {
 
   function getAttendanceStatus(ea: EmployeeAttendance) {
     if (!ea.attendance) {
-      return { label: 'Sin registrar', color: '#ea504c', bg: '#fef2f2', icon: XCircle }
+      // Sin fichaje: rojo si tenía turno, gris si no
+      if (ea.hasShiftToday) {
+        return { label: 'Sin fichar', color: '#ea504c', bg: '#fef2f2', icon: XCircle }
+      }
+      return { label: 'Sin turno', color: '#a39e97', bg: '#f3efe9', icon: XCircle }
     }
     if (ea.attendance.clock_out_at) {
       return { label: 'Completado', color: '#006d5a', bg: '#e8f5f1', icon: CheckCircle }
@@ -315,13 +344,14 @@ export default function EquipoPage() {
 
           {/* Summary badges */}
           {!loading && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {(() => {
-                const completed = employees.filter((e) => e.attendance?.clock_out_at).length
-                const inProgress = employees.filter(
+                const withShift = employees.filter((e) => e.hasShiftToday)
+                const completed = withShift.filter((e) => e.attendance?.clock_out_at).length
+                const inProgress = withShift.filter(
                   (e) => e.attendance && !e.attendance.clock_out_at,
                 ).length
-                const missing = employees.filter((e) => !e.attendance).length
+                const missing = withShift.filter((e) => !e.attendance).length
                 return (
                   <>
                     <span className="rounded-full bg-[#e8f5f1] px-3 py-1 text-xs font-medium text-[#006d5a]">
@@ -331,7 +361,7 @@ export default function EquipoPage() {
                       {inProgress} en turno
                     </span>
                     <span className="rounded-full bg-[#fef2f2] px-3 py-1 text-xs font-medium text-[#ea504c]">
-                      {missing} sin registrar
+                      {missing} sin fichar
                     </span>
                   </>
                 )
@@ -339,7 +369,20 @@ export default function EquipoPage() {
             </div>
           )}
 
-          {/* Employee list */}
+          {/* Search input */}
+          {!loading && employees.length > 0 && (
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por nombre o rol..."
+                className="w-full rounded-xl border border-[#ebe6df] bg-white py-2.5 pl-9 pr-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+              />
+            </div>
+          )}
+
+          {/* Employee list — agrupado por con/sin turno hoy */}
           {loading ? (
             <LoadingState message="Cargando asistencia..." />
           ) : employees.length === 0 ? (
@@ -348,26 +391,32 @@ export default function EquipoPage() {
               title="Sin empleados"
               description="No hay empleados activos registrados"
             />
-          ) : (
-            <div className="space-y-2">
-              {employees.map((ea) => {
-                const status = getAttendanceStatus(ea)
-                const StatusIcon = status.icon
-                return (
-                  <div
-                    key={ea.profile.id}
-                    className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-[#ebe6df]"
-                    style={{ borderLeftWidth: '3px', borderLeftColor: status.color }}
-                  >
-                    {/* Avatar */}
+          ) : (() => {
+            const q = search.trim().toLowerCase()
+            const matchSearch = (e: EmployeeAttendance) =>
+              !q ||
+              `${e.profile.first_name} ${e.profile.last_name}`.toLowerCase().includes(q) ||
+              e.profile.role.toLowerCase().includes(q)
+            const filtered = employees.filter(matchSearch)
+            const withShift = filtered.filter((e) => e.hasShiftToday)
+            const withoutShift = filtered.filter((e) => !e.hasShiftToday)
+
+            const renderRow = (ea: EmployeeAttendance) => {
+              const status = getAttendanceStatus(ea)
+              const StatusIcon = status.icon
+              return (
+                <div
+                  key={ea.profile.id}
+                  className="flex flex-col rounded-xl bg-white shadow-sm ring-1 ring-[#ebe6df]"
+                  style={{ borderLeftWidth: '3px', borderLeftColor: status.color }}
+                >
+                  <div className="flex items-center gap-3 px-4 py-3">
                     <div
                       className="flex size-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
                       style={{ backgroundColor: ROLES[ea.profile.role]?.color ?? '#a39e97' }}
                     >
                       {getInitials(ea.profile)}
                     </div>
-
-                    {/* Info */}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <p className="truncate text-sm font-semibold text-[#3d2c24]">
@@ -376,6 +425,11 @@ export default function EquipoPage() {
                         {getRoleBadge(ea.profile.role)}
                       </div>
                       <div className="mt-0.5 flex items-center gap-2 text-xs text-[#a39e97]">
+                        {ea.hasShiftToday && ea.shiftStart && ea.shiftEnd && (
+                          <span className="rounded-md bg-[#f3efe9] px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-[#6b5d52]">
+                            {ea.shiftStart.slice(0, 5)}–{ea.shiftEnd.slice(0, 5)}
+                          </span>
+                        )}
                         {ea.attendance ? (
                           <>
                             <span className="tabular-nums">
@@ -393,8 +447,6 @@ export default function EquipoPage() {
                         )}
                       </div>
                     </div>
-
-                    {/* Status badge + edit button */}
                     <div className="flex shrink-0 items-center gap-1.5">
                       <span
                         className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold"
@@ -410,9 +462,10 @@ export default function EquipoPage() {
                               setEditingEgresoId(null)
                             } else {
                               setEditingEgresoId(ea.attendance!.id)
-                              setEgresoTime(ea.attendance!.clock_out_at
-                                ? format(new Date(ea.attendance!.clock_out_at), 'HH:mm')
-                                : ''
+                              setEgresoTime(
+                                ea.attendance!.clock_out_at
+                                  ? format(new Date(ea.attendance!.clock_out_at), 'HH:mm')
+                                  : '',
                               )
                               setEgresoReason('')
                             }
@@ -424,53 +477,73 @@ export default function EquipoPage() {
                         </button>
                       )}
                     </div>
-
-                    {/* Inline edit egreso */}
-                    {editingEgresoId === ea.attendance?.id && ea.attendance && (
-                      <div className="col-span-full mt-2 rounded-lg bg-[#faf8f5] p-3 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <label className="text-xs font-medium text-[#3d2c24]">Egreso:</label>
-                          <input
-                            type="time"
-                            value={egresoTime}
-                            onChange={(e) => setEgresoTime(e.target.value)}
-                            className="rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                          />
-                        </div>
-                        <input
-                          value={egresoReason}
-                          onChange={(e) => setEgresoReason(e.target.value)}
-                          placeholder="Motivo (opcional)"
-                          className="w-full rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                        />
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setEditingEgresoId(null)}
-                            className="flex-1 rounded-lg border border-[#ebe6df] py-2 text-xs font-semibold text-[#a39e97] hover:bg-white"
-                          >
-                            Cancelar
-                          </button>
-                          <button
-                            onClick={() => {
-                              handleSaveEgreso(
-                                ea.attendance!.id,
-                                format(selectedDate, 'yyyy-MM-dd')
-                              )
-                            }}
-                            disabled={!egresoTime || savingEgreso}
-                            className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-[#006d5a] py-2 text-xs font-semibold text-white disabled:opacity-50"
-                          >
-                            {savingEgreso ? <Loader2 className="size-3 animate-spin" /> : null}
-                            Guardar
-                          </button>
-                        </div>
-                      </div>
-                    )}
                   </div>
-                )
-              })}
-            </div>
-          )}
+                  {editingEgresoId === ea.attendance?.id && ea.attendance && (
+                    <div className="mx-3 mb-3 rounded-lg bg-[#faf8f5] p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-[#3d2c24]">Egreso:</label>
+                        <input
+                          type="time"
+                          value={egresoTime}
+                          onChange={(e) => setEgresoTime(e.target.value)}
+                          className="rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                        />
+                      </div>
+                      <input
+                        value={egresoReason}
+                        onChange={(e) => setEgresoReason(e.target.value)}
+                        placeholder="Motivo (opcional)"
+                        className="w-full rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setEditingEgresoId(null)}
+                          className="flex-1 rounded-lg border border-[#ebe6df] py-2 text-xs font-semibold text-[#a39e97] hover:bg-white"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={() => {
+                            handleSaveEgreso(
+                              ea.attendance!.id,
+                              format(selectedDate, 'yyyy-MM-dd'),
+                            )
+                          }}
+                          disabled={!egresoTime || savingEgreso}
+                          className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-[#006d5a] py-2 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          {savingEgreso ? <Loader2 className="size-3 animate-spin" /> : null}
+                          Guardar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            }
+
+            return (
+              <div className="space-y-5">
+                {filtered.length === 0 && q && (
+                  <p className="py-6 text-center text-sm text-[#a39e97]">
+                    Sin resultados para "{search}"
+                  </p>
+                )}
+                {withShift.length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="section-label">Con turno hoy ({withShift.length})</h3>
+                    <div className="space-y-2">{withShift.map(renderRow)}</div>
+                  </div>
+                )}
+                {withoutShift.length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="section-label">Sin turno hoy ({withoutShift.length})</h3>
+                    <div className="space-y-2 opacity-80">{withoutShift.map(renderRow)}</div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
 

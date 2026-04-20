@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
+import { mustClockIn } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { useState, useEffect, useCallback } from 'react'
@@ -261,7 +262,12 @@ export function BottomNav() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
 
-  const { items, more } = getNavItems(profile?.role)
+  const nav = getNavItems(profile?.role)
+  const more = nav.more
+  // Socio que debe fichar (p.ej. Ricardo): inyectamos "Mi Turno" en su nav
+  const items = profile?.role === 'socio' && mustClockIn(profile)
+    ? [nav.items[0], { label: 'Mi Turno', href: '/mi-turno', icon: Clock }, ...nav.items.slice(1)]
+    : nav.items
 
   // Fetch unread notification count
   const fetchUnread = useCallback(async () => {

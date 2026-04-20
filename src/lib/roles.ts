@@ -6,6 +6,23 @@ import type { AppRole } from '@/types/database'
  */
 const MANAGER_ROLES: ReadonlySet<string> = new Set(['socio', 'encargado'])
 
+/**
+ * Socios que SÍ deben fichar (excepción a la regla general de que los socios no fichan).
+ * Se listan por UUID para evitar colisiones por nombre.
+ */
+const SOCIOS_QUE_FICHAN: ReadonlySet<string> = new Set([
+  'd058c880-9ec3-4205-be49-84476da0b2d6', // Ricardo Marquez
+])
+
+/** ¿Este perfil debe fichar ingreso/egreso? */
+export function mustClockIn(
+  profile: { id: string; role: string | AppRole | null | undefined } | null | undefined,
+): boolean {
+  if (!profile?.role) return false
+  if (profile.role === 'socio') return SOCIOS_QUE_FICHAN.has(profile.id)
+  return true
+}
+
 /** Can this role manage the business? (socio + encargado) */
 export function isManagerOrAbove(role: string | AppRole | null | undefined): boolean {
   return !!role && MANAGER_ROLES.has(role)
