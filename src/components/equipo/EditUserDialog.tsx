@@ -26,6 +26,7 @@ import {
 import { ROLE_OPTIONS } from '@/lib/constants'
 import type { AppRole, Profile } from '@/types/database'
 import { createClient } from '@/lib/supabase/client'
+import { logAuditClient } from '@/lib/audit'
 
 type EditUserDialogProps = {
   open: boolean
@@ -66,6 +67,7 @@ export function EditUserDialog({ open, onOpenChange, user, onUpdated }: EditUser
       if (error) throw error
 
       toast.success(`Perfil de ${user.first_name} actualizado`)
+      logAuditClient({ userId: null, userName: 'Admin', action: 'update_user_profile', module: 'equipo', entityType: 'profile', description: `Admin editó perfil de: ${user.first_name} ${user.last_name}` })
       onOpenChange(false)
       onUpdated()
     } catch (err) {

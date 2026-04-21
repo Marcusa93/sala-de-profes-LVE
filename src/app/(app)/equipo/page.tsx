@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { format } from 'date-fns'
+import useSWR from 'swr'
+import { format, addDays } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   Users,
@@ -29,6 +30,7 @@ import { useProfileContext } from '@/lib/hooks/use-profile'
 import { mustClockIn } from '@/lib/roles'
 import { errorToast } from '@/lib/toast-helpers'
 import { createClient } from '@/lib/supabase/client'
+import { SWR_KEYS } from '@/lib/swr/keys'
 import { ROLES } from '@/lib/constants'
 import type { Profile, AppRole } from '@/types/database'
 
@@ -69,10 +71,7 @@ export default function EquipoPage() {
 
   const [tab, setTab] = useState<TabValue>('asistencia')
   const [selectedDate, setSelectedDate] = useState(new Date())
-  const [employees, setEmployees] = useState<EmployeeAttendance[]>([])
-  const [allProfiles, setAllProfiles] = useState<Profile[]>([])
   const [showInactive, setShowInactive] = useState(false)
-  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
 
   // Dialogs
@@ -87,81 +86,29 @@ export default function EquipoPage() {
 
   const isManager = profile?.role === 'socio' || profile?.role === 'encargado'
 
-  const handleSaveEgreso = async (attendanceId: string, operativeDate: string) => {
-    if (!egresoTime || savingEgreso) return
-    setSavingEgreso(true)
-    try {
-      const clockOut = new Date(`${operativeDate}T${egresoTime}:00-03:00`)
-      // If time is before 06:00, it's next day (after midnight)
-      const [h] = egresoTime.split(':').map(Number)
-      if (h < 6) {
-        clockOut.setDate(clockOut.getDate() + 1)
-      }
-
-      const res = await fetch('/api/admin/extend-shift', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          attendance_id: attendanceId,
-          new_clock_out: clockOut.toISOString(),
-          reason: egresoReason.trim() || 'Ajuste de egreso por encargado',
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Error')
-      toast.success('Egreso actualizado')
-      setEditingEgresoId(null)
-      setEgresoTime('')
-      setEgresoReason('')
-      // Refresh
-      fetchAttendance()
-    } catch (err) {
-      errorToast('No se pudo guardar el egreso', err)
-    } finally {
-      setSavingEgreso(false)
-    }
-  }
-
   const dateStr = format(selectedDate, 'yyyy-MM-dd')
   const isToday = dateStr === format(new Date(), 'yyyy-MM-dd')
 
   // ---------------------------------------------------------------------------
-  // Fetch data
+  // SWR — attendance for selected date
   // ---------------------------------------------------------------------------
 
-  const fetchAttendance = useCallback(async () => {
-    if (!profile) return
-    setLoading(true)
-
-    try {
-      // Fetch all active profiles
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('is_active', true)
-        .order('first_name')
-
-      // Fetch attendance for the selected date
-      const { data: attendance } = await supabase
-        .from('attendance_logs')
-        .select('id, user_id, clock_in_at, clock_out_at, status, clock_out_type, edited_by')
-        .eq('operative_date', dateStr)
-
-      // Fetch shifts for the selected date (para saber quién tenía turno)
-      const { data: shifts } = await supabase
-        .from('shifts')
-        .select('user_id, start_time, end_time')
-        .eq('shift_date', dateStr)
-
+  const { data: employees = [], isLoading: loadingAttendance, mutate: mutateAttendance } = useSWR(
+    profile && tab === 'asistencia' ? ['equipo_attendance', dateStr] : null,
+    async () => {
+      const [profilesRes, attendanceRes, shiftsRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('is_active', true).order('first_name'),
+        supabase.from('attendance_logs').select('id, user_id, clock_in_at, clock_out_at, status, clock_out_type, edited_by').eq('operative_date', dateStr),
+        supabase.from('shifts').select('user_id, start_time, end_time').eq('shift_date', dateStr),
+      ])
       const attendanceMap = new Map(
-        (attendance ?? []).map((a) => [a.user_id, a as AttendanceRecord]),
+        (attendanceRes.data ?? []).map((a) => [a.user_id, a as AttendanceRecord]),
       )
       const shiftMap = new Map(
-        (shifts ?? []).map((s) => [s.user_id, s]),
+        (shiftsRes.data ?? []).map((s) => [s.user_id, s]),
       )
-
       // Excluir perfiles que no fichan (socios salvo Ricardo)
-      const result: EmployeeAttendance[] = (profiles ?? [])
+      return (profilesRes.data ?? [])
         .filter((p) => mustClockIn(p as Profile))
         .map((p) => {
           const shift = shiftMap.get(p.id)
@@ -172,37 +119,60 @@ export default function EquipoPage() {
             shiftStart: shift?.start_time,
             shiftEnd: shift?.end_time,
           }
-        })
+        }) as EmployeeAttendance[]
+    },
+    { revalidateOnFocus: true },
+  )
 
-      setEmployees(result)
-    } catch (err) {
-      console.error('Error fetching attendance:', err)
-      errorToast('No pudimos cargar la asistencia', err, { retry: () => fetchAttendance() })
-    } finally {
-      setLoading(false)
-    }
-  }, [profile, dateStr, supabase])
+  // ---------------------------------------------------------------------------
+  // SWR — profiles list (team tab)
+  // ---------------------------------------------------------------------------
 
-  const fetchProfiles = useCallback(async () => {
-    if (!profile) return
-
-    try {
+  const { data: allProfiles = [], isLoading: loadingProfiles, mutate: mutateProfiles } = useSWR(
+    profile && tab === 'equipo' ? SWR_KEYS.profilesList(showInactive) : null,
+    async () => {
       const query = supabase.from('profiles').select('*').order('first_name')
-      if (!showInactive) {
-        query.eq('is_active', true)
-      }
-
+      if (!showInactive) query.eq('is_active', true)
       const { data } = await query
-      setAllProfiles((data ?? []) as Profile[])
-    } catch (err) {
-      console.error('Error fetching profiles:', err)
-    }
-  }, [profile, showInactive, supabase])
+      return (data ?? []) as Profile[]
+    },
+    { revalidateOnFocus: true },
+  )
 
-  useEffect(() => {
-    if (tab === 'asistencia') fetchAttendance()
-    else fetchProfiles()
-  }, [tab, fetchAttendance, fetchProfiles])
+  const loading = tab === 'asistencia' ? loadingAttendance : loadingProfiles
+
+  const handleSaveEgreso = async (attendanceId: string, operativeDate: string) => {
+    if (!egresoTime || savingEgreso) return
+    setSavingEgreso(true)
+    try {
+      const [h] = egresoTime.split(':').map(Number)
+      const baseDate = h < 6
+        ? format(addDays(new Date(operativeDate + 'T12:00:00'), 1), 'yyyy-MM-dd')
+        : operativeDate
+      const clockOutIso = `${baseDate}T${egresoTime}:00-03:00`
+
+      const res = await fetch('/api/admin/extend-shift', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          attendance_id: attendanceId,
+          new_clock_out: clockOutIso,
+          reason: egresoReason.trim() || 'Ajuste de egreso por encargado',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success('Egreso actualizado')
+      setEditingEgresoId(null)
+      setEgresoTime('')
+      setEgresoReason('')
+      mutateAttendance() // revalidate SWR
+    } catch (err) {
+      errorToast('No se pudo guardar el egreso', err)
+    } finally {
+      setSavingEgreso(false)
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Date navigation
@@ -630,15 +600,15 @@ export default function EquipoPage() {
       <CreateUserDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onCreated={fetchProfiles}
+        onCreated={() => mutateProfiles()}
       />
       <EditUserDialog
         open={!!editUser}
         onOpenChange={(open) => { if (!open) setEditUser(null) }}
         user={editUser}
         onUpdated={() => {
-          fetchProfiles()
-          if (tab === 'asistencia') fetchAttendance()
+          mutateProfiles()
+          if (tab === 'asistencia') mutateAttendance()
         }}
       />
     </div>

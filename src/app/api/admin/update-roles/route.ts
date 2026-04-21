@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { logAudit } from '@/lib/audit'
 import type { AppRole } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!callerProfile || callerProfile.role !== 'encargado' && callerProfile.role !== 'socio') {
+    if (!callerProfile || (callerProfile.role !== 'encargado' && callerProfile.role !== 'socio')) {
       return NextResponse.json(
         { error: 'Solo socios y encargados pueden actualizar roles' },
         { status: 403 },
@@ -106,6 +107,16 @@ export async function POST(request: NextRequest) {
         continue
       }
 
+      // Obtener rol anterior
+      const { data: oldProfile } = await adminClient
+        .from('profiles')
+        .select('role, first_name, last_name')
+        .eq('id', userId)
+        .single()
+
+      const oldRole = oldProfile?.role ?? '?'
+      const empName = oldProfile ? `${oldProfile.first_name} ${oldProfile.last_name}` : email
+
       // Actualizar rol en profiles
       const { error: updateError } = await adminClient
         .from('profiles')
@@ -117,6 +128,17 @@ export async function POST(request: NextRequest) {
         results.push({ email, success: false, error: updateError.message })
         continue
       }
+
+      // Audit trail (non-blocking)
+      logAudit(adminClient, {
+        userId: user.id,
+        userName: null,
+        action: 'update_user_role',
+        module: 'equipo',
+        entityType: 'profile',
+        entityId: userId,
+        description: `Admin cambió rol de ${empName} de ${oldRole} a ${role}`,
+      })
 
       results.push({ email, success: true })
     }

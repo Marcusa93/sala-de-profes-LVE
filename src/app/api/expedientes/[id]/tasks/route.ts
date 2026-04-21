@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyExpedienteToResponsible } from '@/lib/email/send'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // GET /api/expedientes/[id]/tasks — list tasks
@@ -125,6 +126,17 @@ export async function POST(
       }).catch(() => {})
     }
 
+    // Audit trail (non-blocking)
+    logAudit(admin, {
+      userId: user.id,
+      userName: authorNameFull,
+      action: 'create_expediente_task',
+      module: 'expedientes',
+      entityType: 'expediente_task',
+      entityId: task.id,
+      description: `${authorNameFull} creó tarea: "${title.trim()}" en expediente ${exp?.code ?? id}`,
+    }).catch(() => {})
+
     return NextResponse.json({ data: task })
   } catch (err) {
     console.error('[POST /api/expedientes/[id]/tasks]', err)
@@ -229,6 +241,18 @@ export async function PATCH(
         }).catch(() => {})
       }
 
+      // Audit trail (non-blocking)
+      const reassignerFullName = userProfile ? `${userProfile.first_name} ${userProfile.last_name}`.trim() : 'Alguien'
+      logAudit(admin, {
+        userId: user.id,
+        userName: reassignerFullName,
+        action: 'update_expediente_task',
+        module: 'expedientes',
+        entityType: 'expediente_task',
+        entityId: task_id,
+        description: `${reassignerFullName} reasignó tarea "${task.title}" a ${newAssigneeName}`,
+      }).catch(() => {})
+
       return NextResponse.json({ success: true })
     }
 
@@ -301,6 +325,18 @@ export async function PATCH(
         detail: `"${task.title}" marcada como completada`,
       }).catch(() => {})
     }
+
+    // Audit trail (non-blocking)
+    const statusUpdaterName = userProfile ? `${userProfile.first_name} ${userProfile.last_name}`.trim() : 'Alguien'
+    logAudit(admin, {
+      userId: user.id,
+      userName: statusUpdaterName,
+      action: 'update_expediente_task',
+      module: 'expedientes',
+      entityType: 'expediente_task',
+      entityId: task_id,
+      description: `${statusUpdaterName} cambió tarea "${task.title}" a ${statusLabels[status] ?? status}`,
+    }).catch(() => {})
 
     return NextResponse.json({ success: true })
   } catch (err) {

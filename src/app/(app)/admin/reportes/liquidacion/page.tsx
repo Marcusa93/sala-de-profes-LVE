@@ -23,6 +23,7 @@ type DayDetail = {
   clockOut: string | null
   status: string
   clockOutType: string
+  attendanceId?: string
 }
 
 type Employee = {
@@ -357,6 +358,14 @@ export default function LiquidacionPage() {
                                   <td className="py-1.5 text-center tabular-nums text-[#3d2c24]">{d.clockIn}</td>
                                   <td className={`py-1.5 text-center tabular-nums ${!d.clockOut ? 'text-[#ea504c] font-semibold' : 'text-[#3d2c24]'}`}>
                                     {d.clockOut ?? '—'}{typeIcon}
+                                    {!d.clockOut && d.attendanceId && (
+                                      <a
+                                        href={`/equipo?date=${d.date}`}
+                                        className="ml-1 inline-flex items-center text-[9px] text-[#4a90d9] underline"
+                                      >
+                                        Corregir
+                                      </a>
+                                    )}
                                   </td>
                                   <td className={`py-1.5 text-right tabular-nums font-semibold ${d.hours > 0 ? 'text-[#3d2c24]' : 'text-[#ea504c]'}`}>
                                     {d.hours > 0 ? `${d.hours}h` : '—'}

@@ -37,6 +37,12 @@ const MAX_MESSAGE_LENGTH = 1500
 type ChatRequest = {
   message: string
   history?: { role: 'user' | 'assistant'; content: string }[]
+  confirmAction?: {
+    intent: string
+    items?: { name: string; quantity: string }[]
+    message?: string
+    urgency?: string
+  }
 }
 
 type StockItemRow = {
@@ -208,6 +214,20 @@ Tipos: general, urgente, recordatorio, operativo
 Prioridades: baja, media, alta, crítica
 Scope: todos, por_rol, usuario específico
 
+## REGLAS DE CONVERSACIÓN FUNDAMENTALES
+
+1. **SALUDOS**: Si te saludan ("hola", "buenas", "che"), respondé con un saludo BREVE y preguntá en qué podés ayudar. NO muestres datos.
+   - Bien: "¡Hola Meli! ¿En qué te puedo ayudar?"
+   - Mal: "¡Hola! Acá tenés el resumen completo del stock..." (NUNCA)
+
+2. **DATOS SOLO CUANDO LOS PIDAN**: No vomites información que no te pidieron. Si preguntan por stock, mostrá stock. Si preguntan por turnos, mostrá turnos. No mezcles.
+
+3. **CONCISO**: Máximo 3-5 líneas para respuestas simples. Solo usá listas largas cuando el usuario pidió un detalle específico.
+
+4. **NO REPETIR CONTEXTO**: Los datos del sistema son para TU referencia. NUNCA los copies textualmente en la respuesta.
+
+5. **ACCIONES**: Si el usuario quiere hacer algo (pedir, cargar stock, reportar), detectá la intención y proponé la acción. No describas el proceso.
+
 ## CÓMO RESPONDER
 
 ### Para consultas de stock:
@@ -241,7 +261,162 @@ Basate SIEMPRE en los datos reales. Podés sugerir acciones basándote en patron
 - Máximo 500 palabras por respuesta
 - Si la respuesta es muy larga, priorizá lo más urgente
 
-IMPORTANTE: La fecha y hora actual están en el contexto. Usala para contextualizar tus respuestas (ej: "Hoy viernes 20 de marzo..." ).`
+IMPORTANTE: La fecha y hora actual están en el contexto. Usala para contextualizar tus respuestas (ej: "Hoy viernes 20 de marzo..." ).
+
+## ACCIONES AUTOMÁTICAS — MODO ACCIÓN
+Cuando el usuario pide algo que requiere CREAR algo en el sistema (pedido, reporte, aviso), respondé con el texto normal de confirmación PERO además incluí al final un bloque JSON entre marcadores especiales:
+
+Si detectás intención de PEDIDO DE MERCADERÍA:
+\`\`\`ACTION_JSON
+{"intent":"PEDIDO_MERCADERIA","items":[{"name":"nombre del producto","quantity":"cantidad con unidad"}],"urgency":"normal"}
+\`\`\`
+
+Si detectás intención de ACTUALIZAR STOCK (el usuario quiere CARGAR cantidades, no pedir):
+\`\`\`ACTION_JSON
+{"intent":"ACTUALIZAR_STOCK","items":[{"name":"nombre del producto","quantity":"cantidad con unidad"}]}
+\`\`\`
+
+Si detectás intención de REPORTAR PROBLEMA:
+\`\`\`ACTION_JSON
+{"intent":"REPORTE_PROBLEMA","message":"descripción del problema","urgency":"urgente"}
+\`\`\`
+
+Si detectás intención de AVISAR AL ENCARGADO:
+\`\`\`ACTION_JSON
+{"intent":"AVISO_ENCARGADO","message":"el mensaje","urgency":"normal"}
+\`\`\`
+
+REGLAS DE ACCIONES:
+- SIEMPRE incluí un texto de confirmación ANTES del bloque JSON
+- El texto debe listar claramente qué se va a hacer
+- Terminá pidiendo confirmación: "¿Lo envío?" o "¿Confirmo?"
+- NO ejecutes la acción directamente — el sistema mostrará un botón de confirmación
+- Si el usuario dice "sí", "dale", "mandalo", "confirmo" después de una propuesta, incluí el JSON de nuevo para ejecutar
+- Si el usuario dice "no", "cancelar", "mejor no", respondé amablemente sin JSON
+- Extraé cantidad y unidad por separado (ej: "5 kg", "3 cajas", "10 unidades")
+- Si no entendés la cantidad, preguntá antes de proponer
+
+## REGLA ANTI-ALUCINACIÓN — NOMBRES DE PRODUCTOS (CRÍTICO)
+- **NUNCA inventes nombres de productos.** Usá EXCLUSIVAMENTE los nombres que aparecen en STOCK_ITEMS_LISTA o BAR_STOCK_ITEMS_LISTA del contexto.
+- Si el usuario dice un nombre informal (ej: "nalga", "leche"), mapealo al nombre EXACTO de la lista (ej: "Nalga de ternera", "Leche entera").
+- Si no estás seguro de a qué item se refiere, **preguntá antes de generar el ACTION_JSON**. Ej: "¿Te referís a 'Nalga de ternera' o a 'Nalga de cerdo'?"
+- Si el item que menciona el usuario NO existe en la lista, **decíselo claramente** y mostrá los items más parecidos de la lista para que elija.
+- En el ACTION_JSON, el campo "name" debe contener el nombre EXACTO como aparece en la lista del contexto, no una versión abreviada ni inventada.
+- Para PRODUCCION_COMPLETA, tanto el input.name como cada output.name deben usar nombres de la lista cuando sea posible. Si un output es un producto nuevo (no existe en stock), indicalo con "(nuevo)" al final del nombre.
+- **NUNCA asumas un producto.** Si hay duda, preguntá.
+
+## CONSULTAS DE ASISTENCIA Y FICHAJES
+
+Cuando el encargado/socio pregunta por asistencia, usá los datos de ASISTENCIA HOY, EGRESOS SIN MARCAR y FICHAJES SOSPECHOSOS.
+
+**Preguntas típicas y cómo responder:**
+
+- "¿Quién está trabajando ahora?" → mostrá los que tienen ingreso abierto (sin egreso), con su horario de entrada
+- "¿Quién llegó hoy?" → mostrá ASISTENCIA HOY con hora de ingreso
+- "¿Hay fichajes sospechosos?" → mostrá FICHAJES SOSPECHOSOS HOY, si no hay decí que todo está ok
+- "¿Cuántas horas trabajó [nombre] esta semana?" → con los datos disponibles del contexto, calculá. Si no tenés el historial semanal, indicá que solo ves hoy y sugerí ir a /admin/reportes/asistencia
+- "¿Alguien se olvidó de marcar egreso?" → mostrá EGRESOS SIN MARCAR
+
+**Para el empleado que quiere fichar:**
+- "Fichar entrada" / "Marcar ingreso" / "Entré al trabajo" → decile que el fichaje se hace desde /mi-turno en la app, que necesita dar permiso de ubicación
+- "Fichar salida" / "Marcar egreso" → ídem, desde /mi-turno
+- NO podés fichar por el chat. El fichaje requiere geolocalización en tiempo real.
+
+DISTINGUIR PEDIDO vs ACTUALIZACIÓN DE STOCK:
+- "necesito", "pedí", "falta", "encargá" → PEDIDO_MERCADERIA (pedir al proveedor)
+- "hay", "quedan", "tenemos", "cargá", "actualizar", "son", "conté" → ACTUALIZAR_STOCK (cargar cantidad actual)
+- "hay 10kg de café" = el usuario está diciendo cuánto HAY → ACTUALIZAR_STOCK
+- "necesito 10kg de café" = el usuario está pidiendo que le compren → PEDIDO_MERCADERIA
+- Si no está claro, preguntá: "¿Querés cargar stock (decirme cuánto hay) o pedir mercadería (que te compren)?"
+- ACTUALIZAR_STOCK escribe en la webapp Y se sincroniza con Fudo automáticamente
+
+## PRODUCCIÓN Y DESPIECE
+Cuando el usuario registra que procesó/despiezó un insumo (solo roles: chef, cocina, encargado, socio):
+- "Hice despiece de 10kg de nalga: 7kg milanesas, 2kg hamburguesas"
+- "De 8kg de pollo saqué 6.5kg de pechuga y 1kg de carcaza"
+- "Registrá producción 5kg queso: 4kg cuñas, 0.8kg rallado"
+
+Respondé resumiendo el despiece Y agregá al final:
+\`\`\`ACTION_JSON
+{"intent":"PRODUCCION_COMPLETA","message":"{\"input\":{\"name\":\"nalga\",\"qty\":10,\"unit\":\"kg\"},\"outputs\":[{\"name\":\"milanesas\",\"qty\":7,\"unit\":\"kg\"},{\"name\":\"hamburguesas\",\"qty\":2,\"unit\":\"kg\"}]}"}
+\`\`\`
+
+IMPORTANTE para PRODUCCION_COMPLETA:
+- El campo "message" contiene un JSON-string con input y outputs
+- "input" es el insumo principal que se procesa (un único item)
+- "outputs" son todos los productos obtenidos
+- La merma = input.qty − suma de outputs (se calcula automáticamente)
+- Mostrá la eficiencia antes del bloque: (sum outputs / input) × 100%
+- Si falta info, preguntá antes de proponer
+
+## CONSULTAS ESPECIALES — QUERY_JSON
+Para consultas de disponibilidad, duración de stock, recetas en riesgo, producciones de hoy o links pendientes,
+respondé con texto normal Y embebé un bloque QUERY_JSON. El sistema lo reemplaza con datos reales ANTES de mostrarlo al usuario.
+
+\`\`\`QUERY_JSON
+{"type":"STOCK_DISPONIBILIDAD","item":"nombre del insumo"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"STOCK_DURACION","item":"nombre del insumo"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"RECETAS_RIESGO"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"PRODUCCION_HOY"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"PENDIENTES_LINKS"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"VENTAS_HOY"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"COSTO_PLATO","item":"nombre de la receta"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"BRIEFING_DIARIO"}
+\`\`\`
+
+\`\`\`QUERY_JSON
+{"type":"FICHAJES_ANOMALIAS"}
+\`\`\`
+
+Cuándo usar QUERY_JSON:
+- "¿Cuánta nalga hay?" / "¿Hay stock de pollo?" → STOCK_DISPONIBILIDAD
+- "¿Cuánto me dura?" / "¿Para cuántos días alcanza?" → STOCK_DURACION
+- "¿Qué recetas están en riesgo?" / "¿Qué platos no puedo hacer?" → RECETAS_RIESGO
+- "¿Qué producciones hubo hoy?" / "¿Qué se hizo hoy?" → PRODUCCION_HOY
+- "¿Cuántos links pendientes hay?" / "¿Hay ingredientes sin vincular?" → PENDIENTES_LINKS
+- "¿Cuánto facturamos?" / "¿Cómo van las ventas?" / "¿Qué se vendió más?" → VENTAS_HOY
+- "¿Cuánto cuesta hacer una milanesa?" / "¿Qué margen tiene la hamburguesa?" → COSTO_PLATO
+- "Dame el resumen del día" / "¿Cómo estamos?" / "Briefing" → BRIEFING_DIARIO
+- "¿Hay fichajes sospechosos?" / "¿Quién llegó tarde?" / "Anomalías" → FICHAJES_ANOMALIAS
+
+## MISE EN PLACE
+Si alguien dice "listo salsas", "terminé los vegetales", "mise en place listo", "preparé las masas":
+- Detectá los items mencionados y proponé una acción MISE_EN_PLACE.
+- Formato del ACTION_JSON:
+\`\`\`ACTION_JSON
+{"intent":"MISE_EN_PLACE","items":[{"name":"salsas","quantity":"1"},{"name":"vegetales cortados","quantity":"1"}]}
+\`\`\`
+- El sistema matchea los nombres contra mise_en_place_items del turno activo.
+- Si incluyen cantidad ("hice 50 empanadas"), usala en quantity.
+- Si no hay turno activo, avisá que abran uno primero.
+
+## FICHAJE / ASISTENCIA
+Si alguien dice "fichar entrada", "fichar salida", "marcar ingreso", "marcar egreso":
+- NO fichés desde el chat. El fichaje requiere verificación de seguridad (GPS, WiFi, dispositivo).
+- Respondé: "Para fichar necesitás hacerlo desde **Mi Turno** en la app — ahí se verifica tu ubicación y dispositivo. Entrá a /mi-turno."
+- Si un encargado/socio pregunta "¿quién está trabajando?", "¿fichajes sospechosos?", "¿horas de [nombre]?" → respondé con los datos del contexto.
+- Si preguntan "¿cuántas horas trabajó [nombre] esta semana/mes?" → buscá en el contexto de asistencia.`
 
 // ---------------------------------------------------------------------------
 // Recopilar contexto de datos — ampliado
@@ -343,6 +518,66 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       }
     }
 
+    // 2b. Clock events (nuevo sistema anti-trampa — paralelo a attendance_logs)
+    if (canSeeAttendance) {
+      const { data: clockEvents } = await supabase
+        .from('clock_events')
+        .select('event_type, timestamp, verified, anomaly_flags, profiles!clock_events_employee_id_fkey(first_name, last_name, role)')
+        .gte('timestamp', `${todayStr}T00:00:00-03:00`)
+        .order('timestamp', { ascending: false })
+
+      if (clockEvents && clockEvents.length > 0) {
+        // Build current status per employee
+        const seenEmployees = new Set<string>()
+        const currentlyIn: string[] = []
+        const completedToday: string[] = []
+
+        for (const evt of clockEvents) {
+          const p = evt.profiles as { first_name: string; last_name: string; role: string } | null
+          if (!p) continue
+          const key = `${p.first_name} ${p.last_name}`
+          if (seenEmployees.has(key)) continue
+          seenEmployees.add(key)
+          const time = format(new Date(evt.timestamp as string), 'HH:mm')
+          const flags = Array.isArray(evt.anomaly_flags) ? evt.anomaly_flags : []
+          const flagStr = flags.length > 0 ? ` ⚠️ (${flags.length} alerta${flags.length > 1 ? 's' : ''})` : ''
+          if (evt.event_type === 'clock_in') {
+            currentlyIn.push(`- ${key} (${p.role}): ingresó ${time}${flagStr}`)
+          } else {
+            completedToday.push(`- ${key} (${p.role}): egresó ${time}${flagStr}`)
+          }
+        }
+
+        if (currentlyIn.length > 0) {
+          sections.push(`FICHAJE ANTI-TRAMPA — ACTUALMENTE EN EL LOCAL (${currentlyIn.length}):\n${currentlyIn.join('\n')}`)
+        }
+      }
+
+      // Open anomalies summary
+      const { data: openAnomalies } = await supabase
+        .from('attendance_anomalies')
+        .select('anomaly_type, severity, employee_id, profiles!attendance_anomalies_employee_id_fkey(first_name, last_name)')
+        .eq('resolved', false)
+        .order('created_at', { ascending: false })
+        .limit(10)
+
+      if (openAnomalies && openAnomalies.length > 0) {
+        const lines = openAnomalies.map((a) => {
+          const p = a.profiles as { first_name: string; last_name: string } | null
+          const name = p ? `${p.first_name} ${p.last_name}` : 'Empleado'
+          const tipo = a.anomaly_type === 'gps_out_of_range' ? 'GPS fuera de rango' :
+                       a.anomaly_type === 'wifi_mismatch' ? 'WiFi no reconocida' :
+                       a.anomaly_type === 'unknown_device' ? 'Dispositivo no registrado' :
+                       a.anomaly_type === 'rapid_succession' ? 'Fichaje muy rápido' :
+                       a.anomaly_type === 'unusual_hour' ? 'Horario inusual' : a.anomaly_type
+          return `- ${name}: ${tipo} (${a.severity})`
+        })
+        sections.push(`ANOMALÍAS DE ASISTENCIA SIN RESOLVER (${openAnomalies.length}):\n${lines.join('\n')}`)
+      } else {
+        sections.push('ANOMALÍAS DE ASISTENCIA: Sin anomalías pendientes.')
+      }
+    }
+
     // 3. Stock general (encargados, chef, cocina)
     if (canSeeStockGeneral) {
       const { data: stockItems } = await supabase
@@ -371,6 +606,10 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
 
       const greenCount = stockRows.length - redItems.length - yellowItems.length
       sections.push(`RESUMEN STOCK GENERAL: ${stockRows.length} items — 🔴 ${redItems.length} críticos, 🟡 ${yellowItems.length} en atención, 🟢 ${greenCount} normales`)
+
+      // ── ANTI-HALLUCINATION: inject full item name list for ACTION_JSON ──
+      const stockNameList = stockRows.map(i => `- ${i.name} (${i.unit})`).join('\n')
+      sections.push(`STOCK_ITEMS_LISTA (usá SOLO estos nombres en ACTION_JSON para stock general, pedidos y producción):\n${stockNameList}`)
     }
 
     // 4. Stock de Barra / Cafetería (encargados, baristas)
@@ -392,6 +631,10 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       }
 
       sections.push(`RESUMEN BARRA: ${barRows.length} items — ${barLow.length} bajos/urgentes, ${barRows.length - barLow.length} normales`)
+
+      // ── ANTI-HALLUCINATION: inject full bar item name list ──
+      const barNameList = barRows.map(b => `- ${b.name} (${b.unit})`).join('\n')
+      sections.push(`BAR_STOCK_ITEMS_LISTA (usá SOLO estos nombres en ACTION_JSON para barra):\n${barNameList}`)
     }
 
     // 5. Pedidos de barra pendientes (encargados, baristas)
@@ -440,6 +683,48 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
         if (pending.length > 0) {
           const lines = pending.slice(0, 10).map((i) => `- ⬜ ${i.title}`)
           sections.push(`TAREAS PENDIENTES COCINA:\n${lines.join('\n')}`)
+        }
+
+        // 6b. Mise en place status for this shift
+        const { data: miseItems } = await supabase
+          .from('mise_en_place_items')
+          .select('id, name, family, target_quantity, unit')
+          .eq('is_active', true)
+          .in('shift', [activeShift.shift_type, 'both'])
+
+        if (miseItems && miseItems.length > 0) {
+          const { data: miseRecords } = await supabase
+            .from('mise_en_place_records')
+            .select('mise_en_place_item_id, status, quantity_produced')
+            .eq('kitchen_shift_id', activeShift.id)
+
+          const recordMap = new Map(
+            (miseRecords ?? []).map(r => [r.mise_en_place_item_id, r])
+          )
+
+          const misePending = miseItems.filter(m => {
+            const rec = recordMap.get(m.id)
+            return !rec || rec.status !== 'done'
+          })
+          const miseDone = miseItems.filter(m => {
+            const rec = recordMap.get(m.id)
+            return rec?.status === 'done'
+          })
+
+          sections.push(`MISE EN PLACE — ${miseDone.length}/${miseItems.length} completados, ${misePending.length} pendientes`)
+
+          if (misePending.length > 0) {
+            const miseLines = misePending.slice(0, 15).map(m => {
+              const rec = recordMap.get(m.id)
+              const status = rec?.status === 'in_progress' ? '🔄' : rec?.status === 'low' ? '🟡' : rec?.status === 'missing' ? '🔴' : '⬜'
+              return `- ${status} ${m.name} (objetivo: ${m.target_quantity} ${m.unit})`
+            })
+            sections.push(`MISE EN PLACE PENDIENTE:\n${miseLines.join('\n')}`)
+          }
+
+          // ── ANTI-HALLUCINATION: inject full mise en place item name list ──
+          const miseNameList = miseItems.map(m => `- ${m.name}`).join('\n')
+          sections.push(`MISE_EN_PLACE_ITEMS_LISTA (usá SOLO estos nombres para MISE_EN_PLACE):\n${miseNameList}`)
         }
       }
     }
@@ -519,8 +804,77 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       }
     }
 
-    // 10. Protocolo de atención — always available for runners and baristas
-    if (['runner', 'barista', 'socio', 'encargado'].includes(role)) {
+    // 10. Producción — chef, cocina, encargado, socio
+    const canSeeProduccion = isSocio || ['encargado', 'chef', 'cocina'].includes(role)
+    if (canSeeProduccion) {
+      const prodSince = new Date()
+      prodSince.setDate(prodSince.getDate() - 7)
+
+      const { data: recentOrders } = await supabase
+        .from('production_orders')
+        .select('id, name, status, created_at, profiles!production_orders_chef_id_fkey(first_name)')
+        .gte('created_at', prodSince.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(15)
+
+      if (recentOrders && recentOrders.length > 0) {
+        const pending = recentOrders.filter((o) => o.status !== 'completed' && o.status !== 'cancelled')
+        const completed = recentOrders.filter((o) => o.status === 'completed')
+
+        const lines = recentOrders.map((o) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const chef = (o.profiles as any)?.first_name ?? '?'
+          const icon = o.status === 'completed' ? '✅' : o.status === 'in_progress' ? '🔄' : '📋'
+          const date = new Date(o.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })
+          return `${icon} ${o.name} — ${chef} (${date})`
+        })
+        sections.push(`PRODUCCIÓN ÚLTIMOS 7 DÍAS (${recentOrders.length} total, ${completed.length} completadas, ${pending.length} pendientes):\n${lines.join('\n')}`)
+
+        if (pending.length > 0) {
+          sections.push(`⚠️ PRODUCCIONES SIN COMPLETAR: ${pending.length} — el stock NO se actualiza hasta confirmarlas`)
+        }
+      } else {
+        sections.push('PRODUCCIÓN ÚLTIMOS 7 DÍAS: Sin registros.')
+      }
+    }
+
+    // 11. Pending ingredient links (encargado, socio)
+    if (isSocio || role === 'encargado') {
+      const { count: pendingLinksCount } = await supabase
+        .from('recipe_ingredient_pending_links')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending')
+
+      if (pendingLinksCount && pendingLinksCount > 0) {
+        sections.push(`⚠️ INGREDIENTES SIN VINCULAR AL STOCK: ${pendingLinksCount} pendientes en Admin → Recetas → Pending`)
+      }
+    }
+
+    // 12. Fichajes sospechosos (encargado, socio)
+    if (isSocio || role === 'encargado') {
+      const sevenDaysAgo = new Date()
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+      const { data: suspicious } = await supabase
+        .from('attendance_logs')
+        .select('operative_date, suspicious_reasons, profiles!attendance_logs_user_id_fkey(first_name)')
+        .eq('is_suspicious', true)
+        .gte('operative_date', sevenDaysAgo.toISOString().split('T')[0])
+        .order('operative_date', { ascending: false })
+        .limit(10)
+
+      const suspRows = (suspicious ?? []) as unknown as { operative_date: string; suspicious_reasons: string[]; profiles: { first_name: string } | null }[]
+      if (suspRows.length > 0) {
+        const lines = suspRows.map(s => {
+          const name = s.profiles?.first_name ?? '?'
+          const reasons = (s.suspicious_reasons ?? []).map(r => r.split(':')[0]).join(', ')
+          return `- ${name} (${s.operative_date}): ${reasons}`
+        })
+        sections.push(`⚠️ FICHAJES SOSPECHOSOS (últimos 7 días, ${suspRows.length}):\n${lines.join('\n')}\nVer detalle en Admin → Reportes → Sospechosos`)
+      }
+    }
+
+    // 13. Protocolo de atención — always available for runners and baristas
+    if (['runner', 'barista', 'bacha', 'socio', 'encargado'].includes(role)) {
       sections.push(`PROTOCOLO DE ATENCIÓN — LA VIEJA ESCUELA:
 
 **SALUDO Y BIENVENIDA:**
@@ -586,10 +940,26 @@ function buildKeywordResponse(question: string, context: string): string {
     return match ? match[0] : ''
   }
 
-  if (q.includes('trabaj') || q.includes('quien') || q.includes('equipo') || q.includes('hoy')) {
+  if (q.includes('trabaj') || q.includes('quien') || q.includes('equipo') || q.includes('hoy') || q.includes('fichaj') || q.includes('local')) {
+    const fichaje = getSection('FICHAJE ANTI-TRAMPA')
     const asistencia = getSection('ASISTENCIA HOY')
     const turnos = getSection('TURNOS HOY')
-    return asistencia + (turnos ? '\n\n' + turnos : '')
+    const sinEgreso = getSection('EGRESOS SIN MARCAR')
+    return [fichaje, asistencia, sinEgreso, turnos].filter(Boolean).join('\n\n')
+  }
+
+  if (q.includes('anomal') || q.includes('alerta') || q.includes('sospech') || q.includes('trampa') || q.includes('irreg') || q.includes('irregulari')) {
+    const anomalias = getSection('ANOMALÍAS DE ASISTENCIA')
+    const suspicious = getSection('FICHAJES SOSPECHOSOS')
+    return [anomalias, suspicious].filter(Boolean).join('\n\n') || 'No hay anomalías ni fichajes sospechosos. ✅'
+  }
+
+  if (q.includes('egreso') || q.includes('salida') || q.includes('sin marcar') || q.includes('olvidó')) {
+    return getSection('EGRESOS SIN MARCAR') || 'Todos marcaron egreso. ✅'
+  }
+
+  if (q.includes('hora') || q.includes('horas') && (q.includes('trabajo') || q.includes('trabaj') || q.includes('semana') || q.includes('mes'))) {
+    return 'Para consultar horas trabajadas de un empleado, revisá el panel de Asistencia en /admin/asistencia donde podés filtrar por empleado y período.'
   }
 
   if (q.includes('stock') || q.includes('rojo') || q.includes('critico') || q.includes('falt')) {
@@ -625,6 +995,72 @@ function buildKeywordResponse(question: string, context: string): string {
   }
 
   return `Acá tenés un resumen general:\n\n${context}`
+}
+
+// ---------------------------------------------------------------------------
+// Process AI response — handles ACTION_JSON and QUERY_JSON blocks
+// ---------------------------------------------------------------------------
+
+async function processAIResponse(
+  responseText: string,
+  userRole: string,
+): Promise<Response> {
+  // 1. ACTION_JSON — requires user confirmation
+  const actionMatch = responseText.match(/```ACTION_JSON\s*([\s\S]*?)\s*```/)
+  if (actionMatch) {
+    try {
+      const actionData = JSON.parse(actionMatch[1].trim())
+      const cleanText = responseText.replace(/```ACTION_JSON[\s\S]*?```/, '').trim()
+
+      const { buildProposal, detectIntent } = await import('@/lib/ai/chatbot-actions')
+      const { createAdminClient } = await import('@/lib/supabase/admin')
+      const admin = createAdminClient()
+
+      const intent = detectIntent(actionData)
+      const proposal = await buildProposal(
+        admin,
+        intent,
+        actionData.items ?? [],
+        actionData.message,
+        actionData.urgency,
+        userRole,
+      )
+
+      return NextResponse.json({
+        response: cleanText || proposal.confirmationText,
+        actionProposal: {
+          intent: actionData.intent,
+          items: actionData.items,
+          message: actionData.message,
+          urgency: actionData.urgency,
+        },
+        duplicateWarnings: proposal.duplicateWarnings,
+      })
+    } catch {
+      const cleanText = responseText.replace(/```ACTION_JSON[\s\S]*?```/, '').trim()
+      return NextResponse.json({ response: cleanText })
+    }
+  }
+
+  // 2. QUERY_JSON — immediate read-only query, result replaces the block
+  const queryMatch = responseText.match(/```QUERY_JSON\s*([\s\S]*?)\s*```/)
+  if (queryMatch) {
+    try {
+      const queryData = JSON.parse(queryMatch[1].trim())
+      const { executeQuery } = await import('@/lib/ai/chatbot-actions')
+      const { createAdminClient } = await import('@/lib/supabase/admin')
+      const admin = createAdminClient()
+
+      const queryResult = await executeQuery(admin, queryData, userRole)
+      const finalText = responseText.replace(/```QUERY_JSON[\s\S]*?```/, queryResult).trim()
+      return NextResponse.json({ response: finalText })
+    } catch {
+      const cleanText = responseText.replace(/```QUERY_JSON[\s\S]*?```/, '').trim()
+      return NextResponse.json({ response: cleanText })
+    }
+  }
+
+  return NextResponse.json({ response: responseText })
 }
 
 // ---------------------------------------------------------------------------
@@ -672,6 +1108,56 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Demasiadas solicitudes. Esperá un momento.' }, { status: 429 })
     }
 
+    // --- HANDLE ACTION CONFIRMATION ---
+    if (body.confirmAction) {
+      const { buildProposal, executeAction, detectIntent, checkPermission } = await import('@/lib/ai/chatbot-actions')
+      const { createAdminClient } = await import('@/lib/supabase/admin')
+      const admin = createAdminClient()
+
+      const intent = detectIntent(body.confirmAction)
+
+      // Permission check
+      const perm = checkPermission(intent, userRole)
+      if (!perm.allowed) {
+        return NextResponse.json({
+          response: `Mirá ${profile.first_name}, ${perm.reason}`,
+          actionExecuted: false,
+        })
+      }
+      const proposal = await buildProposal(
+        admin,
+        intent,
+        body.confirmAction.items ?? [],
+        body.confirmAction.message,
+        body.confirmAction.urgency,
+        userRole,
+      )
+
+      proposal.readyToExecute = true
+      const userName = profile.first_name ?? 'Usuario'
+      const result = await executeAction(admin, proposal, user.id, userName, userRole)
+
+      if (result.success && result.created > 0) {
+        const successSuffix =
+          proposal.intent === 'PEDIDO_MERCADERIA'
+            ? 'El pedido le llegó al encargado como notificación.'
+            : proposal.intent === 'REPORTE_PROBLEMA'
+            ? 'El reporte le llegó a los encargados.'
+            : proposal.intent === 'PRODUCCION_COMPLETA'
+            ? 'El stock se actualizó con los movimientos de producción.'
+            : 'Aviso enviado a los encargados.'
+        return NextResponse.json({
+          response: `✅ ¡Listo, ${profile.first_name}! ${result.details.join(', ')}. ${successSuffix}`,
+          actionExecuted: true,
+        })
+      } else {
+        return NextResponse.json({
+          response: `Qué macana, hubo un error: ${result.errors.join(', ')}. Intentá de nuevo.`,
+          actionExecuted: false,
+        })
+      }
+    }
+
     // Recopilar contexto filtrado por rol
     const context = await gatherContext(supabase, userRole)
 
@@ -691,11 +1177,22 @@ export async function POST(request: Request) {
       }
     }
 
-    // Mensaje actual con contexto
+    // User message — CLEAN, no context dumped here
     conversationMessages.push({
       role: 'user',
-      content: `[CONTEXTO ACTUAL DEL SISTEMA — datos en tiempo real]\n\n${context}\n\n---\n\nPregunta de ${profile.first_name} (${userRole}): ${message}`,
+      content: message,
     })
+
+    // Build full system prompt with context
+    const fullSystemPrompt = `${SYSTEM_PROMPT}
+
+## DATOS EN TIEMPO REAL DEL SISTEMA
+El usuario es ${profile.first_name} (${userRole}).
+Usá estos datos SOLO cuando sean relevantes para responder. NO los repitas si no te los piden.
+Si el usuario saluda, respondé con un saludo breve y preguntá en qué podés ayudar.
+NUNCA vomites datos sin que te los pidan.
+
+${context}`
 
     // --- Intentar OpenRouter ---
     const openRouterKey = process.env.OPENROUTER_API_KEY
@@ -715,7 +1212,7 @@ export async function POST(request: Request) {
             max_tokens: 1024,
             temperature: 0.3,
             messages: [
-              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'system', content: fullSystemPrompt },
               ...conversationMessages,
             ],
           }),
@@ -724,7 +1221,7 @@ export async function POST(request: Request) {
         if (response.ok) {
           const data = await response.json()
           const responseText = data.choices?.[0]?.message?.content ?? 'No pude generar una respuesta.'
-          return NextResponse.json({ response: responseText })
+          return processAIResponse(responseText, userRole)
         }
 
         console.error('Error en OpenRouter API:', response.status, await response.text())
@@ -748,7 +1245,7 @@ export async function POST(request: Request) {
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
             max_tokens: 1024,
-            system: SYSTEM_PROMPT,
+            system: fullSystemPrompt,
             messages: conversationMessages,
           }),
         })
@@ -756,7 +1253,7 @@ export async function POST(request: Request) {
         if (response.ok) {
           const data = await response.json()
           const responseText = data.content?.[0]?.text ?? 'No pude generar una respuesta.'
-          return NextResponse.json({ response: responseText })
+          return processAIResponse(responseText, userRole)
         }
 
         console.error('Error en Anthropic API:', response.status, await response.text())

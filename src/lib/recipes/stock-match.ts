@@ -10,7 +10,7 @@ export type StockMatchResult = {
   ingredient_name: string
   normalized_name: string
   recipe_slug: string
-  suggested_stock_item_id: string | null
+  suggested_stock_item_id: string | number | null
   suggested_stock_item_name: string | null
   confidence: 'exacto' | 'probable' | 'ambiguo' | 'sin_match'
   confidence_score: number // 0-100
@@ -19,7 +19,7 @@ export type StockMatchResult = {
 }
 
 type StockItemForMatch = {
-  id: string
+  id: string | number
   name: string
   category: string
 }

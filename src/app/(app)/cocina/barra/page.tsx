@@ -11,6 +11,7 @@ import {
   ChevronUp, History, Pencil, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { logAuditClient } from '@/lib/audit'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
 import { FadeIn } from '@/components/ui/motion'
@@ -81,9 +82,11 @@ export default function MiBarraPage() {
   const [orders, setOrders] = useState<BarOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [showOk, setShowOk] = useState(true)
-  // Always show all when searching
-  const effectiveShowOk = showOk || search.trim().length > 0
   const [search, setSearch] = useState('')
+
+  // Consumption data from Fudo
+  const [consumption, setConsumption] = useState<{ id: number; consumed: number; consumedUnit: string; pctUsed: number }[]>([])
+  const [consumptionLoaded, setConsumptionLoaded] = useState(false)
 
   // Edit state
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -103,9 +106,22 @@ export default function MiBarraPage() {
   // Handover state
   const [lastHandover, setLastHandover] = useState<{
     shift_type: string; date: string; notes: string | null
-    items: unknown[]
+    items: { id: number; name: string; qty: number }[]
+    closedByName?: string
+    created_at?: string
   } | null>(null)
   const [closingShift, setClosingShift] = useState(false)
+  const [handoverDismissed, setHandoverDismissed] = useState(false)
+
+  // Quick stock mode
+  const [stockMode, setStockMode] = useState(false)
+  const [stockDraft, setStockDraft] = useState<Map<number, string>>(new Map())
+  const [savingStock, setSavingStock] = useState(false)
+
+  // Multi-order mode
+  const [orderMode, setOrderMode] = useState(false)
+  const [orderCart, setOrderCart] = useState<Map<number, { qty: string; note: string }>>(new Map())
+  const [sendingOrders, setSendingOrders] = useState(false)
 
   const isManager = isManagerOrAbove(profile?.role)
   const canEdit = profile?.role === 'barista' || isManager
@@ -116,15 +132,38 @@ export default function MiBarraPage() {
     const [itemsRes, ordersRes, handoverRes] = await Promise.all([
       supabase.from('bar_stock_items').select('*').eq('is_active', true).order('sort_order'),
       supabase.from('bar_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }),
-      supabase.from('bar_shift_handover').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      supabase.from('bar_shift_handover').select('*, profiles:closed_by(first_name, last_name)').order('created_at', { ascending: false }).limit(1).maybeSingle(),
     ])
     setItems(itemsRes.data ?? [])
     setOrders(ordersRes.data ?? [])
-    if (handoverRes.data) setLastHandover(handoverRes.data as typeof lastHandover)
+    if (handoverRes.data) {
+      const hd = handoverRes.data as Record<string, unknown>
+      const prof = hd.profiles as { first_name: string; last_name: string } | null
+      setLastHandover({
+        shift_type: hd.shift_type as string,
+        date: hd.date as string,
+        notes: hd.notes as string | null,
+        items: (hd.items as { id: number; name: string; qty: number }[]) ?? [],
+        closedByName: prof ? `${prof.first_name} ${prof.last_name}` : undefined,
+        created_at: hd.created_at as string,
+      })
+    }
     setLoading(false)
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Fetch Fudo consumption (lazy, after main data)
+  useEffect(() => {
+    if (loading || consumptionLoaded) return
+    fetch('/api/bar/consumption')
+      .then(r => r.json())
+      .then(d => {
+        if (d.consumption) setConsumption(d.consumption)
+        setConsumptionLoaded(true)
+      })
+      .catch(() => setConsumptionLoaded(true))
+  }, [loading, consumptionLoaded])
 
   // Filter by search
   const filteredItems = useMemo(() => {
@@ -177,6 +216,17 @@ export default function MiBarraPage() {
     return { urgents, byCat }
   }, [filteredItems])
 
+  // Build consumption map for passing to sections
+  const consumptionMap = useMemo(() => {
+    const map = new Map<number, { consumed: number; unit: string; pctUsed: number }>()
+    for (const c of consumption) {
+      if (c.consumed > 0) {
+        map.set(c.id, { consumed: c.consumed, unit: c.consumedUnit, pctUsed: c.pctUsed })
+      }
+    }
+    return map
+  }, [consumption])
+
   // Items with received orders (need stock update)
   const receivedOrders = useMemo(() => orders.filter(o => o.status === 'received'), [orders])
 
@@ -214,6 +264,7 @@ export default function MiBarraPage() {
         new_qty: newQty,
       })
 
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'bar_stock_log', module: 'barra', entityType: 'bar_stock_log', description: 'User registró actividad barra' })
       setEditingId(null)
       toast.success(`${item.name} → ${newQty}`)
       fetchData()
@@ -272,6 +323,113 @@ export default function MiBarraPage() {
     setLoadingHistory(false)
   }
 
+  // Enter stock mode — pre-fill with current values
+  const enterStockMode = () => {
+    const draft = new Map<number, string>()
+    items.forEach(i => draft.set(i.id, String(i.current_qty)))
+    setStockDraft(draft)
+    setStockMode(true)
+  }
+
+  // Save all stock changes at once (batch)
+  const handleSaveStock = async () => {
+    setSavingStock(true)
+    try {
+      const changes: { itemId: number; qty: number }[] = []
+      for (const [itemId, qtyStr] of stockDraft) {
+        const newQty = parseFloat(qtyStr) || 0
+        const item = items.find(i => i.id === itemId)
+        if (!item || item.current_qty === newQty) continue
+        changes.push({ itemId, qty: newQty })
+      }
+
+      if (changes.length === 0) {
+        toast('No hay cambios para guardar')
+        setSavingStock(false)
+        return
+      }
+
+      // Send all updates in parallel
+      const results = await Promise.allSettled(
+        changes.map(({ itemId, qty }) =>
+          fetch('/api/kitchen/bar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'update_stock', itemId, qty }),
+          })
+        )
+      )
+
+      const updated = results.filter(r => r.status === 'fulfilled' && (r.value as Response).ok).length
+      const failed = changes.length - updated
+
+      if (failed > 0) {
+        toast.error(`${updated} actualizados, ${failed} fallaron`)
+      } else {
+        toast.success(`Stock actualizado — ${updated} item${updated !== 1 ? 's' : ''}`)
+      }
+      setStockMode(false)
+      fetchData()
+    } catch {
+      toast.error('Error al guardar stock')
+    } finally {
+      setSavingStock(false)
+    }
+  }
+
+  // Toggle item in order cart
+  const toggleOrderCart = (itemId: number) => {
+    const cart = new Map(orderCart)
+    if (cart.has(itemId)) {
+      cart.delete(itemId)
+    } else {
+      cart.set(itemId, { qty: '', note: '' })
+    }
+    setOrderCart(cart)
+  }
+
+  // Send all orders at once (batch)
+  const handleSendOrders = async () => {
+    if (orderCart.size === 0 || sendingOrders) return
+    setSendingOrders(true)
+    try {
+      const orders: { itemId: number; item: typeof items[0]; qty: string; note: string }[] = []
+      for (const [itemId, { qty, note }] of orderCart) {
+        const item = items.find(i => i.id === itemId)
+        if (!item || !qty.trim()) continue
+        orders.push({ itemId, item, qty: qty.trim(), note: note.trim() })
+      }
+
+      const results = await Promise.allSettled(
+        orders.map(({ itemId, item, qty, note }) =>
+          fetch('/api/kitchen/bar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'create_order',
+              barStockItemId: itemId,
+              productName: item.name,
+              category: item.category,
+              quantity: qty,
+              urgency: getSemaphore(item) === 'red' ? 'urgente' : 'normal',
+              note: note || null,
+            }),
+          })
+        )
+      )
+
+      const sent = results.filter(r => r.status === 'fulfilled' && (r.value as Response).ok).length
+      toast.success(`${sent} pedido${sent !== 1 ? 's' : ''} enviado${sent !== 1 ? 's' : ''} al encargado`)
+      setOrderMode(false)
+      setOrderCart(new Map())
+      fetchData()
+    } catch {
+      toast.error('Error al enviar pedidos')
+    } finally {
+      setSendingOrders(false)
+    }
+  }
+
   // Close shift — save current stock as handover
   const handleCloseShift = async () => {
     if (closingShift) return
@@ -299,6 +457,7 @@ export default function MiBarraPage() {
       })
 
       if (error) throw error
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'bar_handover', module: 'barra', entityType: 'bar_shift_handover', description: 'User registró traspaso de barra' })
       toast.success('Turno cerrado — stock guardado para el siguiente')
       fetchData()
     } catch (err) {
@@ -372,6 +531,116 @@ export default function MiBarraPage() {
       </FadeIn>
 
       {/* ============================================================= */}
+      {/* HANDOVER — what the previous shift left */}
+      {/* ============================================================= */}
+      {lastHandover && !handoverDismissed && (
+        <div className="rounded-2xl border border-[#006d5a]/30 bg-[#f0f7f5] p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Clock className="size-4 text-[#006d5a]" />
+              <span className="text-xs font-bold uppercase tracking-wider text-[#006d5a]">
+                Turno anterior — {lastHandover.closedByName ?? 'Anónimo'}
+              </span>
+            </div>
+            <button onClick={() => setHandoverDismissed(true)} className="text-[#006d5a]/50 hover:text-[#006d5a]">
+              <X className="size-4" />
+            </button>
+          </div>
+          <p className="text-[10px] text-[#006d5a]/60 mb-2">
+            {lastHandover.created_at ? format(new Date(lastHandover.created_at), "d MMM HH:mm", { locale: es }) : lastHandover.date} · Turno {lastHandover.shift_type === 'morning' ? 'Mañana' : 'Noche'}
+          </p>
+          {lastHandover.notes && (
+            <p className="text-xs text-[#006d5a] mb-2 italic">&quot;{lastHandover.notes}&quot;</p>
+          )}
+          <div className="grid grid-cols-3 gap-1.5">
+            {(lastHandover.items ?? []).slice(0, 9).map((item, i) => (
+              <div key={i} className="rounded-lg bg-white/70 px-2 py-1.5 text-center">
+                <p className="text-[10px] text-[#3d2c24] truncate">{item.name}</p>
+                <p className="text-sm font-bold tabular-nums text-[#006d5a]">{item.qty}</p>
+              </div>
+            ))}
+          </div>
+          {(lastHandover.items ?? []).length > 9 && (
+            <p className="text-[10px] text-[#006d5a]/50 mt-1 text-center">
+              +{(lastHandover.items ?? []).length - 9} items más
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* ACTION BUTTONS — Stock / Pedir / Cerrar turno */}
+      {/* ============================================================= */}
+      {canEdit && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => { if (stockMode) { setStockMode(false) } else { enterStockMode() } }}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-3 text-xs font-bold transition-all ${
+              stockMode
+                ? 'bg-[#006d5a] text-white'
+                : 'border border-[#ebe6df] bg-white text-[#3d2c24] hover:border-[#006d5a]'
+            }`}
+          >
+            <Pencil className="size-3.5" />
+            {stockMode ? 'Editando stock...' : 'Hacer stock'}
+          </button>
+          <button
+            onClick={() => { if (orderMode) { setOrderMode(false); setOrderCart(new Map()) } else { setOrderMode(true) } }}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-3 text-xs font-bold transition-all ${
+              orderMode
+                ? 'bg-[#8b5e34] text-white'
+                : 'border border-[#ebe6df] bg-white text-[#3d2c24] hover:border-[#8b5e34]'
+            }`}
+          >
+            <ShoppingCart className="size-3.5" />
+            {orderMode ? `Pedido (${orderCart.size})` : 'Armar pedido'}
+          </button>
+        </div>
+      )}
+
+      {/* SAVE STOCK bar — sticky when in stock mode */}
+      {stockMode && (
+        <div className="sticky top-0 z-10 flex gap-2 rounded-xl bg-[#006d5a] p-3 shadow-lg">
+          <button
+            onClick={() => setStockMode(false)}
+            className="flex-1 rounded-lg bg-white/20 py-2.5 text-xs font-semibold text-white"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSaveStock}
+            disabled={savingStock}
+            className="flex flex-[2] items-center justify-center gap-1.5 rounded-lg bg-white py-2.5 text-xs font-bold text-[#006d5a] disabled:opacity-50"
+          >
+            {savingStock ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+            Guardar stock
+          </button>
+        </div>
+      )}
+
+      {/* SEND ORDERS bar — sticky when in order mode */}
+      {orderMode && orderCart.size > 0 && (
+        <div className="sticky top-0 z-10 flex gap-2 rounded-xl bg-[#8b5e34] p-3 shadow-lg">
+          <button
+            onClick={() => { setOrderMode(false); setOrderCart(new Map()) }}
+            className="flex-1 rounded-lg bg-white/20 py-2.5 text-xs font-semibold text-white"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSendOrders}
+            disabled={sendingOrders}
+            className="flex flex-[2] items-center justify-center gap-1.5 rounded-lg bg-white py-2.5 text-xs font-bold text-[#8b5e34] disabled:opacity-50"
+          >
+            {sendingOrders ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+            Enviar {orderCart.size} pedido{orderCart.size !== 1 ? 's' : ''}
+          </button>
+        </div>
+      )}
+
+      {/* Close shift button moved to bottom of page — single location */}
+
+      {/* ============================================================= */}
       {/* SECTION: Mercadería recibida — needs stock update */}
       {/* ============================================================= */}
       {receivedOrders.length > 0 && (
@@ -425,6 +694,14 @@ export default function MiBarraPage() {
             onEditQtyChange={setEditQty}
             onOrder={(id) => setOrderItemId(id)}
             onHistory={loadHistory}
+            consumptionMap={consumptionMap}
+            stockMode={stockMode}
+            stockDraft={stockDraft}
+            onStockDraftChange={(id, val) => setStockDraft(new Map(stockDraft).set(id, val))}
+            orderMode={orderMode}
+            orderCart={orderCart}
+            onToggleCart={toggleOrderCart}
+            onCartQtyChange={(id, qty) => { const c = new Map(orderCart); const e = c.get(id); if (e) { e.qty = qty; c.set(id, e) }; setOrderCart(c) }}
             hideHeader
           />
         </div>
@@ -458,6 +735,14 @@ export default function MiBarraPage() {
               historyItemId={historyItemId}
               historyLogs={historyLogs}
               loadingHistory={loadingHistory}
+              consumptionMap={consumptionMap}
+              stockMode={stockMode}
+              stockDraft={stockDraft}
+              onStockDraftChange={(id, val) => setStockDraft(new Map(stockDraft).set(id, val))}
+              orderMode={orderMode}
+              orderCart={orderCart}
+              onToggleCart={toggleOrderCart}
+              onCartQtyChange={(id, qty) => { const c = new Map(orderCart); const e = c.get(id); if (e) { e.qty = qty; c.set(id, e) }; setOrderCart(c) }}
               onEditStart={(id, qty) => { setEditingId(id); setEditQty(String(qty)) }}
               onEditCancel={() => setEditingId(null)}
               onEditSave={(id) => handleUpdateQty(id, parseFloat(editQty) || 0)}
@@ -504,48 +789,17 @@ export default function MiBarraPage() {
       )}
 
       {/* ============================================================= */}
-      {/* HANDOVER — cerrar turno + ver turno anterior */}
+      {/* CLOSE SHIFT — single button at bottom */}
       {/* ============================================================= */}
-      {canEdit && (
-        <div className="space-y-2">
-          {/* Previous handover */}
-          {lastHandover && (
-            <div className="rounded-xl border bg-[#faf8f5] p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Clock className="size-3.5 text-[#8b5e34]" />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#8b5e34]">
-                  Turno anterior dejó
-                </span>
-                <span className="text-[10px] text-[#a39e97]">
-                  {lastHandover.shift_type === 'morning' ? 'Mañana' : 'Noche'} · {lastHandover.date}
-                </span>
-              </div>
-              {lastHandover.notes && (
-                <p className="text-xs text-[#3d2c24] mb-1">📝 {lastHandover.notes}</p>
-              )}
-              <div className="flex flex-wrap gap-1.5">
-                {(lastHandover.items as Array<{ name: string; qty: number; unit: string }>).slice(0, 8).map((item, i) => (
-                  <span key={i} className="rounded-lg bg-white px-2 py-1 text-[10px] text-[#3d2c24]">
-                    {item.name} <strong>{item.qty}</strong> {item.unit || ''}
-                  </span>
-                ))}
-                {(lastHandover.items as unknown[]).length > 8 && (
-                  <span className="text-[10px] text-[#a39e97]">+{(lastHandover.items as unknown[]).length - 8} más</span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Close shift button */}
-          <button
-            onClick={handleCloseShift}
-            disabled={closingShift}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#8b5e34] py-3 text-sm font-bold text-white transition-all hover:bg-[#7a5230] active:scale-[0.98] disabled:opacity-50"
-          >
-            {closingShift ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            Cerrar turno — Guardar estado para el siguiente
-          </button>
-        </div>
+      {canEdit && !stockMode && !orderMode && (
+        <button
+          onClick={handleCloseShift}
+          disabled={closingShift}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#8b5e34] py-3 text-sm font-bold text-white transition-all hover:bg-[#7a5230] active:scale-[0.98] disabled:opacity-50"
+        >
+          {closingShift ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+          Cerrar turno — Guardar estado para el siguiente
+        </button>
       )}
 
       {/* ============================================================= */}
@@ -606,6 +860,14 @@ type SectionProps = {
   historyItemId: number | null
   historyLogs: LogEntry[]
   loadingHistory: boolean
+  consumptionMap: Map<number, { consumed: number; unit: string; pctUsed: number }>
+  stockMode: boolean
+  stockDraft: Map<number, string>
+  onStockDraftChange: (id: number, val: string) => void
+  orderMode: boolean
+  orderCart: Map<number, { qty: string; note: string }>
+  onToggleCart: (id: number) => void
+  onCartQtyChange: (id: number, qty: string) => void
   onEditStart: (id: number, qty: number) => void
   onEditCancel: () => void
   onEditSave: (id: number) => void
@@ -617,7 +879,9 @@ type SectionProps = {
 
 function Section({
   color, label, items, orderByItem, editingId, editQty, canEdit,
-  historyItemId, historyLogs, loadingHistory,
+  historyItemId, historyLogs, loadingHistory, consumptionMap,
+  stockMode, stockDraft, onStockDraftChange,
+  orderMode, orderCart, onToggleCart, onCartQtyChange,
   onEditStart, onEditCancel, onEditSave, onEditQtyChange, onOrder, onHistory,
   hideHeader,
 }: SectionProps) {
@@ -646,7 +910,21 @@ function Section({
           return (
             <div key={item.id} className="rounded-xl border bg-card overflow-hidden" style={{ borderLeftWidth: 3, borderLeftColor: itemSemaphore.border }}>
               <div className="flex items-center gap-2 px-3 py-2.5">
-                {/* Name + category */}
+                {/* Order mode checkbox */}
+                {orderMode && (
+                  <button
+                    onClick={() => onToggleCart(item.id)}
+                    className={`size-6 shrink-0 rounded-md border-2 flex items-center justify-center transition-colors ${
+                      orderCart.has(item.id)
+                        ? 'border-[#8b5e34] bg-[#8b5e34] text-white'
+                        : 'border-[#ebe6df] bg-white'
+                    }`}
+                  >
+                    {orderCart.has(item.id) && <Check className="size-3.5" />}
+                  </button>
+                )}
+
+                {/* Name + category + consumption */}
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-[#3d2c24] truncate">{item.name}</p>
                   <div className="flex items-center gap-2 mt-0.5">
@@ -654,11 +932,27 @@ function Section({
                     {item.current_detail && (
                       <span className="text-[10px] font-medium text-[#d4943a]">{item.current_detail}</span>
                     )}
+                    {(() => {
+                      const cons = consumptionMap.get(item.id)
+                      if (!cons || cons.consumed === 0) return null
+                      return (
+                        <span className="text-[10px] font-medium text-[#4a90d9]">
+                          ↓{cons.consumed} {cons.unit} hoy
+                        </span>
+                      )
+                    })()}
                   </div>
                 </div>
 
-                {/* Qty display or edit */}
-                {isEditing ? (
+                {/* Stock mode — inline input */}
+                {stockMode ? (
+                  <input
+                    value={stockDraft.get(item.id) ?? String(item.current_qty)}
+                    onChange={(e) => onStockDraftChange(item.id, e.target.value)}
+                    className="w-16 rounded-lg border border-[#006d5a] bg-[#f0f7f5] px-2 py-1.5 text-center text-sm font-bold tabular-nums text-[#006d5a] focus:outline-none focus:ring-2 focus:ring-[#006d5a]"
+                    inputMode="decimal"
+                  />
+                ) : isEditing ? (
                   <div className="flex items-center gap-1">
                     <button onClick={() => onEditQtyChange(String(Math.max(0, (parseFloat(editQty) || 0) - 1)))} className="size-8 flex items-center justify-center rounded-lg bg-secondary">
                       <Minus className="size-3" />
@@ -714,6 +1008,20 @@ function Section({
                   </div>
                 )}
               </div>
+
+              {/* Order cart — qty input when selected */}
+              {orderMode && orderCart.has(item.id) && (
+                <div className="border-t bg-[#faf0e4] px-3 py-2.5 flex items-center gap-2">
+                  <span className="text-xs text-[#8b5e34] font-medium">Cantidad:</span>
+                  <input
+                    value={orderCart.get(item.id)?.qty ?? ''}
+                    onChange={(e) => onCartQtyChange(item.id, e.target.value)}
+                    placeholder="ej: 5 kg"
+                    className="flex-1 rounded-lg border border-[#8b5e34]/30 bg-white px-2.5 py-1.5 text-sm focus:border-[#8b5e34] focus:outline-none"
+                    autoFocus
+                  />
+                </div>
+              )}
 
               {/* History panel */}
               {showingHistory && (

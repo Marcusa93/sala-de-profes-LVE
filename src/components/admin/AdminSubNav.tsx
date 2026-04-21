@@ -7,24 +7,22 @@ import {
   LayoutDashboard,
   Users,
   Calendar,
-  Package,
-  Bell,
-  Store,
-  Wine,
-  Camera,
-  BarChart3,
   Calculator,
+  Clock,
+  ShieldAlert,
+  Link2,
+  ChefHat,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
   { label: 'Control', href: '/admin', icon: LayoutDashboard },
-  { label: 'Ventas', href: '/ventas', icon: BarChart3 },
   { label: 'Horas', href: '/admin/reportes/liquidacion', icon: Calculator },
   { label: 'Asistencia', href: '/admin/reportes/asistencia', icon: Users },
+  { label: 'Sospechosos', href: '/admin/reportes/fichajes-sospechosos', icon: ShieldAlert },
   { label: 'Turnos', href: '/admin/reportes/turnos', icon: Calendar },
-  { label: 'Stock', href: '/stock', icon: Package },
-  { label: 'Vajilla', href: '/vajilla', icon: Wine },
-  { label: 'Avisos', href: '/admin/reportes/notificaciones', icon: Bell },
+  { label: 'Salón', href: '/admin/reportes/salon', icon: Clock },
+  { label: 'Stock↔Fudo', href: '/admin/stock/mapeo', icon: Link2 },
+  { label: 'Recetas', href: '/admin/recetas/pending', icon: ChefHat },
 ]
 
 export function AdminSubNav() {

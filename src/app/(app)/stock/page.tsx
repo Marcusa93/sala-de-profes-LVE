@@ -1,13 +1,15 @@
 'use client'
 
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { isManagerOrAbove } from '@/lib/roles'
 import { Package, Loader2, Search, X, ChevronDown, ChevronUp, RefreshCw, History, User, Clock } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
+import { logAuditClient } from '@/lib/audit'
 import { useProfileContext } from '@/lib/hooks/use-profile'
+import { useStockItems, type StockItem } from '@/lib/hooks/use-stock'
 import { STOCK_CATEGORIES, STOCK_CATEGORY_OPTIONS } from '@/lib/constants'
 import type { StockCategoryValue } from '@/types/database'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -16,18 +18,6 @@ import { FadeIn } from '@/components/ui/motion'
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-type StockItem = {
-  id: string
-  name: string
-  category: StockCategoryValue
-  unit: string
-  current_qty: number
-  min_qty: number
-  is_active: boolean
-  supplier_id: string | null
-  suppliers: { name: string } | null
-}
 
 type StockLog = {
   id: number
@@ -58,8 +48,7 @@ const COLORS: Record<SemaphoreColor, { text: string; bg: string; border: string;
 
 export default function StockPage() {
   const { profile, loading: profileLoading } = useProfileContext()
-  const [items, setItems] = useState<StockItem[]>([])
-  const [loading, setLoading] = useState(true)
+  const { items, isLoading: loading, mutate } = useStockItems(true)
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [semaphoreFilter, setSemaphoreFilter] = useState<SemaphoreColor | null>(null)
@@ -72,20 +61,28 @@ export default function StockPage() {
   const [loadingHistory, setLoadingHistory] = useState(false)
 
   const isEncargado = isManagerOrAbove(profile?.role)
+  const [lastFudoSync, setLastFudoSync] = useState<string | null>(null)
+  const [fudoSyncCount, setFudoSyncCount] = useState(0)
 
-  const fetchData = useCallback(async () => {
-    const supabase = createClient()
-    const { data } = await supabase
-      .from('stock_items')
-      .select('id, name, category, unit, current_qty, min_qty, is_active, supplier_id, suppliers(name)')
-      .eq('is_active', true)
-      .order('category')
-      .order('name')
-    setItems((data as unknown as StockItem[]) ?? [])
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { fetchData() }, [fetchData])
+  // Fudo sync on first load
+  useEffect(() => {
+    let cancelled = false
+    async function doSync() {
+      setSyncing(true)
+      try {
+        const syncRes = await fetch('/api/stock/sync')
+        const syncData = await syncRes.json()
+        if (!cancelled && syncData.success) {
+          setLastFudoSync(syncData.timestamp)
+          setFudoSyncCount(syncData.read?.synced ?? 0)
+          mutate() // revalidate stock items with fresh Fudo data
+        }
+      } catch { /* silent */ }
+      if (!cancelled) setSyncing(false)
+    }
+    doSync()
+    return () => { cancelled = true }
+  }, [mutate])
 
   // Load history for an item
   const loadHistory = async (itemId: string) => {
@@ -141,7 +138,6 @@ export default function StockPage() {
       if (!map.has(cat)) map.set(cat, [])
       map.get(cat)!.push(item)
     }
-    // Sort items: red first, then yellow, then green, then by name
     for (const [, arr] of map) {
       arr.sort((a, b) => {
         const sa = getSemaphore(a) === 'red' ? 0 : getSemaphore(a) === 'yellow' ? 1 : 2
@@ -153,19 +149,39 @@ export default function StockPage() {
     return map
   }, [filtered])
 
-  // Update qty
+  // Update qty — writes to Supabase + Fudo (bidirectional)
   const handleSave = async (itemId: string) => {
     const newQty = parseFloat(editQty)
     if (isNaN(newQty) || newQty < 0) { toast.error('Cantidad inválida'); return }
     try {
-      const supabase = createClient()
-      const { error } = await supabase.from('stock_items').update({ current_qty: newQty }).eq('id', itemId)
-      if (error) throw error
-      toast.success('Stock actualizado')
+      const res = await fetch('/api/stock/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stockItemId: itemId, newQty }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+
+      const updatedItem = items.find(i => i.id === itemId)
+      logAuditClient({
+        userId: profile?.id ?? null,
+        userName: profile?.first_name ?? null,
+        action: 'update_stock_qty',
+        module: 'stock',
+        entityType: 'stock_item',
+        entityId: itemId,
+        description: `${profile?.first_name ?? 'User'} actualizó stock de ${updatedItem?.name ?? itemId}: ${updatedItem?.current_qty ?? '?'} -> ${newQty} ${updatedItem?.unit ?? 'unidad'}`,
+      })
+
+      if (data.fudoSynced) {
+        toast.success('Stock actualizado — sincronizado con Fudo ✓')
+      } else {
+        toast.success('Stock actualizado')
+      }
       setEditingId(null)
-      fetchData()
-    } catch {
-      toast.error('Error al guardar')
+      mutate() // revalidate SWR cache
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al guardar')
     }
   }
 
@@ -198,18 +214,27 @@ export default function StockPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Stock</h1>
-            <p className="section-label mt-0.5">{counts.total} items</p>
+            <p className="section-label mt-0.5">
+              {counts.total} items
+              {lastFudoSync && (
+                <span className="ml-1 text-[#006d5a]">
+                  · Fudo {format(new Date(lastFudoSync), 'HH:mm')}
+                </span>
+              )}
+            </p>
           </div>
           {isEncargado && (
             <button
               onClick={async () => {
                 setSyncing(true)
                 try {
-                  const res = await fetch('/api/fudo/sync/stock', { method: 'POST' })
+                  const res = await fetch('/api/stock/sync')
                   const json = await res.json()
                   if (json.success) {
-                    toast.success(`Sincronizado con Fudo — ${json.synced ?? 0} items`)
-                    fetchData()
+                    setLastFudoSync(json.timestamp)
+                    setFudoSyncCount(json.read?.synced ?? 0)
+                    toast.success(`Sincronizado con Fudo — ${json.read?.synced ?? 0} items`)
+                    mutate() // revalidate SWR cache
                   } else {
                     toast.error(json.error || 'Error al sincronizar')
                   }
@@ -242,7 +267,7 @@ export default function StockPage() {
         )}
       </div>
 
-      {/* Semaphore pills — always visible */}
+      {/* Semaphore pills */}
       <div className="flex gap-2">
         {(['red', 'yellow', 'green'] as const).map((color) => {
           const isActive = semaphoreFilter === color
@@ -264,7 +289,7 @@ export default function StockPage() {
         })}
       </div>
 
-      {/* Category pills — horizontal scroll */}
+      {/* Category pills */}
       <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 scrollbar-none">
         <button
           onClick={() => setCategoryFilter('all')}
@@ -298,7 +323,6 @@ export default function StockPage() {
 
           return (
             <div key={cat}>
-              {/* Category header */}
               <button
                 onClick={() => toggleCat(cat)}
                 className="flex w-full items-center justify-between py-2"
@@ -318,14 +342,12 @@ export default function StockPage() {
                 {isCollapsed ? <ChevronDown className="size-4 text-[#a39e97]" /> : <ChevronUp className="size-4 text-[#a39e97]" />}
               </button>
 
-              {/* Items */}
               {!isCollapsed && (
                 <div className="space-y-1 mb-4">
                   {catItems.map(item => {
                     const s = getSemaphore(item)
                     const c = COLORS[s]
                     const isEditing = editingId === item.id
-
                     const showHistory = historyItemId === item.id
 
                     return (
@@ -335,7 +357,6 @@ export default function StockPage() {
                         style={{ borderLeftWidth: 3, borderLeftColor: c.border.replace('border-[', '').replace(']', '') }}
                       >
                         <div className="flex items-center px-3 py-2.5">
-                          {/* Name */}
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-medium text-[#3d2c24]">{item.name}</p>
                             {item.suppliers?.name && (
@@ -343,7 +364,6 @@ export default function StockPage() {
                             )}
                           </div>
 
-                          {/* Qty — tap to edit */}
                           {isEditing ? (
                             <div className="flex items-center gap-1 ml-2">
                               <input
@@ -385,7 +405,6 @@ export default function StockPage() {
                                 </span>
                                 <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
                               </button>
-                              {/* History button */}
                               <button
                                 onClick={() => loadHistory(item.id)}
                                 className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9]"
@@ -397,7 +416,6 @@ export default function StockPage() {
                           )}
                         </div>
 
-                        {/* History panel */}
                         {showHistory && (
                           <div className="border-t bg-[#faf8f5] px-3 py-2.5">
                             {loadingHistory ? (

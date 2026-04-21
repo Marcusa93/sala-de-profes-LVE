@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { logAudit } from '@/lib/audit'
 import { generatePurchaseOrders, generateOrderMessage } from '@/lib/ai/purchase-order'
 
 // GET /api/ai/purchase-order — generate purchase orders grouped by supplier
@@ -73,6 +74,16 @@ export async function POST(request: NextRequest) {
         scope: 'role',
         target_role: 'encargado',
         is_active: true,
+      })
+
+      // Audit trail (non-blocking)
+      logAudit(admin, {
+        userId: user.id,
+        userName: null,
+        action: 'ai_purchase_order',
+        module: 'pedidos',
+        entityType: 'stock_item',
+        description: `AI generó orden de compra para ${items.length} items — ${body.supplier_name ?? 'Proveedor'}`,
       })
 
       return NextResponse.json({ success: true })

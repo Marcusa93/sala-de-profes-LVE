@@ -5,6 +5,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
+import { logAuditClient } from '@/lib/audit'
 import {
   Wine, UtensilsCrossed, Coffee, GlassWater, Grip,
   Pencil, Check, X, Minus, Plus, ClipboardCheck, Trash2, PlusCircle,
@@ -114,6 +115,9 @@ export default function VajillaPage() {
       if (!res.ok) throw new Error('Error al guardar auditoría')
 
       toast.success(`Auditoría guardada — ${updates.length} cambio${updates.length !== 1 ? 's' : ''} registrado${updates.length !== 1 ? 's' : ''}`)
+      for (const item of updates) {
+        logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'update_vajilla_qty', module: 'vajilla', entityType: 'vajilla_stock', description: `User contó vajilla: ${item.item_name} ${recuentoQtys[item.id]}` })
+      }
       setRecuentoMode(false)
       setRecuentoQtys({})
       await fetchItems()
@@ -176,6 +180,7 @@ export default function VajillaPage() {
       toast.error('Error al guardar')
     } else {
       toast.success('Actualizado')
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'update_vajilla_item', module: 'vajilla', entityType: 'vajilla_stock', description: `User editó vajilla: ${editName.trim()}` })
       setItems((prev) =>
         prev.map((i) =>
           i.id === id
@@ -212,6 +217,7 @@ export default function VajillaPage() {
       toast.error('Error al crear')
     } else {
       toast.success(`"${newName.trim()}" agregado`)
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'create_vajilla_item', module: 'vajilla', entityType: 'vajilla_stock', description: `User agregó vajilla: ${newName.trim()}` })
       setItems((prev) => [...prev, data as VajillaItem].sort((a, b) => a.category.localeCompare(b.category) || a.item_name.localeCompare(b.item_name)))
       setShowAdd(false)
       setNewName('')
@@ -229,7 +235,9 @@ export default function VajillaPage() {
     if (error) {
       toast.error('Error al eliminar')
     } else {
+      const deleted = items.find((i) => i.id === id)
       toast.success('Eliminado')
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'delete_vajilla_item', module: 'vajilla', entityType: 'vajilla_stock', description: `User eliminó vajilla: ${deleted?.item_name ?? id}` })
       setItems((prev) => prev.filter((i) => i.id !== id))
       setDeletingId(null)
     }

@@ -471,3 +471,20 @@
     transform: none !important;
   }
 }
+
+/* ===================================================================
+   Splash screen — coffee wiggle (CSS, not framer-motion, so it doesn't
+   block AnimatePresence mode="wait" on exit)
+   =================================================================== */
+@keyframes coffee-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  20%       { transform: rotate(15deg); }
+  40%       { transform: rotate(-15deg); }
+  60%       { transform: rotate(10deg); }
+  80%       { transform: rotate(-10deg); }
+}
+
+.animate-coffee {
+  animation: coffee-wiggle 1.5s ease-in-out infinite;
+  display: inline-block;
+}

@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -20,9 +20,33 @@ import { useState, useEffect, useId } from 'react'
 
 export function TopBar() {
   const router = useRouter()
+  const pathname = usePathname()
   const { profile } = useProfileContext()
   const [scrolled, setScrolled] = useState(false)
   const [mounted, setMounted] = useState(false)
+
+  // Page title from pathname
+  const PAGE_TITLES: Record<string, string> = {
+    '/': '',
+    '/admin': 'Control',
+    '/fichaje': 'Mi Turno',
+    '/mi-turno': 'Mi Turno',
+    '/mis-horarios': 'Horarios',
+    '/notificaciones': 'Avisos',
+    '/equipo': 'Equipo',
+    '/salon': 'Salón',
+    '/ventas': 'Ventas',
+    '/expedientes': 'Expedientes',
+    '/configuracion': 'Configuración',
+    '/cocina/produccion': 'Producción',
+    '/cocina/produccion/nueva': 'Nueva Producción',
+    '/cocina/barra': 'Barra',
+    '/stock/rendimiento': 'Rendimiento',
+    '/admin/stock/mapeo': 'Mapeo Fudo',
+    '/admin/recetas/pending': 'Recetas Pendientes',
+    '/admin/fudo': 'Fudo',
+  }
+  const pageTitle = PAGE_TITLES[pathname] ?? ''
 
   useEffect(() => {
     setMounted(true)
@@ -67,9 +91,9 @@ export function TopBar() {
           />
           <div className="flex flex-col">
             <span className="font-display text-[15px] font-semibold leading-tight tracking-tight text-white">
-              Sala de Profes
+              {pageTitle || 'Sala de Profes'}
             </span>
-            <span className={`text-[9px] font-medium tracking-[0.12em] text-white/40 transition-all duration-200 ${scrolled ? 'h-0 overflow-hidden opacity-0' : 'opacity-100'}`}>
+            <span className={`text-[9px] font-medium tracking-[0.12em] text-white/40 transition-all duration-200 ${scrolled || pageTitle ? 'h-0 overflow-hidden opacity-0' : 'opacity-100'}`}>
               LA VIEJA ESCUELA
             </span>
           </div>

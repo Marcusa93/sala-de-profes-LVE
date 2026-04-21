@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyExpedienteToResponsible } from '@/lib/email/send'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // GET  /api/expedientes  — listar con filtros
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null)
     if (!body) return NextResponse.json({ error: 'Body requerido' }, { status: 400 })
 
-    const { title, description, reason, type, areas, urgency, target_date, impact_categories } = body
+    const { title, description, reason, type, areas, urgency, target_date, impact_categories, responsible_id } = body
 
     if (!title?.trim() || !type) {
       return NextResponse.json({ error: 'Título y tipo son requeridos' }, { status: 400 })
@@ -126,6 +127,17 @@ export async function POST(request: NextRequest) {
       action: 'Expediente creado',
       authorName,
       detail: description?.trim() || undefined,
+    }).catch(() => {})
+
+    // Audit trail (non-blocking)
+    logAudit(admin, {
+      userId: user.id,
+      userName: authorName,
+      action: 'create_expediente',
+      module: 'expedientes',
+      entityType: 'expediente',
+      entityId: data.id,
+      description: `${authorName} creó expediente: ${title.trim()}`,
     }).catch(() => {})
 
     return NextResponse.json({ success: true, data })

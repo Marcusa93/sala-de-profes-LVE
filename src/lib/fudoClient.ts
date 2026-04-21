@@ -318,6 +318,20 @@ export const fudo = {
     })
   },
 
+  updateProductStock: async (productId: string, stock: number): Promise<void> => {
+    await fudoFetch(`/products/${productId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: {
+          type: 'Product',
+          id: productId,
+          attributes: { stock },
+        },
+      }),
+    })
+  },
+
   fetch: fudoFetch,
   fetchAll: fudoFetchAll,
 }

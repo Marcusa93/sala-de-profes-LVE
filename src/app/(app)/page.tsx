@@ -1,8 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { isManagerOrAbove, mustClockIn } from '@/lib/roles'
-import { isStockCritical } from '@/lib/contracts/stock'
 import { DailyBriefing } from '@/components/ai/DailyBriefing'
 import { ActionCenter } from '@/components/ai/ActionCenter'
 import Link from 'next/link'
@@ -30,7 +29,10 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { createClient } from '@/lib/supabase/client'
+import { useMyAttendance, useTeamAttendance } from '@/lib/hooks/use-attendance'
+import { useNextShift } from '@/lib/hooks/use-shifts'
+import { useAnnouncements } from '@/lib/hooks/use-announcements'
+import { useDashboardData } from '@/lib/hooks/use-dashboard'
 import { ROLES } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
 import { DashboardSkeleton } from '@/components/ui/skeleton'
@@ -46,46 +48,38 @@ import {
 } from '@/components/ui/motion'
 
 // ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type TodayAttendance = {
-  id: string
-  clock_in_at: string
-  clock_out_at: string | null
-} | null
-
-type NextShift = {
-  shift_date: string
-  start_time: string
-  end_time: string
-  shift_role: AppRole
-} | null
-
-type TeamMember = {
-  clock_in_at: string
-  profiles: { first_name: string; last_name: string; role: AppRole } | null
-}
-
-// ---------------------------------------------------------------------------
 // Dashboard Page
 // ---------------------------------------------------------------------------
 
 export default function DashboardPage() {
   const { profile, loading: profileLoading } = useProfileContext()
 
-  const [todayAttendance, setTodayAttendance] = useState<TodayAttendance>(null)
-  const [nextShift, setNextShift] = useState<NextShift>(null)
-  const [announcementCount, setAnnouncementCount] = useState(0)
-  const [teamToday, setTeamToday] = useState<TeamMember[]>([])
-  const [criticalStockCount, setCriticalStockCount] = useState(0)
-  const [stockItems, setStockItems] = useState<{ id: string; name: string; current_qty: number; min_qty: number; supplier_id: string | null; category: string }[]>([])
-  const [pendingOrders, setPendingOrders] = useState(0)
-  const [expedientesActivos, setExpedientesActivos] = useState(0)
-  const [expedientesData, setExpedientesData] = useState<{ id: string; code: string; title: string; status: string; urgency: string; target_date: string | null; updated_at: string; responsible_id: string | null }[]>([])
-  const [ventasHoy, setVentasHoy] = useState<{ total: number; tickets: number } | null>(null)
-  const [barUrgent, setBarUrgent] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const [today] = useState(() => new Date())
+  const todayStr = format(today, 'yyyy-MM-dd')
+  const isEncargado = isManagerOrAbove(profile?.role)
+  const isSocio = profile?.role === 'socio'
+
+  // SWR hooks — each has its own cache, dedup, and background revalidation
+  const { record: todayAttendance } = useMyAttendance(profile?.id, todayStr)
+  const { nextShift } = useNextShift(profile?.id, todayStr)
+  const { count: announcementCount } = useAnnouncements()
+  const { team: teamToday } = useTeamAttendance(todayStr, isEncargado)
+  const { data: dashData, isLoading: dashLoading, error: dashError, mutate: refreshDash } = useDashboardData(
+    profile?.id,
+    todayStr,
+    profile?.role,
+    isEncargado,
+  )
+
+  // Derived from dashData
+  const criticalStockCount = dashData?.criticalStockCount ?? 0
+  const stockItems = dashData?.stockItems ?? []
+  const pendingOrders = dashData?.pendingOrders ?? 0
+  const expedientesActivos = dashData?.expedientesActivos ?? 0
+  const expedientesData = dashData?.expedientesData ?? []
+  const ventasHoy = dashData?.ventasHoy ?? null
+  const fudoLastSync = dashData?.fudoLastSync ?? null
+  const barUrgent = dashData?.barUrgent ?? 0
 
   // Report dialog state
   const [reportOpen, setReportOpen] = useState(false)
@@ -118,144 +112,12 @@ export default function DashboardPage() {
     }
   }, [reportMsg, reportUrgency])
 
-  const [today] = useState(() => new Date())
-  const todayStr = format(today, 'yyyy-MM-dd')
-  const isEncargado = isManagerOrAbove(profile?.role)
-
-  // Fetch all dashboard data
-  useEffect(() => {
-    if (!profile) return
-
-    async function fetchData() {
-      setLoading(true)
-      const supabase = createClient()
-
-      try {
-        const attendancePromise = supabase
-          .from('attendance_logs')
-          .select('id, clock_in_at, clock_out_at')
-          .eq('user_id', profile!.id)
-          .eq('operative_date', todayStr)
-          .order('clock_in_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        const shiftPromise = supabase
-          .from('shifts')
-          .select('shift_date, start_time, end_time, shift_role')
-          .eq('user_id', profile!.id)
-          .gte('shift_date', todayStr)
-          .order('shift_date', { ascending: true })
-          .order('start_time', { ascending: true })
-          .limit(1)
-          .maybeSingle()
-
-        // Count unread announcements for this user using the RPC
-        const announcementsPromise = supabase.rpc('get_my_announcements')
-
-        const teamPromise = isEncargado
-          ? supabase
-              .from('attendance_logs')
-              .select(
-                'clock_in_at, profiles!attendance_logs_user_id_fkey(first_name, last_name, role)',
-              )
-              .eq('operative_date', todayStr)
-              .is('clock_out_at', null)
-          : null
-
-        const stockPromise = isEncargado
-          ? supabase
-              .from('stock_items')
-              .select('id, name, current_qty, min_qty, supplier_id, category')
-              .eq('is_active', true)
-          : null
-
-        // Pedidos pendientes (cocina + barra) — for encargado/socio
-        const ordersPromise = isEncargado
-          ? Promise.all([
-              supabase.from('kitchen_orders').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-              supabase.from('bar_orders').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-            ])
-          : null
-
-        // Expedientes activos — for socio (fetch full data for actions)
-        const expedientesPromise = profile!.role === 'socio'
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ? (supabase as any).from('expedientes').select('id, code, title, status, urgency, target_date, updated_at, responsible_id').neq('status', 'cumplido').neq('status', 'cerrado_sin_implementacion').neq('status', 'archivado')
-          : null
-
-        // Ventas hoy — for socio
-        const ventasPromise = profile!.role === 'socio'
-          ? fetch('/api/fudo/auto-sync', { credentials: 'include' }).then(async r => {
-              const json = await r.json()
-              if (json.error) console.error('[Ventas Home]', json.error)
-              return json
-            }).catch((err) => { console.error('[Ventas Home fetch]', err); return null })
-          : null
-
-        // Bar stock urgente — for barista
-        const barUrgentPromise = profile!.role === 'barista'
-          ? supabase.from('bar_stock_items').select('id', { count: 'exact', head: true }).eq('is_urgent', true).eq('is_active', true)
-          : null
-
-        const [attendanceRes, shiftRes, announcementsRes, teamRes, stockRes, ordersRes, expedientesRes, ventasRes, barUrgentRes] =
-          await Promise.all([
-            attendancePromise,
-            shiftPromise,
-            announcementsPromise,
-            teamPromise,
-            stockPromise,
-            ordersPromise,
-            expedientesPromise,
-            ventasPromise,
-            barUrgentPromise,
-          ])
-
-        setTodayAttendance(attendanceRes.data)
-        setNextShift(shiftRes.data)
-        // Count unread from get_my_announcements — filter out already read
-        const allAnnouncements = announcementsRes.data ?? []
-        setAnnouncementCount(allAnnouncements.length)
-
-        if (teamRes) {
-          setTeamToday((teamRes.data as unknown as TeamMember[]) ?? [])
-        }
-        if (stockRes?.data) {
-          const items = stockRes.data ?? []
-          setStockItems(items as unknown as typeof stockItems)
-          const critical = items.filter((item) => isStockCritical(item.current_qty ?? 0, item.min_qty ?? 0))
-          setCriticalStockCount(critical.length)
-        }
-        if (ordersRes) {
-          const [kitchenRes, barRes] = ordersRes
-          setPendingOrders((kitchenRes.count ?? 0) + (barRes.count ?? 0))
-        }
-        if (expedientesRes?.data) {
-          setExpedientesData(expedientesRes.data ?? [])
-          setExpedientesActivos(expedientesRes.data?.length ?? 0)
-        }
-        if (ventasRes?.today) {
-          setVentasHoy({ total: ventasRes.today.totalFacturado ?? 0, tickets: ventasRes.today.totalTickets ?? 0 })
-        }
-        if (barUrgentRes) {
-          setBarUrgent(barUrgentRes.count ?? 0)
-        }
-      } catch (err) {
-        console.error('Error al cargar datos del dashboard:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchData()
-  }, [profile, todayStr])
-
   const firstName = profile?.first_name ?? ''
 
   // ------------------------------------------
   // Skeleton while loading
   // ------------------------------------------
-  if (profileLoading || loading) {
+  if (profileLoading || (dashLoading && !dashData)) {
     return <DashboardSkeleton />
   }
 
@@ -267,11 +129,22 @@ export default function DashboardPage() {
     )
   }
 
+  if (dashError && !dashData) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
+        <p className="text-lg">😕</p>
+        <p className="text-sm text-muted-foreground">No se pudieron cargar los datos</p>
+        <button onClick={() => refreshDash()} className="rounded-xl bg-[#006d5a] px-4 py-2 text-sm font-medium text-white">
+          Reintentar
+        </button>
+      </div>
+    )
+  }
+
   // Attendance status helpers
   const isCompleted = !!todayAttendance?.clock_out_at
   const isInProgress = !!todayAttendance && !todayAttendance.clock_out_at
   const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : '#ebe6df'
-  const isSocio = profile?.role === 'socio'
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-8">
@@ -316,8 +189,6 @@ export default function DashboardPage() {
         </div>
       </FadeIn>
 
-      {/* AI briefing removed — replaced by Action Center below */}
-
       {/* ---------------------------------------------------------------- */}
       {/* KPI Grid — role-aware, most important first                      */}
       {/* ---------------------------------------------------------------- */}
@@ -335,7 +206,10 @@ export default function DashboardPage() {
                   <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#006d5a]">
                     ${(ventasHoy.total / 1000).toFixed(0)}k
                   </p>
-                  <p className="text-[10px] text-[#a39e97]">{ventasHoy.tickets} tickets</p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {ventasHoy.tickets} tickets
+                    {fudoLastSync && ` · Fudo ${format(new Date(fudoLastSync), 'HH:mm')}`}
+                  </p>
                 </div>
               </Link>
             </ScalePress>
@@ -515,8 +389,6 @@ export default function DashboardPage() {
             </ScalePress>
           </StaggerItem>
         )}
-
-        {/* Stock Critico — already in grid above for encargado/socio */}
       </StaggerList>
 
       {/* Action Center deshabilitado temporalmente */}
@@ -607,14 +479,14 @@ export default function DashboardPage() {
       {/* Report Problem Dialog                                            */}
       {/* ---------------------------------------------------------------- */}
       {reportOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby="report-dialog-title" onKeyDown={(e) => { if (e.key === 'Escape') setReportOpen(false) }}>
           <div
             className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
             onClick={() => setReportOpen(false)}
           />
           <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-4 sm:p-5 shadow-xl sm:mx-auto sm:mb-0">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
+              <h3 id="report-dialog-title" className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
               <button
                 onClick={() => setReportOpen(false)}
                 className="icon-btn flex items-center justify-center rounded-full text-[#a39e97] hover:bg-[#f3efe9]"
@@ -627,7 +499,8 @@ export default function DashboardPage() {
               value={reportMsg}
               onChange={(e) => setReportMsg(e.target.value)}
               placeholder="¿Qué problema hay? Ej: Se rompió la máquina de café, falta leche urgente..."
-              rows={2}
+              rows={4}
+              autoFocus
               className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] p-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
             />
 

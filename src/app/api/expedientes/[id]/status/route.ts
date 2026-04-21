@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyExpedienteToResponsible } from '@/lib/email/send'
 import { STATUS_TRANSITIONS, EXPEDIENTE_STATUSES } from '@/lib/constants/expedientes'
 import type { ExpedienteStatus } from '@/types/expedientes'
+import { logAudit } from '@/lib/audit'
+import { sendPushToUser } from '@/lib/push/send'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/expedientes/[id]/status — transición de estado
@@ -30,7 +32,7 @@ export async function PATCH(
     // Get current expediente and user profile
     const [{ data: expediente }, { data: profile }] = await Promise.all([
       admin.from('expedientes')
-        .select('id, code, status, author_id, responsible_id, urgency')
+        .select('id, code, title, status, author_id, responsible_id, urgency')
         .eq('id', id)
         .single(),
       admin.from('profiles')
@@ -125,6 +127,13 @@ export async function PATCH(
         target_user_id: expediente.author_id,
         is_active: true,
       })
+
+      // Push notification to author
+      sendPushToUser(expediente.author_id, {
+        title: `📋 ${expediente.title} → ${toLabel}`,
+        body: `${authorName} cambió el estado del expediente ${expediente.code}`,
+        url: `/expedientes/${id}`,
+      }).catch(() => {})
     }
 
     // Email only to the responsible person
@@ -135,6 +144,18 @@ export async function PATCH(
       action: `Cambio de estado: ${fromLabel} → ${toLabel}`,
       authorName,
       detail: closeReason || undefined,
+    }).catch(() => {})
+
+    // Audit trail (non-blocking)
+    logAudit(admin, {
+      userId: user.id,
+      userName: authorName,
+      action: 'update_expediente_status',
+      module: 'expedientes',
+      entityType: 'expediente',
+      entityId: id,
+      description: `${authorName} cambió estado de expediente a ${toLabel}`,
+      metadata: { from_status: currentStatus, to_status: newStatus },
     }).catch(() => {})
 
     return NextResponse.json({ success: true })

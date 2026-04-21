@@ -38,10 +38,18 @@ export async function DELETE(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
 
     const body = await request.json()
+    const { endpoint } = body
+
+    if (!endpoint) {
+      return NextResponse.json({ error: 'Endpoint requerido' }, { status: 400 })
+    }
+
     const admin = createAdminClient()
-    await admin.from('push_subscriptions').delete()
+    const { error } = await admin.from('push_subscriptions').delete()
       .eq('user_id', user.id)
-      .eq('endpoint', body.endpoint)
+      .eq('endpoint', endpoint)
+
+    if (error) throw error
 
     return NextResponse.json({ success: true })
   } catch (error) {

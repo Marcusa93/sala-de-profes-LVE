@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -11,13 +11,13 @@ import {
   Package,
   AlertTriangle,
   Bell,
-  Truck,
+  RefreshCw,
   ArrowRight,
   MessageCircle,
   LogOut,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { createClient } from '@/lib/supabase/client'
+import { useAdminKpis } from '@/lib/hooks/use-admin-kpis'
 import { DashboardSkeleton } from '@/components/ui/skeleton'
 import {
   FadeIn,
@@ -30,91 +30,29 @@ import { KpiCard } from '@/components/admin/KpiCard'
 import { ExecutiveSummary } from '@/components/admin/ExecutiveSummary'
 
 // ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type DashboardKpis = {
-  team_present_today: number
-  team_clocked_in: number
-  team_total_active: number
-  missing_checkouts: number
-  shifts_today: number
-  shifts_tomorrow: number
-  stock_red: number
-  stock_yellow: number
-  stock_green: number
-  stock_total: number
-  announcements_active: number
-  announcements_urgent: number
-  suppliers_total: number
-}
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export default function AdminDashboard() {
   const { profile, loading: profileLoading } = useProfileContext()
   const [now] = useState(() => new Date())
-  const [kpis, setKpis] = useState<DashboardKpis | null>(null)
-  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (!profile) return
+  const { kpis, error: loadError, isLoading: loading, mutate } = useAdminKpis(!!profile)
 
-    async function fetch() {
-      setLoading(true)
-      const supabase = createClient()
-
-      // Fetch KPIs in parallel from individual queries (RPCs need to be in DB first)
-      try {
-        const todayStr = format(new Date(), 'yyyy-MM-dd')
-        const tomorrowStr = format(new Date(Date.now() + 86400000), 'yyyy-MM-dd')
-
-        const [attendance, attendanceOpen, profiles, shiftsTodayRes, shiftsTomorrowRes, stock, announcementsRes, announcementsUrgent, suppliersRes] = await Promise.all([
-          supabase.from('attendance_logs').select('user_id', { count: 'exact', head: true }).eq('operative_date', todayStr),
-          supabase.from('attendance_logs').select('user_id', { count: 'exact', head: true }).eq('operative_date', todayStr).is('clock_out_at', null).eq('status', 'open'),
-          supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('is_active', true),
-          supabase.from('shifts').select('id', { count: 'exact', head: true }).eq('shift_date', todayStr),
-          supabase.from('shifts').select('id', { count: 'exact', head: true }).eq('shift_date', tomorrowStr),
-          supabase.from('stock_items').select('id, current_qty, min_qty').eq('is_active', true),
-          supabase.from('announcements').select('id', { count: 'exact', head: true }).eq('is_active', true).or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`),
-          supabase.from('announcements').select('id', { count: 'exact', head: true }).eq('is_active', true).eq('priority', 'critica').or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`),
-          supabase.from('suppliers').select('id', { count: 'exact', head: true }),
-        ])
-
-        const stockItems = stock.data ?? []
-        const red = stockItems.filter((s) => s.current_qty <= s.min_qty).length
-        const yellow = stockItems.filter((s) => s.current_qty > s.min_qty && s.current_qty <= s.min_qty * 1.5).length
-        const green = stockItems.filter((s) => s.current_qty > s.min_qty * 1.5).length
-
-        setKpis({
-          team_present_today: attendance.count ?? 0,
-          team_clocked_in: attendanceOpen.count ?? 0,
-          team_total_active: profiles.count ?? 0,
-          missing_checkouts: attendanceOpen.count ?? 0,
-          shifts_today: shiftsTodayRes.count ?? 0,
-          shifts_tomorrow: shiftsTomorrowRes.count ?? 0,
-          stock_red: red,
-          stock_yellow: yellow,
-          stock_green: green,
-          stock_total: stockItems.length,
-          announcements_active: announcementsRes.count ?? 0,
-          announcements_urgent: announcementsUrgent.count ?? 0,
-          suppliers_total: suppliersRes.count ?? 0,
-        })
-      } catch (err) {
-        console.error('Error loading admin KPIs:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetch()
-  }, [profile])
-
-  if (profileLoading || loading || !kpis) {
+  if (profileLoading || (loading && !kpis)) {
     return <DashboardSkeleton />
+  }
+
+  if (loadError || !kpis) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
+        <AlertTriangle className="h-10 w-10 text-amber-500" />
+        <p className="text-sm text-muted-foreground">No se pudo cargar el panel</p>
+        <button onClick={() => mutate()} className="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white">
+          Reintentar
+        </button>
+      </div>
+    )
   }
 
   const hasIssues = kpis.stock_red > 0 || kpis.missing_checkouts > 0 || kpis.announcements_urgent > 0
@@ -201,12 +139,13 @@ export default function AdminDashboard() {
         </StaggerItem>
         <StaggerItem>
           <KpiCard
-            label="Proveedores"
-            value={kpis.suppliers_total}
-            icon={Truck}
-            color="#5a6b52"
-            bg="#eef2ec"
-            href="/proveedores"
+            label="Fudo"
+            value={kpis.fudo_synced ?? 0}
+            icon={RefreshCw}
+            color="#006d5a"
+            bg="#e8f5f1"
+            href="/stock"
+            subtitle={kpis.fudo_last_sync ? `Sync ${new Date(kpis.fudo_last_sync).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}` : 'sin sync'}
           />
         </StaggerItem>
       </StaggerList>

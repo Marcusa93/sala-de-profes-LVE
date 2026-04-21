@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
 
     // Aggregate per employee
     const empMap = new Map<string, {
-      days: Map<string, { hours: number; clockIn: string; clockOut: string | null; status: string; clockOutType: string }>
+      days: Map<string, { hours: number; clockIn: string; clockOut: string | null; status: string; clockOutType: string; attendanceId: string }>
       totalHours: number
       totalDays: number
       missingCheckouts: number
@@ -85,6 +85,7 @@ export async function GET(request: NextRequest) {
         clockOut: log.clock_out_at ? format(parseISO(log.clock_out_at), 'HH:mm') : null,
         status: log.status,
         clockOutType: (log as Record<string, unknown>).clock_out_type as string ?? 'manual',
+        attendanceId: log.id,
       })
 
       emp.totalHours += hours

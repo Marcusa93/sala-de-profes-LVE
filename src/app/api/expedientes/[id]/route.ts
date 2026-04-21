@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyExpedienteAssignment } from '@/lib/email/send'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // GET    /api/expedientes/[id] — detalle
@@ -162,6 +163,19 @@ export async function PATCH(
       }).catch(() => {})
     }
 
+    // Audit trail (non-blocking)
+    const patchAuthorName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim()
+    logAudit(admin, {
+      userId: user.id,
+      userName: patchAuthorName,
+      action: 'update_expediente',
+      module: 'expedientes',
+      entityType: 'expediente',
+      entityId: id,
+      description: `${patchAuthorName} editó expediente: ${changes.join(', ')}`,
+      metadata: { changed_fields: changes },
+    }).catch(() => {})
+
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('[PATCH /api/expedientes/[id]]', error)
@@ -212,6 +226,17 @@ export async function DELETE(
     await admin.from('expediente_comments').delete().eq('expediente_id', id)
     const { error } = await admin.from('expedientes').delete().eq('id', id)
     if (error) throw error
+
+    // Audit trail (non-blocking)
+    logAudit(admin, {
+      userId: user.id,
+      userName: null,
+      action: 'delete_expediente',
+      module: 'expedientes',
+      entityType: 'expediente',
+      entityId: id,
+      description: `Eliminó expediente borrador`,
+    }).catch(() => {})
 
     return NextResponse.json({ success: true })
   } catch (error) {

@@ -26,6 +26,7 @@ import {
   ROLE_OPTIONS,
 } from '@/lib/constants'
 import type { AppRole, AnnouncementInsert, AnnouncementTypeValue, PriorityValue } from '@/types/database'
+import { logAuditClient } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // Scope options
@@ -150,6 +151,26 @@ export default function NuevaNotificacionPage() {
       const { error } = await supabase.from('announcements').insert(insertData)
 
       if (error) throw error
+
+      // Trigger push notifications (non-blocking)
+      fetch('/api/push/send-announcement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title.trim(),
+          message: body.trim(),
+          scope: dbScope,
+          target_role: dbTargetRole,
+          target_user_id: dbTargetUserId,
+        }),
+      }).catch(() => {})
+
+      logAuditClient({
+        action: 'create_announcement',
+        module: 'avisos',
+        entityType: 'announcement',
+        description: `User creó aviso: ${title.trim()}`,
+      })
 
       toast.success('Notificacion creada correctamente')
       router.push('/notificaciones')

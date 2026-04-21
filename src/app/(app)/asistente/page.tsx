@@ -278,49 +278,49 @@ export default function AsistentePage() {
 
   return (
     <div
-      className="mx-auto flex max-w-2xl flex-col"
-      style={{ height: 'calc(100svh - 8rem)' }}
+      className="mx-auto flex w-full max-w-2xl flex-col px-1 sm:px-0"
+      style={{ height: 'calc(100svh - 10rem)' }}
     >
       {/* Header */}
-      <div className="mb-5 flex items-center gap-3.5">
-        <div className="flex size-11 items-center justify-center rounded-xl bg-[#f0f7f5]">
-          <Coffee className="size-5 text-[#006d5a]" />
+      <div className="mb-3 flex items-center gap-3 sm:mb-5 sm:gap-3.5">
+        <div className="flex size-9 items-center justify-center rounded-xl bg-[#f0f7f5] sm:size-11">
+          <Coffee className="size-4 text-[#006d5a] sm:size-5" />
         </div>
         <div>
-          <h1 className="font-display text-xl font-semibold tracking-tight text-[#3d2c24]">
+          <h1 className="font-display text-lg font-semibold tracking-tight text-[#3d2c24] sm:text-xl">
             La Vieja de Historia
           </h1>
-          <p className="section-label mt-0.5">
+          <p className="section-label mt-0.5 text-[10px] sm:text-xs">
             Tu asistente tucumana del café ☕
           </p>
         </div>
       </div>
 
       {/* Chat area */}
-      <div className="flex-1 space-y-5 overflow-y-auto rounded-2xl border border-[#ebe6df] bg-[#faf8f5] p-5">
+      <div className="flex-1 space-y-4 overflow-y-auto rounded-2xl border border-[#ebe6df] bg-[#faf8f5] p-3 sm:space-y-5 sm:p-5">
         {/* Welcome state */}
         {messages.length === 0 && !isThinking && (
-          <div className="flex flex-col items-center justify-center gap-6 py-14">
-            <div className="flex size-18 items-center justify-center rounded-2xl bg-[#f0f7f5]">
-              <Sparkles className="size-8 text-[#006d5a]" />
+          <div className="flex flex-col items-center justify-center gap-4 py-8 sm:gap-6 sm:py-14">
+            <div className="flex size-14 items-center justify-center rounded-2xl bg-[#f0f7f5] sm:size-18">
+              <Sparkles className="size-6 text-[#006d5a] sm:size-8" />
             </div>
-            <div className="text-center">
-              <p className="font-display text-lg font-semibold text-[#3d2c24]">
+            <div className="text-center px-2">
+              <p className="font-display text-base font-semibold text-[#3d2c24] sm:text-lg">
                 ¡Hola {profile.first_name}, che!
               </p>
-              <p className="mt-2 text-sm leading-relaxed text-[#a39e97]">
+              <p className="mt-1.5 text-xs leading-relaxed text-[#a39e97] sm:mt-2 sm:text-sm">
                 Soy La Vieja de Historia, tu asistente del café.{' '}
                 {getRoleGreeting(profile.role)}
               </p>
             </div>
 
             {/* Suggested question pills */}
-            <div className="flex flex-wrap justify-center gap-2.5 px-4">
+            <div className="flex flex-wrap justify-center gap-2 px-2 sm:gap-2.5 sm:px-4">
               {suggestedQuestions.map((sq) => (
                 <button
                   key={sq.question}
                   onClick={() => handleSend(sq.question)}
-                  className="rounded-full border border-[#ebe6df] bg-[#fefcf9] px-4 py-2 text-xs font-medium text-[#006d5a] transition-colors hover:bg-[#f0f7f5]"
+                  className="rounded-full border border-[#ebe6df] bg-[#fefcf9] px-3 py-1.5 text-[11px] font-medium text-[#006d5a] transition-colors hover:bg-[#f0f7f5] sm:px-4 sm:py-2 sm:text-xs"
                 >
                   {sq.label}
                 </button>
@@ -354,7 +354,7 @@ export default function AsistentePage() {
 
             {/* Bubble */}
             <div
-              className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed ${
+              className={`max-w-[85%] px-3 py-2.5 text-[13px] leading-relaxed sm:max-w-[80%] sm:px-4 sm:py-3 sm:text-sm ${
                 msg.role === 'user'
                   ? 'rounded-2xl rounded-br-md bg-[#006d5a] text-white'
                   : 'rounded-2xl rounded-bl-md border border-[#ebe6df] bg-[#fefcf9] text-[#3d2c24]'
@@ -397,12 +397,12 @@ export default function AsistentePage() {
 
         {/* Suggested questions after response */}
         {messages.length > 0 && !isThinking && (
-          <div className="flex flex-wrap gap-2 pt-2">
-            {suggestedQuestions.map((sq) => (
+          <div className="flex flex-wrap gap-1.5 pt-2 sm:gap-2">
+            {suggestedQuestions.slice(0, 4).map((sq) => (
               <button
                 key={sq.question}
                 onClick={() => handleSend(sq.question)}
-                className="rounded-full border border-[#ebe6df] bg-[#fefcf9] px-3 py-1.5 text-[11px] font-medium text-[#006d5a] transition-colors hover:bg-[#f0f7f5]"
+                className="rounded-full border border-[#ebe6df] bg-[#fefcf9] px-2.5 py-1 text-[10px] font-medium text-[#006d5a] transition-colors hover:bg-[#f0f7f5] sm:px-3 sm:py-1.5 sm:text-[11px]"
               >
                 {sq.label}
               </button>
@@ -413,8 +413,8 @@ export default function AsistentePage() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input area */}
-      <div className="card-elevated mt-4 flex items-center gap-3 p-3">
+      {/* Input area — sticky above bottom nav */}
+      <div className="mt-2 flex items-center gap-2 rounded-xl border border-[#ebe6df] bg-white p-2 shadow-sm sm:mt-4 sm:gap-3 sm:p-3">
         <Input
           ref={inputRef}
           value={input}
@@ -422,14 +422,14 @@ export default function AsistentePage() {
           onKeyDown={handleKeyDown}
           placeholder="Pregunta sobre el local..."
           disabled={isThinking}
-          className="flex-1 rounded-xl border-[#ebe6df] bg-[#faf8f5] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]/20"
+          className="flex-1 rounded-xl border-[#ebe6df] bg-[#faf8f5] text-sm placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]/20"
         />
         <Button
           size="icon"
           onClick={() => handleSend()}
           disabled={!input.trim() || isThinking}
           aria-label="Enviar mensaje"
-          className="size-10 rounded-full bg-[#006d5a] text-white shadow-sm hover:bg-[#005a4a] disabled:opacity-40"
+          className="size-9 shrink-0 rounded-full bg-[#006d5a] text-white shadow-sm hover:bg-[#005a4a] disabled:opacity-40 sm:size-10"
         >
           {isThinking ? (
             <Loader2 className="size-4 animate-spin" />

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { logAudit } from '@/lib/audit'
 import { isManagerOrAbove } from '@/lib/roles'
 import { countBySemaphore } from '@/lib/contracts/stock'
 
@@ -42,6 +43,17 @@ export async function POST(request: NextRequest) {
       })
 
       if (error) throw error
+
+      // Audit trail (non-blocking)
+      logAudit(admin, {
+        userId: user.id,
+        userName: null,
+        action: 'create_snapshot',
+        module: 'stock',
+        entityType: 'stock_snapshot',
+        description: 'Snapshot de vajilla creado',
+      })
+
       return NextResponse.json({ success: true, source: 'vajilla', totalPieces, itemCount: items?.length ?? 0 })
     }
 
@@ -68,6 +80,17 @@ export async function POST(request: NextRequest) {
     })
 
     if (error) throw error
+
+    // Audit trail (non-blocking)
+    logAudit(admin, {
+      userId: user.id,
+      userName: null,
+      action: 'create_snapshot',
+      module: 'stock',
+      entityType: 'stock_snapshot',
+      description: 'Snapshot de stock creado',
+    })
+
     return NextResponse.json({ success: true, source: 'stock', totalItems: stockItems.length, totalQty, criticalCount })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Error' }, { status: 500 })

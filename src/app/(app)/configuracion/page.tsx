@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { ROLES } from '@/lib/constants'
+import { logAuditClient } from '@/lib/audit'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -123,6 +124,12 @@ export default function ConfiguracionPage() {
 
       if (error) throw error
       toast.success('Configuración guardada')
+      logAuditClient({
+        action: 'update_settings',
+        module: 'configuracion',
+        entityType: 'profile',
+        description: 'User actualizó su configuración',
+      })
       await refresh()
     } catch (err) {
       console.error(err)

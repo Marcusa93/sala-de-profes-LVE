@@ -16,23 +16,22 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  // Splash solo la primera vez por dispositivo
   const [showSplash, setShowSplash] = useState(() => {
     if (typeof window === 'undefined') return true
-    return !window.localStorage.getItem('lve_splash_seen')
+    return !sessionStorage.getItem('splash-shown')
   })
   const [showReset, setShowReset] = useState(false)
   const [resetEmail, setResetEmail] = useState('')
   const [resetLoading, setResetLoading] = useState(false)
   const [resetSent, setResetSent] = useState(false)
 
-  // Splash screen → login form transition (solo primera vez)
+  // Splash screen → login form transition (only first visit per session)
   useEffect(() => {
     if (!showSplash) return
     const timer = setTimeout(() => {
       setShowSplash(false)
-      try { window.localStorage.setItem('lve_splash_seen', '1') } catch {}
-    }, 900)
+      sessionStorage.setItem('splash-shown', '1')
+    }, 1200)
     return () => clearTimeout(timer)
   }, [showSplash])
 
@@ -95,7 +94,7 @@ export default function LoginPage() {
 
       if (error) {
         if (error.message === 'Invalid login credentials') {
-          toast.error('Credenciales incorrectas. Revisa tu email y contrasena.')
+          toast.error('Credenciales incorrectas. Revisa tu email y contraseña.')
         } else {
           toast.error(error.message)
         }
@@ -151,13 +150,7 @@ export default function LoginPage() {
               animate={{ opacity: 1 }}
               transition={{ delay: 0.6, duration: 0.5 }}
             >
-              <motion.span
-                className="text-4xl"
-                animate={{ rotate: [0, 15, -15, 10, -10, 0] }}
-                transition={{ duration: 1.5, repeat: Infinity, repeatDelay: 0.5, ease: 'easeInOut' }}
-              >
-                ☕
-              </motion.span>
+              <span className="animate-coffee text-4xl">☕</span>
               <p className="font-display text-2xl tracking-tight text-[#3d2c24]">
                 Tranqui profe...
               </p>
@@ -219,7 +212,7 @@ export default function LoginPage() {
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="email" className="text-sm font-medium text-[#3d2c24]">
                     <Mail className="size-4 text-[#a39e97]" />
-                    Correo electronico
+                    Correo electrónico
                   </Label>
                   <Input
                     id="email"
@@ -237,12 +230,12 @@ export default function LoginPage() {
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="password" className="text-sm font-medium text-[#3d2c24]">
                     <Lock className="size-4 text-[#a39e97]" />
-                    Contrasena
+                    Contraseña
                   </Label>
                   <Input
                     id="password"
                     type="password"
-                    placeholder="Tu contrasena"
+                    placeholder="Tu contraseña"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete="current-password"
@@ -266,7 +259,7 @@ export default function LoginPage() {
                   ) : (
                     <>
                       <Coffee className="size-4" />
-                      Iniciar sesion
+                      Iniciar sesión
                     </>
                   )}
                 </Button>

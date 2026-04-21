@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
+import { logAuditClient } from '@/lib/audit'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import type { Supplier, SupplierInsert, StockItem } from '@/types/database'
 import { getSemaphore } from '@/components/stock/StockSemaphoreBadge'
@@ -286,11 +287,28 @@ export default function ProveedoresPage() {
           .eq('id', editingSupplier.id)
 
         if (error) throw error
+        logAuditClient({
+          userId: profile?.id ?? null,
+          userName: profile?.first_name ?? null,
+          action: 'update_supplier',
+          module: 'proveedores',
+          entityType: 'supplier',
+          entityId: String(editingSupplier.id),
+          description: `${profile?.first_name ?? 'User'} editó proveedor: ${formData.name.trim()}`,
+        })
         toast.success('Proveedor actualizado')
       } else {
         const { error } = await supabase.from('suppliers').insert(payload)
 
         if (error) throw error
+        logAuditClient({
+          userId: profile?.id ?? null,
+          userName: profile?.first_name ?? null,
+          action: 'create_supplier',
+          module: 'proveedores',
+          entityType: 'supplier',
+          description: `${profile?.first_name ?? 'User'} creó proveedor: ${formData.name.trim()}`,
+        })
         toast.success('Proveedor creado')
       }
 
@@ -325,6 +343,15 @@ export default function ProveedoresPage() {
         .eq('id', supplierToDelete.id)
 
       if (error) throw error
+      logAuditClient({
+        userId: profile?.id ?? null,
+        userName: profile?.first_name ?? null,
+        action: 'delete_supplier',
+        module: 'proveedores',
+        entityType: 'supplier',
+        entityId: String(supplierToDelete.id),
+        description: `${profile?.first_name ?? 'User'} desactivó proveedor: ${supplierToDelete.name}`,
+      })
 
       toast.success('Proveedor eliminado')
       setDeleteDialogOpen(false)
@@ -444,6 +471,15 @@ export default function ProveedoresPage() {
 
       const totalLinked = kitchenLink.length + barLink.length
       const totalUnlinked = kitchenUnlink.length + barUnlink.length
+      logAuditClient({
+        userId: profile?.id ?? null,
+        userName: profile?.first_name ?? null,
+        action: 'link_supplier_stock',
+        module: 'proveedores',
+        entityType: 'supplier',
+        entityId: String(assignSupplier.id),
+        description: `${profile?.first_name ?? 'User'} vinculó proveedor ${assignSupplier.name} a ${totalLinked} items de stock (${totalUnlinked} desvinculados)`,
+      })
       toast.success(`${totalLinked} vinculados, ${totalUnlinked} desvinculados`)
       setAssignDialogOpen(false)
       fetchData()
@@ -986,16 +1022,16 @@ function SupplierCard({
       {(supplier.phone || supplier.email) && (
         <div className="space-y-1.5 text-xs text-[#a39e97]">
           {supplier.phone && (
-            <p className="flex items-center gap-2">
+            <a href={`tel:${supplier.phone}`} className="flex items-center gap-2 hover:text-[#006d5a] transition-colors">
               <Phone className="size-3 shrink-0" />
-              <span className="text-[#3d2c24]">{supplier.phone}</span>
-            </p>
+              <span className="text-[#3d2c24] underline decoration-dotted">{supplier.phone}</span>
+            </a>
           )}
           {supplier.email && (
-            <p className="flex items-center gap-2">
+            <a href={`mailto:${supplier.email}`} className="flex items-center gap-2 hover:text-[#006d5a] transition-colors">
               <Mail className="size-3 shrink-0" />
-              <span className="text-[#3d2c24]">{supplier.email}</span>
-            </p>
+              <span className="text-[#3d2c24] underline decoration-dotted">{supplier.email}</span>
+            </a>
           )}
         </div>
       )}

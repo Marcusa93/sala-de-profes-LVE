@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { logAudit } from '@/lib/audit'
 import type { AppRole } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!callerProfile || callerProfile.role !== 'encargado' && callerProfile.role !== 'socio') {
+    if (!callerProfile || (callerProfile.role !== 'encargado' && callerProfile.role !== 'socio')) {
       return NextResponse.json(
         { error: 'Solo socios y encargados pueden crear usuarios' },
         { status: 403 },
@@ -135,6 +136,17 @@ export async function POST(request: NextRequest) {
         { status: 500 },
       )
     }
+
+    // Audit trail (non-blocking)
+    logAudit(adminClient, {
+      userId: user.id,
+      userName: null,
+      action: 'create_user',
+      module: 'equipo',
+      entityType: 'profile',
+      entityId: profile.id,
+      description: `Admin creó usuario: ${firstName.trim()} ${lastName.trim()} (${role})`,
+    })
 
     return NextResponse.json({
       success: true,

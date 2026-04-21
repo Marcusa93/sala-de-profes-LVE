@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { logAudit } from '@/lib/audit'
 import { ROLES } from '@/lib/constants'
 import type { AppRole, PriorityValue, AnnouncementTypeValue } from '@/types/database'
 
@@ -48,6 +49,16 @@ export async function POST(request: NextRequest) {
       scope: 'role',
       target_role: 'encargado',
       is_active: true,
+    })
+
+    // Audit trail (non-blocking)
+    logAudit(admin, {
+      userId: user.id,
+      userName: authorName,
+      action: 'generate_report',
+      module: 'avisos',
+      entityType: 'announcement',
+      description: `${authorName} generó reporte: ${body.message.trim().slice(0, 80)}`,
     })
 
     return NextResponse.json({ success: true })

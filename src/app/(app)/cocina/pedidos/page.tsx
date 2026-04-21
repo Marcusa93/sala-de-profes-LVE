@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { isManagerOrAbove } from '@/lib/roles'
+import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import {
   ArrowLeft,
@@ -82,6 +83,11 @@ export default function PedidosCocinaPage() {
   const isEncargado = isManagerOrAbove(profile?.role)
   const canCreate = ['chef', 'cocina', 'encargado', 'socio'].includes(profile?.role ?? '')
 
+  // --- Stock item suggestions (autocomplete) ---
+  const [stockItemNames, setStockItemNames] = useState<string[]>([])
+  const [focusedItemId, setFocusedItemId] = useState<string | null>(null)
+  const suggestionsRef = useRef<HTMLDivElement | null>(null)
+
   // --- Existing orders ---
   const [orders, setOrders] = useState<ExistingOrder[]>([])
   const [loadingOrders, setLoadingOrders] = useState(true)
@@ -95,6 +101,19 @@ export default function PedidosCocinaPage() {
 
   // --- Collapsible sections ---
   const [showHistory, setShowHistory] = useState(false)
+
+  // ----- Fetch stock item names for autocomplete -----
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from('stock_items')
+      .select('name')
+      .eq('is_active', true)
+      .order('name')
+      .then(({ data }) => {
+        if (data) setStockItemNames(data.map((i) => i.name))
+      })
+  }, [])
 
   // ----- Fetch existing orders -----
   const fetchOrders = useCallback(async () => {
@@ -626,18 +645,53 @@ export default function PedidosCocinaPage() {
                       <span className="text-xs font-medium text-[#a39e97] w-5">
                         {idx + 1}.
                       </span>
-                      <Input
-                        placeholder="Producto (ej: Menta, Limon...)"
-                        value={item.product_name}
-                        onChange={(e) =>
-                          updateCartItem(
-                            item.id,
-                            'product_name',
-                            e.target.value,
+                      <div className="relative flex-1">
+                        <Input
+                          placeholder="Producto (ej: Menta, Limon...)"
+                          value={item.product_name}
+                          onChange={(e) =>
+                            updateCartItem(
+                              item.id,
+                              'product_name',
+                              e.target.value,
+                            )
+                          }
+                          onFocus={() => setFocusedItemId(item.id)}
+                          onBlur={() => {
+                            // Delay to allow click on suggestion
+                            setTimeout(() => setFocusedItemId((prev) => prev === item.id ? null : prev), 150)
+                          }}
+                          autoComplete="off"
+                          className="w-full h-11 border border-[#e8e0d8] rounded-lg text-sm"
+                        />
+                        {/* Autocomplete suggestions */}
+                        {focusedItemId === item.id && item.product_name.trim().length >= 1 && (() => {
+                          const q = item.product_name.trim().toLowerCase()
+                          const matches = stockItemNames.filter((n) => n.toLowerCase().includes(q)).slice(0, 6)
+                          if (matches.length === 0 || (matches.length === 1 && matches[0].toLowerCase() === q)) return null
+                          return (
+                            <div
+                              ref={suggestionsRef}
+                              className="absolute z-20 top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg ring-1 ring-[#ebe6df] max-h-44 overflow-y-auto"
+                            >
+                              {matches.map((name) => (
+                                <button
+                                  key={name}
+                                  type="button"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault()
+                                    updateCartItem(item.id, 'product_name', name)
+                                    setFocusedItemId(null)
+                                  }}
+                                  className="w-full text-left px-3 py-2.5 text-sm text-[#3d2c24] hover:bg-[#f0f7f5] transition-colors min-h-[44px] flex items-center"
+                                >
+                                  {name}
+                                </button>
+                              ))}
+                            </div>
                           )
-                        }
-                        className="flex-1 h-11 border border-[#e8e0d8] rounded-lg text-sm"
-                      />
+                        })()}
+                      </div>
                       <button
                         onClick={() => removeCartItem(item.id)}
                         className="size-[44px] flex items-center justify-center rounded-lg hover:bg-red-50 text-[#ea504c] transition-colors"
