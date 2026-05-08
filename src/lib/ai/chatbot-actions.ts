@@ -53,6 +53,11 @@ export type ExtractedItem = {
   matchConfidence: 'exact' | 'probable' | 'none'
 }
 
+type ExtractedItemWithHints = ExtractedItem & {
+  _ambiguous?: boolean
+  _suggestions?: string[]
+}
+
 export type ActionProposal = {
   intent: ActionIntent
   items: ExtractedItem[]
@@ -68,6 +73,56 @@ export type ActionResult = {
   created: number
   details: string[]
   errors: string[]
+}
+
+export function parseStockQuantity(quantity: string): number {
+  const cleaned = quantity.trim().replace(/[^\d,.-]/g, '')
+  if (!cleaned) return NaN
+
+  const hasComma = cleaned.includes(',')
+  const hasDot = cleaned.includes('.')
+  let normalized = cleaned
+
+  if (hasComma && hasDot) {
+    const lastComma = cleaned.lastIndexOf(',')
+    const lastDot = cleaned.lastIndexOf('.')
+    normalized = lastComma > lastDot
+      ? cleaned.replace(/\./g, '').replace(',', '.')
+      : cleaned.replace(/,/g, '')
+  } else if (hasComma) {
+    normalized = cleaned.replace(',', '.')
+  }
+
+  return Number(normalized)
+}
+
+function describeStockSource(item: {
+  fudo_ingredient_id?: string | null
+  fudo_product_id?: string | null
+  fudo_skip?: boolean | null
+}) {
+  if (item.fudo_product_id) return { label: 'Fudo producto', actionable: true }
+  if (item.fudo_ingredient_id) return { label: 'Fudo insumo', actionable: true }
+  if (item.fudo_skip === true) return { label: 'Local LVE', actionable: true }
+  return { label: 'Sin mapeo Fudo', actionable: false }
+}
+
+export function isConfirmableProposal(proposal: ActionProposal): boolean {
+  if (proposal.confirmationText.startsWith('❌')) return false
+
+  switch (proposal.intent) {
+    case 'PEDIDO_MERCADERIA':
+    case 'ACTUALIZAR_STOCK':
+    case 'MISE_EN_PLACE':
+      return proposal.items.length > 0
+    case 'PRODUCCION_COMPLETA':
+      return Boolean(proposal.message) && proposal.confirmationText.startsWith('🔪')
+    case 'REPORTE_PROBLEMA':
+    case 'AVISO_ENCARGADO':
+      return Boolean(proposal.message?.trim())
+    default:
+      return false
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -220,8 +275,7 @@ export async function executeQuery(
 
       if (!affected?.length) return '🟢 No hay recetas vinculadas a insumos en riesgo.'
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const recipeNames = [...new Set((affected as any[]).map((r) => r.recipes?.name).filter(Boolean))]
+      const recipeNames = [...new Set((affected as Array<{ recipes?: { name?: string } | null }>).map((r) => r.recipes?.name).filter(Boolean))]
       if (!recipeNames.length) return '🟢 No hay recetas en riesgo.'
 
       return `⚠️ **Recetas en riesgo** (${recipeNames.length}):\n${recipeNames.map((n) => `- ${n}`).join('\n')}`
@@ -243,8 +297,7 @@ export async function executeQuery(
       const pending = orders.filter((o) => o.status !== 'completed' && o.status !== 'cancelled')
 
       const lines = orders.map((o) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const chef = (o.profiles as any)?.first_name ?? '?'
+        const chef = (o.profiles as { first_name?: string } | null)?.first_name ?? '?'
         const icon = o.status === 'completed' ? '✅' : o.status === 'in_progress' ? '🔄' : '📋'
         return `${icon} ${o.name} — ${chef} (${o.status})`
       })
@@ -281,7 +334,7 @@ export async function executeQuery(
           try {
             const items = await fudo.getSaleItems(sale.id)
             for (const item of items) {
-              const name = (item as any).name ?? 'Desconocido'
+              const name = item.name ?? 'Desconocido'
               productCounts[name] = (productCounts[name] ?? 0) + (item.quantity ?? 1)
             }
           } catch { /* skip */ }
@@ -350,7 +403,9 @@ export async function executeQuery(
       const lines: string[] = []
 
       for (const ing of ingredients) {
-        const si = (ing as any).stock_items
+        const si = (ing as {
+          stock_items?: { name: string; cost_per_unit: number | null; unit: string | null } | null
+        }).stock_items
         if (!si) continue
         const cost = (si.cost_per_unit ?? 0) * (ing.qty_per_portion ?? 0)
         totalCost += cost
@@ -493,7 +548,8 @@ export async function executeQuery(
         lines.push(`📊 ${anomRows.length} anomalías (${openCount} abiertas)\n`)
 
         for (const a of anomRows.slice(0, 8)) {
-          const name = (a as any).profiles?.first_name ?? '?'
+          const anomaly = a as typeof a & { profiles?: { first_name?: string } | null }
+          const name = anomaly.profiles?.first_name ?? '?'
           const tipo =
             a.anomaly_type === 'gps_out_of_range' ? '📍 GPS fuera de rango' :
             a.anomaly_type === 'wifi_mismatch' ? '📶 WiFi no reconocida' :
@@ -510,7 +566,8 @@ export async function executeQuery(
       if (suspRows.length > 0) {
         lines.push(`\n⚠️ **Fichajes sospechosos:** ${suspRows.length}`)
         for (const s of suspRows.slice(0, 5)) {
-          const name = (s as any).profiles?.first_name ?? '?'
+          const suspicious = s as typeof s & { profiles?: { first_name?: string } | null }
+          const name = suspicious.profiles?.first_name ?? '?'
           const reasons = ((s.suspicious_reasons as string[]) ?? []).map(r => r.split(':')[0]).join(', ')
           lines.push(`- ${name} (${s.operative_date}): ${reasons}`)
         }
@@ -540,7 +597,15 @@ export function detectIntent(aiAnalysis: {
 }): ActionIntent {
   const intent = (aiAnalysis.intent || '').toUpperCase().replace(/\s+/g, '_')
 
-  if (intent.includes('ACTUALIZAR') || intent.includes('CARGAR') || intent.includes('UPDATE_STOCK') || intent.includes('STOCK_UPDATE')) {
+  if (
+    intent.includes('ACTUALIZAR')
+    || intent.includes('CARGAR')
+    || intent.includes('SOBREESCRIBIR')
+    || intent.includes('PONER')
+    || intent.includes('CONTAR')
+    || intent.includes('UPDATE_STOCK')
+    || intent.includes('STOCK_UPDATE')
+  ) {
     return 'ACTUALIZAR_STOCK'
   }
   if (intent.includes('PEDIDO') || intent.includes('ORDER') || intent.includes('NECESITO') || intent.includes('FALTA')) {
@@ -787,10 +852,10 @@ export async function buildProposal(
     const matched = await matchItems(admin, rawItems, source)
 
     // Check for ambiguous matches — ask user to clarify instead of guessing
-    const ambiguous = matched.filter(i => (i as any)._ambiguous)
+    const ambiguous = matched.filter((i): i is ExtractedItemWithHints => Boolean((i as ExtractedItemWithHints)._ambiguous))
     if (ambiguous.length > 0) {
       const ambigLines = ambiguous.map(i => {
-        const suggestions = ((i as any)._suggestions as string[]) ?? []
+        const suggestions = i._suggestions ?? []
         return `• "${i.rawName}" podría ser: ${suggestions.map(s => `**${s}**`).join(', ')}`
       })
       return {
@@ -834,10 +899,10 @@ export async function buildProposal(
     const matched = await matchItems(admin, rawItems, source)
 
     // ── AMBIGUITY CHECK — ask user to clarify before proceeding ──
-    const ambiguous = matched.filter(i => (i as any)._ambiguous)
+    const ambiguous = matched.filter((i): i is ExtractedItemWithHints => Boolean((i as ExtractedItemWithHints)._ambiguous))
     if (ambiguous.length > 0) {
       const ambigLines = ambiguous.map(i => {
-        const suggestions = ((i as any)._suggestions as string[]) ?? []
+        const suggestions = i._suggestions ?? []
         return `• "${i.rawName}" podría ser: ${suggestions.map(s => `**${s}**`).join(', ')}`
       })
       return {
@@ -883,7 +948,7 @@ export async function buildProposal(
     // 3. Validate quantities — no negatives, no absurd values, must be numeric
     const qtyErrors: string[] = []
     for (const item of validItems) {
-      const qty = parseFloat(item.quantity.replace(/[^\d.,-]/g, ''))
+      const qty = parseStockQuantity(item.quantity)
       if (isNaN(qty)) {
         qtyErrors.push(`${item.matchedStockName ?? item.rawName}: cantidad "${item.quantity}" no es un número válido`)
       } else if (qty < 0) {
@@ -904,15 +969,46 @@ export async function buildProposal(
     }
 
     // 4. Fetch current quantities for change preview
-    const currentQtys = new Map<string | number, { qty: number; unit: string }>()
+    const currentQtys = new Map<string | number, { qty: number; unit: string; source: string; actionable: boolean }>()
     if (source === 'barra') {
       const { data: barItems } = await admin.from('bar_stock_items').select('id, current_qty, unit').eq('is_active', true)
-      for (const bi of barItems ?? []) currentQtys.set(bi.id, { qty: bi.current_qty, unit: bi.unit ?? '' })
+      for (const bi of barItems ?? []) currentQtys.set(bi.id, {
+        qty: bi.current_qty,
+        unit: bi.unit ?? '',
+        source: 'Barra LVE',
+        actionable: true,
+      })
     } else {
       const ids = validItems.map(i => String(i.matchedStockId)).filter(Boolean)
       if (ids.length > 0) {
-        const { data: siItems } = await admin.from('stock_items').select('id, current_qty, unit').in('id', ids)
-        for (const si of siItems ?? []) currentQtys.set(si.id, { qty: si.current_qty, unit: si.unit ?? '' })
+        const { data: siItems } = await admin
+          .from('stock_items')
+          .select('id, name, current_qty, unit, fudo_ingredient_id, fudo_product_id, fudo_skip')
+          .in('id', ids)
+        for (const si of siItems ?? []) {
+          const sourceInfo = describeStockSource(si)
+          currentQtys.set(si.id, {
+            qty: si.current_qty,
+            unit: si.unit ?? '',
+            source: sourceInfo.label,
+            actionable: sourceInfo.actionable,
+          })
+        }
+      }
+    }
+
+    const mappingErrors = validItems
+      .map((i) => ({ item: i, current: currentQtys.get(i.matchedStockId!) }))
+      .filter(({ current }) => current && !current.actionable)
+      .map(({ item }) => item.matchedStockName ?? item.rawName)
+
+    if (mappingErrors.length > 0) {
+      return {
+        intent,
+        items: [],
+        duplicateWarnings: [],
+        confirmationText: `❌ No puedo actualizar por chat hasta corregir mapeo Fudo/Local LVE:\n${mappingErrors.map((name) => `• ${name}`).join('\n')}`,
+        readyToExecute: false,
       }
     }
 
@@ -920,16 +1016,19 @@ export async function buildProposal(
       const name = i.matchedStockName ?? i.rawName
       const confidence = i.matchConfidence === 'probable' ? ' ⚠️ (coincidencia probable — verificá)' : ''
       const cur = currentQtys.get(i.matchedStockId!)
-      const newQty = parseFloat(i.quantity.replace(/[^\d.,-]/g, ''))
+      const newQty = parseStockQuantity(i.quantity)
       const changeStr = cur ? ` (actual: ${cur.qty} ${cur.unit} → ${newQty} ${cur.unit})` : ''
-      return `• **${name}** → ${i.quantity}${changeStr}${confidence}`
+      const sourceTag = cur ? ` · ${cur.source}` : ''
+      return `• **${name}** → ${i.quantity}${changeStr}${sourceTag}${confidence}`
     })
 
-    let confirmText = `📦 **Actualizar stock:**\n${itemLines.join('\n')}`
+    let confirmText = `📦 **Sobrescribir stock actual:**\n${itemLines.join('\n')}`
     if (rejectedNames) {
       confirmText += `\n\n⚠️ Ignorados (no encontrados): ${rejectedNames}`
     }
-    confirmText += `\n\nEsto actualiza las cantidades en la webapp y en Fudo. ¿Confirmo?`
+    confirmText += source === 'barra'
+      ? `\n\nEsto reemplaza la cantidad actual en stock de barra. ¿Confirmo?`
+      : `\n\nEsto reemplaza la cantidad actual y exige confirmación de Fudo antes de dejar el cambio en LVE. ¿Confirmo?`
 
     return {
       intent,
@@ -1338,19 +1437,19 @@ export async function executeAction(
     }
 
     if (proposal.intent === 'ACTUALIZAR_STOCK') {
-      const { syncToFudo } = await import('@/lib/fudo/stock-sync')
+      const source = getStockSource(userRole)
+      const requestedUpdates: { item: ExtractedItem; stockItemId: string; newQty: number }[] = []
+      const seenIds = new Set<string>()
 
       for (const item of proposal.items) {
-        // Double-check: skip unmatched items (should be filtered in buildProposal but defensive)
         if (!item.matchedStockId || item.matchConfidence === 'none') {
-          result.errors.push(`${item.rawName}: no encontrado en stock — ignorado`)
+          result.errors.push(`${item.rawName}: no encontrado en stock`)
           continue
         }
 
-        const rawQty = item.quantity.replace(/[^\d.,-]/g, '')
-        const newQty = parseFloat(rawQty)
+        const newQty = parseStockQuantity(item.quantity)
+        const stockItemId = String(item.matchedStockId)
 
-        // Defensive validation at execution time (belt + suspenders)
         if (isNaN(newQty)) {
           result.errors.push(`${item.matchedStockName ?? item.rawName}: cantidad "${item.quantity}" no es numérica`)
           continue
@@ -1363,27 +1462,104 @@ export async function executeAction(
           result.errors.push(`${item.matchedStockName ?? item.rawName}: cantidad ${newQty} excede el máximo`)
           continue
         }
-
-        const stockItemId = String(item.matchedStockId)
-
-        try {
-          const syncResult = await syncToFudo(admin, stockItemId, newQty, userId)
-
-          if (syncResult.success) {
-            result.created++
-            const fudoTag = syncResult.fudoSynced ? ' (+ Fudo ✓)' : syncResult.fudoSynced === false ? ' (webapp OK, Fudo ⚠️)' : ''
-            result.details.push(`${item.matchedStockName ?? item.rawName} → ${newQty}${fudoTag}`)
-          } else {
-            result.errors.push(`${item.matchedStockName ?? item.rawName}: ${syncResult.error ?? 'Error al sincronizar'}`)
-          }
-        } catch (err) {
-          result.errors.push(`${item.matchedStockName ?? item.rawName}: ${err instanceof Error ? err.message : 'Error inesperado'}`)
+        if (seenIds.has(stockItemId)) {
+          result.errors.push(`${item.matchedStockName ?? item.rawName}: item repetido en la misma acción`)
+          continue
         }
+        seenIds.add(stockItemId)
+        requestedUpdates.push({ item, stockItemId, newQty })
       }
 
-      // If nothing was updated, mark as failure
-      if (result.created === 0 && result.errors.length > 0) {
+      if (result.errors.length > 0 || requestedUpdates.length === 0) {
         result.success = false
+        if (requestedUpdates.length === 0 && result.errors.length === 0) {
+          result.errors.push('No hay items válidos para actualizar')
+        }
+        return result
+      }
+
+      if (source === 'barra') {
+        for (const update of requestedUpdates) {
+          const { error } = await admin
+            .from('bar_stock_items')
+            .update({ current_qty: update.newQty, updated_at: new Date().toISOString() })
+            .eq('id', Number(update.stockItemId))
+
+          if (error) {
+            result.errors.push(`${update.item.matchedStockName ?? update.item.rawName}: ${error.message}`)
+          } else {
+            result.created++
+            result.details.push(`${update.item.matchedStockName ?? update.item.rawName} → ${update.newQty} (barra)`)
+          }
+        }
+
+        if (result.errors.length > 0) result.success = false
+      } else {
+        const { fudo } = await import('@/lib/fudoClient')
+        const fudoConnection = await fudo.testConnection()
+        if (!fudoConnection.ok) {
+          result.success = false
+          result.errors.push(`Stock no actualizado: Fudo no está disponible (${fudoConnection.error})`)
+          return result
+        }
+
+        const ids = requestedUpdates.map((update) => update.stockItemId)
+        const { data: stockRows, error: stockErr } = await admin
+          .from('stock_items')
+          .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip')
+          .in('id', ids)
+
+        if (stockErr) {
+          result.success = false
+          result.errors.push(`No pude validar mapeos Fudo: ${stockErr.message}`)
+          return result
+        }
+
+        const rowsById = new Map((stockRows ?? []).map((row) => [String(row.id), row]))
+        const mappingErrors: string[] = []
+        for (const update of requestedUpdates) {
+          const row = rowsById.get(update.stockItemId)
+          const name = update.item.matchedStockName ?? update.item.rawName
+          if (!row) {
+            mappingErrors.push(`${name}: no encontré el item al ejecutar`)
+            continue
+          }
+          const isLocalOnly = (row as Record<string, unknown>).fudo_skip === true
+          if (!row.fudo_ingredient_id && !row.fudo_product_id && !isLocalOnly) {
+            mappingErrors.push(`${row.name}: no está mapeado a Fudo ni marcado como local`)
+          }
+        }
+
+        if (mappingErrors.length > 0) {
+          result.success = false
+          result.errors.push(`No actualicé nada. Corregí mapeos antes de usar el chatbot: ${mappingErrors.join('; ')}`)
+          return result
+        }
+
+        const { syncFromFudo, syncToFudo } = await import('@/lib/fudo/stock-sync')
+        for (const update of requestedUpdates) {
+          try {
+            const syncResult = await syncToFudo(admin, update.stockItemId, update.newQty, userId)
+
+            if (syncResult.success) {
+              result.created++
+              const fudoTag = syncResult.fudoSynced ? ' (+ Fudo ✓)' : ' (LVE local explícito)'
+              result.details.push(`${update.item.matchedStockName ?? update.item.rawName} → ${update.newQty}${fudoTag}`)
+            } else {
+              result.errors.push(`${update.item.matchedStockName ?? update.item.rawName}: ${syncResult.error ?? 'Error al sincronizar'}`)
+              break
+            }
+          } catch (err) {
+            result.errors.push(`${update.item.matchedStockName ?? update.item.rawName}: ${err instanceof Error ? err.message : 'Error inesperado'}`)
+            break
+          }
+        }
+
+        if (result.errors.length > 0) {
+          await syncFromFudo(admin).catch(() => null)
+          result.success = false
+          result.errors.push('LVE se re-sincronizó desde Fudo cuando fue posible para evitar cantidades falsas.')
+        }
       }
 
       // Audit (non-blocking)
@@ -1470,6 +1646,14 @@ export async function executeAction(
       if (matchedInput.current_qty < inp.qty) {
         result.success = false
         result.errors.push(`Stock insuficiente: ${matchedInput.name} tiene ${matchedInput.current_qty} ${matchedInput.unit} pero querés procesar ${inp.qty}. Actualizá el stock primero.`)
+        return result
+      }
+
+      const { fudo } = await import('@/lib/fudoClient')
+      const fudoConnection = await fudo.testConnection()
+      if (!fudoConnection.ok) {
+        result.success = false
+        result.errors.push(`Producción no registrada: Fudo no está disponible (${fudoConnection.error}).`)
         return result
       }
 
@@ -1562,11 +1746,21 @@ export async function executeAction(
       let fudoTag = ''
       if (movements.length > 0) {
         try {
-          const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
+          const { syncFromFudo, syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
           const fudoResult = await syncProductionToFudo(admin, movements, userId)
+          if (fudoResult.errors.length > 0) {
+            await syncFromFudo(admin).catch(() => null)
+            result.success = false
+            result.errors.push(`Producción cerrada en LVE, pero Fudo no confirmó el stock: ${fudoResult.errors.join('; ')}. Re-sincronicé LVE desde Fudo cuando fue posible; revisá la orden ${order.id}.`)
+            return result
+          }
           fudoTag = fudoResult.synced > 0 ? ` (Fudo ✓ ${fudoResult.synced} items)` : ' (Fudo: sin items vinculados)'
         } catch (err) {
-          fudoTag = ` (Fudo ⚠️ ${err instanceof Error ? err.message : 'error de sync'})`
+          const { syncFromFudo } = await import('@/lib/fudo/stock-sync')
+          await syncFromFudo(admin).catch(() => null)
+          result.success = false
+          result.errors.push(`Producción cerrada en LVE, pero falló la sincronización con Fudo: ${err instanceof Error ? err.message : 'error de sync'}. Re-sincronicé LVE desde Fudo cuando fue posible; revisá la orden ${order.id}.`)
+          return result
         }
       }
 

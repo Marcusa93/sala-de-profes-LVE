@@ -9,7 +9,6 @@ import {
   Sparkles,
   Loader2,
   X,
-  Minimize2,
   Check,
   Mic,
   MicOff,
@@ -292,7 +291,9 @@ export function FloatingChat() {
     setIsThinking(true)
 
     // Add user confirmation message
-    setMessages(prev => [...prev, {
+    setMessages(prev => [...prev.map((msg) => (
+      msg.actionProposal && !msg.actionExecuted ? { ...msg, actionProposal: undefined } : msg
+    )), {
       id: crypto.randomUUID(),
       role: 'user',
       content: '✅ Confirmado',
@@ -317,7 +318,7 @@ export function FloatingChat() {
         role: 'assistant',
         content: data.response ?? 'Acción ejecutada.',
         timestamp: new Date(),
-        actionExecuted: data.actionExecuted ?? true,
+        actionExecuted: data.actionExecuted ?? false,
       }])
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
@@ -338,7 +339,9 @@ export function FloatingChat() {
 
   // Cancel an action proposal
   const handleCancelAction = useCallback(() => {
-    setMessages(prev => [...prev, {
+    setMessages(prev => [...prev.map((msg) => (
+      msg.actionProposal && !msg.actionExecuted ? { ...msg, actionProposal: undefined } : msg
+    )), {
       id: crypto.randomUUID(),
       role: 'user',
       content: '❌ Cancelar',

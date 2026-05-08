@@ -20,13 +20,18 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      fudoConnected: true,
       ...result,
     })
   } catch (error) {
     console.error('[stock/sync GET]', error)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Error de sincronización' },
-      { status: 500 },
+      {
+        success: false,
+        fudoConnected: false,
+        error: error instanceof Error ? error.message : 'Error de sincronización con Fudo',
+      },
+      { status: 502 },
     )
   }
 }
@@ -50,6 +55,17 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = createAdminClient()
+    const { fudo } = await import('@/lib/fudoClient')
+    const fudoConnection = await fudo.testConnection()
+    if (!fudoConnection.ok) {
+      return NextResponse.json({
+        success: false,
+        fudoSynced: false,
+        error: `Fudo no está disponible: ${fudoConnection.error}`,
+        message: 'Stock no actualizado: Fudo no está disponible',
+      }, { status: 502 })
+    }
+
     const result = await syncToFudo(admin, stockItemId, newQty, user.id)
 
     return NextResponse.json({
@@ -60,13 +76,18 @@ export async function POST(request: NextRequest) {
         ? 'Stock actualizado en webapp y Fudo ✓'
         : result.success
           ? 'Stock actualizado en webapp (sin vínculo Fudo)'
-          : `Error: ${result.error}`,
-    })
+          : `Stock no actualizado: ${result.error}`,
+    }, { status: result.success ? 200 : 502 })
   } catch (error) {
     console.error('[stock/sync POST]', error)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Error' },
-      { status: 500 },
+      {
+        success: false,
+        fudoSynced: false,
+        fudoConnected: false,
+        error: error instanceof Error ? error.message : 'Error de sincronización con Fudo',
+      },
+      { status: 502 },
     )
   }
 }

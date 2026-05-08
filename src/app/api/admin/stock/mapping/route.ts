@@ -245,8 +245,25 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Faltan fudo_id y fudo_type' }, { status: 400 })
       }
 
+      const linkColumn = fudo_type === 'ingredient' ? 'fudo_ingredient_id' : 'fudo_product_id'
+      const { data: existingLink } = await admin
+        .from('stock_items')
+        .select('id, name')
+        .eq(linkColumn, fudo_id)
+        .neq('id', stock_item_id)
+        .maybeSingle()
+
+      if (existingLink) {
+        return NextResponse.json(
+          { error: `Ese vínculo de Fudo ya está asignado a ${existingLink.name}` },
+          { status: 409 },
+        )
+      }
+
       const update: Record<string, unknown> = {
         fudo_skip: false,
+        fudo_ingredient_id: null,
+        fudo_product_id: null,
         updated_at: new Date().toISOString(),
       }
 

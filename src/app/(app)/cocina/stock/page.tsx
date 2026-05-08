@@ -1,13 +1,12 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { isManagerOrAbove } from '@/lib/roles'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   ArrowLeft, UtensilsCrossed, AlertTriangle, Check, ShoppingCart,
-  Loader2, Minus, Plus, Send, Package, Clock, Pencil, X, History,
+  Loader2, Send, Package, Clock, Pencil, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -34,6 +33,9 @@ type StockItem = {
   current_qty: number
   min_qty: number
   is_active: boolean
+  fudo_ingredient_id: string | null
+  fudo_product_id: string | null
+  fudo_skip: boolean | null
 }
 
 type KitchenOrder = {
@@ -55,6 +57,13 @@ const SEMAPHORE = {
   red: { label: 'Urgente', color: '#ea504c', bg: '#fef2f2', border: '#ea504c' },
   yellow: { label: 'Atención', color: '#d4943a', bg: '#fdf6ec', border: '#d4943a' },
   green: { label: 'OK', color: '#006d5a', bg: '#e8f5f1', border: '#006d5a' },
+}
+
+function getStockSource(item: StockItem) {
+  if (item.fudo_product_id) return { label: 'Fudo producto', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true }
+  if (item.fudo_ingredient_id) return { label: 'Fudo insumo', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true }
+  if (item.fudo_skip === true) return { label: 'Local LVE', tone: 'bg-[#f3efe9] text-[#7d6c64]', actionable: true }
+  return { label: 'Sin mapeo', tone: 'bg-[#fef2f2] text-[#ea504c]', actionable: false }
 }
 
 export default function CocinaStockPage() {
@@ -95,7 +104,7 @@ export default function CocinaStockPage() {
     const supabase = createClient()
     const [itemsRes, ordersRes, handoverRes] = await Promise.all([
       supabase.from('stock_items')
-        .select('id, name, category, unit, current_qty, min_qty, is_active')
+        .select('id, name, category, unit, current_qty, min_qty, is_active, fudo_ingredient_id, fudo_product_id, fudo_skip')
         .eq('is_active', true)
         .in('category', KITCHEN_CATEGORIES)
         .order('category')
@@ -184,25 +193,54 @@ export default function CocinaStockPage() {
     setStockMode(true)
   }
 
+  const syncStockItem = async (stockItemId: string, newQty: number) => {
+    const res = await fetch('/api/stock/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stockItemId, newQty }),
+    })
+    const data = await res.json().catch(() => ({})) as { success?: boolean; error?: string; message?: string }
+
+    if (!res.ok || data.success === false) {
+      throw new Error(data.error ?? data.message ?? 'Fudo no confirmó la actualización')
+    }
+
+    return data
+  }
+
   // Save all stock
   const handleSaveStock = async () => {
     setSavingStock(true)
     let updated = 0
     try {
-      const supabase = createClient()
+      const changed: { item: StockItem; newQty: number }[] = []
       for (const [itemId, qtyStr] of stockDraft) {
         const newQty = parseFloat(qtyStr) || 0
         if (newQty < 0) { toast.error('No se permiten cantidades negativas'); continue }
         const item = items.find(i => i.id === itemId)
         if (!item || item.current_qty === newQty) continue
-        const { error } = await supabase.from('stock_items').update({ current_qty: newQty }).eq('id', itemId)
-        if (!error) updated++
+        changed.push({ item, newQty })
+      }
+
+      const blocked = changed.filter(({ item }) => !getStockSource(item).actionable)
+      if (blocked.length > 0) {
+        throw new Error(`Hay items sin mapeo Fudo/Local LVE: ${blocked.map(({ item }) => item.name).join(', ')}`)
+      }
+
+      for (const { item, newQty } of changed) {
+        await syncStockItem(item.id, newQty)
+        updated++
       }
       toast.success(`Stock actualizado — ${updated} item${updated !== 1 ? 's' : ''}`)
       setStockMode(false)
       fetchData()
-    } catch {
-      toast.error('Error al guardar stock')
+    } catch (err) {
+      toast.error(
+        updated > 0
+          ? `Stock parcial (${updated}). Bloqueado por Fudo: ${err instanceof Error ? err.message : 'error'}`
+          : `Stock no actualizado: ${err instanceof Error ? err.message : 'Fudo no confirmó la actualización'}`,
+      )
+      fetchData()
     } finally {
       setSavingStock(false)
     }
@@ -213,13 +251,17 @@ export default function CocinaStockPage() {
     const newQty = parseFloat(editQty) || 0
     if (newQty < 0) { toast.error('No se permiten cantidades negativas'); return }
     try {
-      const supabase = createClient()
-      await supabase.from('stock_items').update({ current_qty: newQty }).eq('id', itemId)
+      const item = items.find(i => i.id === itemId)
+      if (item && !getStockSource(item).actionable) {
+        toast.error('Stock bloqueado: item sin mapeo Fudo ni Local LVE')
+        return
+      }
+      await syncStockItem(itemId, newQty)
       toast.success('Actualizado')
       setEditingId(null)
       fetchData()
-    } catch {
-      toast.error('Error')
+    } catch (err) {
+      toast.error(`Stock no actualizado: ${err instanceof Error ? err.message : 'Fudo no confirmó la actualización'}`)
     }
   }
 
@@ -316,7 +358,7 @@ export default function CocinaStockPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar producto..."
+            placeholder="Buscar insumo o producto..."
             className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] py-2.5 pl-10 pr-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
           />
           <Package className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
@@ -375,23 +417,51 @@ export default function CocinaStockPage() {
       {canEdit && (
         <div className="flex gap-2">
           <button
-            onClick={() => stockMode ? setStockMode(false) : enterStockMode()}
+            onClick={() => {
+              if (stockMode) {
+                setStockMode(false)
+                return
+              }
+              setOrderMode(false)
+              setOrderCart(new Map())
+              enterStockMode()
+            }}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-3 text-xs font-bold transition-all ${
               stockMode ? 'bg-[#006d5a] text-white' : 'border border-[#ebe6df] bg-white text-[#3d2c24] hover:border-[#006d5a]'
             }`}
           >
             <Pencil className="size-3.5" />
-            {stockMode ? 'Editando...' : 'Hacer stock'}
+            {stockMode ? 'Contando...' : 'Contar cantidades'}
           </button>
           <button
-            onClick={() => { if (orderMode) { setOrderMode(false); setOrderCart(new Map()) } else setOrderMode(true) }}
+            onClick={() => {
+              if (orderMode) {
+                setOrderMode(false)
+                setOrderCart(new Map())
+                return
+              }
+              setStockMode(false)
+              setOrderMode(true)
+            }}
             className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-3 text-xs font-bold transition-all ${
               orderMode ? 'bg-[#8b5e34] text-white' : 'border border-[#ebe6df] bg-white text-[#3d2c24] hover:border-[#8b5e34]'
             }`}
           >
             <ShoppingCart className="size-3.5" />
-            {orderMode ? `Pedido (${orderCart.size})` : 'Armar pedido'}
+            {orderMode ? `Reposición (${orderCart.size})` : 'Pedir reposición'}
           </button>
+        </div>
+      )}
+
+      {stockMode && (
+        <div className="rounded-xl border border-[#dcefe8] bg-[#f6fcfa] px-3 py-2 text-[12px] leading-relaxed text-[#006d5a]">
+          Contá lo que hay físicamente. Los items Fudo impactan en Fudo; los Local LVE impactan solo en LVE. Los sin mapeo quedan bloqueados.
+        </div>
+      )}
+
+      {orderMode && (
+        <div className="rounded-xl border border-[#ead8c6] bg-[#fffaf2] px-3 py-2 text-[12px] leading-relaxed text-[#8b5e34]">
+          Marcá faltantes para reposición. Esto no cambia stock: solo arma pedidos para resolver quiebres.
         </div>
       )}
 
@@ -401,7 +471,7 @@ export default function CocinaStockPage() {
           <button onClick={() => setStockMode(false)} className="flex-1 rounded-lg bg-white/20 py-2.5 text-xs font-semibold text-white">Cancelar</button>
           <button onClick={handleSaveStock} disabled={savingStock} className="flex flex-[2] items-center justify-center gap-1.5 rounded-lg bg-white py-2.5 text-xs font-bold text-[#006d5a] disabled:opacity-50">
             {savingStock ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-            Guardar stock
+            Guardar conteo
           </button>
         </div>
       )}
@@ -528,6 +598,7 @@ function ItemRow({ item, canEdit, stockMode, stockDraft, onStockDraftChange, ord
 }) {
   const s = SEMAPHORE[getSemaphore(item)]
   const isEditing = editingId === item.id
+  const source = getStockSource(item)
 
   return (
     <div className="rounded-xl border bg-card overflow-hidden" style={{ borderLeftWidth: 3, borderLeftColor: s.border }}>
@@ -547,11 +618,20 @@ function ItemRow({ item, canEdit, stockMode, stockDraft, onStockDraftChange, ord
         {/* Name */}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-[#3d2c24] truncate">{item.name}</p>
-          <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+            <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${source.tone}`}>
+              {source.label}
+            </span>
+          </div>
         </div>
 
         {/* Stock mode input */}
-        {stockMode ? (
+        {stockMode && !source.actionable ? (
+          <span className="rounded-lg bg-[#fff7f7] px-2 py-1 text-[10px] font-bold text-[#ea504c]">
+            Mapear
+          </span>
+        ) : stockMode ? (
           <input
             value={stockDraft.get(item.id) ?? String(item.current_qty)}
             onChange={(e) => onStockDraftChange(item.id, e.target.value)}
@@ -573,8 +653,9 @@ function ItemRow({ item, canEdit, stockMode, stockDraft, onStockDraftChange, ord
           </div>
         ) : (
           <button
-            onClick={() => canEdit ? onEditStart(item.id, item.current_qty) : undefined}
-            className={`flex items-baseline gap-0.5 rounded-lg px-2.5 py-1 ${canEdit ? 'hover:bg-[#f3efe9] active:scale-95 cursor-pointer' : ''}`}
+            onClick={() => canEdit && source.actionable ? onEditStart(item.id, item.current_qty) : undefined}
+            title={source.actionable ? `Editar ${source.label}` : 'Bloqueado: falta mapear a Fudo o marcar Local LVE'}
+            className={`flex items-baseline gap-0.5 rounded-lg px-2.5 py-1 ${canEdit && source.actionable ? 'hover:bg-[#f3efe9] active:scale-95 cursor-pointer' : 'opacity-60'}`}
             style={{ color: s.color }}
           >
             <span className="text-base font-bold tabular-nums">{item.current_qty}</span>
