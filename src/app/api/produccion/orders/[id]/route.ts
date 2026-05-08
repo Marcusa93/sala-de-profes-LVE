@@ -11,9 +11,9 @@ import { createAdminClient } from '@/lib/supabase/admin'
 //   - Cambiar name, notes, status (solo a 'in_progress' o 'cancelled')
 //   - Agregar un input:  { action: 'add_input',  stock_item_id, qty_used, unit }
 //   - Eliminar un input: { action: 'del_input',  input_id }
-//   - Agregar un output: { action: 'add_output', stock_item_id?, output_name, qty_produced, unit, is_waste?, notes?, theoretical_qty? }
+//   - Agregar un output: { action: 'add_output', stock_item_id?, output_name, qty_produced, unit, is_waste?, notes?, theoretical_qty?, lot_code?, produced_at?, expires_at? }
 //   - Eliminar un output:{ action: 'del_output', output_id }
-//   - Actualizar output: { action: 'upd_output', output_id, qty_produced, notes? }
+//   - Actualizar output: { action: 'upd_output', output_id, qty_produced, notes?, lot_code?, produced_at?, expires_at? }
 // ---------------------------------------------------------------------------
 
 async function authorize(supabase: Awaited<ReturnType<typeof createClient>>) {
@@ -24,6 +24,58 @@ async function authorize(supabase: Awaited<ReturnType<typeof createClient>>) {
     return { user: null, error: NextResponse.json({ error: 'Sin acceso' }, { status: 403 }) }
   }
   return { user, profile, error: null }
+}
+
+function isLotSchemaError(message: string | undefined) {
+  if (!message) return false
+  return (
+    message.includes('lot_code')
+    || message.includes('produced_at')
+    || message.includes('expires_at')
+    || message.includes('stock_lots')
+  )
+}
+
+function buildOutputPayload(body: Record<string, unknown>, includeLotFields: boolean) {
+  const payload: Record<string, unknown> = {
+    stock_item_id: body.stock_item_id || null,
+    output_name: body.output_name,
+    qty_produced: Number(body.qty_produced),
+    theoretical_qty: body.theoretical_qty != null ? Number(body.theoretical_qty) : null,
+    unit: body.unit,
+    is_waste: Boolean(body.is_waste),
+    notes: body.notes ?? null,
+  }
+
+  if (includeLotFields) {
+    payload.lot_code = typeof body.lot_code === 'string' ? body.lot_code.trim() || null : body.lot_code ?? null
+    payload.produced_at = body.produced_at ?? null
+    payload.expires_at = body.expires_at ?? null
+  }
+
+  return payload
+}
+
+async function validateStockMapping(
+  admin: ReturnType<typeof createAdminClient>,
+  stockItemId: string | null | undefined,
+) {
+  if (!stockItemId) return null
+
+  const { data: item, error } = await admin
+    .from('stock_items')
+    .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip')
+    .eq('id', stockItemId)
+    .single()
+
+  if (error || !item) return error?.message ?? 'Item de stock no encontrado'
+
+  const isLocalOnly = (item as Record<string, unknown>).fudo_skip === true
+  if (!item.fudo_ingredient_id && !item.fudo_product_id && !isLocalOnly) {
+    return `${item.name}: sin mapeo Fudo ni local explícito`
+  }
+
+  return null
 }
 
 export async function GET(
@@ -175,6 +227,10 @@ export async function PATCH(
       if (!body.stock_item_id || !body.qty_used || !body.unit) {
         return NextResponse.json({ error: 'add_input requiere: stock_item_id, qty_used, unit' }, { status: 400 })
       }
+      const mappingError = await validateStockMapping(admin, String(body.stock_item_id))
+      if (mappingError) {
+        return NextResponse.json({ error: `Input bloqueado por mapeo Fudo: ${mappingError}` }, { status: 409 })
+      }
       const { data, error } = await admin
         .from('production_inputs')
         .insert({
@@ -207,20 +263,38 @@ export async function PATCH(
       if (!body.output_name || body.qty_produced === undefined || !body.unit) {
         return NextResponse.json({ error: 'add_output requiere: output_name, qty_produced, unit' }, { status: 400 })
       }
-      const { data, error } = await admin
+      if (!body.is_waste && body.stock_item_id) {
+        const mappingError = await validateStockMapping(admin, String(body.stock_item_id))
+        if (mappingError) {
+          return NextResponse.json({ error: `Output bloqueado por mapeo Fudo: ${mappingError}` }, { status: 409 })
+        }
+      }
+      const payload = buildOutputPayload(body as Record<string, unknown>, true)
+      const insertWithLots = await admin
         .from('production_outputs')
         .insert({
           production_order_id: id,
-          stock_item_id: body.stock_item_id || null,
-          output_name: body.output_name,
-          qty_produced: Number(body.qty_produced),
-          theoretical_qty: body.theoretical_qty ? Number(body.theoretical_qty) : null,
-          unit: body.unit,
-          is_waste: Boolean(body.is_waste),
-          notes: body.notes ?? null,
+          ...payload,
         })
         .select()
         .single()
+
+      let data = insertWithLots.data
+      let error = insertWithLots.error
+
+      if (error && isLotSchemaError(error.message)) {
+        const fallbackInsert = await admin
+          .from('production_outputs')
+          .insert({
+            production_order_id: id,
+            ...buildOutputPayload(body as Record<string, unknown>, false),
+          })
+          .select()
+          .single()
+        data = fallbackInsert.data
+        error = fallbackInsert.error
+      }
+
       if (error) throw error
       return NextResponse.json({ success: true, action, output: data })
     }
@@ -244,13 +318,41 @@ export async function PATCH(
       }
       const patch: Record<string, unknown> = { qty_produced: Number(body.qty_produced) }
       if (body.notes !== undefined) patch.notes = body.notes
-      if (body.stock_item_id !== undefined) patch.stock_item_id = body.stock_item_id || null
+      if (body.stock_item_id !== undefined) {
+        if (body.stock_item_id) {
+          const mappingError = await validateStockMapping(admin, String(body.stock_item_id))
+          if (mappingError) {
+            return NextResponse.json({ error: `Output bloqueado por mapeo Fudo: ${mappingError}` }, { status: 409 })
+          }
+        }
+        patch.stock_item_id = body.stock_item_id || null
+      }
       if (body.output_name !== undefined) patch.output_name = body.output_name
-      const { error } = await admin
+      if (body.lot_code !== undefined) patch.lot_code = typeof body.lot_code === 'string' ? body.lot_code.trim() || null : body.lot_code
+      if (body.produced_at !== undefined) patch.produced_at = body.produced_at ?? null
+      if (body.expires_at !== undefined) patch.expires_at = body.expires_at ?? null
+
+      let { error } = await admin
         .from('production_outputs')
         .update(patch)
         .eq('id', Number(body.output_id))
         .eq('production_order_id', id)
+
+      if (error && isLotSchemaError(error.message)) {
+        const fallbackPatch: Record<string, unknown> = { ...patch }
+        delete fallbackPatch.lot_code
+        delete fallbackPatch.produced_at
+        delete fallbackPatch.expires_at
+
+        const fallbackUpdate = await admin
+          .from('production_outputs')
+          .update(fallbackPatch)
+          .eq('id', Number(body.output_id))
+          .eq('production_order_id', id)
+
+        error = fallbackUpdate.error
+      }
+
       if (error) throw error
       return NextResponse.json({ success: true, action })
     }

@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  ChevronLeft, ChevronRight, Check, Plus, Trash2, ChefHat,
+  ChevronLeft, ChevronRight, Check, Plus, Trash2,
   Package, AlertTriangle, Loader2, Leaf, TrendingUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -18,6 +18,10 @@ type StockItem = {
   name: string
   unit: string
   current_qty: number
+  shelf_life_days: number | null
+  fudo_ingredient_id: string | null
+  fudo_product_id: string | null
+  fudo_skip: boolean | null
 }
 
 type Template = {
@@ -48,6 +52,8 @@ type OutputRow = {
   unit: string
   is_waste: boolean
   notes: string
+  lot_code: string
+  expires_on: string
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +65,44 @@ function nextId() { return `local_${++_localId}` }
 
 function formatQty(n: number) {
   return n % 1 === 0 ? n.toFixed(0) : n.toFixed(3).replace(/\.?0+$/, '')
+}
+
+function toLocalDateInput(date: Date) {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function addDaysToDateInput(dateInput: string, days: number) {
+  if (!dateInput || Number.isNaN(days)) return ''
+  const base = new Date(`${dateInput}T00:00:00`)
+  if (Number.isNaN(base.getTime())) return ''
+  base.setDate(base.getDate() + days)
+  return toLocalDateInput(base)
+}
+
+function dateInputToIso(dateInput: string) {
+  if (!dateInput) return null
+  const date = new Date(`${dateInput}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function suggestedExpiryDate(item: Pick<StockItem, 'shelf_life_days'> | null, productionDate: string) {
+  if (!item || item.shelf_life_days == null) return ''
+  return addDaysToDateInput(productionDate, item.shelf_life_days)
+}
+
+function getStockSource(item: StockItem | null) {
+  if (!item) return null
+  if (item.fudo_product_id) return { label: 'Fudo producto', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true }
+  if (item.fudo_ingredient_id) return { label: 'Fudo insumo', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true }
+  if (item.fudo_skip === true) return { label: 'Local LVE', tone: 'bg-[#f3efe9] text-[#7d6c64]', actionable: true }
+  return { label: 'Sin mapeo Fudo', tone: 'bg-[#fef2f2] text-[#ea504c]', actionable: false }
+}
+
+function isStockActionable(item: StockItem | null) {
+  return getStockSource(item)?.actionable === true
 }
 
 function efficiencyLabel(pct: number | null) {
@@ -137,7 +181,10 @@ function StockSearch({
               className="flex w-full items-center justify-between px-3 py-2.5 text-left text-[13px] first:rounded-t-xl last:rounded-b-xl hover:bg-[#f5f2ee]"
             >
               <span className="font-medium text-[#3d2c24]">{item.name}</span>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${getStockSource(item)?.tone}`}>
+                  {getStockSource(item)?.label}
+                </span>
                 {formatQty(item.current_qty)} {item.unit}
               </span>
             </button>
@@ -166,18 +213,20 @@ export default function NuevaProduccionPage() {
   const [inputItem, setInputItem] = useState<StockItem | null>(null)
   const [inputQty, setInputQty] = useState('')
   const [inputUnit, setInputUnit] = useState('kg')
+  const [productionDate, setProductionDate] = useState(() => toLocalDateInput(new Date()))
   const [orderName, setOrderName] = useState('')
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
   const [notes, setNotes] = useState('')
 
   // Step 1 — outputs
   const [outputs, setOutputs] = useState<OutputRow[]>([])
+  const previousProductionDate = useRef(productionDate)
 
   // Load data
   useEffect(() => {
     const load = async () => {
       const [stockRes, tmplRes] = await Promise.all([
-        fetch('/api/stock/items'),
+        fetch('/api/stock/items?preset=full'),
         fetch('/api/produccion/templates'),
       ])
 
@@ -188,6 +237,10 @@ export default function NuevaProduccionPage() {
           name: String(i.name),
           unit: String(i.unit),
           current_qty: Number(i.current_qty ?? 0),
+          shelf_life_days: i.shelf_life_days == null ? null : Number(i.shelf_life_days),
+          fudo_ingredient_id: i.fudo_ingredient_id == null ? null : String(i.fudo_ingredient_id),
+          fudo_product_id: i.fudo_product_id == null ? null : String(i.fudo_product_id),
+          fudo_skip: i.fudo_skip == null ? null : Boolean(i.fudo_skip),
         }))
         setStockItems(items)
       }
@@ -203,10 +256,10 @@ export default function NuevaProduccionPage() {
   // Auto-generate order name
   useEffect(() => {
     if (inputItem) {
-      const date = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })
+      const date = new Date(`${productionDate}T00:00:00`).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })
       setOrderName(`${inputItem.name} — ${date}`)
     }
-  }, [inputItem])
+  }, [inputItem, productionDate])
 
   // When template selected, set input item and unit
   useEffect(() => {
@@ -225,22 +278,51 @@ export default function NuevaProduccionPage() {
     const qty = parseFloat(inputQty)
     if (isNaN(qty) || qty <= 0) return
 
-    const rows: OutputRow[] = selectedTemplate.outputs.map((o) => ({
-      localId: nextId(),
-      stock_item_id: o.stock_item_id,
-      stock_item_name: '',
-      output_name: o.output_name,
-      qty_produced: (qty * o.theoretical_yield_pct / 100).toFixed(3),
-      theoretical_qty: qty * o.theoretical_yield_pct / 100,
-      unit: o.output_unit,
-      is_waste: o.is_waste,
-      notes: o.notes ?? '',
-    }))
+    const rows: OutputRow[] = selectedTemplate.outputs.map((o) => {
+      const linkedItem = stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
+
+      return {
+        localId: nextId(),
+        stock_item_id: o.stock_item_id,
+        stock_item_name: linkedItem?.name ?? '',
+        output_name: o.output_name,
+        qty_produced: (qty * o.theoretical_yield_pct / 100).toFixed(3),
+        theoretical_qty: qty * o.theoretical_yield_pct / 100,
+        unit: linkedItem?.unit ?? o.output_unit,
+        is_waste: o.is_waste,
+        notes: o.notes ?? '',
+        lot_code: '',
+        expires_on: o.is_waste ? '' : suggestedExpiryDate(linkedItem, productionDate),
+      }
+    })
     setOutputs(rows)
-  }, [selectedTemplate, inputQty])
+  }, [inputQty, productionDate, selectedTemplate, stockItems])
+
+  useEffect(() => {
+    const previousDate = previousProductionDate.current
+    if (previousDate === productionDate) return
+
+    setOutputs((current) => current.map((output) => {
+      if (output.is_waste || !output.stock_item_id) return output
+
+      const linkedItem = stockItems.find((stockItem) => stockItem.id === output.stock_item_id) ?? null
+      if (!linkedItem || linkedItem.shelf_life_days == null) return output
+
+      const previousSuggestion = suggestedExpiryDate(linkedItem, previousDate)
+      const nextSuggestion = suggestedExpiryDate(linkedItem, productionDate)
+
+      if (!output.expires_on || output.expires_on === previousSuggestion) {
+        return { ...output, expires_on: nextSuggestion }
+      }
+
+      return output
+    }))
+
+    previousProductionDate.current = productionDate
+  }, [productionDate, stockItems])
 
   // ── Step 0 validation ──
-  const step0Valid = Boolean(inputItem && parseFloat(inputQty) > 0 && orderName.trim())
+  const step0Valid = Boolean(inputItem && isStockActionable(inputItem) && parseFloat(inputQty) > 0 && orderName.trim() && productionDate)
 
   // ── Step 1 helpers ──
   const totalOutputQty = outputs.reduce((s, o) => {
@@ -265,6 +347,8 @@ export default function NuevaProduccionPage() {
       unit: inputUnit,
       is_waste: isWaste,
       notes: '',
+      lot_code: '',
+      expires_on: '',
     }])
   }
 
@@ -276,10 +360,27 @@ export default function NuevaProduccionPage() {
     setOutputs((prev) => prev.filter((o) => o.localId !== localId))
   }
 
-  const step1Valid = outputs.length > 0 && outputs.every((o) => o.output_name && parseFloat(o.qty_produced) >= 0)
+  const step1Valid = outputs.length > 0 && outputs.every((o) => {
+    const linkedItem = o.stock_item_id ? stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null : null
+    return o.output_name
+      && parseFloat(o.qty_produced) >= 0
+      && (o.is_waste || !linkedItem || isStockActionable(linkedItem))
+  })
 
   // ── Submit ──
   async function handleConfirm() {
+    if (!isStockActionable(inputItem)) {
+      setError('Producción bloqueada: el insumo madre no está mapeado a Fudo ni marcado como Local LVE.')
+      return
+    }
+    const blockedOutputs = outputs
+      .filter((o) => !o.is_waste && o.stock_item_id)
+      .map((o) => stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null)
+      .filter((item): item is StockItem => Boolean(item && !isStockActionable(item)))
+    if (blockedOutputs.length > 0) {
+      setError(`Producción bloqueada: salidas sin mapeo Fudo/Local LVE (${blockedOutputs.map((item) => item.name).join(', ')}).`)
+      return
+    }
     const ok = window.confirm('Esto va a actualizar el stock. ¿Confirmar producción?')
     if (!ok) return
     setSaving(true)
@@ -308,6 +409,9 @@ export default function NuevaProduccionPage() {
               unit: o.unit,
               is_waste: o.is_waste,
               notes: o.notes || null,
+              lot_code: o.lot_code.trim() || null,
+              produced_at: dateInputToIso(productionDate),
+              expires_at: o.expires_on ? dateInputToIso(o.expires_on) : null,
             })),
         }),
       })
@@ -325,7 +429,24 @@ export default function NuevaProduccionPage() {
     }
   }
 
-  const STEPS = ['Insumo', 'Salidas', 'Confirmar']
+  const STEPS = [
+    {
+      label: 'Qué entra',
+      title: 'Elegí el insumo que sale del stock',
+      help: 'Este paso descuenta mercadería. Si el item no está vinculado a Fudo ni marcado como Local LVE, la producción queda bloqueada.',
+    },
+    {
+      label: 'Qué sale',
+      title: 'Cargá productos obtenidos, merma y vencimientos',
+      help: 'Vinculá cada salida a su item de stock cuando corresponda. LVE suma stock, registra lotes y respeta la fuente Fudo/Local.',
+    },
+    {
+      label: 'Impacto',
+      title: 'Revisá exactamente qué stock cambia',
+      help: 'Antes de confirmar, validá entrada, salidas, balance, lote y origen. Si algo depende de Fudo, se sincroniza desde la confirmación.',
+    },
+  ]
+  const currentStep = STEPS[step]
 
   return (
     <div className="min-h-screen bg-[#faf8f5] pb-28">
@@ -341,7 +462,7 @@ export default function NuevaProduccionPage() {
             </button>
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {STEPS[step]}
+                {currentStep.label}
               </p>
               <p className="text-[15px] font-bold text-[#3d2c24]">Nueva producción</p>
             </div>
@@ -356,6 +477,15 @@ export default function NuevaProduccionPage() {
       </div>
 
       <div className="mx-auto max-w-2xl px-4 pt-4">
+        <FadeIn>
+          <div className="mb-4 rounded-2xl border border-[#ebe6df] bg-white p-4 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#006d5a]">
+              Paso {step + 1}: {currentStep.label}
+            </p>
+            <h2 className="mt-1 text-[16px] font-bold text-[#3d2c24]">{currentStep.title}</h2>
+            <p className="mt-1 text-[12px] leading-relaxed text-[#7d6c64]">{currentStep.help}</p>
+          </div>
+        </FadeIn>
 
         {/* ── STEP 0: Insumo ── */}
         {step === 0 && (
@@ -388,14 +518,23 @@ export default function NuevaProduccionPage() {
                   <div>
                     <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Insumo madre</label>
                     <StockSearch
+                      key={inputItem?.id ?? 'input-empty'}
                       items={stockItems}
                       value={inputItem}
                       onChange={setInputItem}
                       placeholder="Buscar insumo (ej: Nalga)..."
                     />
                     {inputItem && (
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        Stock actual: {formatQty(inputItem.current_qty)} {inputItem.unit}
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span>Stock actual: {formatQty(inputItem.current_qty)} {inputItem.unit}</span>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${getStockSource(inputItem)?.tone}`}>
+                          {getStockSource(inputItem)?.label}
+                        </span>
+                      </div>
+                    )}
+                    {inputItem && !isStockActionable(inputItem) && (
+                      <p className="mt-1 rounded-xl bg-[#fff7f7] px-3 py-2 text-[11px] font-semibold text-[#ea504c]">
+                        No se puede producir con este insumo hasta mapearlo a Fudo o marcarlo como Local LVE.
                       </p>
                     )}
                   </div>
@@ -425,6 +564,19 @@ export default function NuevaProduccionPage() {
                         ))}
                       </select>
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Fecha de elaboracion</label>
+                    <input
+                      type="date"
+                      value={productionDate}
+                      onChange={(e) => setProductionDate(e.target.value)}
+                      className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                    />
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Se usa para sugerir vencimientos y crear el lote en LVE.
+                    </p>
                   </div>
 
                   {inputItem && parseFloat(inputQty) > inputItem.current_qty && (
@@ -538,15 +690,44 @@ export default function NuevaProduccionPage() {
                           Insumo de destino (opcional)
                         </label>
                         <StockSearch
+                          key={`${o.localId}-${o.stock_item_id ?? 'empty'}`}
                           items={stockItems}
                           value={stockItems.find((s) => s.id === o.stock_item_id) ?? null}
-                          onChange={(item) => updateOutput(o.localId, {
-                            stock_item_id: item?.id ?? null,
-                            output_name: o.output_name || item?.name || '',
-                            unit: item?.unit ?? o.unit,
-                          })}
+                          onChange={(item) => {
+                            const previousLinkedItem = stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
+                            const previousSuggestion = suggestedExpiryDate(previousLinkedItem, productionDate)
+                            const nextSuggestion = suggestedExpiryDate(item, productionDate)
+                            const shouldReplaceName = !o.output_name || o.output_name === previousLinkedItem?.name
+
+                            updateOutput(o.localId, {
+                              stock_item_id: item?.id ?? null,
+                              stock_item_name: item?.name ?? '',
+                              output_name: shouldReplaceName ? item?.name ?? '' : o.output_name,
+                              unit: item?.unit ?? o.unit,
+                              expires_on: !o.expires_on || o.expires_on === previousSuggestion
+                                ? nextSuggestion
+                                : o.expires_on,
+                            })
+                          }}
                           placeholder="Buscar en stock..."
                         />
+                        {o.stock_item_id && (() => {
+                          const linkedItem = stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
+                          if (!linkedItem) return null
+                          const source = getStockSource(linkedItem)
+                          return (
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${source?.tone}`}>
+                                {source?.label}
+                              </span>
+                              {!source?.actionable && (
+                                <span className="text-[11px] font-semibold text-[#ea504c]">
+                                  Bloqueado hasta mapear Fudo/Local LVE
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })()}
                       </div>
                     )}
 
@@ -610,6 +791,50 @@ export default function NuevaProduccionPage() {
                       </div>
                     </div>
 
+                    {!o.is_waste && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                            Lote
+                          </label>
+                          <input
+                            type="text"
+                            value={o.lot_code}
+                            onChange={(e) => updateOutput(o.localId, { lot_code: e.target.value })}
+                            placeholder="Opcional, si no se genera solo"
+                            className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-[13px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                            Vencimiento
+                          </label>
+                          <input
+                            type="date"
+                            value={o.expires_on}
+                            onChange={(e) => updateOutput(o.localId, { expires_on: e.target.value })}
+                            className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-[13px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {!o.is_waste && (() => {
+                      const linkedItem = o.stock_item_id
+                        ? stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
+                        : null
+
+                      if (!linkedItem || linkedItem.shelf_life_days == null) return null
+
+                      return (
+                        <p className="rounded-xl bg-[#fdf6ec] px-3 py-2 text-[11px] text-[#8b5e34]">
+                          Vida util configurada: {linkedItem.shelf_life_days} dias.
+                          {!o.expires_on && ' Si no elegis fecha, LVE la calcula automaticamente.'}
+                        </p>
+                      )
+                    })()}
+
                     <input
                       type="text"
                       value={o.notes}
@@ -657,6 +882,7 @@ export default function NuevaProduccionPage() {
               <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
                 <p className="text-[13px] text-muted-foreground">Producción</p>
                 <p className="mt-0.5 text-[16px] font-bold text-[#3d2c24]">{orderName}</p>
+                <p className="mt-1 text-[12px] text-muted-foreground">Elaboracion: {productionDate}</p>
                 {notes && <p className="mt-1 text-[12px] text-muted-foreground">{notes}</p>}
               </div>
 
@@ -664,7 +890,14 @@ export default function NuevaProduccionPage() {
               <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
                 <p className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">Entrada</p>
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-[#3d2c24]">{inputItem?.name}</span>
+                  <div className="min-w-0">
+                    <span className="font-medium text-[#3d2c24]">{inputItem?.name}</span>
+                    {inputItem && (
+                      <p className={`mt-1 w-fit rounded-full px-1.5 py-0.5 text-[9px] font-bold ${getStockSource(inputItem)?.tone}`}>
+                        {getStockSource(inputItem)?.label}
+                      </p>
+                    )}
+                  </div>
                   <span className="font-bold text-[#3d2c24]">{formatQty(totalInputQty)} {inputUnit}</span>
                 </div>
               </div>
@@ -677,6 +910,10 @@ export default function NuevaProduccionPage() {
                     const qty = parseFloat(o.qty_produced) || 0
                     const pct = totalInputQty > 0 ? (qty / totalInputQty * 100).toFixed(1) : '0'
                     const isBelow = o.theoretical_qty !== null && qty < o.theoretical_qty * 0.9
+                    const linkedItem = o.stock_item_id
+                      ? stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
+                      : null
+                    const source = getStockSource(linkedItem)
                     return (
                       <div key={o.localId} className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
@@ -684,9 +921,22 @@ export default function NuevaProduccionPage() {
                             'size-2 shrink-0 rounded-full',
                             o.is_waste ? 'bg-[#ea504c]' : 'bg-[#006d5a]',
                           )} />
-                          <span className={cn('truncate text-[13px]', o.is_waste ? 'text-[#ea504c]' : 'text-[#3d2c24]')}>
-                            {o.output_name}
-                          </span>
+                          <div className="min-w-0">
+                            <span className={cn('truncate text-[13px]', o.is_waste ? 'text-[#ea504c]' : 'text-[#3d2c24]')}>
+                              {o.output_name}
+                            </span>
+                            {(!o.is_waste && (o.lot_code || o.expires_on)) && (
+                              <p className="truncate text-[10px] text-muted-foreground">
+                                {o.lot_code ? `Lote ${o.lot_code}` : 'Lote automatico'}
+                                {o.expires_on ? ` · vence ${o.expires_on}` : ''}
+                              </p>
+                            )}
+                            {!o.is_waste && source && (
+                              <p className={`mt-1 w-fit rounded-full px-1.5 py-0.5 text-[9px] font-bold ${source.tone}`}>
+                                {source.label}
+                              </p>
+                            )}
+                          </div>
                           {isBelow && <AlertTriangle className="size-3 shrink-0 text-[#d4943a]" />}
                         </div>
                         <div className="shrink-0 text-right">
@@ -739,7 +989,8 @@ export default function NuevaProduccionPage() {
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                 <span>
                   Al confirmar, se descontará <strong>{formatQty(totalInputQty)} {inputUnit} de {inputItem?.name}</strong> del stock
-                  y se sumarán los productos obtenidos.
+                  y se sumarán los productos obtenidos. Los items vinculados se sincronizan con Fudo; los no mapeados quedan bloqueados.
+                  Si la salida tiene vida util, LVE crea un lote con vencimiento.
                 </span>
               </div>
             </div>
@@ -764,8 +1015,8 @@ export default function NuevaProduccionPage() {
               disabled={step === 0 ? !step0Valid : !step1Valid}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#006d5a] py-3 text-[14px] font-semibold text-white disabled:opacity-50 active:scale-[0.99]"
             >
-              {step === 1 && <span>Ver resumen</span>}
-              {step === 0 && <span>Registrar salidas</span>}
+              {step === 1 && <span>Revisar impacto</span>}
+              {step === 0 && <span>Seguir: qué sale</span>}
               <ChevronRight className="size-4" />
             </button>
           ) : (
@@ -775,9 +1026,9 @@ export default function NuevaProduccionPage() {
               className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-semibold text-white disabled:opacity-60 active:scale-[0.99]"
             >
               {saving ? (
-                <><Loader2 className="size-4 animate-spin" />Aplicando al stock...</>
+                <><Loader2 className="size-4 animate-spin" />Sincronizando stock...</>
               ) : (
-                <><Check className="size-4" />Confirmar y cerrar</>
+                <><Check className="size-4" />Confirmar y sincronizar</>
               )}
             </button>
           )}

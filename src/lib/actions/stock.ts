@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -8,7 +9,7 @@ import { createClient } from '@/lib/supabase/server'
 
 type StockMovementResult = {
   movement_id: number
-  stock_item_id: number
+  stock_item_id: number | string
   change: number
   new_qty: number
   reason: string
@@ -45,6 +46,13 @@ export async function produceRecipe(
   referenceId?: string,
 ): Promise<ProduceRecipeRpcResult> {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  const { fudo } = await import('@/lib/fudoClient')
+  const fudoConnection = await fudo.testConnection()
+  if (!fudoConnection.ok) {
+    return { success: false, error: `Fudo no está disponible: ${fudoConnection.error}` }
+  }
 
   const { data, error } = await supabase.rpc('produce_recipe', {
     p_recipe_id: recipeId,
@@ -56,7 +64,37 @@ export async function produceRecipe(
     return { success: false, error: error.message }
   }
 
-  return data as ProduceRecipeRpcResult
+  const result = data as ProduceRecipeRpcResult
+  if (!result.success) return result
+
+  const movements = (result.movements ?? []).map((movement) => ({
+    stock_item_id: movement.stock_item_id,
+    change: -movement.qty_deducted,
+  }))
+
+  if (movements.length > 0) {
+    const admin = createAdminClient()
+    try {
+      const { syncFromFudo, syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
+      const fudoResult = await syncProductionToFudo(admin, movements, user?.id)
+      if (fudoResult.errors.length > 0) {
+        await syncFromFudo(admin).catch(() => null)
+        return {
+          success: false,
+          error: `Receta producida en LVE, pero Fudo no confirmó stock: ${fudoResult.errors.join('; ')}. LVE se re-sincronizó desde Fudo cuando fue posible.`,
+        }
+      }
+    } catch (err) {
+      const { syncFromFudo } = await import('@/lib/fudo/stock-sync')
+      await syncFromFudo(admin).catch(() => null)
+      return {
+        success: false,
+        error: `Receta producida en LVE, pero falló la sincronización con Fudo: ${err instanceof Error ? err.message : 'error desconocido'}. LVE se re-sincronizó desde Fudo cuando fue posible.`,
+      }
+    }
+  }
+
+  return result
 }
 
 // ---------------------------------------------------------------------------
@@ -64,25 +102,63 @@ export async function produceRecipe(
 // ---------------------------------------------------------------------------
 
 export async function adjustStock(
-  stockItemId: number,
+  stockItemId: number | string,
   change: number,
   reason: 'received' | 'waste' | 'expired' | 'manual_adjustment',
 ): Promise<{ success: boolean; data?: StockMovementResult; error?: string }> {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { success: false, error: 'No autenticado' }
 
-  const { data, error } = await supabase.rpc('register_stock_movement', {
-    p_stock_item_id: stockItemId,
-    p_change: change,
-    p_reason: reason,
-    p_reference_type: 'manual',
-    p_reference_id: null,
-  })
+  const { data: item, error: itemError } = await supabase
+    .from('stock_items')
+    .select('id, current_qty')
+    .eq('id', stockItemId)
+    .single()
 
-  if (error) {
-    return { success: false, error: error.message }
+  if (itemError || !item) {
+    return { success: false, error: itemError?.message ?? 'Item no encontrado' }
   }
 
-  return { success: true, data: data as StockMovementResult }
+  const newQty = Math.round((Number(item.current_qty ?? 0) + change) * 100) / 100
+  if (newQty < 0) {
+    return { success: false, error: 'No se permiten cantidades negativas' }
+  }
+
+  const { fudo } = await import('@/lib/fudoClient')
+  const fudoConnection = await fudo.testConnection()
+  if (!fudoConnection.ok) {
+    return { success: false, error: `Fudo no está disponible: ${fudoConnection.error}` }
+  }
+
+  const admin = createAdminClient()
+  const { syncToFudo } = await import('@/lib/fudo/stock-sync')
+  const syncResult = await syncToFudo(admin, String(stockItemId), newQty, user.id)
+
+  if (!syncResult.success) {
+    return { success: false, error: syncResult.error ?? 'Fudo no confirmó la actualización' }
+  }
+
+  await admin.from('audit_trail').insert({
+    user_id: user.id,
+    action: 'stock_adjustment_synced',
+    module: 'stock',
+    entity_type: 'stock_item',
+    entity_id: String(stockItemId),
+    description: `Ajuste de stock ${reason}: cambio ${change}, nuevo stock ${newQty}`,
+    metadata: { reason, change, new_qty: newQty, fudo_synced: syncResult.fudoSynced },
+  })
+
+  return {
+    success: true,
+    data: {
+      movement_id: 0,
+      stock_item_id: stockItemId,
+      change,
+      new_qty: newQty,
+      reason,
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------

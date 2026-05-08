@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import {
   Coffee,
   Send,
@@ -9,6 +8,8 @@ import {
   User,
   Sparkles,
   Loader2,
+  Check,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,6 +24,15 @@ type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   timestamp: Date
+  actionProposal?: ActionProposal
+  actionExecuted?: boolean
+}
+
+type ActionProposal = {
+  intent: string
+  items?: { name: string; quantity: string }[]
+  message?: string
+  urgency?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -34,7 +44,7 @@ function renderMarkdown(text: string): React.ReactNode {
   const elements: React.ReactNode[] = []
 
   for (let i = 0; i < lines.length; i++) {
-    let line = lines[i]
+    const line = lines[i]
 
     // Headers
     if (line.startsWith('### ')) {
@@ -159,7 +169,6 @@ function getRoleGreeting(role?: string): string {
 
 export default function AsistentePage() {
   const { profile, loading: profileLoading } = useProfileContext()
-  const router = useRouter()
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -218,6 +227,8 @@ export default function AsistentePage() {
         role: 'assistant',
         content: data.response ?? 'No pude procesar tu consulta.',
         timestamp: new Date(),
+        actionProposal: data.actionProposal ?? undefined,
+        actionExecuted: data.actionExecuted ?? undefined,
       }
 
       setMessages((prev) => [...prev, botMessage])
@@ -236,6 +247,61 @@ export default function AsistentePage() {
       // Refocus el input
       setTimeout(() => inputRef.current?.focus(), 100)
     }
+  }
+
+  async function handleConfirmAction(proposal: ActionProposal) {
+    if (isThinking) return
+
+    setIsThinking(true)
+    setMessages((prev) => [...prev.map((msg) => (
+      msg.actionProposal && !msg.actionExecuted ? { ...msg, actionProposal: undefined } : msg
+    )), {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: 'Confirmado',
+      timestamp: new Date(),
+    }])
+
+    try {
+      const res = await fetch('/api/chatbot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: 'confirmar acción',
+          confirmAction: proposal,
+        }),
+      })
+
+      const data = await res.json()
+      setMessages((prev) => [...prev, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: data.response ?? 'No pude ejecutar la acción.',
+        timestamp: new Date(),
+        actionExecuted: data.actionExecuted ?? false,
+      }])
+    } catch {
+      setMessages((prev) => [...prev, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: 'Hubo un error al ejecutar la acción. Intentá de nuevo.',
+        timestamp: new Date(),
+      }])
+    } finally {
+      setIsThinking(false)
+      setTimeout(() => inputRef.current?.focus(), 100)
+    }
+  }
+
+  function handleCancelAction() {
+    setMessages((prev) => [...prev.map((msg) => (
+      msg.actionProposal && !msg.actionExecuted ? { ...msg, actionProposal: undefined } : msg
+    )), {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: 'Cancelado. No hice ningún cambio.',
+      timestamp: new Date(),
+    }])
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -365,6 +431,35 @@ export default function AsistentePage() {
               ) : (
                 <p className="whitespace-pre-wrap">{msg.content}</p>
               )}
+
+              {msg.actionProposal && !msg.actionExecuted && (
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => handleConfirmAction(msg.actionProposal!)}
+                    disabled={isThinking}
+                    className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-3 py-1.5 text-xs font-bold text-white transition-all hover:bg-[#005a4a] disabled:opacity-50"
+                  >
+                    <Check className="size-3" />
+                    Confirmar
+                  </button>
+                  <button
+                    onClick={handleCancelAction}
+                    disabled={isThinking}
+                    className="flex items-center gap-1 rounded-lg border border-[#ebe6df] px-3 py-1.5 text-xs font-medium text-[#a39e97] transition-colors hover:bg-[#f3efe9] disabled:opacity-50"
+                  >
+                    <X className="size-3" />
+                    Cancelar
+                  </button>
+                </div>
+              )}
+
+              {msg.actionExecuted && (
+                <div className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-[#006d5a]">
+                  <Check className="size-3" />
+                  Acción ejecutada
+                </div>
+              )}
+
               <p
                 className={`mt-1.5 text-[10px] ${
                   msg.role === 'user'

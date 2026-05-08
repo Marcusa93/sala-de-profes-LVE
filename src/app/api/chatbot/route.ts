@@ -45,6 +45,8 @@ type ChatRequest = {
   }
 }
 
+type ActionProposalPayload = NonNullable<ChatRequest['confirmAction']>
+
 type StockItemRow = {
   id: string
   name: string
@@ -53,6 +55,9 @@ type StockItemRow = {
   current_qty: number
   min_qty: number
   supplier_id: string | null
+  fudo_ingredient_id: string | null
+  fudo_product_id: string | null
+  fudo_skip: boolean | null
   suppliers: { name: string } | null
 }
 
@@ -328,7 +333,10 @@ DISTINGUIR PEDIDO vs ACTUALIZACIÓN DE STOCK:
 - "hay 10kg de café" = el usuario está diciendo cuánto HAY → ACTUALIZAR_STOCK
 - "necesito 10kg de café" = el usuario está pidiendo que le compren → PEDIDO_MERCADERIA
 - Si no está claro, preguntá: "¿Querés cargar stock (decirme cuánto hay) o pedir mercadería (que te compren)?"
-- ACTUALIZAR_STOCK escribe en la webapp Y se sincroniza con Fudo automáticamente
+- ACTUALIZAR_STOCK es una SOBRESCRITURA ABSOLUTA: "hay 14 Carpano" significa dejar stock en 14, NO sumar 14.
+- ACTUALIZAR_STOCK de stock general exige Fudo: si Fudo no confirma, LVE no debe cambiar.
+- Si un item figura en STOCK_GENERAL_SIN_MAPEO_FUDO, avisá que primero hay que mapearlo o marcarlo local antes de actualizar por chat.
+- El chatbot puede recibir varias cantidades en un mensaje, pero el sistema validará todo antes de ejecutar.
 
 ## PRODUCCIÓN Y DESPIECE
 Cuando el usuario registra que procesó/despiezó un insumo (solo roles: chef, cocina, encargado, socio):
@@ -582,7 +590,7 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
     if (canSeeStockGeneral) {
       const { data: stockItems } = await supabase
         .from('stock_items')
-        .select('id, name, category, unit, current_qty, min_qty, supplier_id, suppliers(name)')
+        .select('id, name, category, unit, current_qty, min_qty, supplier_id, fudo_ingredient_id, fudo_product_id, fudo_skip, suppliers(name)')
         .eq('is_active', true)
         .order('name', { ascending: true })
 
@@ -606,6 +614,14 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
 
       const greenCount = stockRows.length - redItems.length - yellowItems.length
       sections.push(`RESUMEN STOCK GENERAL: ${stockRows.length} items — 🔴 ${redItems.length} críticos, 🟡 ${yellowItems.length} en atención, 🟢 ${greenCount} normales`)
+
+      const fudoLinked = stockRows.filter((i) => i.fudo_ingredient_id || i.fudo_product_id).length
+      const localExplicit = stockRows.filter((i) => i.fudo_skip === true).length
+      const unmapped = stockRows.filter((i) => !i.fudo_ingredient_id && !i.fudo_product_id && i.fudo_skip !== true)
+      sections.push(`FUDO_STOCK_SYNC: ${fudoLinked}/${stockRows.length} items mapeados a Fudo; ${localExplicit} locales explícitos; ${unmapped.length} sin mapear. El chatbot bloquea actualizaciones de stock general sin mapeo Fudo/local explícito.`)
+      if (unmapped.length > 0) {
+        sections.push(`STOCK_GENERAL_SIN_MAPEO_FUDO (corregir antes de actualizar por chat):\n${unmapped.slice(0, 30).map((i) => `- ${i.name}`).join('\n')}`)
+      }
 
       // ── ANTI-HALLUCINATION: inject full item name list for ACTION_JSON ──
       const stockNameList = stockRows.map(i => `- ${i.name} (${i.unit})`).join('\n')
@@ -1012,7 +1028,7 @@ async function processAIResponse(
       const actionData = JSON.parse(actionMatch[1].trim())
       const cleanText = responseText.replace(/```ACTION_JSON[\s\S]*?```/, '').trim()
 
-      const { buildProposal, detectIntent } = await import('@/lib/ai/chatbot-actions')
+      const { buildProposal, detectIntent, isConfirmableProposal } = await import('@/lib/ai/chatbot-actions')
       const { createAdminClient } = await import('@/lib/supabase/admin')
       const admin = createAdminClient()
 
@@ -1025,15 +1041,22 @@ async function processAIResponse(
         actionData.urgency,
         userRole,
       )
+      const canConfirm = isConfirmableProposal(proposal)
+      const actionProposal: ActionProposalPayload | undefined = canConfirm
+        ? {
+            intent,
+            items: proposal.items.map((item) => ({
+              name: item.matchedStockName ?? item.rawName,
+              quantity: item.quantity,
+            })),
+            message: proposal.message,
+            urgency: proposal.urgency,
+          }
+        : undefined
 
       return NextResponse.json({
-        response: cleanText || proposal.confirmationText,
-        actionProposal: {
-          intent: actionData.intent,
-          items: actionData.items,
-          message: actionData.message,
-          urgency: actionData.urgency,
-        },
+        response: proposal.confirmationText || cleanText,
+        actionProposal,
         duplicateWarnings: proposal.duplicateWarnings,
       })
     } catch {
@@ -1110,7 +1133,7 @@ export async function POST(request: Request) {
 
     // --- HANDLE ACTION CONFIRMATION ---
     if (body.confirmAction) {
-      const { buildProposal, executeAction, detectIntent, checkPermission } = await import('@/lib/ai/chatbot-actions')
+      const { buildProposal, executeAction, detectIntent, checkPermission, isConfirmableProposal } = await import('@/lib/ai/chatbot-actions')
       const { createAdminClient } = await import('@/lib/supabase/admin')
       const admin = createAdminClient()
 
@@ -1133,6 +1156,13 @@ export async function POST(request: Request) {
         userRole,
       )
 
+      if (!isConfirmableProposal(proposal)) {
+        return NextResponse.json({
+          response: proposal.confirmationText || 'No puedo ejecutar esa acción sin datos válidos.',
+          actionExecuted: false,
+        })
+      }
+
       proposal.readyToExecute = true
       const userName = profile.first_name ?? 'Usuario'
       const result = await executeAction(admin, proposal, user.id, userName, userRole)
@@ -1141,10 +1171,14 @@ export async function POST(request: Request) {
         const successSuffix =
           proposal.intent === 'PEDIDO_MERCADERIA'
             ? 'El pedido le llegó al encargado como notificación.'
+            : proposal.intent === 'ACTUALIZAR_STOCK'
+            ? 'Stock sobrescrito y validado con Fudo cuando corresponde.'
             : proposal.intent === 'REPORTE_PROBLEMA'
             ? 'El reporte le llegó a los encargados.'
             : proposal.intent === 'PRODUCCION_COMPLETA'
             ? 'El stock se actualizó con los movimientos de producción.'
+            : proposal.intent === 'MISE_EN_PLACE'
+            ? 'Mise en place actualizado.'
             : 'Aviso enviado a los encargados.'
         return NextResponse.json({
           response: `✅ ¡Listo, ${profile.first_name}! ${result.details.join(', ')}. ${successSuffix}`,
