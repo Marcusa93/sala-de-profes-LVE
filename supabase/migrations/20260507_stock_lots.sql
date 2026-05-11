@@ -9,7 +9,7 @@ ALTER TABLE public.production_outputs
 
 CREATE TABLE IF NOT EXISTS public.stock_lots (
   id bigserial PRIMARY KEY,
-  stock_item_id uuid NOT NULL REFERENCES public.stock_items(id) ON DELETE CASCADE,
+  stock_item_id bigint NOT NULL REFERENCES public.stock_items(id) ON DELETE CASCADE,
   production_order_id bigint REFERENCES public.production_orders(id) ON DELETE SET NULL,
   production_output_id bigint REFERENCES public.production_outputs(id) ON DELETE SET NULL,
   lot_code text NOT NULL,

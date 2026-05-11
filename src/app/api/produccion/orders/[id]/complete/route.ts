@@ -2,6 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+async function realignStockFromFudo(admin: ReturnType<typeof createAdminClient>) {
+  try {
+    const { syncFromFudo } = await import('@/lib/fudo/stock-sync')
+    const read = await syncFromFudo(admin)
+    return { success: true, synced: read.synced, errors: read.errors }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Error al re-sincronizar desde Fudo' }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/produccion/orders/[id]/complete
 // ---------------------------------------------------------------------------
@@ -60,11 +70,32 @@ export async function POST(
 
     // Sync affected stock items to Fudo
     const movements = (result.movements ?? []) as { stock_item_id: number; change: number }[]
+    let fudoSummary: { synced: number; errors: string[] } | null = null
     if (movements.length > 0) {
-      const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
-      const fudoResult = await syncProductionToFudo(admin, movements, user.id)
-      if (fudoResult.errors.length > 0) {
-        console.warn('[Fudo sync warnings]', fudoResult.errors)
+      try {
+        const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
+        fudoSummary = await syncProductionToFudo(admin, movements, user.id)
+        if (fudoSummary.errors.length > 0) {
+          const realignment = await realignStockFromFudo(admin)
+          return NextResponse.json({
+            success: false,
+            order_id: result.order_id,
+            status: 'completed_local_fudo_failed',
+            error: 'La producción se cerró en LVE pero Fudo no confirmó todos los movimientos. LVE se re-sincronizó desde Fudo cuando fue posible.',
+            fudo: fudoSummary,
+            realignment,
+          }, { status: 502 })
+        }
+      } catch (err) {
+        const realignment = await realignStockFromFudo(admin)
+        return NextResponse.json({
+          success: false,
+          order_id: result.order_id,
+          status: 'completed_local_fudo_failed',
+          error: `La producción se cerró en LVE pero falló la sincronización con Fudo: ${err instanceof Error ? err.message : 'error desconocido'}. LVE se re-sincronizó desde Fudo cuando fue posible.`,
+          fudo: fudoSummary,
+          realignment,
+        }, { status: 502 })
       }
     }
 
@@ -76,6 +107,7 @@ export async function POST(
       waste_qty: result.waste_qty,
       efficiency_pct: result.efficiency_pct,
       movements: result.movements,
+      fudo: fudoSummary,
       message: `Producción completada — eficiencia ${result.efficiency_pct}%`,
     })
   } catch (err) {

@@ -114,6 +114,45 @@ export type Database = {
         }
         Relationships: []
       }
+      audit_trail: {
+        Row: {
+          id: number
+          user_id: string | null
+          user_name: string | null
+          action: string
+          module: string
+          entity_type: string | null
+          entity_id: string | number | null
+          description: string
+          metadata: Record<string, unknown> | null
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          user_id?: string | null
+          user_name?: string | null
+          action: string
+          module: string
+          entity_type?: string | null
+          entity_id?: string | number | null
+          description: string
+          metadata?: Record<string, unknown> | null
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          user_id?: string | null
+          user_name?: string | null
+          action?: string
+          module?: string
+          entity_type?: string | null
+          entity_id?: string | number | null
+          description?: string
+          metadata?: Record<string, unknown> | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       attendance_logs: {
         Row: {
           id: string
@@ -369,6 +408,7 @@ export type Database = {
           supplier_id: number | null
           fudo_product_id: string | null
           fudo_ingredient_id: string | null
+          fudo_skip: boolean | null
           is_active: boolean
           created_at: string
           updated_at: string
@@ -390,6 +430,7 @@ export type Database = {
           supplier_id?: number | null
           fudo_product_id?: string | null
           fudo_ingredient_id?: string | null
+          fudo_skip?: boolean | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -408,6 +449,7 @@ export type Database = {
           supplier_id?: number | null
           fudo_product_id?: string | null
           fudo_ingredient_id?: string | null
+          fudo_skip?: boolean | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -415,6 +457,36 @@ export type Database = {
           category?: StockCategoryValue
           notes?: string | null
           last_ordered_at?: string | null
+        }
+        Relationships: []
+      }
+      stock_logs: {
+        Row: {
+          id: number
+          stock_item_id: number | string
+          user_id: string | null
+          action: string
+          old_qty: number | null
+          new_qty: number | null
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          stock_item_id: number | string
+          user_id?: string | null
+          action: string
+          old_qty?: number | null
+          new_qty?: number | null
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          stock_item_id?: number | string
+          user_id?: string | null
+          action?: string
+          old_qty?: number | null
+          new_qty?: number | null
+          created_at?: string
         }
         Relationships: []
       }
@@ -694,6 +766,7 @@ export type Database = {
       fudo_sales: {
         Row: {
           id: number
+          fudo_sale_item_id: string | null
           fudo_ticket_id: string
           fudo_product_id: string
           quantity: number
@@ -703,6 +776,7 @@ export type Database = {
         }
         Insert: {
           id?: number
+          fudo_sale_item_id?: string | null
           fudo_ticket_id: string
           fudo_product_id: string
           quantity: number
@@ -712,12 +786,145 @@ export type Database = {
         }
         Update: {
           id?: number
+          fudo_sale_item_id?: string | null
           fudo_ticket_id?: string
           fudo_product_id?: string
           quantity?: number
           sold_at?: string
           raw_payload?: Record<string, unknown> | null
           created_at?: string
+        }
+        Relationships: []
+      }
+      fudo_sync_events: {
+        Row: {
+          id: string
+          operation: string
+          direction: 'fudo_to_lve' | 'lve_to_fudo' | 'read'
+          status: 'pending' | 'success' | 'failed' | 'skipped'
+          entity_type: string | null
+          entity_id: string | null
+          stock_item_id: string | null
+          fudo_type: 'ingredient' | 'product' | 'sale' | 'provider' | null
+          fudo_id: string | null
+          idempotency_key: string | null
+          request_payload: Record<string, unknown>
+          response_payload: Record<string, unknown> | null
+          error_message: string | null
+          attempts: number
+          created_by: string | null
+          created_at: string
+          updated_at: string
+          completed_at: string | null
+        }
+        Insert: {
+          id?: string
+          operation: string
+          direction: 'fudo_to_lve' | 'lve_to_fudo' | 'read'
+          status?: 'pending' | 'success' | 'failed' | 'skipped'
+          entity_type?: string | null
+          entity_id?: string | null
+          stock_item_id?: string | null
+          fudo_type?: 'ingredient' | 'product' | 'sale' | 'provider' | null
+          fudo_id?: string | null
+          idempotency_key?: string | null
+          request_payload?: Record<string, unknown>
+          response_payload?: Record<string, unknown> | null
+          error_message?: string | null
+          attempts?: number
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+          completed_at?: string | null
+        }
+        Update: {
+          id?: string
+          operation?: string
+          direction?: 'fudo_to_lve' | 'lve_to_fudo' | 'read'
+          status?: 'pending' | 'success' | 'failed' | 'skipped'
+          entity_type?: string | null
+          entity_id?: string | null
+          stock_item_id?: string | null
+          fudo_type?: 'ingredient' | 'product' | 'sale' | 'provider' | null
+          fudo_id?: string | null
+          idempotency_key?: string | null
+          request_payload?: Record<string, unknown>
+          response_payload?: Record<string, unknown> | null
+          error_message?: string | null
+          attempts?: number
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+          completed_at?: string | null
+        }
+        Relationships: []
+      }
+      fudo_sync_incidents: {
+        Row: {
+          id: string
+          source: string
+          code: string
+          severity: 'low' | 'medium' | 'high' | 'critical'
+          status: 'open' | 'resolved' | 'ignored'
+          entity_type: string | null
+          entity_id: string | null
+          stock_item_id: string | null
+          fudo_type: 'ingredient' | 'product' | 'sale' | 'provider' | null
+          fudo_id: string | null
+          incident_key: string
+          title: string
+          detail: string | null
+          payload: Record<string, unknown>
+          first_seen_at: string
+          last_seen_at: string
+          resolved_at: string | null
+          resolved_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          source?: string
+          code: string
+          severity?: 'low' | 'medium' | 'high' | 'critical'
+          status?: 'open' | 'resolved' | 'ignored'
+          entity_type?: string | null
+          entity_id?: string | null
+          stock_item_id?: string | null
+          fudo_type?: 'ingredient' | 'product' | 'sale' | 'provider' | null
+          fudo_id?: string | null
+          incident_key: string
+          title: string
+          detail?: string | null
+          payload?: Record<string, unknown>
+          first_seen_at?: string
+          last_seen_at?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          source?: string
+          code?: string
+          severity?: 'low' | 'medium' | 'high' | 'critical'
+          status?: 'open' | 'resolved' | 'ignored'
+          entity_type?: string | null
+          entity_id?: string | null
+          stock_item_id?: string | null
+          fudo_type?: 'ingredient' | 'product' | 'sale' | 'provider' | null
+          fudo_id?: string | null
+          incident_key?: string
+          title?: string
+          detail?: string | null
+          payload?: Record<string, unknown>
+          first_seen_at?: string
+          last_seen_at?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -1336,6 +1543,10 @@ export type Database = {
           unit?: string
           cost_per_unit?: number | null
           stock_movement_id?: number | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       attendance_audit: {
         Row: {
           id: string
@@ -1594,6 +1805,9 @@ export type Database = {
           notes?: string | null
           stock_movement_id?: number | null
           created_at?: string
+        }
+        Relationships: []
+      }
       wifi_access_points: {
         Row: {
           id: string
@@ -1752,6 +1966,7 @@ export type Database = {
       production_dashboard: {
         Args: { p_days?: number }
         Returns: Record<string, unknown>
+      }
       clock_in_secure: {
         Args: {
           p_photo_url?: string | null
@@ -1911,6 +2126,10 @@ export type MenuItemUpdate = Database['public']['Tables']['menu_items']['Update'
 
 export type FudoSale = Database['public']['Tables']['fudo_sales']['Row']
 export type FudoSaleInsert = Database['public']['Tables']['fudo_sales']['Insert']
+export type FudoSyncEvent = Database['public']['Tables']['fudo_sync_events']['Row']
+export type FudoSyncEventInsert = Database['public']['Tables']['fudo_sync_events']['Insert']
+export type FudoSyncIncident = Database['public']['Tables']['fudo_sync_incidents']['Row']
+export type FudoSyncIncidentInsert = Database['public']['Tables']['fudo_sync_incidents']['Insert']
 
 export type StockMovement = Database['public']['Tables']['stock_movements']['Row']
 export type StockMovementInsert = Database['public']['Tables']['stock_movements']['Insert']

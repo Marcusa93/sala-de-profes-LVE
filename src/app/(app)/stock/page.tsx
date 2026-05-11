@@ -78,6 +78,12 @@ type StockLotsResponse = {
 
 type SemaphoreColor = 'red' | 'yellow' | 'green'
 type FudoConnectionState = 'checking' | 'ok' | 'error'
+type FudoStatusResponse = {
+  state: 'ok' | 'warning' | 'error'
+  last_sync_at: string | null
+  incidents: { open: number; critical: number; high: number }
+  events: { pending: number; failed_last_24h: number }
+}
 
 function getSemaphore(item: StockItem): SemaphoreColor {
   if (item.current_qty === 0) return 'red'
@@ -152,6 +158,11 @@ function formatLotCountdown(expiresInDays: number) {
   return `Vence en ${expiresInDays}d`
 }
 
+function formatQty(qty: number) {
+  if (Number.isInteger(qty)) return String(qty)
+  return qty.toLocaleString('es-AR', { maximumFractionDigits: 2 })
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -187,7 +198,42 @@ export default function StockPage() {
     state: FudoConnectionState
     message: string | null
     issueCount: number
-  }>({ state: 'checking', message: null, issueCount: 0 })
+    pendingEvents: number
+    failedEvents: number
+    criticalIncidents: number
+    highIncidents: number
+  }>({
+    state: 'checking',
+    message: null,
+    issueCount: 0,
+    pendingEvents: 0,
+    failedEvents: 0,
+    criticalIncidents: 0,
+    highIncidents: 0,
+  })
+
+  const loadFudoStatus = useCallback(async () => {
+    const res = await fetch('/api/fudo/status')
+    const status = await res.json() as FudoStatusResponse | { error?: string }
+    if (!res.ok) throw new Error('error' in status ? status.error : 'No se pudo leer estado Fudo')
+
+    const data = status as FudoStatusResponse
+    if (data.last_sync_at) setLastFudoSync(data.last_sync_at)
+    setFudoConnection((current) => ({
+      ...current,
+      state: data.state === 'error' ? 'error' : 'ok',
+      message: data.state === 'error'
+        ? 'Hay incidentes críticos o escrituras Fudo fallidas'
+        : data.incidents.open > 0
+          ? `${data.incidents.open} incidentes Fudo abiertos`
+          : current.message,
+      issueCount: data.incidents.open,
+      pendingEvents: data.events.pending,
+      failedEvents: data.events.failed_last_24h,
+      criticalIncidents: data.incidents.critical,
+      highIncidents: data.incidents.high,
+    }))
+  }, [])
 
   const loadLots = useCallback(async () => {
     setLoadingLots(true)
@@ -285,8 +331,13 @@ export default function StockPage() {
             state: 'ok',
             message: issueCount > 0 ? `${issueCount} inconsistencias de mapeo Fudo` : null,
             issueCount,
+            pendingEvents: 0,
+            failedEvents: 0,
+            criticalIncidents: 0,
+            highIncidents: 0,
           })
           mutate() // revalidate stock items with fresh Fudo data
+          void loadFudoStatus().catch(() => null)
           void loadIntelligence()
           void loadLots()
         } else {
@@ -294,6 +345,10 @@ export default function StockPage() {
             state: 'error',
             message: syncData.error || 'No se pudo sincronizar con Fudo',
             issueCount: 0,
+            pendingEvents: 0,
+            failedEvents: 0,
+            criticalIncidents: 0,
+            highIncidents: 0,
           })
         }
       } catch (err) {
@@ -302,6 +357,10 @@ export default function StockPage() {
             state: 'error',
             message: err instanceof Error ? err.message : 'No se pudo sincronizar con Fudo',
             issueCount: 0,
+            pendingEvents: 0,
+            failedEvents: 0,
+            criticalIncidents: 0,
+            highIncidents: 0,
           })
         }
       }
@@ -309,7 +368,7 @@ export default function StockPage() {
     }
     doSync()
     return () => { cancelled = true }
-  }, [loadIntelligence, loadLots, mutate])
+  }, [loadFudoStatus, loadIntelligence, loadLots, mutate])
 
   useEffect(() => {
     void loadIntelligence()
@@ -583,17 +642,38 @@ export default function StockPage() {
                       state: 'ok',
                       message: issueCount > 0 ? `${issueCount} inconsistencias de mapeo Fudo` : null,
                       issueCount,
+                      pendingEvents: 0,
+                      failedEvents: 0,
+                      criticalIncidents: 0,
+                      highIncidents: 0,
                     })
+                    void loadFudoStatus().catch(() => null)
                     toast.success(`Sincronizado con Fudo — ${json.read?.synced ?? 0} items`)
                     await Promise.all([mutate(), loadIntelligence(), loadLots()])
                   } else {
                     const message = json.error || 'Error al sincronizar con Fudo'
-                    setFudoConnection({ state: 'error', message, issueCount: 0 })
+                    setFudoConnection({
+                      state: 'error',
+                      message,
+                      issueCount: 0,
+                      pendingEvents: 0,
+                      failedEvents: 0,
+                      criticalIncidents: 0,
+                      highIncidents: 0,
+                    })
                     toast.error(message)
                   }
                 } catch (err) {
                   const message = err instanceof Error ? err.message : 'Error de conexión con Fudo'
-                  setFudoConnection({ state: 'error', message, issueCount: 0 })
+                  setFudoConnection({
+                    state: 'error',
+                    message,
+                    issueCount: 0,
+                    pendingEvents: 0,
+                    failedEvents: 0,
+                    criticalIncidents: 0,
+                    highIncidents: 0,
+                  })
                   toast.error(message)
                 }
                 setSyncing(false)
@@ -636,6 +716,30 @@ export default function StockPage() {
             </div>
             {fudoConnection.message && (
               <p className="mt-0.5 text-[11px]">{fudoConnection.message}</p>
+            )}
+            {(fudoConnection.pendingEvents > 0 || fudoConnection.failedEvents > 0 || fudoConnection.criticalIncidents > 0 || fudoConnection.highIncidents > 0) && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {fudoConnection.criticalIncidents > 0 && (
+                  <span className="rounded-full bg-[#fef2f2] px-2 py-0.5 text-[10px] font-bold text-[#ea504c]">
+                    {fudoConnection.criticalIncidents} críticos
+                  </span>
+                )}
+                {fudoConnection.highIncidents > 0 && (
+                  <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[10px] font-bold text-[#d4943a]">
+                    {fudoConnection.highIncidents} altos
+                  </span>
+                )}
+                {fudoConnection.failedEvents > 0 && (
+                  <span className="rounded-full bg-[#fef2f2] px-2 py-0.5 text-[10px] font-bold text-[#ea504c]">
+                    {fudoConnection.failedEvents} escrituras fallidas
+                  </span>
+                )}
+                {fudoConnection.pendingEvents > 0 && (
+                  <span className="rounded-full bg-[#f3efe9] px-2 py-0.5 text-[10px] font-bold text-[#7d6c64]">
+                    {fudoConnection.pendingEvents} pendientes
+                  </span>
+                )}
+              </div>
             )}
             {fudoConnection.state === 'error' && (
               <p className="mt-0.5 text-[11px]">Las escrituras de stock quedan bloqueadas hasta sincronizar.</p>

@@ -541,7 +541,7 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
         const completedToday: string[] = []
 
         for (const evt of clockEvents) {
-          const p = evt.profiles as { first_name: string; last_name: string; role: string } | null
+          const p = evt.profiles as unknown as { first_name: string; last_name: string; role: string } | null
           if (!p) continue
           const key = `${p.first_name} ${p.last_name}`
           if (seenEmployees.has(key)) continue
@@ -571,7 +571,7 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
 
       if (openAnomalies && openAnomalies.length > 0) {
         const lines = openAnomalies.map((a) => {
-          const p = a.profiles as { first_name: string; last_name: string } | null
+          const p = a.profiles as unknown as { first_name: string; last_name: string } | null
           const name = p ? `${p.first_name} ${p.last_name}` : 'Empleado'
           const tipo = a.anomaly_type === 'gps_out_of_range' ? 'GPS fuera de rango' :
                        a.anomaly_type === 'wifi_mismatch' ? 'WiFi no reconocida' :
@@ -619,6 +619,23 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       const localExplicit = stockRows.filter((i) => i.fudo_skip === true).length
       const unmapped = stockRows.filter((i) => !i.fudo_ingredient_id && !i.fudo_product_id && i.fudo_skip !== true)
       sections.push(`FUDO_STOCK_SYNC: ${fudoLinked}/${stockRows.length} items mapeados a Fudo; ${localExplicit} locales explícitos; ${unmapped.length} sin mapear. El chatbot bloquea actualizaciones de stock general sin mapeo Fudo/local explícito.`)
+      try {
+        const [criticalIncidents, failedWrites] = await Promise.all([
+          supabase
+            .from('fudo_sync_incidents')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'open')
+            .eq('severity', 'critical'),
+          supabase
+            .from('fudo_sync_events')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'failed')
+            .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+        ])
+        sections.push(`FUDO_GUARDRAILS: ${criticalIncidents.count ?? 0} incidentes críticos abiertos; ${failedWrites.count ?? 0} escrituras fallidas en 24h. Si hay incidentes críticos o escrituras fallidas, NO propongas sobrescribir stock.`)
+      } catch {
+        sections.push('FUDO_GUARDRAILS: tabla de eventos/incidentes pendiente de migración.')
+      }
       if (unmapped.length > 0) {
         sections.push(`STOCK_GENERAL_SIN_MAPEO_FUDO (corregir antes de actualizar por chat):\n${unmapped.slice(0, 30).map((i) => `- ${i.name}`).join('\n')}`)
       }
@@ -794,12 +811,21 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
         .order('category')
         .order('name')
 
-      if (recipes && recipes.length > 0) {
-        const lines = recipes.map((r) => {
+      const recipeRows = (recipes ?? []) as unknown as Array<{
+        name: string
+        category: string
+        yield_portions: number | null
+        preparation: string | null
+        notes: string | null
+        ingredients: Array<{ name: string; qty: string }> | null
+      }>
+
+      if (recipeRows.length > 0) {
+        const lines = recipeRows.map((r) => {
           const ings = Array.isArray(r.ingredients) ? (r.ingredients as Array<{ name: string; qty: string }>).map(i => `${i.name} ${i.qty}`).join(', ') : ''
           return `- **${r.name}** (${r.category}, rinde ${r.yield_portions}): ${ings}\n  Preparación: ${(r.preparation ?? '').slice(0, 200)}${r.notes ? `\n  Notas: ${r.notes}` : ''}`
         })
-        sections.push(`RECETAS CON DETALLE (${recipes.length}):\n${lines.join('\n')}`)
+        sections.push(`RECETAS CON DETALLE (${recipeRows.length}):\n${lines.join('\n')}`)
       }
     } else if (canSeeRecipesMenu) {
       // Runners and baristas: see menu descriptions (what each dish IS, how it's served)

@@ -17,11 +17,22 @@ export async function GET() {
 
     const admin = createAdminClient()
     const result = await fullSync(admin)
+    let auditSummary: Record<string, unknown> | null = null
+    let auditError: string | null = null
+    try {
+      const { runFudoAudit } = await import('@/lib/fudo/audit')
+      const audit = await runFudoAudit(admin)
+      auditSummary = audit.summary
+    } catch (err) {
+      auditError = err instanceof Error ? err.message : 'No se pudo auditar Fudo'
+    }
 
     return NextResponse.json({
       success: true,
-      fudoConnected: true,
       ...result,
+      fudoConnected: true,
+      audit: auditSummary,
+      auditError,
     })
   } catch (error) {
     console.error('[stock/sync GET]', error)
