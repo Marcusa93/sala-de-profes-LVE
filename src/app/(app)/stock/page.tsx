@@ -81,11 +81,21 @@ type StockLotsResponse = {
 type SemaphoreColor = 'red' | 'yellow' | 'green'
 type FudoConnectionState = 'checking' | 'ok' | 'error'
 type StockSourceFilter = 'all' | 'fudo' | 'local' | 'unmapped'
+type StockView = 'radar' | 'conteo' | 'inventario'
 type FudoStatusResponse = {
   state: 'ok' | 'warning' | 'error'
   last_sync_at: string | null
   incidents: { open: number; critical: number; high: number }
   events: { pending: number; failed_last_24h: number }
+}
+
+type StockReviewCard = {
+  id: string
+  item: StockItem | null
+  priority: 'critico' | 'revisar' | 'accion'
+  title: string
+  detail: string
+  primaryAction: 'sync' | 'count' | 'configure' | 'map' | 'watch'
 }
 
 function getSemaphore(item: StockItem): SemaphoreColor {
@@ -182,6 +192,69 @@ function needsVarianceNote(item: StockItem, countedQty: number) {
   return abs >= threshold || pct >= 0.25
 }
 
+function getQuantityReview(item: StockItem): StockReviewCard | null {
+  const source = getStockSource(item)
+
+  if (source.kind === 'unmapped') {
+    return {
+      id: `unmapped:${item.id}`,
+      item,
+      priority: 'critico',
+      title: `${item.name}: falta vínculo Fudo`,
+      detail: 'No se puede corregir stock hasta vincularlo a Fudo o marcarlo como Local LVE.',
+      primaryAction: 'map',
+    }
+  }
+
+  if (item.current_qty < 0) {
+    return {
+      id: `negative:${item.id}`,
+      item,
+      priority: 'critico',
+      title: `${item.name}: stock negativo`,
+      detail: `Figura ${formatQty(item.current_qty)} ${item.unit}. Contá físicamente y corregí contra Fudo.`,
+      primaryAction: 'count',
+    }
+  }
+
+  if (getSemaphore(item) === 'red') {
+    return {
+      id: `low:${item.id}`,
+      item,
+      priority: 'critico',
+      title: `${item.name}: stock crítico`,
+      detail: `Hay ${formatQty(item.current_qty)} ${item.unit}; mínimo operativo ${formatQty(item.min_qty)}.`,
+      primaryAction: 'count',
+    }
+  }
+
+  const unit = item.unit.toLowerCase()
+  if (item.fudo_ingredient_id && unit.includes('unidad') && !Number.isInteger(item.current_qty)) {
+    return {
+      id: `unit:${item.id}`,
+      item,
+      priority: 'revisar',
+      title: `${item.name}: unidad sospechosa`,
+      detail: `Figura ${formatQty(item.current_qty)} unidad. Si es fiambre/carne/lácteo por peso debería estar en kg.`,
+      primaryAction: 'configure',
+    }
+  }
+
+  const highStockThreshold = Math.max(item.min_qty * 4, isPerishableForUi(item) ? 12 : 80)
+  if (item.current_qty >= highStockThreshold && item.current_qty > 0) {
+    return {
+      id: `high:${item.id}`,
+      item,
+      priority: isPerishableForUi(item) ? 'accion' : 'revisar',
+      title: `${item.name}: cantidad alta`,
+      detail: `Hay ${formatQty(item.current_qty)} ${item.unit}. Confirmá si es normal o si hay que accionar.`,
+      primaryAction: 'count',
+    }
+  }
+
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -190,6 +263,7 @@ export default function StockPage() {
   const { profile, loading: profileLoading } = useProfileContext()
   const { items, isLoading: loading, mutate } = useStockItems(true)
   const [search, setSearch] = useState('')
+  const [view, setView] = useState<StockView>('radar')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [semaphoreFilter, setSemaphoreFilter] = useState<SemaphoreColor | null>(null)
   const [sourceFilter, setSourceFilter] = useState<StockSourceFilter>('all')
@@ -472,7 +546,80 @@ export default function StockPage() {
     + (lotsData?.summary.expiring_today ?? 0)
     + (lotsData?.summary.expiring_window ?? 0)
 
-  const setupIssues = intelligence?.setup_issues.slice(0, 3) ?? []
+  const setupIssues = useMemo(
+    () => intelligence?.setup_issues.slice(0, 4) ?? [],
+    [intelligence],
+  )
+
+  const reviewCards = useMemo<StockReviewCard[]>(() => {
+    const cards: StockReviewCard[] = []
+
+    if (fudoConnection.state === 'error') {
+      cards.push({
+        id: 'fudo:blocking',
+        item: null,
+        priority: 'critico',
+        title: 'Fudo bloquea correcciones de stock',
+        detail: fudoConnection.message ?? 'Hay que sincronizar antes de contar o corregir mercadería.',
+        primaryAction: 'sync',
+      })
+    } else if (fudoConnection.issueCount > 0 || fudoConnection.highIncidents > 0) {
+      cards.push({
+        id: 'fudo:incidents',
+        item: null,
+        priority: 'revisar',
+        title: 'Fudo tiene inconsistencias abiertas',
+        detail: `${fudoConnection.issueCount} incidentes. Revisá mapeos/unidades antes de pisar stock sensible.`,
+        primaryAction: 'sync',
+      })
+    }
+
+    for (const item of items) {
+      const card = getQuantityReview(item)
+      if (card) cards.push(card)
+    }
+
+    for (const issue of setupIssues) {
+      const item = items.find((entry) => entry.id === issue.stock_item_id) ?? null
+      cards.push({
+        id: `setup:${issue.id}`,
+        item,
+        priority: issue.severity === 'high' ? 'accion' : 'revisar',
+        title: issue.title,
+        detail: issue.detail,
+        primaryAction: 'configure',
+      })
+    }
+
+    if (expiringLotsCount > 0) {
+      const firstLot = lotsData?.lots[0]
+      cards.push({
+        id: 'lots:expiring',
+        item: firstLot ? items.find((entry) => entry.id === firstLot.stock_item_id) ?? null : null,
+        priority: lotsData?.summary.expired ? 'critico' : 'accion',
+        title: `${expiringLotsCount} lotes por vencer`,
+        detail: firstLot
+          ? `${firstLot.stock_item_name}: ${formatLotCountdown(firstLot.expires_in_days)} (${formatQty(firstLot.qty_remaining)} ${firstLot.unit}).`
+          : 'Revisá vencimientos y definí promoción, uso prioritario o descarte.',
+        primaryAction: 'watch',
+      })
+    }
+
+    const priorityOrder = { critico: 0, accion: 1, revisar: 2 }
+    return cards
+      .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
+      .slice(0, 12)
+  }, [
+    expiringLotsCount,
+    fudoConnection.highIncidents,
+    fudoConnection.issueCount,
+    fudoConnection.message,
+    fudoConnection.state,
+    items,
+    lotsData?.lots,
+    lotsData?.summary.expired,
+    setupIssues,
+  ])
 
   // Group by category
   const grouped = useMemo(() => {
@@ -549,6 +696,58 @@ export default function StockPage() {
     }
   }
 
+  const handleFudoSync = async () => {
+    setSyncing(true)
+    setFudoConnection((current) => ({ ...current, state: 'checking', message: null }))
+    try {
+      const res = await fetch('/api/stock/sync')
+      const json = await res.json()
+      if (res.ok && json.success && json.fudoConnected !== false) {
+        const issueCount = Array.isArray(json.read?.errors) ? json.read.errors.length : 0
+        setLastFudoSync(json.timestamp)
+        setFudoSyncCount(json.read?.synced ?? 0)
+        setFudoConnection({
+          state: 'ok',
+          message: issueCount > 0 ? `${issueCount} inconsistencias de mapeo Fudo` : null,
+          issueCount,
+          pendingEvents: 0,
+          failedEvents: 0,
+          criticalIncidents: 0,
+          highIncidents: 0,
+        })
+        void loadFudoStatus().catch(() => null)
+        toast.success(`Sincronizado con Fudo — ${json.read?.synced ?? 0} items`)
+        await Promise.all([mutate(), loadIntelligence(), loadLots()])
+      } else {
+        const message = json.error || 'Error al sincronizar con Fudo'
+        setFudoConnection({
+          state: 'error',
+          message,
+          issueCount: 0,
+          pendingEvents: 0,
+          failedEvents: 0,
+          criticalIncidents: 0,
+          highIncidents: 0,
+        })
+        toast.error(message)
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error de conexión con Fudo'
+      setFudoConnection({
+        state: 'error',
+        message,
+        issueCount: 0,
+        pendingEvents: 0,
+        failedEvents: 0,
+        criticalIncidents: 0,
+        highIncidents: 0,
+      })
+      toast.error(message)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const toggleCat = (cat: string) => {
     setCollapsedCats(prev => {
       const next = new Set(prev)
@@ -556,6 +755,23 @@ export default function StockPage() {
       else next.add(cat)
       return next
     })
+  }
+
+  const startPhysicalCount = (item: StockItem) => {
+    const source = getStockSource(item)
+    if (!isEncargado) return
+    if (fudoConnection.state !== 'ok') {
+      toast.error('Stock bloqueado: primero hay que reconectar con Fudo')
+      return
+    }
+    if (!source.actionable) {
+      toast.error('Stock bloqueado: item sin mapeo Fudo ni Local LVE')
+      return
+    }
+    setView('conteo')
+    setEditingId(item.id)
+    setEditQty('')
+    setCountNote('')
   }
 
   const renderMetadataEditor = (itemId: string, source: 'setup' | 'item') => {
@@ -753,6 +969,76 @@ export default function StockPage() {
     )
   }
 
+  const renderReviewCard = (card: StockReviewCard) => {
+    const tone = card.priority === 'critico'
+      ? 'border-[#f3d0cf] bg-[#fff7f7]'
+      : card.priority === 'accion'
+        ? 'border-[#f1dfba] bg-[#fffaf2]'
+        : 'border-[#ebe6df] bg-white'
+    const pill = card.priority === 'critico'
+      ? 'bg-[#fef2f2] text-[#ea504c]'
+      : card.priority === 'accion'
+        ? 'bg-[#fdf6ec] text-[#d4943a]'
+        : 'bg-[#f3efe9] text-[#7d6c64]'
+
+    const onPrimaryAction = () => {
+      if (card.primaryAction === 'sync') {
+        setView('radar')
+        void handleFudoSync()
+        return
+      }
+      if (card.primaryAction === 'count' && card.item) {
+        startPhysicalCount(card.item)
+        return
+      }
+      if (card.primaryAction === 'configure' && card.item) {
+        openMetadataEditor(card.item.id, 'item')
+        return
+      }
+      if (card.primaryAction === 'map') {
+        setSourceFilter('unmapped')
+        setView('inventario')
+        return
+      }
+      setView('radar')
+    }
+
+    const actionLabel: Record<StockReviewCard['primaryAction'], string> = {
+      sync: 'Traer Fudo',
+      count: 'Contar',
+      configure: 'Configurar',
+      map: 'Ver sin mapeo',
+      watch: 'Ver detalle',
+    }
+
+    return (
+      <div key={card.id} className={`rounded-2xl border p-3 ${tone}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${pill}`}>
+                {card.priority === 'critico' ? 'Crítico' : card.priority === 'accion' ? 'Acción' : 'Revisar'}
+              </span>
+              {card.item && (
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${getStockSource(card.item).tone}`}>
+                  {getStockSource(card.item).label}
+                </span>
+              )}
+            </div>
+            <h3 className="mt-2 text-sm font-bold leading-snug text-[#3d2c24]">{card.title}</h3>
+            <p className="mt-1 text-[12px] leading-relaxed text-[#6f665f]">{card.detail}</p>
+          </div>
+          <button
+            onClick={onPrimaryAction}
+            className="shrink-0 rounded-xl bg-[#3d2c24] px-3 py-2 text-[11px] font-bold text-white"
+          >
+            {actionLabel[card.primaryAction]}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // Loading
   if (profileLoading || loading) {
     return (
@@ -767,7 +1053,7 @@ export default function StockPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg space-y-4 pb-28">
+    <div className="mx-auto max-w-4xl space-y-4 pb-28">
       {/* Header */}
       <FadeIn>
         <div className="flex items-center justify-between">
@@ -844,6 +1130,94 @@ export default function StockPage() {
         </div>
       </FadeIn>
 
+      <FadeIn>
+        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-[#f3efe9] p-1">
+          {[
+            { key: 'radar' as const, label: 'Radar', detail: 'qué revisar' },
+            { key: 'conteo' as const, label: 'Conteo', detail: 'stock físico' },
+            { key: 'inventario' as const, label: 'Inventario', detail: 'lista completa' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setView(tab.key)}
+              className={`rounded-xl px-2 py-2 text-center transition-all ${
+                view === tab.key
+                  ? 'bg-white text-[#3d2c24] shadow-sm'
+                  : 'text-[#8d847b] hover:bg-white/60'
+              }`}
+            >
+              <span className="block text-sm font-bold">{tab.label}</span>
+              <span className="block text-[10px] font-semibold uppercase tracking-wide">{tab.detail}</span>
+            </button>
+          ))}
+        </div>
+      </FadeIn>
+
+      {view === 'radar' && (
+        <FadeIn>
+          <div className="space-y-3 rounded-3xl border border-[#ebe6df] bg-white p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">
+                  Radar operativo
+                </p>
+                <h2 className="mt-1 text-xl font-bold tracking-tight text-[#3d2c24]">
+                  Revisar estos puntos primero
+                </h2>
+                <p className="mt-1 max-w-xl text-sm leading-relaxed text-[#6f665f]">
+                  Acá no va el inventario completo. Solo lo que puede generar errores entre Fudo,
+                  LVE y el conteo físico.
+                </p>
+              </div>
+              <div className={`rounded-2xl px-3 py-2 text-right text-[11px] font-bold ${
+                fudoConnection.state === 'error'
+                  ? 'bg-[#fef2f2] text-[#ea504c]'
+                  : fudoConnection.state === 'checking'
+                    ? 'bg-[#faf8f5] text-[#7d6c64]'
+                    : 'bg-[#e8f5f1] text-[#006d5a]'
+              }`}>
+                <p>{fudoConnection.state === 'error' ? 'Fudo bloqueado' : fudoConnection.state === 'checking' ? 'Fudo verificando' : 'Fudo OK'}</p>
+                {lastFudoSync && <p className="mt-0.5 text-[10px] opacity-80">{format(new Date(lastFudoSync), 'HH:mm')}</p>}
+              </div>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-4">
+              <button onClick={() => { setSemaphoreFilter('red'); setView('conteo') }} className="rounded-2xl bg-[#fff7f7] px-3 py-3 text-left ring-1 ring-[#f3d0cf]">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#ea504c]">Crítico</p>
+                <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.red}</p>
+                <p className="text-[11px] text-[#7d6c64]">contar o reponer</p>
+              </button>
+              <button onClick={() => { setSourceFilter('unmapped'); setView('inventario') }} className="rounded-2xl bg-[#fffaf2] px-3 py-3 text-left ring-1 ring-[#f1dfba]">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Sin mapeo</p>
+                <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.unmapped}</p>
+                <p className="text-[11px] text-[#7d6c64]">bloqueados</p>
+              </button>
+              <button onClick={() => setView('radar')} className="rounded-2xl bg-[#fffaf2] px-3 py-3 text-left ring-1 ring-[#f1dfba]">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Vencen</p>
+                <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{expiringLotsCount}</p>
+                <p className="text-[11px] text-[#7d6c64]">usar o promover</p>
+              </button>
+              <button onClick={() => setView('radar')} className="rounded-2xl bg-[#faf8f5] px-3 py-3 text-left ring-1 ring-[#ebe6df]">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#7d6c64]">Alertas</p>
+                <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{reviewCards.length}</p>
+                <p className="text-[11px] text-[#7d6c64]">para auditar</p>
+              </button>
+            </div>
+
+            {reviewCards.length === 0 ? (
+              <div className="rounded-2xl bg-[#f6fcfa] px-4 py-4 text-sm font-semibold text-[#006d5a] ring-1 ring-[#dcefe8]">
+                Sin anomalías relevantes. Podés ir a Conteo para controlar stock físico.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {reviewCards.map(renderReviewCard)}
+              </div>
+            )}
+          </div>
+        </FadeIn>
+      )}
+
+      {view !== 'radar' && (
       <FadeIn>
         <div className="rounded-xl border border-[#ebe6df] bg-white p-3">
           <div className="flex items-center justify-between">
@@ -969,8 +1343,9 @@ export default function StockPage() {
           )}
         </div>
       </FadeIn>
+      )}
 
-      {(lotsData?.requires_migration || Boolean(lotsData?.lots.length)) && (
+      {view !== 'radar' && (lotsData?.requires_migration || Boolean(lotsData?.lots.length)) && (
         <FadeIn>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
@@ -1014,7 +1389,7 @@ export default function StockPage() {
         </FadeIn>
       )}
 
-      {setupIssues.length > 0 && (
+      {view !== 'radar' && setupIssues.length > 0 && (
         <FadeIn>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
@@ -1055,6 +1430,22 @@ export default function StockPage() {
           </div>
         </FadeIn>
       )}
+
+      {view !== 'radar' && (
+      <>
+      <div className="rounded-2xl border border-[#ebe6df] bg-white px-4 py-3">
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">
+          {view === 'conteo' ? 'Conteo físico' : 'Inventario completo'}
+        </p>
+        <h2 className="mt-1 text-lg font-bold text-[#3d2c24]">
+          {view === 'conteo' ? 'Elegí el item exacto que estás contando' : 'Buscar y revisar todos los items'}
+        </h2>
+        <p className="mt-1 text-sm leading-relaxed text-[#7d6c64]">
+          {view === 'conteo'
+            ? 'El número que cargues es el conteo real. Si está vinculado a Fudo, primero se guarda en Fudo y después en LVE.'
+            : 'Esta vista es solo para buscar, filtrar y entrar al detalle. Las anomalías importantes están en Radar.'}
+        </p>
+      </div>
 
       {/* Search */}
       <div className="relative">
@@ -1284,6 +1675,8 @@ export default function StockPage() {
             </div>
           )
         })
+      )}
+      </>
       )}
     </div>
   )
