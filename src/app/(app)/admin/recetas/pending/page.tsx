@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, Check, X, Pencil, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle2, XCircle, Package, Search,
+  ArrowRight, ShieldCheck, Link2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
@@ -36,15 +37,20 @@ function confidenceBadge(conf: string, score: number) {
   if (conf === 'ambiguo') {
     return (
       <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[10px] font-semibold text-[#d4943a]">
-        ambiguo · {score}
+        revisar sugerencia · {score}
       </span>
     )
   }
   return (
     <span className="rounded-full bg-[#fef2f2] px-2 py-0.5 text-[10px] font-semibold text-[#ea504c]">
-      sin match · {score}
+      elegir insumo Fudo · {score}
     </span>
   )
+}
+
+function sameId(a: string | number | null, b: string | number | null) {
+  if (a === null || b === null) return false
+  return String(a) === String(b)
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -69,7 +75,7 @@ function ManualAssignPanel({
 }: {
   link: RecipeIngredientPendingLink
   stockItems: StockItemOption[]
-  onSave: (stockItemId: number, qty: number, unit: string) => Promise<void>
+  onSave: (stockItemId: string, qty: number, unit: string) => Promise<void>
   onCancel: () => void
 }) {
   const [search, setSearch] = useState('')
@@ -98,7 +104,14 @@ function ManualAssignPanel({
 
   return (
     <div className="mt-2 space-y-3 rounded-xl bg-[#faf8f5] p-3 ring-1 ring-[#ebe6df]">
-      <p className="text-xs font-semibold text-[#3d2c24]">Asignar manualmente para &quot;{link.ingredient_name}&quot;</p>
+      <div>
+        <p className="text-xs font-semibold text-[#3d2c24]">
+          Elegir item real de stock para &quot;{link.ingredient_name}&quot;
+        </p>
+        <p className="mt-1 text-[11px] leading-relaxed text-[#7f776f]">
+          Esto no crea ni modifica Fudo. Solo define qué item debe descontar esta receta.
+        </p>
+      </div>
 
       {/* Stock item search */}
       <div className="relative">
@@ -107,7 +120,7 @@ function ManualAssignPanel({
           value={selectedItem ? selectedItem.name : search}
           onChange={e => { setSearch(e.target.value); setSelectedItem(null); setShowDropdown(true) }}
           onFocus={() => setShowDropdown(true)}
-          placeholder="Buscar insumo de stock..."
+          placeholder="Buscar item de Fudo/stock..."
           className="h-9 w-full rounded-lg border border-[#ebe6df] bg-white pl-8 pr-3 text-xs text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none"
         />
         {selectedItem && (
@@ -138,7 +151,7 @@ function ManualAssignPanel({
       <div className="flex gap-2">
         <div className="flex-1">
           <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-[#a39e97]">
-            Cantidad por porción
+            Cantidad que descuenta por porción
           </label>
           <input
             type="number"
@@ -166,7 +179,7 @@ function ManualAssignPanel({
       {/* Corpus original hint */}
       {link.cantidad !== null && (
         <p className="text-[10px] text-[#a39e97]">
-          Corpus: {link.cantidad} {link.unidad} · Unidad del insumo: {selectedItem?.unit ?? '—'}
+          Texto original: {link.cantidad} {link.unidad} · Unidad del item: {selectedItem?.unit ?? '—'}
         </p>
       )}
 
@@ -178,7 +191,7 @@ function ManualAssignPanel({
           className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#006d5a] py-2 text-xs font-semibold text-white disabled:opacity-50"
         >
           <Check className="size-3.5" />
-          {saving ? 'Guardando…' : 'Confirmar vínculo'}
+          {saving ? 'Guardando…' : 'Vincular al stock'}
         </button>
         <button
           onClick={onCancel}
@@ -227,7 +240,7 @@ function PendingLinkRow({
     }
   }
 
-  async function resolveManual(stockItemId: number, qty: number, unit: string) {
+  async function resolveManual(stockItemId: string, qty: number, unit: string) {
     const res = await fetch(`/api/recipes/pending-links/${link.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -261,24 +274,23 @@ function PendingLinkRow({
           <p className="mt-0.5 text-[11px] text-[#a39e97]">
             Receta: <span className="font-medium text-[#3d2c24]">{link.recipe_name}</span>
             {link.cantidad !== null && (
-              <span> · Corpus: {link.cantidad} {link.unidad}</span>
+              <span> · Texto original: {link.cantidad} {link.unidad}</span>
             )}
           </p>
 
           {/* Suggested match */}
           {link.suggested_stock_item_name && (
             <p className="mt-1 text-[11px] text-[#3d2c24]">
-              Sugerencia:{' '}
+              Sugerencia de LVE:{' '}
               <span className="font-medium text-[#d4943a]">{link.suggested_stock_item_name}</span>
-              {' '}(score {link.match_score})
             </p>
           )}
 
           {/* Resolved info */}
           {link.status !== 'pending' && link.resolved_stock_item_id && (
             <p className="mt-1 text-[11px] text-[#006d5a]">
-              Resuelto: {
-                stockItems.find(s => s.id === link.resolved_stock_item_id)?.name ?? `item #${link.resolved_stock_item_id}`
+              Vinculado a stock: {
+                stockItems.find(s => sameId(s.id, link.resolved_stock_item_id))?.name ?? `item #${link.resolved_stock_item_id}`
               }
               {link.resolved_qty_per_portion !== null && ` · ${link.resolved_qty_per_portion} ${link.resolved_unit ?? ''}/porción`}
             </p>
@@ -300,6 +312,9 @@ function PendingLinkRow({
       {/* Reasons expanded */}
       {expanded && (
         <div className="border-t border-[#ebe6df] bg-[#faf8f5] px-3 py-2">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[#a39e97]">
+            Por qué LVE lo marcó
+          </p>
           {link.match_reasons && link.match_reasons.length > 0 ? (
             <ul className="space-y-0.5">
               {link.match_reasons.map((r, i) => (
@@ -307,7 +322,7 @@ function PendingLinkRow({
               ))}
             </ul>
           ) : (
-            <p className="text-[11px] text-[#a39e97]">Sin razones detalladas</p>
+            <p className="text-[11px] text-[#a39e97]">Sin explicación automática.</p>
           )}
         </div>
       )}
@@ -323,7 +338,7 @@ function PendingLinkRow({
               className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#e8f5f1] py-1.5 text-xs font-semibold text-[#006d5a] disabled:opacity-50 hover:bg-[#006d5a] hover:text-white transition-colors"
             >
               <Check className="size-3.5" />
-              {loading === 'approve' ? 'Aprobando…' : `Aprobar → ${link.suggested_stock_item_name ?? ''}`}
+              {loading === 'approve' ? 'Vinculando…' : `Usar sugerido: ${link.suggested_stock_item_name ?? ''}`}
             </button>
           )}
 
@@ -334,7 +349,7 @@ function PendingLinkRow({
             className="flex items-center justify-center gap-1 rounded-lg bg-[#fdf6ec] px-3 py-1.5 text-xs font-semibold text-[#d4943a] hover:bg-[#d4943a] hover:text-white transition-colors"
           >
             <Pencil className="size-3.5" />
-            Manual
+            Elegir otro
           </button>
 
           {/* Reject */}
@@ -342,6 +357,7 @@ function PendingLinkRow({
             onClick={() => resolve('reject')}
             disabled={loading !== null}
             className="flex items-center justify-center rounded-lg bg-[#fef2f2] px-2.5 py-1.5 text-[#ea504c] hover:bg-[#ea504c] hover:text-white transition-colors"
+            title="Descartar: esta receta no descuenta stock por este ingrediente"
           >
             <X className="size-3.5" />
           </button>
@@ -366,6 +382,51 @@ function PendingLinkRow({
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
+
+function ExplainerCard() {
+  return (
+    <div className="space-y-3 rounded-2xl bg-[#fffaf2] p-4 ring-1 ring-[#eadfce]">
+      <div className="flex items-start gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-[#e8f5f1] text-[#006d5a]">
+          <Link2 className="size-5" />
+        </div>
+        <div>
+          <h2 className="text-sm font-bold text-[#3d2c24]">Qué se resuelve acá</h2>
+          <p className="mt-1 text-xs leading-relaxed text-[#7f776f]">
+            Cada fila es un ingrediente escrito en una receta. Antes de usar esa receta para
+            producción, ventas o alertas, LVE necesita saber qué item de Fudo/stock descuenta
+            y cuánto descuenta por porción.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2 text-center">
+        <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-[#ebe6df]">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">1. Receta</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-[#3d2c24]">Ingrediente escrito</p>
+        </div>
+        <ArrowRight className="size-4 text-[#c8bfb6]" />
+        <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-[#ebe6df]">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">2. Stock</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-[#3d2c24]">Item Fudo real</p>
+        </div>
+        <ArrowRight className="size-4 text-[#c8bfb6]" />
+        <div className="rounded-xl bg-white px-2 py-2 ring-1 ring-[#ebe6df]">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">3. Control</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-[#3d2c24]">Descuento correcto</p>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-2 rounded-xl bg-white p-3 ring-1 ring-[#ebe6df]">
+        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[#006d5a]" />
+        <p className="text-[11px] leading-relaxed text-[#6f665f]">
+          Esta pantalla no cambia cantidades ni pisa Fudo. Solo corrige el vínculo receta → stock.
+          Si el item no existe en Fudo/stock, primero hay que resolverlo desde la matriz de stock.
+        </p>
+      </div>
+    </div>
+  )
+}
 
 export default function PendingLinksPage() {
   const [data, setData] = useState<PendingData | null>(null)
@@ -392,7 +453,11 @@ export default function PendingLinksPage() {
       setData(pendingJson)
 
       const { data: items } = await stockRes
-      setStockItems((items ?? []) as StockItemOption[])
+      setStockItems((items ?? []).map(item => ({
+        id: String(item.id),
+        name: item.name,
+        unit: item.unit,
+      })))
     } catch {
       toast.error('Error al cargar datos')
     } finally {
@@ -427,10 +492,10 @@ export default function PendingLinksPage() {
   }
 
   const tabs: { key: StatusTab; label: string; color: string }[] = [
-    { key: 'pending', label: 'Pendientes', color: '#d4943a' },
-    { key: 'approved', label: 'Aprobados', color: '#006d5a' },
-    { key: 'manual', label: 'Manual', color: '#006d5a' },
-    { key: 'rejected', label: 'Descartados', color: '#a39e97' },
+    { key: 'pending', label: 'A revisar', color: '#d4943a' },
+    { key: 'approved', label: 'Sugeridos OK', color: '#006d5a' },
+    { key: 'manual', label: 'Manual OK', color: '#006d5a' },
+    { key: 'rejected', label: 'No descuenta', color: '#a39e97' },
   ]
 
   return (
@@ -445,11 +510,13 @@ export default function PendingLinksPage() {
         </Link>
         <div className="min-w-0 flex-1">
           <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">
-            Ingredientes pendientes
+            Vincular recetas al stock Fudo
           </h1>
-          <p className="section-label mt-0.5">Revisión de vínculos receta → stock</p>
+          <p className="section-label mt-0.5">Qué descuenta cada receta del stock real</p>
         </div>
       </div>
+
+      <ExplainerCard />
 
       {/* Status counts */}
       {data && (
@@ -483,7 +550,7 @@ export default function PendingLinksPage() {
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
           <Input
-            placeholder="Buscar ingrediente o receta…"
+            placeholder="Buscar ingrediente, receta o insumo Fudo…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="rounded-xl border-[#ebe6df] bg-[#faf8f5] pl-10"
@@ -497,7 +564,7 @@ export default function PendingLinksPage() {
               : 'bg-secondary text-[#a39e97]'
           }`}
         >
-          Por receta
+          {groupByRecipe ? 'Por receta' : 'Lista'}
         </button>
       </div>
 
@@ -510,7 +577,7 @@ export default function PendingLinksPage() {
           title={activeTab === 'pending' ? '¡Todo resuelto!' : 'Sin resultados'}
           description={
             activeTab === 'pending'
-              ? 'No hay ingredientes pendientes de revisión.'
+              ? 'No quedan ingredientes por asociar con stock/Fudo.'
               : 'No hay ítems en esta categoría.'
           }
         />
@@ -528,7 +595,7 @@ export default function PendingLinksPage() {
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold text-[#3d2c24]">{recipeName}</span>
                       <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[10px] font-bold text-[#d4943a]">
-                        {items.length}
+                        {items.length} vínculos
                       </span>
                     </div>
                     {isCollapsed
@@ -572,9 +639,9 @@ export default function PendingLinksPage() {
       {activeTab === 'pending' && (data?.counts.pending ?? 0) > 0 && !loading && (
         <div className="rounded-xl bg-[#fdf6ec] p-3 ring-1 ring-[#d4943a]/20">
           <p className="text-xs text-[#d4943a]">
-            <strong>Cómo resolver:</strong> Aprobá el match sugerido si es correcto, asignalo
-            manualmente si querés otro insumo, o descartalo si el ingrediente no tiene stock propio
-            (ej: condimentos sin medida exacta).
+            <strong>Regla de trabajo:</strong> si la receta usa mercadería real, vinculala a un
+            item de Fudo/stock. Descartá solo ingredientes que no querés controlar como stock
+            separado, por ejemplo condimentos sin medida exacta.
           </p>
         </div>
       )}

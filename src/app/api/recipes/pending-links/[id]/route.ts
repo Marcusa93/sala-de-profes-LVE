@@ -15,7 +15,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 //     con la misma lógica de conversión del ingest.
 //
 //   Si 'manual':
-//     stock_item_id  (number, required) — item a vincular
+//     stock_item_id  (string, required) — item Fudo/stock a vincular
 //     qty_per_portion (number, required) — cantidad por porción
 //     unit           (string, required)  — unidad
 //
@@ -164,13 +164,13 @@ export async function PATCH(
 
     // --- MANUAL ---
     if (action === 'manual') {
-      const stockItemId = body?.stock_item_id != null ? Number(body.stock_item_id) : null
+      const stockItemId = body?.stock_item_id != null ? String(body.stock_item_id).trim() : ''
       const qtyPerPortion: number = body?.qty_per_portion != null ? Number(body.qty_per_portion) : 0
       const unit: string = body?.unit
 
-      if (!stockItemId || !qtyPerPortion || !unit) {
+      if (!stockItemId || !Number.isFinite(qtyPerPortion) || qtyPerPortion <= 0 || !unit) {
         return NextResponse.json({
-          error: 'Manual requiere: stock_item_id, qty_per_portion (number), unit (string)',
+          error: 'Manual requiere: stock_item_id, qty_per_portion positivo y unit',
         }, { status: 400 })
       }
 
