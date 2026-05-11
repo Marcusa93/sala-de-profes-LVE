@@ -60,6 +60,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { stockItemId, newQty } = body
+    const reason = body?.reason === 'manual_adjustment' ? 'manual_adjustment' : 'physical_count'
+    const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 500) : null
 
     if (!stockItemId || typeof newQty !== 'number') {
       return NextResponse.json({ error: 'stockItemId y newQty requeridos' }, { status: 400 })
@@ -77,7 +79,7 @@ export async function POST(request: NextRequest) {
       }, { status: 502 })
     }
 
-    const result = await syncToFudo(admin, stockItemId, newQty, user.id)
+    const result = await syncToFudo(admin, stockItemId, newQty, user.id, { reason, note })
 
     return NextResponse.json({
       success: result.success,

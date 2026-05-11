@@ -16,6 +16,8 @@ import {
   AlertTriangle,
   Settings2,
   Save,
+  ClipboardCheck,
+  ShieldCheck,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -78,6 +80,7 @@ type StockLotsResponse = {
 
 type SemaphoreColor = 'red' | 'yellow' | 'green'
 type FudoConnectionState = 'checking' | 'ok' | 'error'
+type StockSourceFilter = 'all' | 'fudo' | 'local' | 'unmapped'
 type FudoStatusResponse = {
   state: 'ok' | 'warning' | 'error'
   last_sync_at: string | null
@@ -119,15 +122,15 @@ function isPerishableForUi(item: StockItem) {
 
 function getStockSource(item: StockItem) {
   if (item.fudo_product_id) {
-    return { label: 'Fudo producto', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true }
+    return { label: 'Fudo producto', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true, kind: 'fudo' as const }
   }
   if (item.fudo_ingredient_id) {
-    return { label: 'Fudo insumo', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true }
+    return { label: 'Fudo insumo', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true, kind: 'fudo' as const }
   }
   if (item.fudo_skip === true) {
-    return { label: 'Local LVE', tone: 'bg-[#f3efe9] text-[#7d6c64]', actionable: true }
+    return { label: 'Local LVE', tone: 'bg-[#f3efe9] text-[#7d6c64]', actionable: true, kind: 'local' as const }
   }
-  return { label: 'Sin mapeo Fudo', tone: 'bg-[#fef2f2] text-[#ea504c]', actionable: false }
+  return { label: 'Sin mapeo Fudo', tone: 'bg-[#fef2f2] text-[#ea504c]', actionable: false, kind: 'unmapped' as const }
 }
 
 function formatPriority(priority: StockPriority) {
@@ -163,6 +166,22 @@ function formatQty(qty: number) {
   return qty.toLocaleString('es-AR', { maximumFractionDigits: 2 })
 }
 
+function getVariance(item: StockItem, countedQty: number) {
+  const diff = countedQty - item.current_qty
+  const abs = Math.abs(diff)
+  const pct = item.current_qty > 0 ? abs / item.current_qty : abs > 0 ? 1 : 0
+  return { diff, abs, pct }
+}
+
+function needsVarianceNote(item: StockItem, countedQty: number) {
+  const { abs, pct } = getVariance(item, countedQty)
+  const unit = item.unit.toLowerCase()
+  const threshold = unit.includes('kg') || unit.includes('kilo')
+    ? Math.max(0.5, item.current_qty * 0.12)
+    : Math.max(2, item.current_qty * 0.15)
+  return abs >= threshold || pct >= 0.25
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -173,8 +192,10 @@ export default function StockPage() {
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [semaphoreFilter, setSemaphoreFilter] = useState<SemaphoreColor | null>(null)
+  const [sourceFilter, setSourceFilter] = useState<StockSourceFilter>('all')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editQty, setEditQty] = useState('')
+  const [countNote, setCountNote] = useState('')
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
   const [syncing, setSyncing] = useState(false)
   const [historyItemId, setHistoryItemId] = useState<string | null>(null)
@@ -406,11 +427,14 @@ export default function StockPage() {
     if (categoryFilter !== 'all') {
       result = result.filter(i => i.category === categoryFilter)
     }
+    if (sourceFilter !== 'all') {
+      result = result.filter(i => getStockSource(i).kind === sourceFilter)
+    }
     if (semaphoreFilter) {
       result = result.filter(i => getSemaphore(i) === semaphoreFilter)
     }
     return result
-  }, [items, search, categoryFilter, semaphoreFilter])
+  }, [items, search, categoryFilter, sourceFilter, semaphoreFilter])
 
   // Counts
   const counts = useMemo(() => {
@@ -473,6 +497,20 @@ export default function StockPage() {
   const handleSave = async (itemId: string) => {
     const newQty = parseFloat(editQty)
     if (isNaN(newQty) || newQty < 0) { toast.error('Cantidad inválida'); return }
+    const currentItem = items.find(i => i.id === itemId)
+    if (!currentItem) { toast.error('Item no encontrado'); return }
+    if (Math.abs(newQty - currentItem.current_qty) < 0.001) {
+      toast.info('Sin cambios de stock')
+      setEditingId(null)
+      setEditQty('')
+      setCountNote('')
+      return
+    }
+    const note = countNote.trim()
+    if (needsVarianceNote(currentItem, newQty) && note.length < 6) {
+      toast.error('La diferencia es relevante: agregá una nota corta del conteo')
+      return
+    }
     if (fudoConnection.state !== 'ok') {
       toast.error('Stock bloqueado: primero hay que reconectar con Fudo')
       return
@@ -481,7 +519,7 @@ export default function StockPage() {
       const res = await fetch('/api/stock/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stockItemId: itemId, newQty }),
+        body: JSON.stringify({ stockItemId: itemId, newQty, reason: 'physical_count', note }),
       })
       const data = await res.json()
       if (!res.ok || !data.success) throw new Error(data.error || data.message)
@@ -503,6 +541,8 @@ export default function StockPage() {
         toast.success('Stock actualizado')
       }
       setEditingId(null)
+      setEditQty('')
+      setCountNote('')
       await Promise.all([mutate(), loadIntelligence(), loadLots()])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al guardar')
@@ -592,6 +632,122 @@ export default function StockPage() {
               Guardar
             </button>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  const renderPhysicalCountEditor = (item: StockItem) => {
+    if (editingId !== item.id) return null
+
+    const countedQty = parseFloat(editQty)
+    const hasCount = !Number.isNaN(countedQty) && countedQty >= 0
+    const variance = hasCount ? getVariance(item, countedQty) : null
+    const noteRequired = hasCount ? needsVarianceNote(item, countedQty) : false
+    const source = getStockSource(item)
+
+    return (
+      <div className="border-t border-[#ebe6df] bg-[#fbfaf8] px-3 py-3">
+        <div className="flex items-start gap-2 rounded-xl bg-white p-3 ring-1 ring-[#ebe6df]">
+          <ClipboardCheck className="mt-0.5 size-4 shrink-0 text-[#006d5a]" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-[#3d2c24]">Conteo físico de {item.name}</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-[#7d6c64]">
+              {source.kind === 'fudo'
+                ? 'Primero se escribe en Fudo y solo después se actualiza LVE. Si Fudo no confirma, no se guarda.'
+                : 'Este item es Local LVE: no toca Fudo. Usalo solo para descartables o controles internos.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-[#ebe6df]">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Sistema</p>
+            <p className="mt-0.5 text-base font-bold tabular-nums text-[#3d2c24]">
+              {formatQty(item.current_qty)}
+            </p>
+            <p className="text-[10px] text-[#a39e97]">{item.unit}</p>
+          </div>
+
+          <label className="rounded-xl bg-white px-3 py-2 ring-1 ring-[#006d5a]/25">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-[#006d5a]">Conteo real</span>
+            <input
+              value={editQty}
+              onChange={(e) => setEditQty(e.target.value)}
+              inputMode="decimal"
+              placeholder="0"
+              className="mt-0.5 w-full bg-transparent text-base font-bold tabular-nums text-[#3d2c24] outline-none placeholder:text-[#c8bfb6]"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleSave(item.id)
+                if (e.key === 'Escape') {
+                  setEditingId(null)
+                  setEditQty('')
+                  setCountNote('')
+                }
+              }}
+            />
+            <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+          </label>
+
+          <div className={`rounded-xl px-3 py-2 ring-1 ${
+            !variance || variance.abs < 0.001
+              ? 'bg-[#faf8f5] ring-[#ebe6df]'
+              : variance.diff < 0
+                ? 'bg-[#fff7f7] ring-[#f3d0cf]'
+                : 'bg-[#f6fcfa] ring-[#dcefe8]'
+          }`}>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Diferencia</p>
+            <p className={`mt-0.5 text-base font-bold tabular-nums ${
+              !variance || variance.abs < 0.001
+                ? 'text-[#7d6c64]'
+                : variance.diff < 0
+                  ? 'text-[#ea504c]'
+                  : 'text-[#006d5a]'
+            }`}>
+              {variance ? `${variance.diff > 0 ? '+' : ''}${formatQty(variance.diff)}` : '-'}
+            </p>
+            <p className="text-[10px] text-[#a39e97]">{item.unit}</p>
+          </div>
+        </div>
+
+        <label className="mt-3 block space-y-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
+            Nota del conteo {noteRequired ? '(obligatoria)' : '(opcional)'}
+          </span>
+          <textarea
+            value={countNote}
+            onChange={(e) => setCountNote(e.target.value)}
+            rows={2}
+            placeholder="Ej. conteo cierre, caja abierta, merma detectada, proveedor entregó..."
+            className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-2 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none"
+          />
+        </label>
+
+        {noteRequired && (
+          <p className="mt-2 rounded-lg bg-[#fff8eb] px-3 py-2 text-[11px] font-semibold text-[#8b5e34]">
+            La diferencia supera el margen normal. Dejamos nota para auditar si fue venta, merma, error de carga o diferencia física.
+          </p>
+        )}
+
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <button
+            onClick={() => {
+              setEditingId(null)
+              setEditQty('')
+              setCountNote('')
+            }}
+            className="rounded-lg px-3 py-2 text-[11px] font-semibold text-[#7d6c64] hover:bg-[#f3efe9]"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => void handleSave(item.id)}
+            disabled={!hasCount || (noteRequired && countNote.trim().length < 6)}
+            className="rounded-lg bg-[#006d5a] px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50"
+          >
+            Guardar conteo
+          </button>
         </div>
       </div>
     )
@@ -746,6 +902,19 @@ export default function StockPage() {
             )}
           </div>
 
+          <div className="mt-3 rounded-lg border border-[#ebe6df] bg-[#faf8f5] px-3 py-3">
+            <div className="flex items-start gap-2">
+              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[#006d5a]" />
+              <div>
+                <p className="text-[12px] font-bold text-[#3d2c24]">Flujo seguro de control</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-[#7d6c64]">
+                  1. Traer Fudo. 2. Contar físicamente el item exacto. 3. Guardar conteo con diferencia visible.
+                  Los items sin mapeo quedan bloqueados para evitar pisar stock incorrecto.
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
               onClick={() => setSemaphoreFilter(semaphoreFilter === 'red' ? null : 'red')}
@@ -776,13 +945,21 @@ export default function StockPage() {
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-[#7d6c64]">
-            <span>{stockOverview.total} activos</span>
-            <span>{stockOverview.fudoLinked} vinculados a Fudo</span>
-            <span>{stockOverview.localOnly} locales LVE</span>
-            {stockOverview.unmapped > 0 && (
-              <span className="text-[#ea504c]">{stockOverview.unmapped} sin mapeo</span>
-            )}
+          <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
+            {[
+              { key: 'all' as const, label: `${stockOverview.total} activos`, tone: 'text-[#7d6c64]' },
+              { key: 'fudo' as const, label: `${stockOverview.fudoLinked} Fudo`, tone: 'text-[#006d5a]' },
+              { key: 'local' as const, label: `${stockOverview.localOnly} Local LVE`, tone: 'text-[#7d6c64]' },
+              { key: 'unmapped' as const, label: `${stockOverview.unmapped} sin mapeo`, tone: 'text-[#ea504c]' },
+            ].map((filter) => (
+              <button
+                key={filter.key}
+                onClick={() => setSourceFilter(filter.key)}
+                className={`rounded-full px-2 py-0.5 ${sourceFilter === filter.key ? 'bg-[#3d2c24] text-white' : `bg-[#faf8f5] ${filter.tone}`}`}
+              >
+                {filter.label}
+              </button>
+            ))}
             {lastFudoSync && <span>Fudo {format(new Date(lastFudoSync), 'HH:mm')}</span>}
           </div>
           {stockOverview.unmapped > 0 && (
@@ -1008,26 +1185,16 @@ export default function StockPage() {
                           </div>
 
                           {isEditing ? (
-                            <div className="flex items-center gap-1 ml-2">
-                              <input
-                                value={editQty}
-                                onChange={(e) => setEditQty(e.target.value)}
-                                className="w-16 rounded-lg border bg-white px-2 py-1.5 text-center text-sm font-bold tabular-nums focus:border-[#006d5a] focus:outline-none"
-                                autoFocus
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleSave(item.id)
-                                  if (e.key === 'Escape') setEditingId(null)
+                            <div className="ml-2 flex items-center gap-1">
+                              <span className="rounded-lg bg-[#e8f5f1] px-2 py-1 text-[10px] font-bold text-[#006d5a]">
+                                Contando
+                              </span>
+                              <button
+                                onClick={() => {
+                                  setEditingId(null)
+                                  setEditQty('')
+                                  setCountNote('')
                                 }}
-                              />
-                              <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
-                              <button
-                                onClick={() => handleSave(item.id)}
-                                className="rounded-lg bg-[#006d5a] px-2 py-1.5 text-[10px] font-bold text-white"
-                              >
-                                OK
-                              </button>
-                              <button
-                                onClick={() => setEditingId(null)}
                                 className="rounded-lg px-1.5 py-1.5 text-[#a39e97]"
                               >
                                 <X className="size-3" />
@@ -1047,15 +1214,17 @@ export default function StockPage() {
                                     return
                                   }
                                   setEditingId(item.id)
-                                  setEditQty(String(item.current_qty))
+                                  setEditQty('')
+                                  setCountNote('')
                                 }}
                                 title={source.actionable ? `Editar ${source.label}` : 'Bloqueado: falta mapear a Fudo o marcar Local LVE'}
-                                className={`flex items-baseline gap-0.5 rounded-lg px-2.5 py-1 ${isEncargado && source.actionable ? 'hover:bg-[#f3efe9] cursor-pointer active:scale-95' : ''} ${fudoConnection.state !== 'ok' || !source.actionable ? 'opacity-60' : ''}`}
+                                className={`flex items-center gap-1 rounded-lg px-2.5 py-1 ${isEncargado && source.actionable ? 'hover:bg-[#f3efe9] cursor-pointer active:scale-95' : ''} ${fudoConnection.state !== 'ok' || !source.actionable ? 'opacity-60' : ''}`}
                               >
-                                <span className={`text-base font-bold tabular-nums ${c.text}`}>
-                                  {item.current_qty}
-                                </span>
+                                <span className={`text-base font-bold tabular-nums ${c.text}`}>{formatQty(item.current_qty)}</span>
                                 <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+                                <span className="ml-1 rounded-full bg-[#faf8f5] px-1.5 py-0.5 text-[9px] font-bold text-[#7d6c64]">
+                                  Contar
+                                </span>
                               </button>
                               <button
                                 onClick={() => loadHistory(item.id)}
@@ -1075,6 +1244,7 @@ export default function StockPage() {
                           )}
                         </div>
 
+                        {renderPhysicalCountEditor(item)}
                         {renderMetadataEditor(item.id, 'item')}
 
                         {showHistory && (

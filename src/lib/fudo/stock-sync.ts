@@ -51,7 +51,24 @@ type FudoWriteContext = {
   fudoId: string
   oldQty?: number | null
   newQty: number
+  reason?: string | null
+  note?: string | null
   idempotencyKey?: string | null
+}
+
+type StockWriteOptions = {
+  reason?: 'physical_count' | 'manual_adjustment'
+  note?: string | null
+}
+
+function stockWriteNeedsNote(currentQty: number, newQty: number, unit?: string | null) {
+  const abs = Math.abs(newQty - currentQty)
+  const pct = currentQty > 0 ? abs / currentQty : abs > 0 ? 1 : 0
+  const normalizedUnit = (unit ?? '').toLowerCase()
+  const threshold = normalizedUnit.includes('kg') || normalizedUnit.includes('kilo')
+    ? Math.max(0.5, currentQty * 0.12)
+    : Math.max(2, currentQty * 0.15)
+  return abs >= threshold || pct >= 0.25
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +196,8 @@ export async function writeFudoStock(
       requestPayload: {
         old_qty: context.oldQty ?? null,
         new_qty: newQty,
+        reason: context.reason ?? null,
+        note: context.note ?? null,
       },
       createdBy: context.userId ?? null,
     })
@@ -299,6 +318,8 @@ async function writeFudoProductStock(
       requestPayload: {
         old_qty: context.oldQty ?? null,
         new_qty: newQty,
+        reason: context.reason ?? null,
+        note: context.note ?? null,
       },
       createdBy: context.userId ?? null,
     })
@@ -589,11 +610,12 @@ export async function syncToFudo(
   stockItemId: string,
   newQty: number,
   userId?: string,
+  options: StockWriteOptions = {},
 ): Promise<{ success: boolean; fudoSynced: boolean; error?: string }> {
   // 1. Get the stock_item to find fudo link
   const { data: item } = await admin
     .from('stock_items')
-    .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty')
+    .select('id, name, unit, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty')
     .eq('id', stockItemId)
     .single()
 
@@ -603,6 +625,17 @@ export async function syncToFudo(
   const skipFudo = (item as Record<string, unknown>).fudo_skip === true
 
   const fudoLink = item.fudo_ingredient_id || item.fudo_product_id
+  const writeReason = options.reason ?? 'physical_count'
+  const writeOperation = writeReason === 'physical_count' ? 'physical_stock_count' : 'manual_stock_write'
+  const note = options.note?.trim() || null
+
+  if (writeReason === 'physical_count' && stockWriteNeedsNote(item.current_qty, newQty, item.unit) && !note) {
+    return {
+      success: false,
+      fudoSynced: false,
+      error: 'La diferencia de conteo es relevante. Agregá una nota para auditoría.',
+    }
+  }
 
   if (!fudoLink && !skipFudo) {
     return {
@@ -617,7 +650,7 @@ export async function syncToFudo(
     const fudoResult = item.fudo_ingredient_id
       ? await writeFudoStock(item.fudo_ingredient_id, newQty, {
         admin,
-        operation: 'manual_stock_write',
+        operation: writeOperation,
         stockItemId,
         userId,
         entityType: 'stock_item',
@@ -626,10 +659,12 @@ export async function syncToFudo(
         fudoId: item.fudo_ingredient_id,
         oldQty: item.current_qty,
         newQty,
+        reason: writeReason,
+        note,
       })
       : await writeFudoProductStock(item.fudo_product_id!, newQty, {
         admin,
-        operation: 'manual_stock_write',
+        operation: writeOperation,
         stockItemId,
         userId,
         entityType: 'stock_item',
@@ -638,6 +673,8 @@ export async function syncToFudo(
         fudoId: item.fudo_product_id!,
         oldQty: item.current_qty,
         newQty,
+        reason: writeReason,
+        note,
       })
 
     if (!fudoResult.success) {
@@ -649,7 +686,7 @@ export async function syncToFudo(
         entity_type: 'stock_item',
         entity_id: stockItemId,
         description: `Stock NO actualizado en LVE porque Fudo falló para ${item.name}: ${fudoResult.error}`,
-        metadata: { fudo_id: fudoLink, attempted_qty: newQty, local_qty_kept: item.current_qty },
+        metadata: { fudo_id: fudoLink, attempted_qty: newQty, local_qty_kept: item.current_qty, reason: writeReason, note },
       })
 
       return { success: false, fudoSynced: false, error: fudoResult.error }
@@ -684,7 +721,7 @@ export async function syncToFudo(
   await admin.from('stock_logs').insert({
     stock_item_id: stockItemId,
     user_id: userId ?? null,
-    action: 'update',
+    action: writeReason,
     old_qty: item.current_qty,
     new_qty: newQty,
   })
@@ -697,7 +734,7 @@ export async function syncToFudo(
       entity_type: 'stock_item',
       entity_id: stockItemId,
       description: `${item.name}: ${item.current_qty} → ${newQty} (sincronizado con Fudo)`,
-      metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: newQty, synced: true },
+      metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: newQty, synced: true, reason: writeReason, note },
     })
 
     return { success: true, fudoSynced: true }
