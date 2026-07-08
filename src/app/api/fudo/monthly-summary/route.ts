@@ -34,11 +34,15 @@ export async function GET(request: NextRequest) {
     const startStr = format(start, 'yyyy-MM-dd')
     const endStr = format(end, 'yyyy-MM-dd')
 
+    type JsonApiRow = { type: string; id: string; attributes?: Record<string, unknown>; relationships?: Record<string, { data: unknown }> }
+
     let page = 1
     const maxPages = 20
     while (page <= maxPages) {
       try {
-        const res = await fudo(`/sales?include=items.product&sort=-createdAt&page[size]=200&page[number]=${page}`)
+        const res = await fudo.fetch<{ data?: JsonApiRow[]; included?: JsonApiRow[] }>(
+          `/sales?include=items.product&sort=-createdAt&page[size]=200&page[number]=${page}`
+        )
 
         const salesData = res.data ?? []
         const included = res.included ?? []

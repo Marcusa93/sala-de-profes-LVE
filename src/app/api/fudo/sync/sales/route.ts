@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireRole } from '@/lib/supabase/require-role'
 import { fudo, type FudoSale } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
@@ -8,6 +9,9 @@ import { fudo, type FudoSale } from '@/lib/fudoClient'
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireRole(['socio', 'encargado'])
+    if (auth.response) return auth.response
+
     const body = await request.json().catch(() => ({}))
     const from = body?.from as string | undefined
     const to = body?.to as string | undefined

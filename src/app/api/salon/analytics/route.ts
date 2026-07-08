@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { format, subDays, parseISO, differenceInMinutes } from 'date-fns'
 import { es } from 'date-fns/locale/es'
+import { getFudoToken } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
 // GET /api/salon/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -10,16 +11,6 @@ import { es } from 'date-fns/locale/es'
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
-
-async function getFudoToken() {
-  const res = await fetch('https://auth.fu.do/authenticate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ login: process.env.FUDO_LOGIN, password: process.env.FUDO_PASSWORD }),
-  })
-  if (!res.ok) throw new Error('Fudo auth failed')
-  return (await res.json()).token as string
-}
 
 export async function GET(request: NextRequest) {
   try {

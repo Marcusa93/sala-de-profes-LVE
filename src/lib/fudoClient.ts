@@ -102,7 +102,7 @@ function flattenResource(resource: JsonApiResource) {
 // Fetch with auth + auto-retry on 401
 // ---------------------------------------------------------------------------
 
-async function fudoFetch<T = unknown>(path: string, options?: RequestInit): Promise<T> {
+async function fudoFetch<T = unknown>(path: string, options?: RequestInit, attempt = 0): Promise<T> {
   const token = await getToken()
 
   const res = await fetch(`${FUDO_API_URL}${path}`, {
@@ -118,7 +118,12 @@ async function fudoFetch<T = unknown>(path: string, options?: RequestInit): Prom
     if (res.status === 401 && cachedToken) {
       cachedToken = null
       tokenExpiresAt = 0
-      return fudoFetch<T>(path, options)
+      return fudoFetch<T>(path, options, attempt)
+    }
+    if (res.status === 429 && attempt < 2) {
+      const retryAfter = Math.min(parseInt(res.headers.get('retry-after') ?? '2') || 2, 15)
+      await new Promise((r) => setTimeout(r, retryAfter * 1000))
+      return fudoFetch<T>(path, options, attempt + 1)
     }
     const body = await res.text().catch(() => '')
     throw new Error(`Fudo API ${res.status} on ${path}: ${body}`)
@@ -243,8 +248,8 @@ export type FudoIngredient = {
 export const fudo = {
   testConnection: async () => {
     try {
-      const token = await getToken()
-      return { ok: true, token: token.slice(0, 10) + '...' }
+      await getToken()
+      return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'Unknown' }
     }
@@ -260,14 +265,38 @@ export const fudo = {
 
   getSales: async (params?: { from?: string; to?: string; includeItems?: boolean }): Promise<FudoSale[]> => {
     const include = params?.includeItems ? '?include=items,payments&sort=-closedAt' : '?sort=-closedAt'
-    const all = await fudoFetchAll<FudoSale>(`/sales${include}`)
-    if (!params?.from && !params?.to) return all
-    return all.filter((s) => {
-      const d = s.createdAt || s.closedAt || ''
-      if (params.from && d < params.from) return false
-      if (params.to && d > params.to + 'T23:59:59') return false
-      return true
-    })
+    const path = `/sales${include}`
+
+    if (!params?.from) {
+      const all = await fudoFetchAll<FudoSale>(path)
+      if (!params?.to) return all
+      return all.filter((s) => (s.createdAt || s.closedAt || '') <= params.to! + 'T23:59:59')
+    }
+
+    // Con `from`: las ventas vienen ordenadas por fecha descendente, así que
+    // cortamos la paginación apenas una página entera queda antes del rango.
+    const pageSize = 500
+    const matched: FudoSale[] = []
+    let page = 1
+    while (page <= 100) {
+      const sep = path.includes('?') ? '&' : '?'
+      const response = await fudoFetch<JsonApiResponse>(`${path}${sep}page[size]=${pageSize}&page[number]=${page}`)
+      const items = Array.isArray(response.data) ? response.data : response.data ? [response.data] : []
+      const sales = items.map(flattenResource) as unknown as FudoSale[]
+
+      let allBeforeRange = sales.length > 0
+      for (const s of sales) {
+        const d = s.createdAt || s.closedAt || ''
+        if (d >= params.from) allBeforeRange = false
+        if (d < params.from) continue
+        if (params.to && d > params.to + 'T23:59:59') continue
+        matched.push(s)
+      }
+
+      if (allBeforeRange || items.length < pageSize) break
+      page++
+    }
+    return matched
   },
 
   /** Fetch sales with included items in a single request (more efficient) */
@@ -336,4 +365,4 @@ export const fudo = {
   fetchAll: fudoFetchAll,
 }
 
-export { fudoFetch, fudoFetchAll }
+export { fudoFetch, fudoFetchAll, getToken as getFudoToken }
