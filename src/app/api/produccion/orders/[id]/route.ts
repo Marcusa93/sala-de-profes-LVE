@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { Database } from '@/types/database'
+
+type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
+type ProductionOutputPayload = Omit<ProductionOutputInsert, 'production_order_id'>
 
 // ---------------------------------------------------------------------------
 // GET /api/produccion/orders/[id]
@@ -36,21 +40,21 @@ function isLotSchemaError(message: string | undefined) {
   )
 }
 
-function buildOutputPayload(body: Record<string, unknown>, includeLotFields: boolean) {
-  const payload: Record<string, unknown> = {
-    stock_item_id: body.stock_item_id || null,
-    output_name: body.output_name,
+function buildOutputPayload(body: Record<string, unknown>, includeLotFields: boolean): ProductionOutputPayload {
+  const payload: ProductionOutputPayload = {
+    stock_item_id: typeof body.stock_item_id === 'string' ? body.stock_item_id : null,
+    output_name: String(body.output_name ?? ''),
     qty_produced: Number(body.qty_produced),
     theoretical_qty: body.theoretical_qty != null ? Number(body.theoretical_qty) : null,
-    unit: body.unit,
+    unit: typeof body.unit === 'string' ? body.unit : 'kg',
     is_waste: Boolean(body.is_waste),
-    notes: body.notes ?? null,
+    notes: typeof body.notes === 'string' ? body.notes : null,
   }
 
   if (includeLotFields) {
-    payload.lot_code = typeof body.lot_code === 'string' ? body.lot_code.trim() || null : body.lot_code ?? null
-    payload.produced_at = body.produced_at ?? null
-    payload.expires_at = body.expires_at ?? null
+    payload.lot_code = typeof body.lot_code === 'string' ? body.lot_code.trim() || null : null
+    payload.produced_at = typeof body.produced_at === 'string' ? body.produced_at : null
+    payload.expires_at = typeof body.expires_at === 'string' ? body.expires_at : null
   }
 
   return payload
@@ -70,9 +74,8 @@ async function validateStockMapping(
 
   if (error || !item) return error?.message ?? 'Item de stock no encontrado'
 
-  const isLocalOnly = (item as Record<string, unknown>).fudo_skip === true
-  if (!item.fudo_ingredient_id && !item.fudo_product_id && !isLocalOnly) {
-    return `${item.name}: sin mapeo Fudo ni local explícito`
+  if (!item.fudo_ingredient_id && !item.fudo_product_id) {
+    return `${item.name}: sin vínculo Fudo`
   }
 
   return null
@@ -262,6 +265,9 @@ export async function PATCH(
     if (action === 'add_output') {
       if (!body.output_name || body.qty_produced === undefined || !body.unit) {
         return NextResponse.json({ error: 'add_output requiere: output_name, qty_produced, unit' }, { status: 400 })
+      }
+      if (!body.is_waste && !body.stock_item_id) {
+        return NextResponse.json({ error: 'Producto final bloqueado: elegí un item vinculado a Fudo' }, { status: 409 })
       }
       if (!body.is_waste && body.stock_item_id) {
         const mappingError = await validateStockMapping(admin, String(body.stock_item_id))

@@ -317,7 +317,7 @@ export type Database = {
       }
       suppliers: {
         Row: {
-          id: number
+          id: string
           name: string
           contact_name: string | null
           phone: string | null
@@ -330,7 +330,7 @@ export type Database = {
           fudo_provider_id: string | null
         }
         Insert: {
-          id?: number
+          id?: string
           name: string
           contact_name?: string | null
           phone?: string | null
@@ -343,7 +343,7 @@ export type Database = {
           fudo_provider_id?: string | null
         }
         Update: {
-          id?: number
+          id?: string
           name?: string
           contact_name?: string | null
           phone?: string | null
@@ -359,16 +359,18 @@ export type Database = {
       }
       stock_items: {
         Row: {
-          id: number
+          id: string
           name: string
           unit: string
           min_level: number
           current_qty: number
           cost_per_unit: number | null
           shelf_life_days: number | null
-          supplier_id: number | null
+          purchase_lead_time_days: number | null
+          supplier_id: string | null
           fudo_product_id: string | null
           fudo_ingredient_id: string | null
+          fudo_skip: boolean
           is_active: boolean
           created_at: string
           updated_at: string
@@ -380,16 +382,18 @@ export type Database = {
           last_ordered_at: string | null
         }
         Insert: {
-          id?: number
+          id?: string
           name: string
           unit: string
           min_level?: number
           current_qty?: number
           cost_per_unit?: number | null
           shelf_life_days?: number | null
-          supplier_id?: number | null
+          purchase_lead_time_days?: number | null
+          supplier_id?: string | null
           fudo_product_id?: string | null
           fudo_ingredient_id?: string | null
+          fudo_skip?: boolean
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -398,16 +402,18 @@ export type Database = {
           notes?: string | null
         }
         Update: {
-          id?: number
+          id?: string
           name?: string
           unit?: string
           min_level?: number
           current_qty?: number
           cost_per_unit?: number | null
           shelf_life_days?: number | null
-          supplier_id?: number | null
+          purchase_lead_time_days?: number | null
+          supplier_id?: string | null
           fudo_product_id?: string | null
           fudo_ingredient_id?: string | null
+          fudo_skip?: boolean
           is_active?: boolean
           created_at?: string
           updated_at?: string
@@ -1198,10 +1204,11 @@ export type Database = {
           id: number
           name: string
           description: string | null
-          input_stock_item_id: number | null
-          input_unit: string
+          recipe_id: string | null
+          default_input_stock_item_id: string | null
+          default_input_unit: string
           is_active: boolean
-          created_by: string | null
+          sort_order: number
           created_at: string
           updated_at: string
         }
@@ -1209,10 +1216,11 @@ export type Database = {
           id?: number
           name: string
           description?: string | null
-          input_stock_item_id?: number | null
-          input_unit?: string
+          recipe_id?: string | null
+          default_input_stock_item_id?: string | null
+          default_input_unit?: string
           is_active?: boolean
-          created_by?: string | null
+          sort_order?: number
           created_at?: string
           updated_at?: string
         }
@@ -1220,10 +1228,11 @@ export type Database = {
           id?: number
           name?: string
           description?: string | null
-          input_stock_item_id?: number | null
-          input_unit?: string
+          recipe_id?: string | null
+          default_input_stock_item_id?: string | null
+          default_input_unit?: string
           is_active?: boolean
-          created_by?: string | null
+          sort_order?: number
           created_at?: string
           updated_at?: string
         }
@@ -1233,7 +1242,7 @@ export type Database = {
         Row: {
           id: number
           template_id: number
-          stock_item_id: number | null
+          stock_item_id: string | null
           output_name: string
           theoretical_yield_pct: number
           output_unit: string
@@ -1244,7 +1253,7 @@ export type Database = {
         Insert: {
           id?: number
           template_id: number
-          stock_item_id?: number | null
+          stock_item_id?: string | null
           output_name: string
           theoretical_yield_pct: number
           output_unit: string
@@ -1255,7 +1264,7 @@ export type Database = {
         Update: {
           id?: number
           template_id?: number
-          stock_item_id?: number | null
+          stock_item_id?: string | null
           output_name?: string
           theoretical_yield_pct?: number
           output_unit?: string
@@ -1271,11 +1280,15 @@ export type Database = {
           name: string
           parent_order_id: number | null
           template_id: number | null
-          status: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+          status: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
           chef_id: string | null
           notes: string | null
           started_at: string | null
           completed_at: string | null
+          submitted_at: string | null
+          reviewed_by: string | null
+          reviewed_at: string | null
+          review_notes: string | null
           created_at: string
           updated_at: string
         }
@@ -1284,11 +1297,15 @@ export type Database = {
           name: string
           parent_order_id?: number | null
           template_id?: number | null
-          status?: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+          status?: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
           chef_id?: string | null
           notes?: string | null
           started_at?: string | null
           completed_at?: string | null
+          submitted_at?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          review_notes?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1297,11 +1314,15 @@ export type Database = {
           name?: string
           parent_order_id?: number | null
           template_id?: number | null
-          status?: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+          status?: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
           chef_id?: string | null
           notes?: string | null
           started_at?: string | null
           completed_at?: string | null
+          submitted_at?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          review_notes?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1311,7 +1332,7 @@ export type Database = {
         Row: {
           id: number
           production_order_id: number
-          stock_item_id: number
+          stock_item_id: string
           qty_used: number
           unit: string
           cost_per_unit: number | null
@@ -1321,7 +1342,7 @@ export type Database = {
         Insert: {
           id?: number
           production_order_id: number
-          stock_item_id: number
+          stock_item_id: string
           qty_used: number
           unit: string
           cost_per_unit?: number | null
@@ -1331,11 +1352,15 @@ export type Database = {
         Update: {
           id?: number
           production_order_id?: number
-          stock_item_id?: number
+          stock_item_id?: string
           qty_used?: number
           unit?: string
           cost_per_unit?: number | null
           stock_movement_id?: number | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       attendance_audit: {
         Row: {
           id: string
@@ -1559,7 +1584,7 @@ export type Database = {
         Row: {
           id: number
           production_order_id: number
-          stock_item_id: number | null
+          stock_item_id: string | null
           output_name: string
           qty_produced: number
           theoretical_qty: number | null
@@ -1567,12 +1592,15 @@ export type Database = {
           is_waste: boolean
           notes: string | null
           stock_movement_id: number | null
+          lot_code: string | null
+          produced_at: string | null
+          expires_at: string | null
           created_at: string
         }
         Insert: {
           id?: number
           production_order_id: number
-          stock_item_id?: number | null
+          stock_item_id?: string | null
           output_name: string
           qty_produced: number
           theoretical_qty?: number | null
@@ -1580,12 +1608,15 @@ export type Database = {
           is_waste?: boolean
           notes?: string | null
           stock_movement_id?: number | null
+          lot_code?: string | null
+          produced_at?: string | null
+          expires_at?: string | null
           created_at?: string
         }
         Update: {
           id?: number
           production_order_id?: number
-          stock_item_id?: number | null
+          stock_item_id?: string | null
           output_name?: string
           qty_produced?: number
           theoretical_qty?: number | null
@@ -1593,7 +1624,13 @@ export type Database = {
           is_waste?: boolean
           notes?: string | null
           stock_movement_id?: number | null
+          lot_code?: string | null
+          produced_at?: string | null
+          expires_at?: string | null
           created_at?: string
+        }
+        Relationships: []
+      }
       wifi_access_points: {
         Row: {
           id: string
@@ -1752,6 +1789,7 @@ export type Database = {
       production_dashboard: {
         Args: { p_days?: number }
         Returns: Record<string, unknown>
+      }
       clock_in_secure: {
         Args: {
           p_photo_url?: string | null
@@ -2051,7 +2089,7 @@ export type ProductionOutput = Database['public']['Tables']['production_outputs'
 export type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
 export type ProductionOutputUpdate = Database['public']['Tables']['production_outputs']['Update']
 
-export type ProductionOrderStatus = 'draft' | 'in_progress' | 'completed' | 'cancelled'
+export type ProductionOrderStatus = 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
 
 // Full order with nested inputs + outputs (returned by GET /api/produccion/orders/[id])
 export type ProductionOrderDetail = ProductionOrder & {

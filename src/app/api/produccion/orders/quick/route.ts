@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { Database } from '@/types/database'
+
+type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
+type ProductionInputInsert = Database['public']['Tables']['production_inputs']['Insert']
+
+type QuickInputPayload = {
+  stock_item_id?: string | null
+  qty_used: number
+  unit?: string
+  cost_per_unit?: number | null
+}
 
 type QuickOutputPayload = {
   stock_item_id?: string | null
@@ -31,7 +42,7 @@ async function authorize(supabase: Awaited<ReturnType<typeof createClient>>) {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, first_name, last_name')
     .eq('id', user.id)
     .single()
 
@@ -39,14 +50,14 @@ async function authorize(supabase: Awaited<ReturnType<typeof createClient>>) {
     return { user: null, error: NextResponse.json({ error: 'Sin acceso' }, { status: 403 }) }
   }
 
-  return { user, error: null }
+  return { user, profile, error: null }
 }
 
-function buildOutputRows(orderId: number, outputs: QuickOutputPayload[], includeLotFields: boolean) {
+function buildOutputRows(orderId: number, outputs: QuickOutputPayload[], includeLotFields: boolean): ProductionOutputInsert[] {
   return outputs
     .filter((output) => output.output_name && output.qty_produced !== undefined)
     .map((output) => {
-      const row: Record<string, unknown> = {
+      const row: ProductionOutputInsert = {
         production_order_id: orderId,
         stock_item_id: output.stock_item_id || null,
         output_name: output.output_name,
@@ -100,9 +111,8 @@ async function validateStockMappings(
       errors.push(`${id}: item de stock no encontrado`)
       continue
     }
-    const isLocalOnly = (row as Record<string, unknown>).fudo_skip === true
-    if (!row.fudo_ingredient_id && !row.fudo_product_id && !isLocalOnly) {
-      errors.push(`${row.name}: sin mapeo Fudo ni local explícito`)
+    if (!row.fudo_ingredient_id && !row.fudo_product_id) {
+      errors.push(`${row.name}: sin vínculo Fudo`)
     }
   }
 
@@ -114,23 +124,47 @@ export async function POST(request: NextRequest) {
 
   try {
     const supabase = await createClient()
-    const { user, error: authErr } = await authorize(supabase)
+    const { user, profile, error: authErr } = await authorize(supabase)
     if (authErr || !user) return authErr!
 
     const body = await request.json().catch(() => null)
-    if (!body?.name || !body?.input || !body?.outputs?.length) {
+    if (!body?.name || !body?.outputs?.length || (!body?.input && !body?.inputs?.length)) {
       return NextResponse.json({
-        error: 'Campos requeridos: name, input (stock_item_id, qty_used, unit), outputs[]',
+        error: 'Campos requeridos: name, inputs[] (stock_item_id, qty_used, unit), outputs[]',
       }, { status: 400 })
     }
 
     const admin = createAdminClient()
-    const autoComplete = body.auto_complete !== false
+    const autoComplete = body.auto_complete === true
     const warnings: string[] = []
+    const inputs = (Array.isArray(body.inputs) ? body.inputs : [body.input]) as QuickInputPayload[]
+    const outputs = body.outputs as QuickOutputPayload[]
+
+    const invalidInputs = inputs
+      .filter((input) => !input.stock_item_id || Number(input.qty_used) <= 0)
+      .map((input) => input.stock_item_id ?? 'materia prima sin item')
+
+    if (invalidInputs.length > 0) {
+      return NextResponse.json({
+        success: false,
+        error: `Producción bloqueada: materias primas inválidas o sin item Fudo: ${invalidInputs.join(', ')}`,
+      }, { status: 409 })
+    }
+
+    const outputsWithoutFudoItem = outputs
+      .filter((output) => !output.is_waste && !output.stock_item_id)
+      .map((output) => output.output_name)
+
+    if (outputsWithoutFudoItem.length > 0) {
+      return NextResponse.json({
+        success: false,
+        error: `Producción bloqueada: estos productos finales no tienen item Fudo seleccionado: ${outputsWithoutFudoItem.join(', ')}`,
+      }, { status: 409 })
+    }
 
     const mappingErrors = await validateStockMappings(admin, [
-      String(body.input.stock_item_id),
-      ...((body.outputs as QuickOutputPayload[])
+      ...inputs.map((input) => String(input.stock_item_id)),
+      ...(outputs
         .filter((output) => !output.is_waste && output.stock_item_id)
         .map((output) => String(output.stock_item_id))),
     ])
@@ -147,9 +181,10 @@ export async function POST(request: NextRequest) {
       .insert({
         name: body.name,
         template_id: body.template_id ?? null,
-        status: 'draft',
+        status: autoComplete ? 'draft' : 'pending_review',
         chef_id: user.id,
         notes: body.notes ?? null,
+        submitted_at: autoComplete ? null : new Date().toISOString(),
       })
       .select('id')
       .single()
@@ -160,21 +195,23 @@ export async function POST(request: NextRequest) {
 
     orderId = order.id
 
+    const inputRows: ProductionInputInsert[] = inputs.map((input) => ({
+      production_order_id: orderId!,
+      stock_item_id: input.stock_item_id!,
+      qty_used: Number(input.qty_used),
+      unit: input.unit ?? 'kg',
+      cost_per_unit: input.cost_per_unit != null ? Number(input.cost_per_unit) : null,
+    }))
+
     const { error: inputErr } = await admin
       .from('production_inputs')
-      .insert({
-        production_order_id: orderId,
-        stock_item_id: body.input.stock_item_id,
-        qty_used: Number(body.input.qty_used),
-        unit: body.input.unit ?? 'kg',
-        cost_per_unit: body.input.cost_per_unit != null ? Number(body.input.cost_per_unit) : null,
-      })
+      .insert(inputRows)
 
     if (inputErr) {
       throw new Error(`Error al agregar insumo: ${inputErr.message}`)
     }
 
-    const outputRowsWithLots = buildOutputRows(orderId, body.outputs as QuickOutputPayload[], true)
+    const outputRowsWithLots = buildOutputRows(orderId, outputs, true)
     if (outputRowsWithLots.length === 0) {
       throw new Error('Se requiere al menos una salida')
     }
@@ -187,7 +224,7 @@ export async function POST(request: NextRequest) {
     if (outputErr && isLotSchemaError(outputErr.message)) {
       lotSupport = false
       warnings.push('La migración de lotes todavía no está aplicada. La producción se guardó sin vencimientos por lote.')
-      const fallbackRows = buildOutputRows(orderId, body.outputs as QuickOutputPayload[], false)
+      const fallbackRows = buildOutputRows(orderId, outputs, false)
       const fallbackInsert = await admin.from('production_outputs').insert(fallbackRows)
       outputErr = fallbackInsert.error
     }
@@ -197,12 +234,39 @@ export async function POST(request: NextRequest) {
     }
 
     if (!autoComplete) {
+      const authorName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || 'Cocina'
+      const inputSummary = inputs
+        .map((input) => `${input.qty_used}${input.unit ?? 'kg'}`)
+        .join(' + ')
+      const outputSummary = outputs
+        .filter((output) => !output.is_waste)
+        .map((output) => `${output.output_name} ${output.qty_produced}${output.unit ?? 'kg'}`)
+        .join(', ')
+
+      await admin.from('announcements').insert({
+        author_id: user.id,
+        type: 'operativo',
+        priority: 'alta',
+        title: `Producción enviada a validar: ${body.name}`,
+        body: [
+          `${authorName} cargó una producción y espera validación.`,
+          `Entradas: ${inputSummary || 'sin detalle'}.`,
+          `Salidas: ${outputSummary || 'sin detalle'}.`,
+          'Revisar si la producción responde a venta real, reposición necesaria o pedido pendiente antes de aprobar.',
+        ].join('\n'),
+        scope: 'role',
+        target_role: 'encargado',
+        target_user_id: null,
+        is_active: true,
+        expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+      })
+
       return NextResponse.json({
         success: true,
         order_id: orderId,
-        status: 'draft',
+        status: 'pending_review',
         warnings,
-        message: 'Orden creada como borrador',
+        message: 'Producción enviada a validación. Stock y Fudo todavía no fueron modificados.',
       }, { status: 201 })
     }
 

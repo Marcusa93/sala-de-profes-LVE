@@ -27,8 +27,30 @@ export type FudoIngredient = {
   providerId?: string
 }
 
+type FudoProductStock = {
+  id: string
+  name: string
+  stock: number
+  cost: number | null
+  stockControl: boolean
+}
+
+type StockItemRow = {
+  id: number | string
+  name: string
+  unit: string
+  category: string
+  fudo_ingredient_id: string | null
+  fudo_product_id: string | null
+  current_qty: number
+  shelf_life_days?: number | null
+  cost_per_unit: number | null
+  supplier_id: number | null
+  fudo_skip?: boolean | null
+}
+
 export type SyncResult = {
-  read: { synced: number; total: number; errors: string[] }
+  read: { synced: number; total: number; created: number; linked: number; errors: string[] }
   write?: { pushed: number; errors: string[] }
   timestamp: string
   fudoConnected: boolean
@@ -56,6 +78,344 @@ function findDuplicateIds(ids: Array<string | null | undefined>): Set<string> {
   }
 
   return duplicates
+}
+
+function normalizeName(value: string | null | undefined) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function inferStockCategoryFromProductName(name: string) {
+  const text = normalizeName(name)
+
+  if (/\b(budin|budin|cuadrado|cookie|galleta|alfajor|roll|rosca|rosquita|brownie|medialuna|chipa|pastafrola|pepa|bombita)\b/.test(text)) {
+    return 'panaderia'
+  }
+
+  if (/\b(empanada|pizza|tortilla|sanguche|ciabatta|baguetin)\b/.test(text)) {
+    return 'panaderia'
+  }
+
+  if (/\b(coca|pepsi|sprite|fanta|schweppes|aquarius|agua|benedicto|cerveza|vino|fernet|vermut|trumpeter|malbec|lata|botella)\b/.test(text)) {
+    return 'bebidas'
+  }
+
+  if (/\b(yerba|te|cafe)\b/.test(text)) {
+    return 'condimentos'
+  }
+
+  return 'otros'
+}
+
+function inferShelfLifeDaysFromProductName(name: string): number | null {
+  const text = normalizeName(name)
+
+  if (/\b(budin|cuadrado|cookie|galleta|alfajor|roll|rosca|rosquita|brownie|medialuna|chipa|pastafrola|pepa|bombita)\b/.test(text)) {
+    return 7
+  }
+
+  if (/\b(empanada|tortilla|sanguche|ciabatta|baguetin)\b/.test(text)) {
+    return 3
+  }
+
+  return null
+}
+
+function inferStockCategoryFromIngredientName(name: string) {
+  const text = normalizeName(name)
+
+  if (/\b(caja|cajas|carton|sorbete|bolsa|servilleta|vaso|tapa|film|papel)\b/.test(text)) return 'desechables'
+  if (/\b(jamon|crudo|cocido|lomo|carne|molida|pollo|filet|panceta|mortadela|ternera|bondiola|chorizo|milanesa|tira)\b/.test(text)) return 'carnes'
+  if (/\b(leche|queso|crema|manteca|yogur|helado|cremoso|mozzarella|tybo|azul|cremette)\b/.test(text)) return 'lacteos'
+  if (/\b(banana|manzana|limon|naranja|palta|frutilla|pera)\b/.test(text)) return 'frutas'
+  if (/\b(papa|tomate|cebolla|lechuga|repollo|verdeo|zanahoria|rucula|berenjena|morron|pepino)\b/.test(text)) return 'verduras'
+  if (/\b(harina|azucar|cacao|chocolate|levadura|budin|cookie|alfajor|roll|chipa|medialuna|pan|pimenton|canela|sal|yerba|cafe)\b/.test(text)) return 'panaderia'
+  if (/\b(aceite|vinagre|salsa|mayonesa|mostaza|ketchup|condimento)\b/.test(text)) return 'condimentos'
+
+  return 'otros'
+}
+
+function inferUnitFromIngredientName(name: string, category: string) {
+  const text = normalizeName(name)
+
+  if (/\b(caja|cajas|carton|sorbete|bolsa|servilleta|vaso|tapa|rollo|unidad|unid)\b/.test(text)) return 'unidad'
+  if (/\b(leche|aceite|vinagre|jugo|almibar)\b/.test(text)) return 'l'
+  if (/\b(jamon|crudo|cocido|lomo|carne|molida|pollo|filet|panceta|mortadela|ternera|bondiola|chorizo|milanesa|tira)\b/.test(text)) return 'kg'
+  if (/\b(queso|crema|manteca|cremoso|mozzarella|tybo|azul|cremette|helado)\b/.test(text)) return 'kg'
+  if (/\b(harina|azucar|cacao|chocolate|pimenton|canela|sal|yerba|cafe|papas en chips)\b/.test(text)) return 'kg'
+  if (/\b(papa|tomate|cebolla|lechuga|repollo|verdeo|zanahoria|rucula|berenjena|morron|pepino)\b/.test(text)) return 'kg'
+  if (/\b(banana|manzana|palta|limon|naranja|pera)\b/.test(text)) return 'unidad'
+  if (category === 'carnes' || category === 'lacteos' || category === 'verduras') return 'kg'
+  if (category === 'frutas') return 'unidad'
+
+  return 'unidad'
+}
+
+function inferShelfLifeDaysFromIngredientName(name: string, category: string): number | null {
+  if (category === 'carnes') return 3
+  if (category === 'lacteos') return 5
+  if (category === 'verduras' || category === 'frutas') return 4
+
+  const text = normalizeName(name)
+  if (/\b(budin|cuadrado|cookie|galleta|alfajor|roll|rosca|brownie|medialuna|chipa|pastafrola|pepa|bombita)\b/.test(text)) return 7
+
+  return null
+}
+
+function stockItemSelect() {
+  return 'id, name, unit, category, fudo_ingredient_id, fudo_product_id, current_qty, shelf_life_days, cost_per_unit, supplier_id, fudo_skip'
+}
+
+async function markStaleFudoLinksLocal(
+  admin: SupabaseClient,
+  stockItems: StockItemRow[],
+  fudoIngredientIds: Set<string>,
+  fudoProductIds: Set<string>,
+): Promise<{ stockItems: StockItemRow[]; marked: number; errors: string[] }> {
+  const result = {
+    stockItems: [] as StockItemRow[],
+    marked: 0,
+    errors: [] as string[],
+  }
+
+  for (const item of stockItems) {
+    const staleIngredient = Boolean(item.fudo_ingredient_id && !fudoIngredientIds.has(item.fudo_ingredient_id))
+    const staleProduct = Boolean(item.fudo_product_id && !fudoProductIds.has(item.fudo_product_id))
+
+    if (!staleIngredient && !staleProduct) {
+      result.stockItems.push(item)
+      continue
+    }
+
+    const staleId = item.fudo_ingredient_id ?? item.fudo_product_id
+    const staleType = item.fudo_ingredient_id ? 'ingrediente' : 'producto'
+
+    const { error } = await admin
+      .from('stock_items')
+      .update({
+        fudo_ingredient_id: staleIngredient ? null : item.fudo_ingredient_id,
+        fudo_product_id: staleProduct ? null : item.fudo_product_id,
+        fudo_skip: true,
+        notes: `Local LVE: tenia vinculo Fudo ${staleType} ${staleId}, pero ese ID ya no existe en Fudo actual.`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', item.id)
+
+    if (error) {
+      result.errors.push(`Could not mark stale Fudo link local for ${item.name}: ${error.message}`)
+      result.stockItems.push(item)
+      continue
+    }
+
+    result.marked++
+  }
+
+  return result
+}
+
+async function ensureFudoProductStockItems(
+  admin: SupabaseClient,
+  fudoProducts: FudoProductStock[],
+  stockItems: StockItemRow[],
+): Promise<{ stockItems: StockItemRow[]; created: number; linked: number; errors: string[] }> {
+  const result = {
+    stockItems: [...stockItems],
+    created: 0,
+    linked: 0,
+    errors: [] as string[],
+  }
+
+  const linkedProductIds = new Set(
+    result.stockItems
+      .map((item) => item.fudo_product_id)
+      .filter((id): id is string => Boolean(id)),
+  )
+
+  const unlinkedByName = new Map<string, StockItemRow[]>()
+  for (const item of result.stockItems) {
+    if (item.fudo_skip === true) continue
+    if (item.fudo_product_id || item.fudo_ingredient_id) continue
+    const key = normalizeName(item.name)
+    if (!key) continue
+    const group = unlinkedByName.get(key) ?? []
+    group.push(item)
+    unlinkedByName.set(key, group)
+  }
+
+  for (const product of fudoProducts) {
+    if (linkedProductIds.has(product.id)) continue
+
+    const exactLocalMatches = unlinkedByName.get(normalizeName(product.name)) ?? []
+    if (exactLocalMatches.length === 1) {
+      const existing = exactLocalMatches[0]
+      const { data, error } = await admin
+        .from('stock_items')
+        .update({
+          fudo_product_id: product.id,
+          fudo_ingredient_id: null,
+          current_qty: product.stock,
+          unit: 'unidad',
+          category: inferStockCategoryFromProductName(product.name),
+          shelf_life_days: inferShelfLifeDaysFromProductName(product.name),
+          cost_per_unit: product.cost ?? existing.cost_per_unit ?? 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select(stockItemSelect())
+        .single()
+
+      if (error || !data) {
+        result.errors.push(`Could not link Fudo product ${product.name} (${product.id}): ${error?.message ?? 'no row returned'}`)
+        continue
+      }
+
+      linkedProductIds.add(product.id)
+      result.linked++
+      result.stockItems = result.stockItems.map((item) => item.id === existing.id ? data as StockItemRow : item)
+      continue
+    }
+
+    const category = inferStockCategoryFromProductName(product.name)
+    const shelfLifeDays = inferShelfLifeDaysFromProductName(product.name)
+
+    const { data, error } = await admin
+      .from('stock_items')
+      .insert({
+        name: product.name,
+        unit: 'unidad',
+        min_qty: 0,
+        current_qty: product.stock,
+        cost_per_unit: product.cost ?? 0,
+        shelf_life_days: shelfLifeDays,
+        supplier_id: null,
+        fudo_product_id: product.id,
+        fudo_ingredient_id: null,
+        fudo_skip: false,
+        is_active: true,
+        category,
+        notes: 'Importado automáticamente desde Fudo producto con control de stock.',
+        updated_at: new Date().toISOString(),
+      })
+      .select(stockItemSelect())
+      .single()
+
+    if (error || !data) {
+      result.errors.push(`Could not create stock item for Fudo product ${product.name} (${product.id}): ${error?.message ?? 'no row returned'}`)
+      continue
+    }
+
+    linkedProductIds.add(product.id)
+    result.created++
+    result.stockItems.push(data as StockItemRow)
+  }
+
+  return result
+}
+
+async function ensureFudoIngredientStockItems(
+  admin: SupabaseClient,
+  fudoIngredients: FudoIngredient[],
+  stockItems: StockItemRow[],
+): Promise<{ stockItems: StockItemRow[]; created: number; linked: number; errors: string[] }> {
+  const result = {
+    stockItems: [...stockItems],
+    created: 0,
+    linked: 0,
+    errors: [] as string[],
+  }
+
+  const linkedIngredientIds = new Set(
+    result.stockItems
+      .map((item) => item.fudo_ingredient_id)
+      .filter((id): id is string => Boolean(id)),
+  )
+
+  const unlinkedByName = new Map<string, StockItemRow[]>()
+  for (const item of result.stockItems) {
+    if (item.fudo_skip === true) continue
+    if (item.fudo_product_id || item.fudo_ingredient_id) continue
+    const key = normalizeName(item.name)
+    if (!key) continue
+    const group = unlinkedByName.get(key) ?? []
+    group.push(item)
+    unlinkedByName.set(key, group)
+  }
+
+  for (const ingredient of fudoIngredients) {
+    if (!ingredient.stockControl || typeof ingredient.stock !== 'number') continue
+    if (linkedIngredientIds.has(ingredient.id)) continue
+
+    const category = inferStockCategoryFromIngredientName(ingredient.name)
+    const unit = inferUnitFromIngredientName(ingredient.name, category)
+    const shelfLifeDays = inferShelfLifeDaysFromIngredientName(ingredient.name, category)
+
+    const exactLocalMatches = unlinkedByName.get(normalizeName(ingredient.name)) ?? []
+    if (exactLocalMatches.length === 1) {
+      const existing = exactLocalMatches[0]
+      const { data, error } = await admin
+        .from('stock_items')
+        .update({
+          fudo_ingredient_id: ingredient.id,
+          fudo_product_id: null,
+          current_qty: ingredient.stock,
+          unit,
+          category,
+          shelf_life_days: shelfLifeDays,
+          cost_per_unit: ingredient.cost ?? existing.cost_per_unit ?? 0,
+          supplier_id: existing.supplier_id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select(stockItemSelect())
+        .single()
+
+      if (error || !data) {
+        result.errors.push(`Could not link Fudo ingredient ${ingredient.name} (${ingredient.id}): ${error?.message ?? 'no row returned'}`)
+        continue
+      }
+
+      linkedIngredientIds.add(ingredient.id)
+      result.linked++
+      result.stockItems = result.stockItems.map((item) => item.id === existing.id ? data as StockItemRow : item)
+      continue
+    }
+
+    const { data, error } = await admin
+      .from('stock_items')
+      .insert({
+        name: ingredient.name,
+        unit,
+        min_qty: 0,
+        current_qty: ingredient.stock,
+        cost_per_unit: ingredient.cost ?? 0,
+        shelf_life_days: shelfLifeDays,
+        supplier_id: null,
+        fudo_ingredient_id: ingredient.id,
+        fudo_product_id: null,
+        fudo_skip: false,
+        is_active: true,
+        category,
+        notes: 'Importado automáticamente desde Fudo ingrediente con control de stock.',
+        updated_at: new Date().toISOString(),
+      })
+      .select(stockItemSelect())
+      .single()
+
+    if (error || !data) {
+      result.errors.push(`Could not create stock item for Fudo ingredient ${ingredient.name} (${ingredient.id}): ${error?.message ?? 'no row returned'}`)
+      continue
+    }
+
+    linkedIngredientIds.add(ingredient.id)
+    result.created++
+    result.stockItems.push(data as StockItemRow)
+  }
+
+  return result
 }
 
 async function getFudoToken(): Promise<string> {
@@ -200,7 +560,7 @@ async function writeFudoProductStock(
 // ---------------------------------------------------------------------------
 
 export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['read']> {
-  const result = { synced: 0, total: 0, errors: [] as string[] }
+  const result = { synced: 0, total: 0, created: 0, linked: 0, errors: [] as string[] }
 
   // 1. Read all Fudo ingredients (now includes cost + providerId)
   // Transport/auth failures must bubble up. Stock cannot pretend it synced.
@@ -209,21 +569,51 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
   // 2. Read Fudo products (for finished goods like empanadas)
   const { fudo } = await import('@/lib/fudoClient')
   const products = await fudo.getProducts()
-  const fudoProducts: { id: string; name: string; stock: number; cost: number | null; stockControl: boolean }[] = products
-    .filter(p => p.stockControl && p.stock != null)
+  const fudoProducts: FudoProductStock[] = products
+    .filter(p => p.active === true && p.stockControl === true && typeof p.stock === 'number')
     .map(p => ({ id: p.id, name: p.name, stock: p.stock!, cost: p.cost, stockControl: true }))
 
   result.total = fudoItems.length + fudoProducts.length
 
   // 3. Get all stock_items (ingredient-linked AND product-linked)
   //    Exclude items marked as fudo_skip — those are local-only
-  const { data: stockItems } = await admin
+  const { data: initialStockItems } = await admin
     .from('stock_items')
-    .select('id, fudo_ingredient_id, fudo_product_id, current_qty, cost_per_unit, supplier_id')
+    .select(stockItemSelect())
     .eq('is_active', true)
     .neq('fudo_skip', true)
 
-  if (!stockItems) return result
+  if (!initialStockItems) return result
+
+  const fudoIngredientIds = new Set(fudoItems.map((item) => item.id))
+  const fudoProductIds = new Set(fudoProducts.map((item) => item.id))
+  const staleResult = await markStaleFudoLinksLocal(
+    admin,
+    initialStockItems as StockItemRow[],
+    fudoIngredientIds,
+    fudoProductIds,
+  )
+  result.linked += staleResult.marked
+  result.errors.push(...staleResult.errors)
+
+  const importResult = await ensureFudoProductStockItems(
+    admin,
+    fudoProducts,
+    staleResult.stockItems,
+  )
+  const ingredientImportResult = await ensureFudoIngredientStockItems(
+    admin,
+    fudoItems,
+    importResult.stockItems,
+  )
+  const stockItems = ingredientImportResult.stockItems
+  result.created += importResult.created
+  result.created += ingredientImportResult.created
+  result.linked += importResult.linked
+  result.linked += ingredientImportResult.linked
+  result.synced += importResult.created + importResult.linked + ingredientImportResult.created + ingredientImportResult.linked
+  result.errors.push(...importResult.errors)
+  result.errors.push(...ingredientImportResult.errors)
 
   // 4. Build supplier map: fudo_provider_id → supplier.id
   const { data: suppliers } = await admin
@@ -241,7 +631,7 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     fudoIngMap.set(fi.id, fi)
   }
 
-  const fudoProdMap = new Map<string, { stock: number; cost: number | null }>()
+  const fudoProdMap = new Map<string, { name: string; stock: number; cost: number | null }>()
   for (const fp of fudoProducts) {
     fudoProdMap.set(fp.id, fp)
   }
@@ -272,14 +662,15 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
   )
 
   for (const fudoItem of fudoItems) {
-    if (!fudoItem.stockControl) continue
+    if (!fudoItem.stockControl || typeof fudoItem.stock !== 'number') continue
     if (!linkedIngredientIds.has(fudoItem.id)) {
-      result.errors.push(`Unmapped Fudo ingredient: ${fudoItem.name} (${fudoItem.id})`)
+      const importError = ingredientImportResult.errors.some((error) => error.includes(`(${fudoItem.id})`))
+      if (!importError) result.errors.push(`Unmapped Fudo ingredient: ${fudoItem.name} (${fudoItem.id})`)
     }
   }
 
   for (const fudoProduct of fudoProducts) {
-    if (!linkedProductIds.has(fudoProduct.id)) {
+    if (!linkedProductIds.has(fudoProduct.id) && !importResult.errors.some((error) => error.includes(`(${fudoProduct.id})`))) {
       result.errors.push(`Unmapped Fudo product with stock control: ${fudoProduct.name} (${fudoProduct.id})`)
     }
   }
@@ -329,8 +720,6 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       }
     }
 
-    if (fudoQty === null && fudoCost === null && !fudoProviderId) continue
-
     // Build update payload — only include fields that changed
     const update: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
@@ -353,6 +742,49 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       if (supplierId) {
         update.supplier_id = supplierId
         hasChanges = true
+      }
+    }
+
+    if (si.fudo_ingredient_id) {
+      const fudoItem = fudoIngMap.get(si.fudo_ingredient_id)
+      if (fudoItem) {
+        const inferredCategory = inferStockCategoryFromIngredientName(fudoItem.name)
+        const inferredUnit = inferUnitFromIngredientName(fudoItem.name, inferredCategory)
+        const inferredShelfLife = inferShelfLifeDaysFromIngredientName(fudoItem.name, inferredCategory)
+
+        if (si.unit !== inferredUnit) {
+          update.unit = inferredUnit
+          hasChanges = true
+        }
+        if (si.category !== inferredCategory) {
+          update.category = inferredCategory
+          hasChanges = true
+        }
+        if (inferredShelfLife !== null && si.shelf_life_days !== inferredShelfLife) {
+          update.shelf_life_days = inferredShelfLife
+          hasChanges = true
+        }
+      }
+    }
+
+    if (si.fudo_product_id) {
+      const fudoProduct = fudoProdMap.get(si.fudo_product_id)
+      if (fudoProduct) {
+        const inferredCategory = inferStockCategoryFromProductName(fudoProduct.name)
+        const inferredShelfLife = inferShelfLifeDaysFromProductName(fudoProduct.name)
+
+        if (si.unit !== 'unidad') {
+          update.unit = 'unidad'
+          hasChanges = true
+        }
+        if (si.category !== inferredCategory) {
+          update.category = inferredCategory
+          hasChanges = true
+        }
+        if (inferredShelfLife !== null && si.shelf_life_days !== inferredShelfLife) {
+          update.shelf_life_days = inferredShelfLife
+          hasChanges = true
+        }
       }
     }
 

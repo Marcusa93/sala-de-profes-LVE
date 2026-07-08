@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getStockSemaphore } from '@/lib/contracts/stock'
 import { isManagerOrAbove } from '@/lib/roles'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   deriveSector,
   getOverstockThreshold,
@@ -33,6 +34,7 @@ type StockRow = {
   updated_at: string
   fudo_product_id: string | null
   fudo_ingredient_id: string | null
+  fudo_skip: boolean | null
 }
 
 type MenuRow = {
@@ -48,6 +50,47 @@ type MenuRow = {
 type MenuCategoryRow = {
   id: number
   name: string
+}
+
+type FudoSaleRow = {
+  fudo_product_id: string
+  quantity: number
+}
+
+type StockLotRow = {
+  stock_item_id: string | number
+  qty_remaining: number
+  expires_at: string | null
+  status: string
+}
+
+type StockAnomalyDecisionRow = {
+  id: string
+  issue_key: string
+  stock_item_id: string | number
+  issue_type: StockSetupIssue['type']
+  decision: 'confirmed_ok' | 'snoozed' | 'rule_created' | 'fix_fudo' | 'fix_lve'
+  note: string | null
+  snapshot: Record<string, unknown> | null
+  snoozed_until: string | null
+  created_at: string
+}
+
+type StockAnomalyRuleRow = {
+  id: string
+  stock_item_id: string | number | null
+  issue_type: StockSetupIssue['type'] | null
+  name_pattern: string | null
+  category: StockCategoryValue | null
+  unit: string | null
+  min_qty: number | null
+  max_qty: number | null
+  notify_enabled: boolean
+  notification_priority: 'baja' | 'media' | 'alta' | 'critica'
+  last_notified_at: string | null
+  created_from_issue_key: string | null
+  note: string | null
+  is_active: boolean
 }
 
 function priorityWeight(priority: StockPriority) {
@@ -70,6 +113,230 @@ function createSetupIssue(input: Omit<StockSetupIssue, 'id'>): StockSetupIssue {
   }
 }
 
+function getIssueKey(issue: Pick<StockSetupIssue, 'type' | 'stock_item_id'>) {
+  return `${issue.type}:${issue.stock_item_id}`
+}
+
+function normalizeText(value: string | null | undefined): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function isUnit(value: string | null | undefined, expected: string) {
+  return normalizeText(value) === normalizeText(expected)
+}
+
+function getExpectedUnit(item: Pick<StockRow, 'name' | 'category' | 'unit' | 'fudo_product_id'>): string | null {
+  const name = normalizeText(item.name)
+
+  if (item.fudo_product_id) {
+    return null
+  }
+
+  if (
+    item.category === 'carnes'
+    || /\b(jamon|lomo|carne|pollo|bondiola|panceta|salame|chorizo|morcilla|bife|entraña|entrana)\b/.test(name)
+  ) {
+    return 'kg'
+  }
+
+  if (/\b(leche|aceite|vinagre|almibar|salsa|crema de leche)\b/.test(name)) {
+    return 'l'
+  }
+
+  if (/\b(queso|muzzarella|mozzarella|harina|azucar|cacao|papa|papas|tomate|cebolla|zanahoria|morron|limon|palta)\b/.test(name)) {
+    return 'kg'
+  }
+
+  return null
+}
+
+function unitReviewDetail(item: StockRow): string | null {
+  const expected = getExpectedUnit(item)
+  if (!expected || isUnit(item.unit, expected)) return null
+
+  return `Figura como ${item.unit}, pero por nombre/categoría debería controlarse en ${expected}. Esto puede convertir ${item.current_qty} ${item.unit} en una lectura operativa falsa.`
+}
+
+function quantityAnomalyDetail(params: {
+  item: StockRow
+  soldLast14Days: number
+  finishedGood: boolean
+}): { severity: StockPriority; detail: string } | null {
+  const { item, soldLast14Days, finishedGood } = params
+  const name = normalizeText(item.name)
+
+  if (isUnit(item.unit, 'unidad') && Math.abs(item.current_qty - Math.round(item.current_qty)) > 0.001) {
+    return {
+      severity: 'medium',
+      detail: `Tiene ${item.current_qty} unidades con decimal. Si se cuenta por unidad, debería ser entero; si es peso/volumen, hay que corregir la unidad.`,
+    }
+  }
+
+  if (/\bbanana|bananas\b/.test(name) && item.current_qty >= 150) {
+    return {
+      severity: 'high',
+      detail: `Hay ${item.current_qty} ${item.unit} de banana. Es una cantidad alta: confirmar conteo físico, unidad y carga en Fudo.`,
+    }
+  }
+
+  if (item.category === 'carnes' && item.current_qty >= 40) {
+    return {
+      severity: 'high',
+      detail: `Hay ${item.current_qty} ${item.unit} en carnes. Revisar unidad, merma o compra duplicada antes de volver a pedir.`,
+    }
+  }
+
+  if ((item.category === 'frutas' || item.category === 'verduras') && item.current_qty >= 120) {
+    return {
+      severity: 'medium',
+      detail: `Hay ${item.current_qty} ${item.unit} en ${item.category}. Confirmar si la unidad es correcta y si hay riesgo de merma.`,
+    }
+  }
+
+  if (item.category === 'lacteos' && item.current_qty >= 80) {
+    return {
+      severity: 'medium',
+      detail: `Hay ${item.current_qty} ${item.unit} en lácteos. Revisar vencimiento, unidad y compra reciente.`,
+    }
+  }
+
+  if (finishedGood && item.current_qty >= 20 && soldLast14Days <= 3) {
+    return {
+      severity: item.shelf_life_days != null && item.shelf_life_days <= 7 ? 'high' : 'medium',
+      detail: `Hay ${item.current_qty} ${item.unit} y solo ${soldLast14Days} ventas en los últimos 14 días. Revisar producción, promo o baja de compra.`,
+    }
+  }
+
+  return null
+}
+
+function isAnomalyIssue(issue: StockSetupIssue) {
+  return issue.type === 'unit_review'
+    || issue.type === 'quantity_anomaly'
+    || issue.type === 'negative_stock'
+    || issue.type === 'stale_stock'
+    || issue.type === 'missing_lot_control'
+    || issue.type === 'expired_lot_stock'
+    || issue.type === 'mapping_conflict'
+    || issue.type === 'missing_fudo_mapping'
+    || issue.type === 'sales_stock_mismatch'
+}
+
+function isOptionalLotsError(message: string | undefined) {
+  if (!message) return false
+  return message.includes('stock_lots')
+    || message.includes('Could not find the table')
+    || message.includes('does not exist')
+}
+
+function isOptionalAnomalyControlsError(message: string | undefined) {
+  if (!message) return false
+  return message.includes('stock_anomaly_')
+    || message.includes('Could not find the table')
+    || message.includes('does not exist')
+}
+
+function ruleMatchesIssue(rule: StockAnomalyRuleRow, issue: StockSetupIssue, item: StockRow | null) {
+  if (!rule.is_active) return false
+  if (rule.issue_type && rule.issue_type !== issue.type) return false
+  if (rule.stock_item_id && String(rule.stock_item_id) !== String(issue.stock_item_id)) return false
+  if (!item) return false
+  if (rule.category && rule.category !== item.category) return false
+  if (rule.unit && normalizeText(rule.unit) !== normalizeText(item.unit)) return false
+  if (rule.name_pattern && !normalizeText(item.name).includes(normalizeText(rule.name_pattern))) return false
+  return true
+}
+
+function isWithinRule(rule: StockAnomalyRuleRow, qty: number) {
+  if (rule.min_qty != null && qty < Number(rule.min_qty)) return false
+  if (rule.max_qty != null && qty > Number(rule.max_qty)) return false
+  return true
+}
+
+function confirmedOkStillApplies(decision: StockAnomalyDecisionRow, item: StockRow | null) {
+  if (!item) return false
+  const snapshotQty = Number(decision.snapshot?.current_qty)
+  const snapshotUnit = String(decision.snapshot?.unit ?? '')
+
+  if (snapshotUnit && normalizeText(snapshotUnit) !== normalizeText(item.unit)) return false
+  if (!Number.isFinite(snapshotQty)) return true
+  if (snapshotQty === 0) return Math.abs(item.current_qty) <= 1
+
+  const diffPct = Math.abs(item.current_qty - snapshotQty) / Math.abs(snapshotQty)
+  return diffPct <= 0.2
+}
+
+function shouldSuppressIssue(params: {
+  issue: StockSetupIssue
+  item: StockRow | null
+  latestDecision: StockAnomalyDecisionRow | null
+  rules: StockAnomalyRuleRow[]
+  now: Date
+}) {
+  const { issue, item, latestDecision, rules, now } = params
+
+  for (const rule of rules) {
+    if (ruleMatchesIssue(rule, issue, item) && item && isWithinRule(rule, item.current_qty)) {
+      return true
+    }
+  }
+
+  if (!latestDecision) return false
+
+  if (
+    latestDecision.decision === 'snoozed'
+    && latestDecision.snoozed_until
+    && new Date(latestDecision.snoozed_until) > now
+  ) {
+    return true
+  }
+
+  if (latestDecision.decision === 'confirmed_ok' && confirmedOkStillApplies(latestDecision, item)) {
+    return true
+  }
+
+  return false
+}
+
+async function maybeNotifyRuleViolation(params: {
+  admin: SupabaseClient
+  userId: string
+  rule: StockAnomalyRuleRow
+  item: StockRow
+  detail: string
+}) {
+  const { admin, userId, rule, item, detail } = params
+  if (!rule.notify_enabled) return
+
+  const lastNotifiedAt = rule.last_notified_at ? new Date(rule.last_notified_at) : null
+  if (lastNotifiedAt && Date.now() - lastNotifiedAt.getTime() < 24 * 60 * 60 * 1000) return
+
+  const title = `Stock fuera de regla: ${item.name}`
+  const body = `${detail}\n\nActual: ${item.current_qty} ${item.unit}. Revisar en Control de mercadería.`
+
+  await (admin as SupabaseClient).from('announcements').insert({
+    author_id: userId,
+    type: 'operativo',
+    priority: rule.notification_priority,
+    title,
+    body,
+    scope: 'role',
+    target_role: 'encargado',
+    target_user_id: null,
+    expires_at: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+  })
+
+  await (admin as SupabaseClient)
+    .from('stock_anomaly_rules')
+    .update({ last_notified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', rule.id)
+}
+
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
@@ -89,11 +356,15 @@ export async function GET() {
     }
 
     const admin = createAdminClient()
+    const now = new Date()
+    const staleSyncLimit = new Date(now.getTime() - 26 * 60 * 60 * 1000)
+    const salesSince = new Date(now)
+    salesSince.setDate(salesSince.getDate() - 14)
 
-    const [stockRes, menuRes, menuCategoriesRes] = await Promise.all([
+    const [stockRes, menuRes, menuCategoriesRes, salesRes] = await Promise.all([
       admin
         .from('stock_items')
-        .select('id, name, category, unit, current_qty, min_qty, shelf_life_days, notes, updated_at, fudo_product_id, fudo_ingredient_id')
+        .select('id, name, category, unit, current_qty, min_qty, shelf_life_days, notes, updated_at, fudo_product_id, fudo_ingredient_id, fudo_skip')
         .eq('is_active', true)
         .order('name'),
       admin
@@ -104,22 +375,76 @@ export async function GET() {
       admin
         .from('menu_categories')
         .select('id, name'),
+      admin
+        .from('fudo_sales')
+        .select('fudo_product_id, quantity')
+        .gte('sold_at', salesSince.toISOString()),
     ])
 
     if (stockRes.error) throw stockRes.error
     if (menuRes.error) throw menuRes.error
     if (menuCategoriesRes.error) throw menuCategoriesRes.error
+    if (salesRes.error) throw salesRes.error
+
+    const [lotsRes, decisionsRes, rulesRes] = await Promise.all([
+      admin
+        .from('stock_lots')
+        .select('stock_item_id, qty_remaining, expires_at, status')
+        .in('status', ['active', 'expired']),
+      (admin as SupabaseClient)
+        .from('stock_anomaly_decisions')
+        .select('id, issue_key, stock_item_id, issue_type, decision, note, snapshot, snoozed_until, created_at')
+        .order('created_at', { ascending: false })
+        .limit(500),
+      (admin as SupabaseClient)
+        .from('stock_anomaly_rules')
+        .select('id, stock_item_id, issue_type, name_pattern, category, unit, min_qty, max_qty, notify_enabled, notification_priority, last_notified_at, created_from_issue_key, note, is_active')
+        .eq('is_active', true),
+    ])
 
     const stockItems = (stockRes.data ?? []) as unknown as StockRow[]
     const menuItems = (menuRes.data ?? []) as unknown as MenuRow[]
     const menuCategories = (menuCategoriesRes.data ?? []) as MenuCategoryRow[]
+    const fudoSales = (salesRes.data ?? []) as FudoSaleRow[]
+    const stockLots = (!lotsRes.error ? (lotsRes.data ?? []) : []) as unknown as StockLotRow[]
+    const decisions = (!decisionsRes.error ? (decisionsRes.data ?? []) : []) as unknown as StockAnomalyDecisionRow[]
+    const rules = (!rulesRes.error ? (rulesRes.data ?? []) : []) as unknown as StockAnomalyRuleRow[]
 
+    if (lotsRes.error && !isOptionalLotsError(lotsRes.error.message)) {
+      throw lotsRes.error
+    }
+    if (decisionsRes.error && !isOptionalAnomalyControlsError(decisionsRes.error.message)) {
+      throw decisionsRes.error
+    }
+    if (rulesRes.error && !isOptionalAnomalyControlsError(rulesRes.error.message)) {
+      throw rulesRes.error
+    }
+
+    const stockItemById = new Map(stockItems.map((item) => [String(item.id), item]))
     const menuCategoryById = new Map(menuCategories.map((item) => [item.id, item.name]))
     const activeMenuByFudoId = new Map(
       menuItems
         .filter((item) => item.fudo_product_id)
         .map((item) => [item.fudo_product_id!, item]),
     )
+    const salesByFudoProductId = fudoSales.reduce((acc, sale) => {
+      const key = String(sale.fudo_product_id)
+      acc.set(key, (acc.get(key) ?? 0) + Number(sale.quantity ?? 0))
+      return acc
+    }, new Map<string, number>())
+    const activeLotQtyByStockItemId = stockLots.reduce((acc, lot) => {
+      if (lot.status !== 'active') return acc
+      const key = String(lot.stock_item_id)
+      acc.set(key, (acc.get(key) ?? 0) + Number(lot.qty_remaining ?? 0))
+      return acc
+    }, new Map<string, number>())
+    const expiredLotQtyByStockItemId = stockLots.reduce((acc, lot) => {
+      const expiresAt = lot.expires_at ? new Date(lot.expires_at) : null
+      if (lot.status !== 'expired' && (!expiresAt || expiresAt >= now)) return acc
+      const key = String(lot.stock_item_id)
+      acc.set(key, (acc.get(key) ?? 0) + Number(lot.qty_remaining ?? 0))
+      return acc
+    }, new Map<string, number>())
 
     const sectorActions: Record<StockSector, StockSectorAction[]> = {
       salon: [],
@@ -128,6 +453,12 @@ export async function GET() {
       compras: [],
     }
     const setupIssues: StockSetupIssue[] = []
+    const latestDecisionByIssueKey = new Map<string, StockAnomalyDecisionRow>()
+    for (const decision of decisions) {
+      if (!latestDecisionByIssueKey.has(decision.issue_key)) {
+        latestDecisionByIssueKey.set(decision.issue_key, decision)
+      }
+    }
 
     let finishedGoods = 0
     let finishedGoodsWithShelfLife = 0
@@ -157,6 +488,154 @@ export async function GET() {
       const semaphore = getStockSemaphore(item.current_qty ?? 0, item.min_qty ?? 0)
       const suggestedShelfLife = guessShelfLifeDays(item.category, menuCategoryName)
       const suggestedCategory = finishedGood ? guessCategoryForFinishedGood(menuCategoryName) : null
+      const stockItemId = String(item.id)
+      const soldLast14Days = item.fudo_product_id
+        ? salesByFudoProductId.get(String(item.fudo_product_id)) ?? 0
+        : 0
+
+      if (item.fudo_product_id && item.fudo_ingredient_id) {
+        setupIssues.push(createSetupIssue({
+          stock_item_id: stockItemId,
+          stock_item_name: item.name,
+          severity: 'high',
+          type: 'mapping_conflict',
+          title: `Doble vínculo Fudo en ${item.name}`,
+          detail: 'El mismo item está vinculado como producto y como insumo. Hay que dejar un solo origen para evitar escrituras sobre el stock equivocado.',
+          current_qty: item.current_qty,
+          unit: item.unit,
+          suggested_shelf_life_days: suggestedShelfLife,
+          suggested_category: suggestedCategory,
+        }))
+      }
+
+      if (!item.fudo_product_id && !item.fudo_ingredient_id && item.fudo_skip !== true) {
+        setupIssues.push(createSetupIssue({
+          stock_item_id: stockItemId,
+          stock_item_name: item.name,
+          severity: item.current_qty > 0 ? 'high' : 'medium',
+          type: 'missing_fudo_mapping',
+          title: `${item.name} no tiene origen claro`,
+          detail: 'No está vinculado a Fudo ni marcado como Local LVE. La app no debería permitir escritura hasta resolver si depende de Fudo o es control interno.',
+          current_qty: item.current_qty,
+          unit: item.unit,
+          suggested_shelf_life_days: suggestedShelfLife,
+          suggested_category: suggestedCategory,
+        }))
+      }
+
+      if ((item.fudo_product_id || item.fudo_ingredient_id) && new Date(item.updated_at) < staleSyncLimit) {
+        setupIssues.push(createSetupIssue({
+          stock_item_id: stockItemId,
+          stock_item_name: item.name,
+          severity: 'high',
+          type: 'stale_stock',
+          title: `${item.name} no sincronizó hoy`,
+          detail: `Última actualización: ${item.updated_at}. Si Fudo está conectado, este item debería refrescarse todos los días.`,
+          current_qty: item.current_qty,
+          unit: item.unit,
+          suggested_shelf_life_days: suggestedShelfLife,
+          suggested_category: suggestedCategory,
+        }))
+      }
+
+      if (item.current_qty < 0) {
+        setupIssues.push(createSetupIssue({
+          stock_item_id: stockItemId,
+          stock_item_name: item.name,
+          severity: 'high',
+          type: 'negative_stock',
+          title: `${item.name} quedó en negativo`,
+          detail: `Figura ${item.current_qty} ${item.unit}. Esto suele indicar venta sin stock, receta mal descontada o ajuste manual equivocado.`,
+          current_qty: item.current_qty,
+          unit: item.unit,
+          suggested_shelf_life_days: suggestedShelfLife,
+          suggested_category: suggestedCategory,
+        }))
+      }
+
+      const unitDetail = unitReviewDetail(item)
+      if (unitDetail) {
+        setupIssues.push(createSetupIssue({
+          stock_item_id: stockItemId,
+          stock_item_name: item.name,
+          severity: 'high',
+          type: 'unit_review',
+          title: `Revisar unidad de ${item.name}`,
+          detail: unitDetail,
+          current_qty: item.current_qty,
+          unit: item.unit,
+          suggested_shelf_life_days: suggestedShelfLife,
+          suggested_category: suggestedCategory,
+        }))
+      }
+
+      const quantityAnomaly = quantityAnomalyDetail({ item, soldLast14Days, finishedGood })
+      if (quantityAnomaly) {
+        setupIssues.push(createSetupIssue({
+          stock_item_id: stockItemId,
+          stock_item_name: item.name,
+          severity: quantityAnomaly.severity,
+          type: 'quantity_anomaly',
+          title: `Cantidad rara en ${item.name}`,
+          detail: quantityAnomaly.detail,
+          current_qty: item.current_qty,
+          unit: item.unit,
+          suggested_shelf_life_days: suggestedShelfLife,
+          suggested_category: suggestedCategory,
+        }))
+      }
+
+      if (finishedGood && item.current_qty <= 0 && soldLast14Days >= 5) {
+        setupIssues.push(createSetupIssue({
+          stock_item_id: stockItemId,
+          stock_item_name: item.name,
+          severity: 'high',
+          type: 'sales_stock_mismatch',
+          title: `${item.name} se vende pero figura sin stock`,
+          detail: `Tiene ${item.current_qty} ${item.unit}, pero registra ${soldLast14Days} ventas en los últimos 14 días. Revisar stock Fudo, producción o vínculo del producto.`,
+          current_qty: item.current_qty,
+          unit: item.unit,
+          suggested_shelf_life_days: suggestedShelfLife,
+          suggested_category: suggestedCategory,
+        }))
+      }
+
+      if (
+        stockLots.length > 0
+        && item.current_qty > 0
+        && item.shelf_life_days != null
+        && (finishedGood || item.category === 'panaderia')
+        && activeLotQtyByStockItemId.get(stockItemId) == null
+      ) {
+        setupIssues.push(createSetupIssue({
+          stock_item_id: stockItemId,
+          stock_item_name: item.name,
+          severity: 'medium',
+          type: 'missing_lot_control',
+          title: `${item.name} tiene stock sin lote`,
+          detail: `Hay ${item.current_qty} ${item.unit} y vida útil de ${item.shelf_life_days} días, pero no hay lote activo para saber qué vence primero.`,
+          current_qty: item.current_qty,
+          unit: item.unit,
+          suggested_shelf_life_days: suggestedShelfLife,
+          suggested_category: suggestedCategory,
+        }))
+      }
+
+      const expiredQty = expiredLotQtyByStockItemId.get(stockItemId) ?? 0
+      if (expiredQty > 0) {
+        setupIssues.push(createSetupIssue({
+          stock_item_id: stockItemId,
+          stock_item_name: item.name,
+          severity: 'high',
+          type: 'expired_lot_stock',
+          title: `${item.name} tiene lote vencido con stock`,
+          detail: `Hay ${expiredQty} ${item.unit} en lotes vencidos. Hay que descartar, reprocesar o corregir el lote antes de confiar en el stock.`,
+          current_qty: item.current_qty,
+          unit: item.unit,
+          suggested_shelf_life_days: suggestedShelfLife,
+          suggested_category: suggestedCategory,
+        }))
+      }
 
       if (finishedGood) {
         finishedGoods++
@@ -307,6 +786,54 @@ export async function GET() {
       }
     }
 
+    for (const rule of rules) {
+      if (!rule.is_active || !rule.stock_item_id) continue
+      const item = stockItemById.get(String(rule.stock_item_id))
+      if (!item || isWithinRule(rule, item.current_qty)) continue
+
+      const range = [
+        rule.min_qty != null ? `mín. ${Number(rule.min_qty)}` : null,
+        rule.max_qty != null ? `máx. ${Number(rule.max_qty)}` : null,
+      ].filter(Boolean).join(' / ')
+      const detail = `La regla aceptada para ${item.name} es ${range} ${rule.unit ?? item.unit}. Hoy figura ${item.current_qty} ${item.unit}.`
+
+      setupIssues.push(createSetupIssue({
+        stock_item_id: String(item.id),
+        stock_item_name: item.name,
+        severity: rule.notification_priority === 'critica' || rule.notification_priority === 'alta' ? 'high' : 'medium',
+        type: 'quantity_anomaly',
+        title: `${item.name} salió de su regla`,
+        detail,
+        current_qty: item.current_qty,
+        unit: item.unit,
+        suggested_shelf_life_days: item.shelf_life_days,
+        suggested_category: null,
+        rule_id: rule.id,
+      }))
+
+      await maybeNotifyRuleViolation({
+        admin,
+        userId: user.id,
+        rule,
+        item,
+        detail,
+      }).catch((err) => {
+        console.error('[stock anomaly notification]', err)
+      })
+    }
+
+    const visibleSetupIssues = setupIssues.filter((issue) => {
+      const item = stockItemById.get(String(issue.stock_item_id)) ?? null
+      const latestDecision = latestDecisionByIssueKey.get(getIssueKey(issue)) ?? null
+      return !shouldSuppressIssue({
+        issue,
+        item,
+        latestDecision,
+        rules,
+        now,
+      })
+    })
+
     const sectors = (Object.keys(STOCK_SECTOR_META) as StockSector[]).map((sector) => {
       const actions = sectorActions[sector]
         .sort((a, b) => {
@@ -329,6 +856,8 @@ export async function GET() {
       }
     })
 
+    const anomalyCount = visibleSetupIssues.filter(isAnomalyIssue).length
+
     const response: StockIntelligenceResponse = {
       summary: {
         active_items: stockItems.length,
@@ -337,16 +866,18 @@ export async function GET() {
         perishable_missing_shelf_life: perishableMissingShelfLife,
         low_stock_items: lowStockItems,
         overstock_finished_goods: overstockFinishedGoods,
-        setup_issues: setupIssues.length,
+        setup_issues: visibleSetupIssues.length,
+        anomalies: anomalyCount,
+        anomaly_rules: rules.length,
       },
       sectors,
-      setup_issues: setupIssues
+      setup_issues: visibleSetupIssues
         .sort((a, b) => {
           const severityDiff = priorityWeight(a.severity) - priorityWeight(b.severity)
           if (severityDiff !== 0) return severityDiff
           return b.current_qty - a.current_qty
         })
-        .slice(0, 12),
+        .slice(0, 100),
       generated_at: new Date().toISOString(),
     }
 

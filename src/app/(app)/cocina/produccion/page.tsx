@@ -4,12 +4,12 @@ import { useState } from 'react'
 import Link from 'next/link'
 import {
   Plus, ChefHat, CheckCircle2, Clock, XCircle, ChevronRight,
-  TrendingUp, AlertTriangle, Package, GitBranch,
+  TrendingUp, AlertTriangle, Package, GitBranch, ShieldCheck,
 } from 'lucide-react'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { cn } from '@/lib/utils'
 import { LoadingState } from '@/components/ui/LoadingState'
-import { useProduccionOrders, type OrderSummary } from '@/lib/hooks/use-produccion'
+import { useProduccionOrders } from '@/lib/hooks/use-produccion'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -18,6 +18,7 @@ import { useProduccionOrders, type OrderSummary } from '@/lib/hooks/use-producci
 const STATUS_CONFIG = {
   draft:       { label: 'Borrador',    icon: Clock,         color: 'text-[#a39e97] bg-[#f5f2ee]' },
   in_progress: { label: 'En progreso', icon: Clock,         color: 'text-[#d4943a] bg-amber-50' },
+  pending_review: { label: 'A validar', icon: ShieldCheck, color: 'text-[#d4943a] bg-amber-50' },
   completed:   { label: 'Completado',  icon: CheckCircle2,  color: 'text-[#006d5a] bg-[#e8f5f1]' },
   cancelled:   { label: 'Cancelado',   icon: XCircle,       color: 'text-[#ea504c] bg-red-50' },
 }
@@ -51,6 +52,7 @@ export default function ProduccionPage() {
     all: orders.length,
     draft: orders.filter((o) => o.status === 'draft').length,
     in_progress: orders.filter((o) => o.status === 'in_progress').length,
+    pending_review: orders.filter((o) => o.status === 'pending_review').length,
     completed: orders.filter((o) => o.status === 'completed').length,
   }
 
@@ -58,6 +60,7 @@ export default function ProduccionPage() {
     { key: 'all',         label: 'Todas',       count: counts.all },
     { key: 'draft',       label: 'Borrador',    count: counts.draft },
     { key: 'in_progress', label: 'En curso',    count: counts.in_progress },
+    { key: 'pending_review', label: 'A validar', count: counts.pending_review },
     { key: 'completed',   label: 'Completadas', count: counts.completed },
   ]
 
@@ -198,7 +201,7 @@ export default function ProduccionPage() {
                     </div>
 
                     <p className="mt-2 text-[11px] text-muted-foreground">
-                      {formatDate(order.created_at)}
+                      {formatDate(order.submitted_at ?? order.created_at)}
                       {order.chef_name && ` · ${order.chef_name}`}
                     </p>
                   </Link>
@@ -209,12 +212,12 @@ export default function ProduccionPage() {
         )}
 
         {/* Alert: pending orders */}
-        {counts.draft + counts.in_progress > 0 && statusFilter === 'all' && (
+        {counts.draft + counts.in_progress + counts.pending_review > 0 && statusFilter === 'all' && (
           <div className="flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-[#d4943a]">
             <AlertTriangle className="size-3.5 shrink-0" />
             <span>
-              Hay {counts.draft + counts.in_progress} producción{counts.draft + counts.in_progress > 1 ? 'es' : ''} sin completar.{' '}
-              El stock no se actualiza hasta que se confirmen.
+              Hay {counts.draft + counts.in_progress + counts.pending_review} producción{counts.draft + counts.in_progress + counts.pending_review > 1 ? 'es' : ''} sin cerrar.{' '}
+              Las que están a validar no actualizan stock ni Fudo hasta aprobación del encargado.
             </span>
           </div>
         )}
