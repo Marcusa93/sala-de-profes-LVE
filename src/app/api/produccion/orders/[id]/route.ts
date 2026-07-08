@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { normalizeToStockUnit } from '@/lib/produccion/units'
 import type { Database } from '@/types/database'
 
 type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
@@ -60,25 +61,27 @@ function buildOutputPayload(body: Record<string, unknown>, includeLotFields: boo
   return payload
 }
 
+type StockItemInfo = { id: string; name: string; unit: string; fudo_ingredient_id: string | null; fudo_product_id: string | null }
+
 async function validateStockMapping(
   admin: ReturnType<typeof createAdminClient>,
   stockItemId: string | null | undefined,
-) {
-  if (!stockItemId) return null
+): Promise<{ error: string | null; item: StockItemInfo | null }> {
+  if (!stockItemId) return { error: null, item: null }
 
   const { data: item, error } = await admin
     .from('stock_items')
-    .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip')
+    .select('id, name, unit, fudo_ingredient_id, fudo_product_id, fudo_skip')
     .eq('id', stockItemId)
     .single()
 
-  if (error || !item) return error?.message ?? 'Item de stock no encontrado'
+  if (error || !item) return { error: error?.message ?? 'Item de stock no encontrado', item: null }
 
   if (!item.fudo_ingredient_id && !item.fudo_product_id) {
-    return `${item.name}: sin vínculo Fudo`
+    return { error: `${item.name}: sin vínculo Fudo`, item: item as StockItemInfo }
   }
 
-  return null
+  return { error: null, item: item as StockItemInfo }
 }
 
 export async function GET(
@@ -230,17 +233,25 @@ export async function PATCH(
       if (!body.stock_item_id || !body.qty_used || !body.unit) {
         return NextResponse.json({ error: 'add_input requiere: stock_item_id, qty_used, unit' }, { status: 400 })
       }
-      const mappingError = await validateStockMapping(admin, String(body.stock_item_id))
+      const { error: mappingError, item } = await validateStockMapping(admin, String(body.stock_item_id))
       if (mappingError) {
         return NextResponse.json({ error: `Input bloqueado por mapeo Fudo: ${mappingError}` }, { status: 409 })
+      }
+      let qtyUsed = Number(body.qty_used)
+      let unit = String(body.unit)
+      if (item) {
+        const normalized = normalizeToStockUnit(qtyUsed, unit, item)
+        if (!normalized.ok) return NextResponse.json({ error: normalized.error }, { status: 409 })
+        qtyUsed = normalized.qty
+        unit = normalized.unit
       }
       const { data, error } = await admin
         .from('production_inputs')
         .insert({
           production_order_id: id,
           stock_item_id: body.stock_item_id,
-          qty_used: Number(body.qty_used),
-          unit: body.unit,
+          qty_used: qtyUsed,
+          unit,
           cost_per_unit: body.cost_per_unit ? Number(body.cost_per_unit) : null,
         })
         .select()
@@ -270,9 +281,15 @@ export async function PATCH(
         return NextResponse.json({ error: 'Producto final bloqueado: elegí un item vinculado a Fudo' }, { status: 409 })
       }
       if (!body.is_waste && body.stock_item_id) {
-        const mappingError = await validateStockMapping(admin, String(body.stock_item_id))
+        const { error: mappingError, item } = await validateStockMapping(admin, String(body.stock_item_id))
         if (mappingError) {
           return NextResponse.json({ error: `Output bloqueado por mapeo Fudo: ${mappingError}` }, { status: 409 })
+        }
+        if (item) {
+          const normalized = normalizeToStockUnit(Number(body.qty_produced), String(body.unit), item)
+          if (!normalized.ok) return NextResponse.json({ error: normalized.error }, { status: 409 })
+          body.qty_produced = normalized.qty
+          body.unit = normalized.unit
         }
       }
       const payload = buildOutputPayload(body as Record<string, unknown>, true)
@@ -326,9 +343,15 @@ export async function PATCH(
       if (body.notes !== undefined) patch.notes = body.notes
       if (body.stock_item_id !== undefined) {
         if (body.stock_item_id) {
-          const mappingError = await validateStockMapping(admin, String(body.stock_item_id))
+          const { error: mappingError, item } = await validateStockMapping(admin, String(body.stock_item_id))
           if (mappingError) {
             return NextResponse.json({ error: `Output bloqueado por mapeo Fudo: ${mappingError}` }, { status: 409 })
+          }
+          if (item && body.unit) {
+            const normalized = normalizeToStockUnit(Number(body.qty_produced), String(body.unit), item)
+            if (!normalized.ok) return NextResponse.json({ error: normalized.error }, { status: 409 })
+            patch.qty_produced = normalized.qty
+            patch.unit = normalized.unit
           }
         }
         patch.stock_item_id = body.stock_item_id || null

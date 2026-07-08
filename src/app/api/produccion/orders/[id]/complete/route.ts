@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
+import { normalizeToStockUnit } from '@/lib/produccion/units'
 
 // ---------------------------------------------------------------------------
 // POST /api/produccion/orders/[id]/complete
@@ -72,6 +73,51 @@ async function validateOrderFudoLinks(admin: ReturnType<typeof createAdminClient
   return errors
 }
 
+// Normaliza las filas de la orden a la unidad de cada item de stock antes de
+// ejecutar el RPC (que suma/resta contra stock_items.current_qty sin convertir).
+// Cubre órdenes creadas antes de que el alta convirtiera unidades.
+async function normalizeOrderUnits(admin: ReturnType<typeof createAdminClient>, orderId: number) {
+  const [inputsRes, outputsRes] = await Promise.all([
+    admin
+      .from('production_inputs')
+      .select('id, qty_used, unit, stock_items(name, unit)')
+      .eq('production_order_id', orderId),
+    admin
+      .from('production_outputs')
+      .select('id, qty_produced, unit, is_waste, stock_item_id, stock_items(name, unit)')
+      .eq('production_order_id', orderId),
+  ])
+
+  const errors: string[] = []
+
+  for (const input of inputsRes.data ?? []) {
+    const item = input.stock_items as unknown as { name: string; unit: string } | null
+    if (!item || input.unit === item.unit) continue
+    const normalized = normalizeToStockUnit(Number(input.qty_used), String(input.unit), item)
+    if (!normalized.ok) { errors.push(normalized.error); continue }
+    const { error } = await admin
+      .from('production_inputs')
+      .update({ qty_used: normalized.qty, unit: normalized.unit })
+      .eq('id', input.id)
+    if (error) errors.push(`${item.name}: ${error.message}`)
+  }
+
+  for (const output of outputsRes.data ?? []) {
+    if (output.is_waste || !output.stock_item_id) continue
+    const item = output.stock_items as unknown as { name: string; unit: string } | null
+    if (!item || output.unit === item.unit) continue
+    const normalized = normalizeToStockUnit(Number(output.qty_produced), String(output.unit), item)
+    if (!normalized.ok) { errors.push(normalized.error); continue }
+    const { error } = await admin
+      .from('production_outputs')
+      .update({ qty_produced: normalized.qty, unit: normalized.unit })
+      .eq('id', output.id)
+    if (error) errors.push(`${item.name}: ${error.message}`)
+  }
+
+  return errors
+}
+
 export async function POST(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -119,6 +165,16 @@ export async function POST(
         order_id: id,
         status: order.status,
         error: `Producción bloqueada: todo insumo/producto debe estar vinculado a Fudo. ${fudoLinkErrors.join('; ')}`,
+      }, { status: 409 })
+    }
+
+    const unitErrors = await normalizeOrderUnits(admin, id)
+    if (unitErrors.length > 0) {
+      return NextResponse.json({
+        success: false,
+        order_id: id,
+        status: order.status,
+        error: `Producción bloqueada por unidades incompatibles: ${unitErrors.join('; ')}`,
       }, { status: 409 })
     }
 

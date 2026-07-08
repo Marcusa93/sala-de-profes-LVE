@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { normalizeToStockUnit } from '@/lib/produccion/units'
 import type { Database } from '@/types/database'
 
 type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
@@ -88,25 +89,28 @@ async function realignStockFromFudo(admin: ReturnType<typeof createAdminClient>)
   }
 }
 
+type StockMappingRow = { id: string; name: string; unit: string; fudo_ingredient_id: string | null; fudo_product_id: string | null; fudo_skip: boolean | null }
+
 async function validateStockMappings(
   admin: ReturnType<typeof createAdminClient>,
   ids: string[],
-) {
+): Promise<{ errors: string[]; itemsById: Map<string, StockMappingRow> }> {
   const uniqueIds = [...new Set(ids.filter(Boolean))]
-  if (uniqueIds.length === 0) return []
+  const itemsById = new Map<string, StockMappingRow>()
+  if (uniqueIds.length === 0) return { errors: [], itemsById }
 
   const { data, error } = await admin
     .from('stock_items')
-    .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip')
+    .select('id, name, unit, fudo_ingredient_id, fudo_product_id, fudo_skip')
     .in('id', uniqueIds)
 
-  if (error) return [`No pude validar mapeos Fudo: ${error.message}`]
+  if (error) return { errors: [`No pude validar mapeos Fudo: ${error.message}`], itemsById }
 
-  const rowsById = new Map((data ?? []).map((row) => [String(row.id), row]))
+  for (const row of (data ?? []) as StockMappingRow[]) itemsById.set(String(row.id), row)
   const errors: string[] = []
 
   for (const id of uniqueIds) {
-    const row = rowsById.get(id)
+    const row = itemsById.get(id)
     if (!row) {
       errors.push(`${id}: item de stock no encontrado`)
       continue
@@ -116,7 +120,7 @@ async function validateStockMappings(
     }
   }
 
-  return errors
+  return { errors, itemsById }
 }
 
 export async function POST(request: NextRequest) {
@@ -162,7 +166,7 @@ export async function POST(request: NextRequest) {
       }, { status: 409 })
     }
 
-    const mappingErrors = await validateStockMappings(admin, [
+    const { errors: mappingErrors, itemsById } = await validateStockMappings(admin, [
       ...inputs.map((input) => String(input.stock_item_id)),
       ...(outputs
         .filter((output) => !output.is_waste && output.stock_item_id)
@@ -173,6 +177,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: false,
         error: `Producción bloqueada por mapeo Fudo: ${mappingErrors.join('; ')}`,
+      }, { status: 409 })
+    }
+
+    // Normalizar cantidades a la unidad de cada item de stock (el RPC opera
+    // sobre stock_items.current_qty sin convertir unidades).
+    const unitErrors: string[] = []
+    for (const input of inputs) {
+      const item = itemsById.get(String(input.stock_item_id))
+      if (!item) continue
+      const normalized = normalizeToStockUnit(Number(input.qty_used), input.unit ?? item.unit, item)
+      if (!normalized.ok) { unitErrors.push(normalized.error); continue }
+      input.qty_used = normalized.qty
+      input.unit = normalized.unit
+    }
+    for (const output of outputs) {
+      if (output.is_waste || !output.stock_item_id) continue
+      const item = itemsById.get(String(output.stock_item_id))
+      if (!item) continue
+      const normalized = normalizeToStockUnit(Number(output.qty_produced), output.unit ?? item.unit, item)
+      if (!normalized.ok) { unitErrors.push(normalized.error); continue }
+      output.qty_produced = normalized.qty
+      if (output.theoretical_qty != null) {
+        const theo = normalizeToStockUnit(Number(output.theoretical_qty), output.unit ?? item.unit, item)
+        if (theo.ok) output.theoretical_qty = theo.qty
+      }
+      output.unit = normalized.unit
+    }
+
+    if (unitErrors.length > 0) {
+      return NextResponse.json({
+        success: false,
+        error: `Producción bloqueada por unidades incompatibles: ${unitErrors.join('; ')}`,
       }, { status: 409 })
     }
 
