@@ -5,12 +5,9 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
-  // TODO: Remove once database.ts types are regenerated from Supabase schema.
-  // Current types are missing columns added after initial generation:
-  // - bar_stock_items.supplier_id, kitchen_orders.supplier_id
-  // - expedientes table (entirely missing from types)
-  // - profiles.settings, vajilla_stock table
-  // These cause ~15 build errors that are safe at runtime (columns exist in DB).
+  // TODO: Remove once the remaining ~190 type errors are fixed.
+  // database.ts ya se regeneró desde el esquema real (2026-07-10); los errores
+  // que quedan son discrepancias reales código↔esquema, no tipos faltantes.
   typescript: {
     ignoreBuildErrors: true,
   },
