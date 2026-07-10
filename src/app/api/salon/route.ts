@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getFudoToken } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
 // GET /api/salon — Open tables with items and delay semaphore
@@ -8,16 +9,6 @@ import { createAdminClient } from '@/lib/supabase/admin'
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
-
-async function getFudoToken() {
-  const res = await fetch('https://auth.fu.do/authenticate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ login: process.env.FUDO_LOGIN, password: process.env.FUDO_PASSWORD }),
-  })
-  if (!res.ok) throw new Error('Fudo auth failed')
-  return (await res.json()).token as string
-}
 
 export async function GET() {
   try {

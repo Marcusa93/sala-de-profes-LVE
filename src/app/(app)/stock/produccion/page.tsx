@@ -5,9 +5,13 @@ import Link from 'next/link'
 import {
   TrendingUp, AlertTriangle, CheckCircle2, Clock, ChefHat,
   Package, Leaf, BarChart3, ChevronRight, RefreshCw, GitBranch,
+  ArrowRight, ShieldCheck, Lock, Loader2,
 } from 'lucide-react'
-import { FadeIn, StaggerList, StaggerItem, AnimatedNumber } from '@/components/ui/motion'
+import { toast } from 'sonner'
+import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { cn } from '@/lib/utils'
+import { useProfileContext } from '@/lib/hooks/use-profile'
+import { isManagerOrAbove } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,12 +41,16 @@ type DashboardData = {
 type OrderRow = {
   id: number
   name: string
-  status: 'draft' | 'in_progress' | 'completed' | 'cancelled'
+  status: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
   parent_order_id: number | null
   template_name: string | null
   chef_name: string | null
   created_at: string
   completed_at: string | null
+  submitted_at: string | null
+  reviewed_at: string | null
+  inputs: { name: string; qty: number; unit: string }[]
+  outputs: { name: string; qty: number; unit: string; is_waste: boolean }[]
   summary: {
     total_input_qty: number
     total_output_qty: number
@@ -78,6 +86,20 @@ function formatKg(v: number | null) {
   return v >= 1 ? `${v.toFixed(2)} kg` : `${(v * 1000).toFixed(0)} g`
 }
 
+function formatQty(value: number, unit: string) {
+  const qty = Math.abs(value) >= 10
+    ? Number(value.toFixed(1)).toString()
+    : Number(value.toFixed(2)).toString()
+  return `${qty} ${unit || 'unid.'}`
+}
+
+function summarizeItems(items: { name: string; qty: number; unit: string }[]) {
+  if (items.length === 0) return 'Sin detalle'
+  const visible = items.slice(0, 2).map((item) => `${item.name} ${formatQty(item.qty, item.unit)}`)
+  const rest = items.length > 2 ? ` +${items.length - 2}` : ''
+  return `${visible.join(' · ')}${rest}`
+}
+
 // ---------------------------------------------------------------------------
 // KPI Card
 // ---------------------------------------------------------------------------
@@ -85,12 +107,16 @@ function formatKg(v: number | null) {
 function KpiCard({
   label, value, unit, sub, color = 'text-[#3d2c24]',
 }: { label: string; value: number | null; unit?: string; sub?: string; color?: string }) {
+  const formattedValue = value !== null
+    ? Number(value.toFixed(value % 1 !== 0 ? 1 : 0)).toLocaleString('es-AR')
+    : null
+
   return (
     <div className="flex-1 rounded-2xl bg-white p-3.5 shadow-sm ring-1 ring-[#ebe6df]">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
       <p className={cn('mt-1 text-[22px] font-bold leading-none', color)}>
         {value !== null
-          ? <><AnimatedNumber value={value} decimals={value % 1 !== 0 ? 1 : 0} />{unit && <span className="ml-0.5 text-[14px] font-medium">{unit}</span>}</>
+          ? <>{formattedValue}{unit && <span className="ml-0.5 text-[14px] font-medium">{unit}</span>}</>
           : '—'}
       </p>
       {sub && <p className="mt-0.5 text-[11px] text-muted-foreground">{sub}</p>}
@@ -122,11 +148,15 @@ function EffBar({ pct }: { pct: number | null }) {
 // ---------------------------------------------------------------------------
 
 export default function ProduccionDashboardPage() {
+  const { profile } = useProfileContext()
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState(30)
   const [tab, setTab] = useState<'resumen' | 'historial' | 'chefs'>('resumen')
+  const [approvingId, setApprovingId] = useState<number | null>(null)
+
+  const canValidateProduction = isManagerOrAbove(profile?.role)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -145,7 +175,39 @@ export default function ProduccionDashboardPage() {
   useEffect(() => { load() }, [load])
 
   const completedOrders = orders.filter((o) => o.status === 'completed')
-  const pendingOrders   = orders.filter((o) => o.status !== 'completed' && o.status !== 'cancelled')
+  const pendingReviewOrders = orders.filter((o) => o.status === 'pending_review')
+  const pendingOrders = orders.filter((o) => o.status !== 'completed' && o.status !== 'cancelled')
+
+  async function approveOrder(order: OrderRow) {
+    if (!canValidateProduction) {
+      toast.error('Solo socio o encargado puede validar producción')
+      return
+    }
+
+    const ok = window.confirm(
+      `Validar "${order.name}"?\n\nEsto descuenta insumos, suma producción terminada y sincroniza Fudo.`,
+    )
+    if (!ok) return
+
+    setApprovingId(order.id)
+    try {
+      const res = await fetch(`/api/produccion/orders/${order.id}/complete`, { method: 'POST' })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error ?? 'No se pudo validar la producción')
+      }
+
+      const synced = typeof json.fudo?.synced === 'number' ? json.fudo.synced : null
+      toast.success(synced !== null
+        ? `Producción validada · Fudo ${synced} item${synced !== 1 ? 's' : ''}`
+        : 'Producción validada')
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al validar producción')
+    } finally {
+      setApprovingId(null)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-[#faf8f5] pb-28">
@@ -203,16 +265,127 @@ export default function ProduccionDashboardPage() {
       <div className="mx-auto max-w-2xl px-4 pt-4 space-y-4">
 
         {/* Pending alert */}
-        {dashboard && dashboard.pending_orders > 0 && (
+        {pendingOrders.length > 0 && (
           <div className="flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-[12px] text-[#d4943a]">
             <AlertTriangle className="size-4 shrink-0" />
             <span>
-              {dashboard.pending_orders} producción{dashboard.pending_orders > 1 ? 'es' : ''} sin completar
-              — el stock todavía no fue actualizado.
+              {pendingOrders.length} producción{pendingOrders.length > 1 ? 'es' : ''} sin validar
+              — el stock y Fudo todavía no fueron actualizados.
             </span>
             <Link href="/cocina/produccion" className="ml-auto font-semibold underline underline-offset-2">
               Ver
             </Link>
+          </div>
+        )}
+
+        {/* Validation queue */}
+        <div className="rounded-[1.35rem] bg-[#2f241f] p-3 text-white shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/60">Flujo seguro Fudo</p>
+              <h2 className="mt-1 text-lg font-semibold">Producción con validación</h2>
+              <p className="mt-1 max-w-md text-[12px] leading-relaxed text-white/70">
+                El chef carga la transformación. El encargado valida entrada, salida y merma antes de mover stock en LVE y reescribir Fudo.
+              </p>
+            </div>
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-white/10">
+              <ShieldCheck className="size-5 text-[#9fe1d4]" />
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
+            {[
+              ['1', 'Chef carga'],
+              ['2', 'Encargado valida'],
+              ['3', 'LVE + Fudo'],
+            ].map(([step, label], idx) => (
+              <div key={step} className="rounded-2xl bg-white/10 px-2 py-2">
+                <div className="mx-auto flex size-6 items-center justify-center rounded-full bg-white text-[11px] font-bold text-[#2f241f]">
+                  {step}
+                </div>
+                <p className="mt-1 text-[10px] font-semibold text-white/75">{label}</p>
+                {idx < 2 && <ArrowRight className="mx-auto mt-1 size-3 text-white/25" />}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {pendingReviewOrders.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Para validar ahora
+              </p>
+              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-[#d4943a]">
+                {pendingReviewOrders.length}
+              </span>
+            </div>
+
+            {pendingReviewOrders.slice(0, 4).map((order) => {
+              const producedItems = order.outputs.filter((item) => !item.is_waste)
+              const wasteItems = order.outputs.filter((item) => item.is_waste)
+              const isApproving = approvingId === order.id
+
+              return (
+                <div key={order.id} className="rounded-[1.35rem] bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-[#d4943a]">
+                        <AlertTriangle className="size-3" />
+                        Espera encargado
+                      </span>
+                      <h3 className="mt-2 truncate text-[16px] font-semibold text-[#3d2c24]">{order.name}</h3>
+                      <p className="text-[11px] text-muted-foreground">
+                        {order.chef_name || 'Chef sin nombre'} · {formatDate(order.submitted_at ?? order.created_at)}
+                      </p>
+                    </div>
+                    <EffBar pct={order.summary.efficiency_pct} />
+                  </div>
+
+                  <div className="mt-3 space-y-2 rounded-2xl bg-[#faf8f5] p-3">
+                    <div className="flex gap-2 text-[12px]">
+                      <span className="w-14 shrink-0 font-semibold text-[#7f7168]">Entrada</span>
+                      <span className="min-w-0 text-[#3d2c24]">{summarizeItems(order.inputs)}</span>
+                    </div>
+                    <div className="flex gap-2 text-[12px]">
+                      <span className="w-14 shrink-0 font-semibold text-[#7f7168]">Salida</span>
+                      <span className="min-w-0 text-[#006d5a]">{summarizeItems(producedItems)}</span>
+                    </div>
+                    {wasteItems.length > 0 && (
+                      <div className="flex gap-2 text-[12px]">
+                        <span className="w-14 shrink-0 font-semibold text-[#7f7168]">Merma</span>
+                        <span className="min-w-0 text-[#ea504c]">{summarizeItems(wasteItems)}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2">
+                    <Link
+                      href={`/cocina/produccion/${order.id}`}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#f5f2ee] px-3 py-2.5 text-[12px] font-semibold text-[#3d2c24]"
+                    >
+                      Ver detalle
+                      <ChevronRight className="size-3.5" />
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => approveOrder(order)}
+                      disabled={!canValidateProduction || isApproving}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2.5 text-[12px] font-semibold text-white disabled:bg-[#d8d1c8] disabled:text-[#8f867e]"
+                    >
+                      {isApproving ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : canValidateProduction ? (
+                        <ShieldCheck className="size-3.5" />
+                      ) : (
+                        <Lock className="size-3.5" />
+                      )}
+                      {canValidateProduction ? 'Validar y sync Fudo' : 'Solo encargado'}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -350,6 +523,7 @@ export default function ProduccionDashboardPage() {
                     const STATUS = {
                       draft:       { label: 'Borrador',    icon: Clock,         color: 'text-muted-foreground bg-[#f5f2ee]' },
                       in_progress: { label: 'En progreso', icon: Clock,         color: 'text-[#d4943a] bg-amber-50' },
+                      pending_review: { label: 'A validar', icon: ShieldCheck, color: 'text-[#d4943a] bg-amber-50' },
                       completed:   { label: 'Completado',  icon: CheckCircle2,  color: 'text-[#006d5a] bg-[#e8f5f1]' },
                       cancelled:   { label: 'Cancelado',   icon: AlertTriangle, color: 'text-[#ea504c] bg-red-50' },
                     }

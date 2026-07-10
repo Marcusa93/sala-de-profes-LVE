@@ -17,6 +17,7 @@ export type StockItem = {
   current_qty: number
   min_qty: number
   shelf_life_days: number | null
+  purchase_lead_time_days: number | null
   is_active: boolean
   notes: string | null
   updated_at: string
@@ -24,7 +25,7 @@ export type StockItem = {
   fudo_product_id?: string | null
   fudo_ingredient_id?: string | null
   fudo_skip?: boolean | null
-  suppliers: { name: string } | null
+  suppliers: { id: number; name: string; phone: string | null; contact_name: string | null } | null
 }
 
 // ---------------------------------------------------------------------------
@@ -35,7 +36,7 @@ async function fetchStockItems(active: boolean): Promise<StockItem[]> {
   const supabase = createClient()
   let query = supabase
     .from('stock_items')
-    .select('id, name, category, unit, current_qty, min_qty, shelf_life_days, is_active, notes, updated_at, supplier_id, fudo_product_id, fudo_ingredient_id, fudo_skip, suppliers(name)')
+    .select('id, name, category, unit, current_qty, min_qty, shelf_life_days, purchase_lead_time_days, is_active, notes, updated_at, supplier_id, fudo_product_id, fudo_ingredient_id, fudo_skip, suppliers(id, name, phone, contact_name)')
     .order('category')
     .order('name')
 

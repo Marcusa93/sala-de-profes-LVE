@@ -30,6 +30,7 @@ export async function PATCH(
 
     const { id } = await context.params
     const body = await request.json().catch(() => ({}))
+    const admin = createAdminClient()
 
     const update: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
@@ -69,16 +70,66 @@ export async function PATCH(
       update.category = body.category as StockCategoryValue
     }
 
+    if ('min_qty' in body) {
+      const value = body.min_qty == null || body.min_qty === '' ? 0 : Number(body.min_qty)
+      if (!Number.isFinite(value) || value < 0 || value > 999999) {
+        return NextResponse.json(
+          { error: 'min_qty debe ser un número mayor o igual a 0' },
+          { status: 400 },
+        )
+      }
+      update.min_qty = value
+    }
+
+    if ('purchase_lead_time_days' in body) {
+      const value = body.purchase_lead_time_days
+      if (value == null || value === '') {
+        update.purchase_lead_time_days = null
+      } else if (!Number.isInteger(value) || value < 0 || value > 60) {
+        return NextResponse.json(
+          { error: 'purchase_lead_time_days debe ser un entero entre 0 y 60' },
+          { status: 400 },
+        )
+      } else {
+        update.purchase_lead_time_days = value
+      }
+    }
+
+    if ('supplier_id' in body) {
+      const value = body.supplier_id
+      if (value == null || value === '') {
+        update.supplier_id = null
+      } else {
+        const supplierId = Number(value)
+        if (!Number.isInteger(supplierId) || supplierId < 1) {
+          return NextResponse.json({ error: 'supplier_id inválido' }, { status: 400 })
+        }
+
+        const { data: supplier, error: supplierError } = await admin
+          .from('suppliers')
+          .select('id')
+          .eq('id', supplierId)
+          .eq('is_active', true)
+          .maybeSingle()
+
+        if (supplierError) throw supplierError
+        if (!supplier) {
+          return NextResponse.json({ error: 'Proveedor no encontrado o inactivo' }, { status: 400 })
+        }
+
+        update.supplier_id = supplierId
+      }
+    }
+
     if (Object.keys(update).length === 1) {
       return NextResponse.json({ error: 'No hay cambios para guardar' }, { status: 400 })
     }
 
-    const admin = createAdminClient()
     const { data, error } = await admin
       .from('stock_items')
       .update(update)
       .eq('id', id)
-      .select('id, name, category, shelf_life_days, notes')
+      .select('id, name, category, min_qty, supplier_id, purchase_lead_time_days, shelf_life_days, notes')
       .single()
 
     if (error) throw error

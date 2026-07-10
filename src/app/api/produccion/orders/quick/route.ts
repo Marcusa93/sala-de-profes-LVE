@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { normalizeToStockUnit } from '@/lib/produccion/units'
+import type { Database } from '@/types/database'
+
+type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
+type ProductionInputInsert = Database['public']['Tables']['production_inputs']['Insert']
+
+type QuickInputPayload = {
+  stock_item_id?: string | null
+  qty_used: number
+  unit?: string
+  cost_per_unit?: number | null
+}
 
 type QuickOutputPayload = {
   stock_item_id?: string | null
@@ -31,7 +43,7 @@ async function authorize(supabase: Awaited<ReturnType<typeof createClient>>) {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, first_name, last_name')
     .eq('id', user.id)
     .single()
 
@@ -39,14 +51,14 @@ async function authorize(supabase: Awaited<ReturnType<typeof createClient>>) {
     return { user: null, error: NextResponse.json({ error: 'Sin acceso' }, { status: 403 }) }
   }
 
-  return { user, error: null }
+  return { user, profile, error: null }
 }
 
-function buildOutputRows(orderId: number, outputs: QuickOutputPayload[], includeLotFields: boolean) {
+function buildOutputRows(orderId: number, outputs: QuickOutputPayload[], includeLotFields: boolean): ProductionOutputInsert[] {
   return outputs
     .filter((output) => output.output_name && output.qty_produced !== undefined)
     .map((output) => {
-      const row: Record<string, unknown> = {
+      const row: ProductionOutputInsert = {
         production_order_id: orderId,
         stock_item_id: output.stock_item_id || null,
         output_name: output.output_name,
@@ -77,36 +89,38 @@ async function realignStockFromFudo(admin: ReturnType<typeof createAdminClient>)
   }
 }
 
+type StockMappingRow = { id: string; name: string; unit: string; fudo_ingredient_id: string | null; fudo_product_id: string | null; fudo_skip: boolean | null }
+
 async function validateStockMappings(
   admin: ReturnType<typeof createAdminClient>,
   ids: string[],
-) {
+): Promise<{ errors: string[]; itemsById: Map<string, StockMappingRow> }> {
   const uniqueIds = [...new Set(ids.filter(Boolean))]
-  if (uniqueIds.length === 0) return []
+  const itemsById = new Map<string, StockMappingRow>()
+  if (uniqueIds.length === 0) return { errors: [], itemsById }
 
   const { data, error } = await admin
     .from('stock_items')
-    .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip')
+    .select('id, name, unit, fudo_ingredient_id, fudo_product_id, fudo_skip')
     .in('id', uniqueIds)
 
-  if (error) return [`No pude validar mapeos Fudo: ${error.message}`]
+  if (error) return { errors: [`No pude validar mapeos Fudo: ${error.message}`], itemsById }
 
-  const rowsById = new Map((data ?? []).map((row) => [String(row.id), row]))
+  for (const row of (data ?? []) as StockMappingRow[]) itemsById.set(String(row.id), row)
   const errors: string[] = []
 
   for (const id of uniqueIds) {
-    const row = rowsById.get(id)
+    const row = itemsById.get(id)
     if (!row) {
       errors.push(`${id}: item de stock no encontrado`)
       continue
     }
-    const isLocalOnly = (row as Record<string, unknown>).fudo_skip === true
-    if (!row.fudo_ingredient_id && !row.fudo_product_id && !isLocalOnly) {
-      errors.push(`${row.name}: sin mapeo Fudo ni local explícito`)
+    if (!row.fudo_ingredient_id && !row.fudo_product_id) {
+      errors.push(`${row.name}: sin vínculo Fudo`)
     }
   }
 
-  return errors
+  return { errors, itemsById }
 }
 
 export async function POST(request: NextRequest) {
@@ -114,23 +128,47 @@ export async function POST(request: NextRequest) {
 
   try {
     const supabase = await createClient()
-    const { user, error: authErr } = await authorize(supabase)
+    const { user, profile, error: authErr } = await authorize(supabase)
     if (authErr || !user) return authErr!
 
     const body = await request.json().catch(() => null)
-    if (!body?.name || !body?.input || !body?.outputs?.length) {
+    if (!body?.name || !body?.outputs?.length || (!body?.input && !body?.inputs?.length)) {
       return NextResponse.json({
-        error: 'Campos requeridos: name, input (stock_item_id, qty_used, unit), outputs[]',
+        error: 'Campos requeridos: name, inputs[] (stock_item_id, qty_used, unit), outputs[]',
       }, { status: 400 })
     }
 
     const admin = createAdminClient()
-    const autoComplete = body.auto_complete !== false
+    const autoComplete = body.auto_complete === true
     const warnings: string[] = []
+    const inputs = (Array.isArray(body.inputs) ? body.inputs : [body.input]) as QuickInputPayload[]
+    const outputs = body.outputs as QuickOutputPayload[]
 
-    const mappingErrors = await validateStockMappings(admin, [
-      String(body.input.stock_item_id),
-      ...((body.outputs as QuickOutputPayload[])
+    const invalidInputs = inputs
+      .filter((input) => !input.stock_item_id || Number(input.qty_used) <= 0)
+      .map((input) => input.stock_item_id ?? 'materia prima sin item')
+
+    if (invalidInputs.length > 0) {
+      return NextResponse.json({
+        success: false,
+        error: `Producción bloqueada: materias primas inválidas o sin item Fudo: ${invalidInputs.join(', ')}`,
+      }, { status: 409 })
+    }
+
+    const outputsWithoutFudoItem = outputs
+      .filter((output) => !output.is_waste && !output.stock_item_id)
+      .map((output) => output.output_name)
+
+    if (outputsWithoutFudoItem.length > 0) {
+      return NextResponse.json({
+        success: false,
+        error: `Producción bloqueada: estos productos finales no tienen item Fudo seleccionado: ${outputsWithoutFudoItem.join(', ')}`,
+      }, { status: 409 })
+    }
+
+    const { errors: mappingErrors, itemsById } = await validateStockMappings(admin, [
+      ...inputs.map((input) => String(input.stock_item_id)),
+      ...(outputs
         .filter((output) => !output.is_waste && output.stock_item_id)
         .map((output) => String(output.stock_item_id))),
     ])
@@ -142,14 +180,47 @@ export async function POST(request: NextRequest) {
       }, { status: 409 })
     }
 
+    // Normalizar cantidades a la unidad de cada item de stock (el RPC opera
+    // sobre stock_items.current_qty sin convertir unidades).
+    const unitErrors: string[] = []
+    for (const input of inputs) {
+      const item = itemsById.get(String(input.stock_item_id))
+      if (!item) continue
+      const normalized = normalizeToStockUnit(Number(input.qty_used), input.unit ?? item.unit, item)
+      if (!normalized.ok) { unitErrors.push(normalized.error); continue }
+      input.qty_used = normalized.qty
+      input.unit = normalized.unit
+    }
+    for (const output of outputs) {
+      if (output.is_waste || !output.stock_item_id) continue
+      const item = itemsById.get(String(output.stock_item_id))
+      if (!item) continue
+      const normalized = normalizeToStockUnit(Number(output.qty_produced), output.unit ?? item.unit, item)
+      if (!normalized.ok) { unitErrors.push(normalized.error); continue }
+      output.qty_produced = normalized.qty
+      if (output.theoretical_qty != null) {
+        const theo = normalizeToStockUnit(Number(output.theoretical_qty), output.unit ?? item.unit, item)
+        if (theo.ok) output.theoretical_qty = theo.qty
+      }
+      output.unit = normalized.unit
+    }
+
+    if (unitErrors.length > 0) {
+      return NextResponse.json({
+        success: false,
+        error: `Producción bloqueada por unidades incompatibles: ${unitErrors.join('; ')}`,
+      }, { status: 409 })
+    }
+
     const { data: order, error: orderErr } = await admin
       .from('production_orders')
       .insert({
         name: body.name,
         template_id: body.template_id ?? null,
-        status: 'draft',
+        status: autoComplete ? 'draft' : 'pending_review',
         chef_id: user.id,
         notes: body.notes ?? null,
+        submitted_at: autoComplete ? null : new Date().toISOString(),
       })
       .select('id')
       .single()
@@ -160,21 +231,23 @@ export async function POST(request: NextRequest) {
 
     orderId = order.id
 
+    const inputRows: ProductionInputInsert[] = inputs.map((input) => ({
+      production_order_id: orderId!,
+      stock_item_id: input.stock_item_id!,
+      qty_used: Number(input.qty_used),
+      unit: input.unit ?? 'kg',
+      cost_per_unit: input.cost_per_unit != null ? Number(input.cost_per_unit) : null,
+    }))
+
     const { error: inputErr } = await admin
       .from('production_inputs')
-      .insert({
-        production_order_id: orderId,
-        stock_item_id: body.input.stock_item_id,
-        qty_used: Number(body.input.qty_used),
-        unit: body.input.unit ?? 'kg',
-        cost_per_unit: body.input.cost_per_unit != null ? Number(body.input.cost_per_unit) : null,
-      })
+      .insert(inputRows)
 
     if (inputErr) {
       throw new Error(`Error al agregar insumo: ${inputErr.message}`)
     }
 
-    const outputRowsWithLots = buildOutputRows(orderId, body.outputs as QuickOutputPayload[], true)
+    const outputRowsWithLots = buildOutputRows(orderId, outputs, true)
     if (outputRowsWithLots.length === 0) {
       throw new Error('Se requiere al menos una salida')
     }
@@ -187,7 +260,7 @@ export async function POST(request: NextRequest) {
     if (outputErr && isLotSchemaError(outputErr.message)) {
       lotSupport = false
       warnings.push('La migración de lotes todavía no está aplicada. La producción se guardó sin vencimientos por lote.')
-      const fallbackRows = buildOutputRows(orderId, body.outputs as QuickOutputPayload[], false)
+      const fallbackRows = buildOutputRows(orderId, outputs, false)
       const fallbackInsert = await admin.from('production_outputs').insert(fallbackRows)
       outputErr = fallbackInsert.error
     }
@@ -197,12 +270,39 @@ export async function POST(request: NextRequest) {
     }
 
     if (!autoComplete) {
+      const authorName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || 'Cocina'
+      const inputSummary = inputs
+        .map((input) => `${input.qty_used}${input.unit ?? 'kg'}`)
+        .join(' + ')
+      const outputSummary = outputs
+        .filter((output) => !output.is_waste)
+        .map((output) => `${output.output_name} ${output.qty_produced}${output.unit ?? 'kg'}`)
+        .join(', ')
+
+      await admin.from('announcements').insert({
+        author_id: user.id,
+        type: 'operativo',
+        priority: 'alta',
+        title: `Producción enviada a validar: ${body.name}`,
+        body: [
+          `${authorName} cargó una producción y espera validación.`,
+          `Entradas: ${inputSummary || 'sin detalle'}.`,
+          `Salidas: ${outputSummary || 'sin detalle'}.`,
+          'Revisar si la producción responde a venta real, reposición necesaria o pedido pendiente antes de aprobar.',
+        ].join('\n'),
+        scope: 'role',
+        target_role: 'encargado',
+        target_user_id: null,
+        is_active: true,
+        expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+      })
+
       return NextResponse.json({
         success: true,
         order_id: orderId,
-        status: 'draft',
+        status: 'pending_review',
         warnings,
-        message: 'Orden creada como borrador',
+        message: 'Producción enviada a validación. Stock y Fudo todavía no fueron modificados.',
       }, { status: 201 })
     }
 

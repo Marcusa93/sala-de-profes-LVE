@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { SupabaseClient } from '@supabase/supabase-js'
+import { getFudoToken } from '@/lib/fudoClient'
 import {
   createFudoSyncEvent,
   finishFudoSyncEvent,
@@ -71,13 +72,6 @@ function stockWriteNeedsNote(currentQty: number, newQty: number, unit?: string |
   return abs >= threshold || pct >= 0.25
 }
 
-// ---------------------------------------------------------------------------
-// Fudo Auth — get JWT token
-// ---------------------------------------------------------------------------
-
-let cachedToken: string | null = null
-let tokenExpiry = 0
-
 function asNullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
@@ -93,27 +87,6 @@ function findDuplicateIds(ids: Array<string | null | undefined>): Set<string> {
   }
 
   return duplicates
-}
-
-async function getFudoToken(): Promise<string> {
-  if (cachedToken && Date.now() < tokenExpiry) return cachedToken
-
-  const login = process.env.FUDO_LOGIN
-  const password = process.env.FUDO_PASSWORD
-  if (!login || !password) throw new Error('FUDO_LOGIN/FUDO_PASSWORD not configured')
-
-  const res = await fetch('https://auth.fu.do/authenticate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ login, password }),
-  })
-
-  if (!res.ok) throw new Error(`Fudo auth failed: ${res.status}`)
-
-  const { token } = await res.json()
-  cachedToken = token
-  tokenExpiry = Date.now() + 20 * 60 * 60 * 1000 // 20 hours
-  return token
 }
 
 // ---------------------------------------------------------------------------

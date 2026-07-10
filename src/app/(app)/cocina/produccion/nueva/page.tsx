@@ -56,12 +56,30 @@ type OutputRow = {
   expires_on: string
 }
 
+type InputRow = {
+  localId: string
+  stock_item_id: string | null
+  stock_item_name: string
+  qty_used: string
+  unit: string
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 let _localId = 0
 function nextId() { return `local_${++_localId}` }
+
+function makeInputRow(item: StockItem | null = null, unit = 'kg'): InputRow {
+  return {
+    localId: nextId(),
+    stock_item_id: item?.id ?? null,
+    stock_item_name: item?.name ?? '',
+    qty_used: '',
+    unit: item?.unit ?? unit,
+  }
+}
 
 function formatQty(n: number) {
   return n % 1 === 0 ? n.toFixed(0) : n.toFixed(3).replace(/\.?0+$/, '')
@@ -101,8 +119,8 @@ function getStockSource(item: StockItem | null) {
   return { label: 'Sin mapeo Fudo', tone: 'bg-[#fef2f2] text-[#ea504c]', actionable: false }
 }
 
-function isStockActionable(item: StockItem | null) {
-  return getStockSource(item)?.actionable === true
+function isFudoLinked(item: StockItem | null) {
+  return Boolean(item?.fudo_ingredient_id || item?.fudo_product_id)
 }
 
 function efficiencyLabel(pct: number | null) {
@@ -142,18 +160,25 @@ function StockSearch({
   onChange,
   placeholder = 'Buscar insumo...',
   className,
+  requireFudoLink = false,
+  emptyText = 'No hay coincidencias',
+  helperText,
 }: {
   items: StockItem[]
   value: StockItem | null
   onChange: (item: StockItem | null) => void
   placeholder?: string
   className?: string
+  requireFudoLink?: boolean
+  emptyText?: string
+  helperText?: string
 }) {
   const [query, setQuery] = useState(value?.name ?? '')
   const [open, setOpen] = useState(false)
+  const eligibleItems = requireFudoLink ? items.filter(isFudoLinked) : items
 
   const filtered = query.length >= 1
-    ? items.filter((i) => i.name.toLowerCase().includes(query.toLowerCase())).slice(0, 8)
+    ? eligibleItems.filter((i) => i.name.toLowerCase().includes(query.toLowerCase())).slice(0, 8)
     : []
 
   return (
@@ -163,9 +188,16 @@ function StockSearch({
         value={query}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); if (!e.target.value) onChange(null) }}
         onFocus={() => setOpen(true)}
+        onBlur={() => {
+          window.setTimeout(() => {
+            setOpen(false)
+            if (!value || query !== value.name) setQuery(value?.name ?? '')
+          }, 120)
+        }}
         placeholder={placeholder}
         className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] placeholder:text-muted-foreground focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
       />
+      {helperText && <p className="mt-1 text-[11px] text-muted-foreground">{helperText}</p>}
       {open && filtered.length > 0 && (
         <div className="absolute z-30 mt-1 w-full rounded-xl border border-[#ebe6df] bg-white shadow-lg">
           {filtered.map((item) => (
@@ -191,6 +223,11 @@ function StockSearch({
           ))}
         </div>
       )}
+      {open && query.length >= 1 && filtered.length === 0 && (
+        <div className="absolute z-30 mt-1 w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[12px] text-muted-foreground shadow-lg">
+          {emptyText}
+        </div>
+      )}
     </div>
   )
 }
@@ -209,18 +246,38 @@ export default function NuevaProduccionPage() {
   const [stockItems, setStockItems] = useState<StockItem[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
 
-  // Step 0 — input
-  const [inputItem, setInputItem] = useState<StockItem | null>(null)
-  const [inputQty, setInputQty] = useState('')
-  const [inputUnit, setInputUnit] = useState('kg')
+  // Step 0 — inputs
+  const [inputs, setInputs] = useState<InputRow[]>(() => [makeInputRow()])
   const [productionDate, setProductionDate] = useState(() => toLocalDateInput(new Date()))
   const [orderName, setOrderName] = useState('')
+  const [productionMode, setProductionMode] = useState<'template' | 'free'>('free')
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
   const [notes, setNotes] = useState('')
 
   // Step 1 — outputs
   const [outputs, setOutputs] = useState<OutputRow[]>([])
   const previousProductionDate = useRef(productionDate)
+
+  const inputDetails = inputs.map((input) => {
+    const item = input.stock_item_id
+      ? stockItems.find((stockItem) => stockItem.id === input.stock_item_id) ?? null
+      : null
+    return {
+      ...input,
+      item,
+      qty: parseFloat(input.qty_used) || 0,
+      unit: input.unit || item?.unit || 'kg',
+    }
+  })
+  const primaryInputItem = inputDetails[0]?.item ?? null
+  const primaryInputUnit = inputDetails[0]?.unit ?? 'kg'
+  const primaryInputQty = inputDetails[0]?.qty ?? 0
+  const inputTotalsByUnit = inputDetails.reduce<Record<string, number>>((acc, input) => {
+    if (input.qty <= 0) return acc
+    acc[input.unit] = (acc[input.unit] ?? 0) + input.qty
+    return acc
+  }, {})
+  const inputUnitEntries = Object.entries(inputTotalsByUnit)
 
   // Load data
   useEffect(() => {
@@ -255,27 +312,31 @@ export default function NuevaProduccionPage() {
 
   // Auto-generate order name
   useEffect(() => {
-    if (inputItem) {
+    if (primaryInputItem) {
       const date = new Date(`${productionDate}T00:00:00`).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })
-      setOrderName(`${inputItem.name} — ${date}`)
+      setOrderName(`${primaryInputItem.name} — ${date}`)
     }
-  }, [inputItem, productionDate])
+  }, [primaryInputItem, productionDate])
 
   // When template selected, set input item and unit
   useEffect(() => {
     if (selectedTemplate) {
       if (selectedTemplate.input_stock_item) {
         const found = stockItems.find((s) => s.id === selectedTemplate.input_stock_item!.id)
-        if (found) setInputItem(found)
+        setInputs((prev) => [{
+          ...(prev[0] ?? makeInputRow()),
+          stock_item_id: found && isFudoLinked(found) ? found.id : null,
+          stock_item_name: found && isFudoLinked(found) ? found.name : '',
+          unit: found?.unit ?? selectedTemplate.input_unit,
+        }])
       }
-      setInputUnit(selectedTemplate.input_unit)
     }
   }, [selectedTemplate, stockItems])
 
   // Pre-fill outputs from template when qty changes
   const applyTemplate = useCallback(() => {
-    if (!selectedTemplate || !inputQty) return
-    const qty = parseFloat(inputQty)
+    if (!selectedTemplate || primaryInputQty <= 0) return
+    const qty = primaryInputQty
     if (isNaN(qty) || qty <= 0) return
 
     const rows: OutputRow[] = selectedTemplate.outputs.map((o) => {
@@ -296,7 +357,7 @@ export default function NuevaProduccionPage() {
       }
     })
     setOutputs(rows)
-  }, [inputQty, productionDate, selectedTemplate, stockItems])
+  }, [primaryInputQty, productionDate, selectedTemplate, stockItems])
 
   useEffect(() => {
     const previousDate = previousProductionDate.current
@@ -322,19 +383,52 @@ export default function NuevaProduccionPage() {
   }, [productionDate, stockItems])
 
   // ── Step 0 validation ──
-  const step0Valid = Boolean(inputItem && isStockActionable(inputItem) && parseFloat(inputQty) > 0 && orderName.trim() && productionDate)
+  const inputsValid = inputDetails.length > 0 && inputDetails.every((input) => (
+    input.item && isFudoLinked(input.item) && input.qty > 0 && input.unit
+  ))
+  const step0Valid = Boolean(inputsValid && orderName.trim() && productionDate)
 
   // ── Step 1 helpers ──
-  const totalOutputQty = outputs.reduce((s, o) => {
-    const q = parseFloat(o.qty_produced)
-    return s + (isNaN(q) ? 0 : q)
-  }, 0)
-  const totalInputQty = parseFloat(inputQty) || 0
-  const balance = totalInputQty - totalOutputQty
-  const balanceOk = Math.abs(balance) < 0.001
-  const efficiency = totalInputQty > 0
-    ? Math.round((1 - outputs.filter((o) => o.is_waste).reduce((s, o) => s + (parseFloat(o.qty_produced) || 0), 0) / totalInputQty) * 1000) / 10
+  const outputTotalsByUnit = outputs.reduce<Record<string, number>>((acc, output) => {
+    const qty = parseFloat(output.qty_produced)
+    if (isNaN(qty) || qty <= 0) return acc
+    const unit = output.unit || primaryInputUnit
+    acc[unit] = (acc[unit] ?? 0) + qty
+    return acc
+  }, {})
+  const balanceByUnit = Array.from(new Set([
+    ...Object.keys(inputTotalsByUnit),
+    ...Object.keys(outputTotalsByUnit),
+  ])).map((unit) => ({
+    unit,
+    input: inputTotalsByUnit[unit] ?? 0,
+    output: outputTotalsByUnit[unit] ?? 0,
+    diff: (inputTotalsByUnit[unit] ?? 0) - (outputTotalsByUnit[unit] ?? 0),
+  }))
+  const comparableBalanceRows = balanceByUnit.filter((row) => row.input > 0 && row.output > 0)
+  const balanceOk = comparableBalanceRows.length > 0 && comparableBalanceRows.every((row) => Math.abs(row.diff) < 0.001)
+  const singleInputUnit = inputUnitEntries.length === 1 ? inputUnitEntries[0] : null
+  const totalInputQty = singleInputUnit ? singleInputUnit[1] : inputDetails.reduce((sum, input) => sum + input.qty, 0)
+  const totalWasteSameUnit = singleInputUnit
+    ? outputs
+      .filter((o) => o.is_waste && o.unit === singleInputUnit[0])
+      .reduce((s, o) => s + (parseFloat(o.qty_produced) || 0), 0)
+    : 0
+  const efficiency = singleInputUnit && totalInputQty > 0
+    ? Math.round((1 - totalWasteSameUnit / totalInputQty) * 1000) / 10
     : null
+
+  function addInput() {
+    setInputs((prev) => [...prev, makeInputRow(null, primaryInputUnit)])
+  }
+
+  function updateInput(localId: string, patch: Partial<InputRow>) {
+    setInputs((prev) => prev.map((input) => input.localId === localId ? { ...input, ...patch } : input))
+  }
+
+  function removeInput(localId: string) {
+    setInputs((prev) => prev.length <= 1 ? prev : prev.filter((input) => input.localId !== localId))
+  }
 
   function addOutput(isWaste = false) {
     setOutputs((prev) => [...prev, {
@@ -344,7 +438,7 @@ export default function NuevaProduccionPage() {
       output_name: isWaste ? 'Merma' : '',
       qty_produced: '',
       theoretical_qty: null,
-      unit: inputUnit,
+      unit: primaryInputUnit,
       is_waste: isWaste,
       notes: '',
       lot_code: '',
@@ -364,29 +458,40 @@ export default function NuevaProduccionPage() {
     const linkedItem = o.stock_item_id ? stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null : null
     return o.output_name
       && parseFloat(o.qty_produced) >= 0
-      && (o.is_waste || !linkedItem || isStockActionable(linkedItem))
+      && (o.is_waste || (linkedItem && isFudoLinked(linkedItem)))
   })
+  const finishedOutputs = outputs.filter((output) => !output.is_waste)
+  const checklist = [
+    { label: 'Materias primas Fudo', ok: inputsValid },
+    { label: 'Producto final Fudo', ok: finishedOutputs.length > 0 && finishedOutputs.every((output) => {
+      const linkedItem = output.stock_item_id ? stockItems.find((stockItem) => stockItem.id === output.stock_item_id) ?? null : null
+      return linkedItem && isFudoLinked(linkedItem)
+    }) },
+    { label: 'Cantidades cargadas', ok: inputDetails.every((input) => input.qty > 0) && outputs.every((output) => parseFloat(output.qty_produced) >= 0) },
+    { label: 'Queda para encargado', ok: true },
+  ]
+  const readyForReview = step0Valid && step1Valid
 
   // ── Submit ──
   async function handleConfirm() {
-    if (!isStockActionable(inputItem)) {
-      setError('Producción bloqueada: el insumo madre no está mapeado a Fudo ni marcado como Local LVE.')
+    if (!inputsValid) {
+      setError('Producción bloqueada: todas las materias primas deben elegirse desde el autocompletado y estar vinculadas a Fudo.')
       return
     }
     const blockedOutputs = outputs
-      .filter((o) => !o.is_waste && o.stock_item_id)
+      .filter((o) => !o.is_waste)
       .map((o) => stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null)
-      .filter((item): item is StockItem => Boolean(item && !isStockActionable(item)))
+      .filter((item) => !item || !isFudoLinked(item))
     if (blockedOutputs.length > 0) {
-      setError(`Producción bloqueada: salidas sin mapeo Fudo/Local LVE (${blockedOutputs.map((item) => item.name).join(', ')}).`)
+      setError(`Producción bloqueada: todos los productos finales deben elegirse desde el autocompletado y estar vinculados a Fudo (${blockedOutputs.map((item) => item?.name ?? 'salida sin item').join(', ')}).`)
       return
     }
-    const ok = window.confirm('Esto va a actualizar el stock. ¿Confirmar producción?')
+    const ok = window.confirm('La producción quedará pendiente de validación por encargado. Stock y Fudo no se modifican todavía. ¿Enviar?')
     if (!ok) return
     setSaving(true)
     setError(null)
     try {
-      // Single request: create order + add inputs/outputs + complete
+      // Single request: create order + add inputs/outputs. Stock moves only after manager validation.
       const res = await fetch('/api/produccion/orders/quick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -394,11 +499,11 @@ export default function NuevaProduccionPage() {
           name: orderName,
           template_id: selectedTemplate?.id ?? null,
           notes: notes || null,
-          input: {
-            stock_item_id: inputItem!.id,
-            qty_used: parseFloat(inputQty),
-            unit: inputUnit,
-          },
+          inputs: inputDetails.map((input) => ({
+            stock_item_id: input.item!.id,
+            qty_used: input.qty,
+            unit: input.unit,
+          })),
           outputs: outputs
             .filter((o) => o.output_name && !isNaN(parseFloat(o.qty_produced)))
             .map((o) => ({
@@ -413,6 +518,7 @@ export default function NuevaProduccionPage() {
               produced_at: dateInputToIso(productionDate),
               expires_at: o.expires_on ? dateInputToIso(o.expires_on) : null,
             })),
+          auto_complete: false,
         }),
       })
       const json = await res.json()
@@ -420,8 +526,8 @@ export default function NuevaProduccionPage() {
         throw new Error(json.error ?? 'Error al procesar la producción')
       }
 
-      // Success — navigate to list
-      router.push('/cocina/produccion')
+      // Success — navigate to validation queue
+      router.push('/stock/produccion')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error desconocido')
     } finally {
@@ -432,18 +538,18 @@ export default function NuevaProduccionPage() {
   const STEPS = [
     {
       label: 'Qué entra',
-      title: 'Elegí el insumo que sale del stock',
-      help: 'Este paso descuenta mercadería. Si el item no está vinculado a Fudo ni marcado como Local LVE, la producción queda bloqueada.',
+      title: 'Elegí las materias primas',
+      help: 'Ejemplo milanesas: carne, pan rallado y huevo, todos elegidos desde items vinculados a Fudo. Nada se descuenta todavía; queda pendiente de validación.',
     },
     {
       label: 'Qué sale',
-      title: 'Cargá productos obtenidos, merma y vencimientos',
-      help: 'Vinculá cada salida a su item de stock cuando corresponda. LVE suma stock, registra lotes y respeta la fuente Fudo/Local.',
+      title: 'Cargá el producto que queda listo',
+      help: 'Ejemplo milanesas: cargás Milanesa cruda como salida, la cantidad obtenida, merma si hubo, lote y vencimiento.',
     },
     {
       label: 'Impacto',
       title: 'Revisá exactamente qué stock cambia',
-      help: 'Antes de confirmar, validá entrada, salidas, balance, lote y origen. Si algo depende de Fudo, se sincroniza desde la confirmación.',
+      help: 'El chef envía la producción a validación. Recién cuando el encargado aprueba, LVE mueve stock y sincroniza Fudo.',
     },
   ]
   const currentStep = STEPS[step]
@@ -491,83 +597,217 @@ export default function NuevaProduccionPage() {
         {step === 0 && (
           <FadeIn>
             <div className="space-y-4">
+              <div className="rounded-2xl bg-[#2f241f] p-4 text-white shadow-sm">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/55">
+                  Ejemplo real: milanesas
+                </p>
+                <h2 className="mt-1 text-[17px] font-bold">Cómo se carga una producción</h2>
+                <div className="mt-3 space-y-2 text-[12px] text-white/75">
+                  <div className="flex gap-2">
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-[#2f241f]">1</span>
+                    <span><strong className="text-white">Entrada:</strong> carne, pan rallado, huevo u otras materias primas desde Fudo.</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-[#2f241f]">2</span>
+                    <span><strong className="text-white">Salida:</strong> Milanesa cruda/lista como item de stock.</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-[#2f241f]">3</span>
+                    <span><strong className="text-white">Control:</strong> merma, lote, vencimiento y rendimiento.</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-[#2f241f]">4</span>
+                    <span><strong className="text-white">Validación:</strong> encargado aprueba y recién ahí LVE sincroniza Fudo.</span>
+                  </div>
+                </div>
+                <p className="mt-3 rounded-xl bg-white/10 px-3 py-2 text-[11px] leading-relaxed text-white/70">
+                  Importante: la materia prima y el producto final se eligen solo desde items vinculados a Fudo. Si no aparece, primero hay que mapearlo.
+                </p>
+              </div>
+
               <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
-                <h2 className="mb-3 text-[13px] font-semibold text-[#3d2c24]">Template (opcional)</h2>
-                <select
-                  value={selectedTemplate?.id ?? ''}
-                  onChange={(e) => {
-                    const tmpl = templates.find((t) => t.id === Number(e.target.value)) ?? null
-                    setSelectedTemplate(tmpl)
-                  }}
-                  className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                >
-                  <option value="">Sin template — registro libre</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+                <div className="mb-3">
+                  <h2 className="text-[13px] font-semibold text-[#3d2c24]">Tipo de carga</h2>
+                  <p className="mt-0.5 text-[12px] text-muted-foreground">
+                    Usá una receta de producción si ya está preseteada. Si no, cargá libre y después se puede convertir en preset.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProductionMode('template')
+                    }}
+                    className={cn(
+                      'rounded-2xl border px-3 py-3 text-left transition-all',
+                      productionMode === 'template'
+                        ? 'border-[#006d5a] bg-[#e8f5f1] text-[#006d5a]'
+                        : 'border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24]',
+                    )}
+                  >
+                    <p className="text-[13px] font-bold">Receta de producción</p>
+                    <p className="mt-0.5 text-[11px] opacity-75">Preset validado</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProductionMode('free')
+                      setSelectedTemplate(null)
+                    }}
+                    className={cn(
+                      'rounded-2xl border px-3 py-3 text-left transition-all',
+                      productionMode === 'free'
+                        ? 'border-[#006d5a] bg-[#e8f5f1] text-[#006d5a]'
+                        : 'border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24]',
+                    )}
+                  >
+                    <p className="text-[13px] font-bold">Registro libre</p>
+                    <p className="mt-0.5 text-[11px] opacity-75">Carga manual</p>
+                  </button>
+                </div>
+
+                {productionMode === 'template' && (
+                  <div className="mt-3">
+                    {templates.length > 0 ? (
+                      <select
+                        value={selectedTemplate?.id ?? ''}
+                        onChange={(e) => {
+                          const tmpl = templates.find((t) => t.id === Number(e.target.value)) ?? null
+                          setSelectedTemplate(tmpl)
+                        }}
+                        className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                      >
+                        <option value="">Elegí receta preseteada</option>
+                        {templates.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-[#d8d1c8] bg-[#faf8f5] px-3 py-3">
+                        <p className="text-[13px] font-semibold text-[#3d2c24]">Todavía no hay recetas preseteadas</p>
+                        <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
+                          Cargá esta producción libre. Cuando el chef pase la receta estable, se carga como preset para próximas veces.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {selectedTemplate?.description && (
                   <p className="mt-1.5 text-[12px] text-muted-foreground">{selectedTemplate.description}</p>
                 )}
               </div>
 
               <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
-                <h2 className="mb-3 text-[13px] font-semibold text-[#3d2c24]">¿Qué vas a procesar?</h2>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#ea504c]">
+                      Baja stock Fudo
+                    </p>
+                    <h2 className="text-[13px] font-semibold text-[#3d2c24]">Materias primas</h2>
+                    <p className="mt-0.5 text-[12px] text-muted-foreground">
+                      Cada entrada baja stock y debe estar vinculada a Fudo.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addInput}
+                    className="flex shrink-0 items-center gap-1 rounded-xl bg-[#006d5a] px-3 py-2 text-[12px] font-semibold text-white"
+                  >
+                    <Plus className="size-3.5" />
+                    Agregar
+                  </button>
+                </div>
 
                 <div className="space-y-3">
-                  <div>
-                    <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Insumo madre</label>
-                    <StockSearch
-                      key={inputItem?.id ?? 'input-empty'}
-                      items={stockItems}
-                      value={inputItem}
-                      onChange={setInputItem}
-                      placeholder="Buscar insumo (ej: Nalga)..."
-                    />
-                    {inputItem && (
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <span>Stock actual: {formatQty(inputItem.current_qty)} {inputItem.unit}</span>
-                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${getStockSource(inputItem)?.tone}`}>
-                          {getStockSource(inputItem)?.label}
-                        </span>
+                  {inputs.map((input, idx) => {
+                    const linkedItem = input.stock_item_id
+                      ? stockItems.find((stockItem) => stockItem.id === input.stock_item_id) ?? null
+                      : null
+                    const qty = parseFloat(input.qty_used)
+
+                    return (
+                      <div key={input.localId} className="rounded-2xl border border-[#ebe6df] bg-[#faf8f5] p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-[#7d6c64]">
+                            Materia prima {idx + 1}
+                          </p>
+                          {inputs.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeInput(input.localId)}
+                              className="rounded-lg p-1 text-muted-foreground hover:bg-red-50 hover:text-[#ea504c]"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        <label className="mb-1 block text-[12px] font-medium text-muted-foreground">
+                          Item que baja del stock
+                        </label>
+                        <StockSearch
+                          key={`${input.localId}-${input.stock_item_id ?? 'empty'}`}
+                          items={stockItems}
+                          value={linkedItem}
+                          onChange={(item) => updateInput(input.localId, {
+                            stock_item_id: item?.id ?? null,
+                            stock_item_name: item?.name ?? '',
+                            unit: item?.unit ?? input.unit,
+                          })}
+                          placeholder="Buscar materia prima (ej: Nalga, pan rallado, huevo)..."
+                          requireFudoLink
+                          helperText="Autocompletado cerrado: solo aparecen items vinculados a Fudo."
+                          emptyText="No encontré ese item con vínculo Fudo. Primero mapealo en stock."
+                        />
+                        {linkedItem && (
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                            <span>Stock actual: {formatQty(linkedItem.current_qty)} {linkedItem.unit}</span>
+                            <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${getStockSource(linkedItem)?.tone}`}>
+                              {getStockSource(linkedItem)?.label}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Cantidad usada</label>
+                            <input
+                              type="number"
+                              step="0.001"
+                              min="0"
+                              value={input.qty_used}
+                              onChange={(e) => updateInput(input.localId, { qty_used: e.target.value })}
+                              placeholder="0.000"
+                              className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Unidad</label>
+                            <select
+                              value={input.unit}
+                              onChange={(e) => updateInput(input.localId, { unit: e.target.value })}
+                              className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                            >
+                              {['kg', 'g', 'lt', 'ml', 'unidad', 'atado', 'bandeja'].map((u) => (
+                                <option key={u} value={u}>{u}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        {linkedItem && !Number.isNaN(qty) && qty > linkedItem.current_qty && (
+                          <div className="mt-2 flex items-center gap-1.5 rounded-xl bg-red-50 px-3 py-2 text-[12px] text-[#ea504c]">
+                            <AlertTriangle className="size-3.5 shrink-0" />
+                            Cantidad mayor al stock disponible ({formatQty(linkedItem.current_qty)} {linkedItem.unit})
+                          </div>
+                        )}
                       </div>
-                    )}
-                    {inputItem && !isStockActionable(inputItem) && (
-                      <p className="mt-1 rounded-xl bg-[#fff7f7] px-3 py-2 text-[11px] font-semibold text-[#ea504c]">
-                        No se puede producir con este insumo hasta mapearlo a Fudo o marcarlo como Local LVE.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Cantidad</label>
-                      <input
-                        type="number"
-                        step="0.001"
-                        min="0"
-                        value={inputQty}
-                        onChange={(e) => setInputQty(e.target.value)}
-                        placeholder="0.000"
-                        className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Unidad</label>
-                      <select
-                        value={inputUnit}
-                        onChange={(e) => setInputUnit(e.target.value)}
-                        className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                      >
-                        {['kg', 'g', 'lt', 'ml', 'unidad', 'atado', 'bandeja'].map((u) => (
-                          <option key={u} value={u}>{u}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+                    )
+                  })}
 
                   <div>
-                    <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Fecha de elaboracion</label>
+                    <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Fecha de elaboración</label>
                     <input
                       type="date"
                       value={productionDate}
@@ -575,16 +815,9 @@ export default function NuevaProduccionPage() {
                       className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
                     />
                     <p className="mt-1 text-[11px] text-muted-foreground">
-                      Se usa para sugerir vencimientos y crear el lote en LVE.
+                      Se usa para sugerir vencimientos y crear el lote en LVE. Fudo se actualiza recién con aprobación.
                     </p>
                   </div>
-
-                  {inputItem && parseFloat(inputQty) > inputItem.current_qty && (
-                    <div className="flex items-center gap-1.5 rounded-xl bg-red-50 px-3 py-2 text-[12px] text-[#ea504c]">
-                      <AlertTriangle className="size-3.5 shrink-0" />
-                      Cantidad mayor al stock disponible ({formatQty(inputItem.current_qty)} {inputItem.unit})
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -594,7 +827,7 @@ export default function NuevaProduccionPage() {
                   type="text"
                   value={orderName}
                   onChange={(e) => setOrderName(e.target.value)}
-                  placeholder="Ej: Despiece nalga — 4 abr"
+                  placeholder="Ej: Milanesas — 9 may"
                   className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
                 />
                 <div className="mt-3">
@@ -603,7 +836,7 @@ export default function NuevaProduccionPage() {
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     rows={2}
-                    placeholder="Observaciones, lote, etc."
+                    placeholder="Ej: carne limpia, corte fino, pendiente revisar merma"
                     className="w-full resize-none rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
                   />
                 </div>
@@ -617,34 +850,45 @@ export default function NuevaProduccionPage() {
           <FadeIn>
             <div className="space-y-3">
               {/* Input summary */}
-              <div className="flex items-center gap-2 rounded-xl bg-[#e8f5f1] px-3 py-2">
+              <div className="rounded-xl bg-[#e8f5f1] px-3 py-2">
+                <div className="flex items-center gap-2">
                 <Package className="size-4 text-[#006d5a]" />
                 <span className="text-[13px] font-semibold text-[#006d5a]">
-                  Entrada: {formatQty(totalInputQty)} {inputUnit} de {inputItem?.name}
+                    Entradas: {inputDetails.length} materia{inputDetails.length !== 1 ? 's' : ''} prima{inputDetails.length !== 1 ? 's' : ''}
                 </span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {inputDetails.map((input) => (
+                    <span key={input.localId} className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-medium text-[#006d5a]">
+                      {input.item?.name ?? 'Sin item'} · {formatQty(input.qty)} {input.unit}
+                    </span>
+                  ))}
+                </div>
               </div>
 
-              {/* Balance indicator */}
-              {totalOutputQty > 0 && (
-                <div className={cn(
-                  'flex items-center gap-2 rounded-xl px-3 py-2 text-[12px] font-medium',
-                  balanceOk
-                    ? 'bg-[#e8f5f1] text-[#006d5a]'
-                    : Math.abs(balance) < 0.05
-                    ? 'bg-amber-50 text-[#d4943a]'
-                    : 'bg-red-50 text-[#ea504c]',
-                )}>
-                  {balanceOk
-                    ? <Check className="size-3.5" />
-                    : <AlertTriangle className="size-3.5" />}
-                  {balanceOk
-                    ? 'Balance cerrado ✓'
-                    : balance > 0
-                    ? `Faltan ${formatQty(balance)} ${inputUnit} en salidas`
-                    : `Exceso de ${formatQty(-balance)} ${inputUnit}`}
-                  <span className="ml-auto">
-                    {formatQty(totalOutputQty)}/{formatQty(totalInputQty)} {inputUnit}
-                  </span>
+              {/* Unit control */}
+              {balanceByUnit.length > 0 && (
+                <div className="rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-[#8b5e34]">
+                  <div className="flex items-center gap-2 font-semibold">
+                    {balanceOk ? <Check className="size-3.5 text-[#006d5a]" /> : <AlertTriangle className="size-3.5" />}
+                    Control por unidad
+                  </div>
+                  <div className="mt-1 space-y-0.5">
+                    {balanceByUnit.map((row) => (
+                      <div key={row.unit} className="flex items-center justify-between gap-2">
+                        <span>{row.unit}</span>
+                        <span>
+                          entra {formatQty(row.input)} · sale {formatQty(row.output)}
+                          {row.input > 0 && row.output > 0 && Math.abs(row.diff) >= 0.001
+                            ? ` · dif. ${formatQty(Math.abs(row.diff))}`
+                            : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-1 text-[11px] leading-relaxed text-[#8b5e34]/80">
+                    Si mezclás kg con unidades, LVE registra ambos movimientos pero no fuerza balance matemático entre unidades distintas.
+                  </p>
                 </div>
               )}
 
@@ -655,9 +899,19 @@ export default function NuevaProduccionPage() {
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#006d5a]/40 bg-[#006d5a]/5 py-3 text-[13px] font-medium text-[#006d5a]"
                 >
                   <TrendingUp className="size-4" />
-                  Cargar salidas del template &quot;{selectedTemplate.name}&quot;
+                  Usar guía &quot;{selectedTemplate.name}&quot;
                 </button>
               )}
+
+              <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#006d5a]">
+                  Sube stock Fudo
+                </p>
+                <h2 className="mt-1 text-[13px] font-semibold text-[#3d2c24]">Productos finales</h2>
+                <p className="mt-0.5 text-[12px] text-muted-foreground">
+                  Cada producto final debe elegirse desde Fudo. Merma/descarte no sube stock.
+                </p>
+              </div>
 
               {/* Output rows */}
               {outputs.map((o, idx) => (
@@ -673,7 +927,7 @@ export default function NuevaProduccionPage() {
                       'text-[11px] font-semibold uppercase tracking-wider',
                       o.is_waste ? 'text-[#ea504c]' : 'text-[#006d5a]',
                     )}>
-                      {o.is_waste ? '🗑 Merma' : `Producto ${idx + 1 - outputs.slice(0, idx).filter((x) => x.is_waste).length}`}
+                      {o.is_waste ? 'Merma / descarte' : `Producto obtenido ${idx + 1 - outputs.slice(0, idx).filter((x) => x.is_waste).length}`}
                     </span>
                     <button
                       onClick={() => removeOutput(o.localId)}
@@ -687,7 +941,7 @@ export default function NuevaProduccionPage() {
                     {!o.is_waste && (
                       <div>
                         <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
-                          Insumo de destino (opcional)
+                          Item de stock que sube
                         </label>
                         <StockSearch
                           key={`${o.localId}-${o.stock_item_id ?? 'empty'}`}
@@ -709,7 +963,10 @@ export default function NuevaProduccionPage() {
                                 : o.expires_on,
                             })
                           }}
-                          placeholder="Buscar en stock..."
+                          placeholder="Buscar producto final (ej: Milanesa cruda)..."
+                          requireFudoLink
+                          helperText="Obligatorio: elegí el item Fudo que sube stock."
+                          emptyText="No encontré ese producto vinculado a Fudo. Primero mapealo en stock."
                         />
                         {o.stock_item_id && (() => {
                           const linkedItem = stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
@@ -720,9 +977,9 @@ export default function NuevaProduccionPage() {
                               <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${source?.tone}`}>
                                 {source?.label}
                               </span>
-                              {!source?.actionable && (
+                              {!isFudoLinked(linkedItem) && (
                                 <span className="text-[11px] font-semibold text-[#ea504c]">
-                                  Bloqueado hasta mapear Fudo/Local LVE
+                                  Bloqueado hasta mapear con Fudo
                                 </span>
                               )}
                             </div>
@@ -733,7 +990,7 @@ export default function NuevaProduccionPage() {
 
                     <div>
                       <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
-                        Nombre en el registro
+                        Nombre visible de la salida
                       </label>
                       <input
                         type="text"
@@ -829,8 +1086,8 @@ export default function NuevaProduccionPage() {
 
                       return (
                         <p className="rounded-xl bg-[#fdf6ec] px-3 py-2 text-[11px] text-[#8b5e34]">
-                          Vida util configurada: {linkedItem.shelf_life_days} dias.
-                          {!o.expires_on && ' Si no elegis fecha, LVE la calcula automaticamente.'}
+                          Vida útil configurada: {linkedItem.shelf_life_days} días.
+                          {!o.expires_on && ' Si no elegís fecha, LVE la calcula automáticamente.'}
                         </p>
                       )
                     })()}
@@ -853,14 +1110,14 @@ export default function NuevaProduccionPage() {
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-dashed border-[#006d5a]/40 py-2.5 text-[13px] font-medium text-[#006d5a]"
                 >
                   <Plus className="size-4" />
-                  Producto
+                  Producto final
                 </button>
                 <button
                   onClick={() => addOutput(true)}
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-dashed border-[#ea504c]/30 py-2.5 text-[13px] font-medium text-[#ea504c]"
                 >
                   <Leaf className="size-4" />
-                  Merma
+                  Merma / descarte
                 </button>
               </div>
             </div>
@@ -882,23 +1139,27 @@ export default function NuevaProduccionPage() {
               <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
                 <p className="text-[13px] text-muted-foreground">Producción</p>
                 <p className="mt-0.5 text-[16px] font-bold text-[#3d2c24]">{orderName}</p>
-                <p className="mt-1 text-[12px] text-muted-foreground">Elaboracion: {productionDate}</p>
+                <p className="mt-1 text-[12px] text-muted-foreground">Elaboración: {productionDate}</p>
                 {notes && <p className="mt-1 text-[12px] text-muted-foreground">{notes}</p>}
               </div>
 
               {/* Input */}
               <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
-                <p className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">Entrada</p>
-                <div className="flex items-center justify-between">
-                  <div className="min-w-0">
-                    <span className="font-medium text-[#3d2c24]">{inputItem?.name}</span>
-                    {inputItem && (
-                      <p className={`mt-1 w-fit rounded-full px-1.5 py-0.5 text-[9px] font-bold ${getStockSource(inputItem)?.tone}`}>
-                        {getStockSource(inputItem)?.label}
-                      </p>
-                    )}
-                  </div>
-                  <span className="font-bold text-[#3d2c24]">{formatQty(totalInputQty)} {inputUnit}</span>
+                <p className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">Entradas</p>
+                <div className="space-y-2">
+                  {inputDetails.map((input) => (
+                    <div key={input.localId} className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="font-medium text-[#3d2c24]">{input.item?.name ?? 'Sin item'}</span>
+                        {input.item && (
+                          <p className={`mt-1 w-fit rounded-full px-1.5 py-0.5 text-[9px] font-bold ${getStockSource(input.item)?.tone}`}>
+                            {getStockSource(input.item)?.label}
+                          </p>
+                        )}
+                      </div>
+                      <span className="shrink-0 font-bold text-[#3d2c24]">{formatQty(input.qty)} {input.unit}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -908,7 +1169,9 @@ export default function NuevaProduccionPage() {
                 <div className="space-y-2">
                   {outputs.map((o) => {
                     const qty = parseFloat(o.qty_produced) || 0
-                    const pct = totalInputQty > 0 ? (qty / totalInputQty * 100).toFixed(1) : '0'
+                    const pct = singleInputUnit && o.unit === singleInputUnit[0] && totalInputQty > 0
+                      ? (qty / totalInputQty * 100).toFixed(1)
+                      : null
                     const isBelow = o.theoretical_qty !== null && qty < o.theoretical_qty * 0.9
                     const linkedItem = o.stock_item_id
                       ? stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
@@ -941,23 +1204,27 @@ export default function NuevaProduccionPage() {
                         </div>
                         <div className="shrink-0 text-right">
                           <span className="text-[13px] font-bold text-[#3d2c24]">{formatQty(qty)} {o.unit}</span>
-                          <span className="ml-1.5 text-[11px] text-muted-foreground">({pct}%)</span>
+                          {pct !== null && <span className="ml-1.5 text-[11px] text-muted-foreground">({pct}%)</span>}
                         </div>
                       </div>
                     )
                   })}
                 </div>
 
-                {/* Balance check */}
-                <div className={cn(
-                  'mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-[12px] font-semibold',
-                  balanceOk ? 'bg-[#e8f5f1] text-[#006d5a]' : 'bg-amber-50 text-[#d4943a]',
-                )}>
-                  <span>Balance</span>
-                  <span>
-                    {formatQty(totalOutputQty)}/{formatQty(totalInputQty)} {inputUnit}
-                    {!balanceOk && ` (diferencia: ${formatQty(Math.abs(balance))})`}
-                  </span>
+                {/* Unit control */}
+                <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-[#8b5e34]">
+                  <div className="flex items-center justify-between gap-2 font-semibold">
+                    <span>Control por unidad</span>
+                    {balanceOk && <span className="text-[#006d5a]">OK</span>}
+                  </div>
+                  <div className="mt-1 space-y-0.5">
+                    {balanceByUnit.map((row) => (
+                      <div key={row.unit} className="flex items-center justify-between gap-2">
+                        <span>{row.unit}</span>
+                        <span>entra {formatQty(row.input)} · sale {formatQty(row.output)}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -988,14 +1255,38 @@ export default function NuevaProduccionPage() {
               <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-[12px] text-[#d4943a]">
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                 <span>
-                  Al confirmar, se descontará <strong>{formatQty(totalInputQty)} {inputUnit} de {inputItem?.name}</strong> del stock
-                  y se sumarán los productos obtenidos. Los items vinculados se sincronizan con Fudo; los no mapeados quedan bloqueados.
-                  Si la salida tiene vida util, LVE crea un lote con vencimiento.
+                  Al enviar, no se mueve stock todavía. Queda pendiente para encargado: al aprobar se descuentan las materias primas,
+                  se suman las salidas, se crean lotes/vencimientos en LVE y se sincroniza Fudo.
                 </span>
               </div>
             </div>
           </FadeIn>
         )}
+
+        <div className="sticky bottom-3 z-20 mt-5 rounded-[1.25rem] border border-[#ebe6df] bg-white/95 p-3 shadow-lg backdrop-blur">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Control rápido</p>
+              <p className="mt-0.5 text-[13px] font-semibold text-[#3d2c24]">
+                {readyForReview ? 'Listo para enviar a encargado' : 'Faltan datos para validar'}
+              </p>
+            </div>
+            <span className={cn(
+              'rounded-full px-2 py-1 text-[11px] font-bold',
+              readyForReview ? 'bg-[#e8f5f1] text-[#006d5a]' : 'bg-amber-50 text-[#d4943a]',
+            )}>
+              {inputs.length} entrada{inputs.length !== 1 ? 's' : ''} · {finishedOutputs.length} salida{finishedOutputs.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-1.5">
+            {checklist.map((item) => (
+              <div key={item.label} className="flex items-center gap-1.5 text-[11px] text-[#7d6c64]">
+                <span className={cn('size-2 rounded-full', item.ok ? 'bg-[#006d5a]' : 'bg-[#d4943a]')} />
+                {item.label}
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* ── Navigation buttons ── */}
         <div className="mt-6 flex gap-3">
@@ -1026,9 +1317,9 @@ export default function NuevaProduccionPage() {
               className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-semibold text-white disabled:opacity-60 active:scale-[0.99]"
             >
               {saving ? (
-                <><Loader2 className="size-4 animate-spin" />Sincronizando stock...</>
+                <><Loader2 className="size-4 animate-spin" />Enviando a validación...</>
               ) : (
-                <><Check className="size-4" />Confirmar y sincronizar</>
+                <><Check className="size-4" />Enviar a validación</>
               )}
             </button>
           )}

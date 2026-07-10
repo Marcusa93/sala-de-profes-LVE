@@ -24,13 +24,27 @@ export type StockSetupIssue = {
   stock_item_id: string
   stock_item_name: string
   severity: StockPriority
-  type: 'missing_shelf_life' | 'category_review' | 'missing_menu_mapping'
+  type:
+    | 'missing_shelf_life'
+    | 'category_review'
+    | 'missing_menu_mapping'
+    | 'unit_review'
+    | 'quantity_anomaly'
+    | 'negative_stock'
+    | 'stale_stock'
+    | 'missing_lot_control'
+    | 'expired_lot_stock'
+    | 'mapping_conflict'
+    | 'missing_fudo_mapping'
+    | 'sales_stock_mismatch'
   title: string
   detail: string
   current_qty: number
   unit: string
   suggested_shelf_life_days: number | null
   suggested_category: StockCategoryValue | null
+  rule_id?: string | null
+  decision_state?: 'open' | 'confirmed_ok' | 'snoozed' | 'rule_created' | null
 }
 
 export type StockIntelligenceResponse = {
@@ -42,6 +56,8 @@ export type StockIntelligenceResponse = {
     low_stock_items: number
     overstock_finished_goods: number
     setup_issues: number
+    anomalies: number
+    anomaly_rules: number
   }
   sectors: Array<{
     sector: StockSector

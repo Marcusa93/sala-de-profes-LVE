@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireRole } from '@/lib/supabase/require-role'
 import { fudo } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
@@ -16,6 +17,9 @@ import { fudo } from '@/lib/fudoClient'
 
 export async function POST() {
   try {
+    const auth = await requireRole(['socio', 'encargado'])
+    if (auth.response) return auth.response
+
     const supabase = createAdminClient()
 
     // 1) Fetch Fudo ingredients with relationships
