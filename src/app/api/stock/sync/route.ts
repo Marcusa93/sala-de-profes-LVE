@@ -68,17 +68,6 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = createAdminClient()
-    const { fudo } = await import('@/lib/fudoClient')
-    const fudoConnection = await fudo.testConnection()
-    if (!fudoConnection.ok) {
-      return NextResponse.json({
-        success: false,
-        fudoSynced: false,
-        error: `Fudo no está disponible: ${fudoConnection.error}`,
-        message: 'Stock no actualizado: Fudo no está disponible',
-      }, { status: 502 })
-    }
-
     const result = await syncToFudo(admin, stockItemId, newQty, user.id, { reason, note })
 
     return NextResponse.json({

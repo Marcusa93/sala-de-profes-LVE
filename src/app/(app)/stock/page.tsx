@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { isManagerOrAbove } from '@/lib/roles'
 import {
   Package,
@@ -18,6 +19,11 @@ import {
   Save,
   ClipboardCheck,
   ShieldCheck,
+  Activity,
+  ArrowRight,
+  CheckCircle2,
+  ClipboardList,
+  ListChecks,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -34,6 +40,10 @@ import {
   type StockIntelligenceResponse,
   type StockPriority,
 } from '@/lib/stock/intelligence'
+import type {
+  StockAnomaliesResponse,
+  StockAnomalyItem,
+} from '@/lib/contracts/stock-anomalies'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,7 +89,7 @@ type StockLotsResponse = {
 }
 
 type SemaphoreColor = 'red' | 'yellow' | 'green'
-type FudoConnectionState = 'checking' | 'ok' | 'error'
+type FudoConnectionState = 'checking' | 'ok' | 'warning' | 'error'
 type StockSourceFilter = 'all' | 'fudo' | 'local' | 'unmapped'
 type StockView = 'radar' | 'conteo' | 'inventario'
 type FudoStatusResponse = {
@@ -96,6 +106,8 @@ type StockReviewCard = {
   title: string
   detail: string
   primaryAction: 'sync' | 'count' | 'configure' | 'map' | 'watch'
+  actionLabel?: string
+  actionHref?: string | null
 }
 
 function getSemaphore(item: StockItem): SemaphoreColor {
@@ -162,6 +174,12 @@ function lotTone(expiresInDays: number) {
     pill: 'bg-[#e8f5f1] text-[#006d5a]',
     panel: 'border-[#dcefe8] bg-[#f7fcfa]',
   }
+}
+
+function priorityFromAnomaly(anomaly: StockAnomalyItem): StockReviewCard['priority'] {
+  if (anomaly.severity === 'critical') return 'critico'
+  if (anomaly.severity === 'high') return 'accion'
+  return 'revisar'
 }
 
 function formatLotCountdown(expiresInDays: number) {
@@ -260,6 +278,7 @@ function getQuantityReview(item: StockItem): StockReviewCard | null {
 // ---------------------------------------------------------------------------
 
 export default function StockPage() {
+  const router = useRouter()
   const { profile, loading: profileLoading } = useProfileContext()
   const { items, isLoading: loading, mutate } = useStockItems(true)
   const [search, setSearch] = useState('')
@@ -277,6 +296,8 @@ export default function StockPage() {
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [intelligence, setIntelligence] = useState<StockIntelligenceResponse | null>(null)
   const [loadingIntelligence, setLoadingIntelligence] = useState(false)
+  const [anomalies, setAnomalies] = useState<StockAnomaliesResponse | null>(null)
+  const [loadingAnomalies, setLoadingAnomalies] = useState(false)
   const [editingMetaId, setEditingMetaId] = useState<string | null>(null)
   const [editingMetaSource, setEditingMetaSource] = useState<'setup' | 'item' | null>(null)
   const [metaShelfLife, setMetaShelfLife] = useState('')
@@ -316,12 +337,12 @@ export default function StockPage() {
     if (data.last_sync_at) setLastFudoSync(data.last_sync_at)
     setFudoConnection((current) => ({
       ...current,
-      state: data.state === 'error' ? 'error' : 'ok',
+      state: data.state,
       message: data.state === 'error'
         ? 'Hay incidentes críticos o escrituras Fudo fallidas'
-        : data.incidents.open > 0
+        : data.state === 'warning'
           ? `${data.incidents.open} incidentes Fudo abiertos`
-          : current.message,
+          : null,
       issueCount: data.incidents.open,
       pendingEvents: data.events.pending,
       failedEvents: data.events.failed_last_24h,
@@ -355,6 +376,20 @@ export default function StockPage() {
       toast.error(err instanceof Error ? err.message : 'Error al cargar control de stock')
     } finally {
       setLoadingIntelligence(false)
+    }
+  }, [])
+
+  const loadAnomalies = useCallback(async () => {
+    setLoadingAnomalies(true)
+    try {
+      const res = await fetch('/api/stock/anomalies')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error al cargar anomalías')
+      setAnomalies(data)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al cargar anomalías')
+    } finally {
+      setLoadingAnomalies(false)
     }
   }, [])
 
@@ -399,13 +434,13 @@ export default function StockPage() {
       toast.success('Configuración de stock actualizada')
       setEditingMetaId(null)
       setEditingMetaSource(null)
-      await Promise.all([mutate(), loadIntelligence(), loadLots()])
+      await Promise.all([mutate(), loadIntelligence(), loadAnomalies(), loadLots()])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al guardar configuración')
     } finally {
       setSavingMeta(false)
     }
-  }, [loadIntelligence, loadLots, metaCategory, metaNotes, metaShelfLife, mutate])
+  }, [loadAnomalies, loadIntelligence, loadLots, metaCategory, metaNotes, metaShelfLife, mutate])
 
   // Fudo sync on first load
   useEffect(() => {
@@ -434,6 +469,7 @@ export default function StockPage() {
           mutate() // revalidate stock items with fresh Fudo data
           void loadFudoStatus().catch(() => null)
           void loadIntelligence()
+          void loadAnomalies()
           void loadLots()
         } else {
           setFudoConnection({
@@ -445,6 +481,7 @@ export default function StockPage() {
             criticalIncidents: 0,
             highIncidents: 0,
           })
+          void loadAnomalies()
         }
       } catch (err) {
         if (!cancelled) {
@@ -457,17 +494,22 @@ export default function StockPage() {
             criticalIncidents: 0,
             highIncidents: 0,
           })
+          void loadAnomalies()
         }
       }
       if (!cancelled) setSyncing(false)
     }
     doSync()
     return () => { cancelled = true }
-  }, [loadFudoStatus, loadIntelligence, loadLots, mutate])
+  }, [loadAnomalies, loadFudoStatus, loadIntelligence, loadLots, mutate])
 
   useEffect(() => {
     void loadIntelligence()
   }, [loadIntelligence])
+
+  useEffect(() => {
+    void loadAnomalies()
+  }, [loadAnomalies])
 
   useEffect(() => {
     void loadLots()
@@ -551,30 +593,37 @@ export default function StockPage() {
     [intelligence],
   )
 
+  const anomalyCards = useMemo<StockReviewCard[]>(() => {
+    return (anomalies?.items ?? []).map((anomaly) => {
+      const item = anomaly.stock_item_id
+        ? items.find((entry) => entry.id === anomaly.stock_item_id) ?? null
+        : null
+
+      return {
+        id: `anomaly:${anomaly.id}`,
+        item,
+        priority: priorityFromAnomaly(anomaly),
+        title: anomaly.title,
+        detail: anomaly.detail,
+        primaryAction: anomaly.primary_action === 'pending_links' ? 'watch' : anomaly.primary_action,
+        actionLabel: anomaly.action_label,
+        actionHref: anomaly.action_href,
+      }
+    })
+  }, [anomalies?.items, items])
+
   const reviewCards = useMemo<StockReviewCard[]>(() => {
     const cards: StockReviewCard[] = []
+    const anomalyItemIds = new Set(
+      (anomalies?.items ?? [])
+        .map((entry) => entry.stock_item_id)
+        .filter((value): value is string => Boolean(value)),
+    )
 
-    if (fudoConnection.state === 'error') {
-      cards.push({
-        id: 'fudo:blocking',
-        item: null,
-        priority: 'critico',
-        title: 'Fudo bloquea correcciones de stock',
-        detail: fudoConnection.message ?? 'Hay que sincronizar antes de contar o corregir mercadería.',
-        primaryAction: 'sync',
-      })
-    } else if (fudoConnection.issueCount > 0 || fudoConnection.highIncidents > 0) {
-      cards.push({
-        id: 'fudo:incidents',
-        item: null,
-        priority: 'revisar',
-        title: 'Fudo tiene inconsistencias abiertas',
-        detail: `${fudoConnection.issueCount} incidentes. Revisá mapeos/unidades antes de pisar stock sensible.`,
-        primaryAction: 'sync',
-      })
-    }
+    cards.push(...anomalyCards)
 
     for (const item of items) {
+      if (anomalyItemIds.has(item.id)) continue
       const card = getQuantityReview(item)
       if (card) cards.push(card)
     }
@@ -610,11 +659,9 @@ export default function StockPage() {
       .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
       .slice(0, 12)
   }, [
+    anomalies?.items,
+    anomalyCards,
     expiringLotsCount,
-    fudoConnection.highIncidents,
-    fudoConnection.issueCount,
-    fudoConnection.message,
-    fudoConnection.state,
     items,
     lotsData?.lots,
     lotsData?.summary.expired,
@@ -658,7 +705,8 @@ export default function StockPage() {
       toast.error('La diferencia es relevante: agregá una nota corta del conteo')
       return
     }
-    if (fudoConnection.state !== 'ok') {
+    const source = getStockSource(currentItem)
+    if (source.kind === 'fudo' && (fudoConnection.state === 'checking' || fudoConnection.state === 'error')) {
       toast.error('Stock bloqueado: primero hay que reconectar con Fudo')
       return
     }
@@ -690,7 +738,7 @@ export default function StockPage() {
       setEditingId(null)
       setEditQty('')
       setCountNote('')
-      await Promise.all([mutate(), loadIntelligence(), loadLots()])
+      await Promise.all([mutate(), loadIntelligence(), loadAnomalies(), loadLots()])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al guardar')
     }
@@ -717,7 +765,7 @@ export default function StockPage() {
         })
         void loadFudoStatus().catch(() => null)
         toast.success(`Sincronizado con Fudo — ${json.read?.synced ?? 0} items`)
-        await Promise.all([mutate(), loadIntelligence(), loadLots()])
+        await Promise.all([mutate(), loadIntelligence(), loadAnomalies(), loadLots()])
       } else {
         const message = json.error || 'Error al sincronizar con Fudo'
         setFudoConnection({
@@ -730,6 +778,7 @@ export default function StockPage() {
           highIncidents: 0,
         })
         toast.error(message)
+        void loadAnomalies()
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error de conexión con Fudo'
@@ -743,6 +792,7 @@ export default function StockPage() {
         highIncidents: 0,
       })
       toast.error(message)
+      void loadAnomalies()
     } finally {
       setSyncing(false)
     }
@@ -760,7 +810,7 @@ export default function StockPage() {
   const startPhysicalCount = (item: StockItem) => {
     const source = getStockSource(item)
     if (!isEncargado) return
-    if (fudoConnection.state !== 'ok') {
+    if (source.kind === 'fudo' && (fudoConnection.state === 'checking' || fudoConnection.state === 'error')) {
       toast.error('Stock bloqueado: primero hay que reconectar con Fudo')
       return
     }
@@ -969,7 +1019,8 @@ export default function StockPage() {
     )
   }
 
-  const renderReviewCard = (card: StockReviewCard) => {
+  const renderReviewCard = (card: StockReviewCard, options?: { featured?: boolean }) => {
+    const featured = Boolean(options?.featured)
     const tone = card.priority === 'critico'
       ? 'border-[#f3d0cf] bg-[#fff7f7]'
       : card.priority === 'accion'
@@ -982,6 +1033,10 @@ export default function StockPage() {
         : 'bg-[#f3efe9] text-[#7d6c64]'
 
     const onPrimaryAction = () => {
+      if (card.actionHref) {
+        router.push(card.actionHref)
+        return
+      }
       if (card.primaryAction === 'sync') {
         setView('radar')
         void handleFudoSync()
@@ -1011,33 +1066,99 @@ export default function StockPage() {
       watch: 'Ver detalle',
     }
 
+    const source = card.item ? getStockSource(card.item) : null
+
     return (
-      <div key={card.id} className={`rounded-2xl border p-3 ${tone}`}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+      <div
+        key={card.id}
+        className={`group overflow-hidden rounded-[1.4rem] border ${featured ? 'p-4 shadow-sm' : 'p-3'} ${tone}`}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${pill}`}>
                 {card.priority === 'critico' ? 'Crítico' : card.priority === 'accion' ? 'Acción' : 'Revisar'}
               </span>
-              {card.item && (
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${getStockSource(card.item).tone}`}>
-                  {getStockSource(card.item).label}
+              {source && (
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${source.tone}`}>
+                  {source.label}
                 </span>
               )}
             </div>
-            <h3 className="mt-2 text-sm font-bold leading-snug text-[#3d2c24]">{card.title}</h3>
-            <p className="mt-1 text-[12px] leading-relaxed text-[#6f665f]">{card.detail}</p>
+            <h3 className={`${featured ? 'mt-3 text-lg' : 'mt-2 text-sm'} font-bold leading-snug text-[#3d2c24]`}>
+              {card.title}
+            </h3>
+            <p className={`${featured ? 'mt-2 text-sm' : 'mt-1 text-[12px]'} leading-relaxed text-[#6f665f]`}>
+              {card.detail}
+            </p>
+            {featured && card.item && (
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-black/5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Sistema</p>
+                  <p className="mt-0.5 text-base font-bold tabular-nums text-[#3d2c24]">
+                    {formatQty(card.item.current_qty)}
+                  </p>
+                  <p className="text-[10px] text-[#7d6c64]">{card.item.unit}</p>
+                </div>
+                <div className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-black/5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Mínimo</p>
+                  <p className="mt-0.5 text-base font-bold tabular-nums text-[#3d2c24]">
+                    {formatQty(card.item.min_qty)}
+                  </p>
+                  <p className="text-[10px] text-[#7d6c64]">{card.item.unit}</p>
+                </div>
+                <div className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-black/5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Origen</p>
+                  <p className="mt-0.5 truncate text-xs font-bold text-[#3d2c24]">
+                    {source?.kind === 'fudo' ? 'Fudo' : source?.kind === 'local' ? 'Local' : 'Sin mapeo'}
+                  </p>
+                  <p className="text-[10px] text-[#7d6c64]">control</p>
+                </div>
+              </div>
+            )}
           </div>
           <button
             onClick={onPrimaryAction}
-            className="shrink-0 rounded-xl bg-[#3d2c24] px-3 py-2 text-[11px] font-bold text-white"
+            className={`${featured ? 'rounded-2xl px-4 py-3 text-sm' : 'rounded-xl px-3 py-2 text-[11px]'} flex w-full shrink-0 items-center justify-center gap-1.5 bg-[#3d2c24] font-bold text-white transition-transform group-active:scale-[0.98] sm:w-auto`}
           >
-            {actionLabel[card.primaryAction]}
+            {card.actionLabel ?? actionLabel[card.primaryAction]}
+            <ArrowRight className={featured ? 'size-4' : 'size-3.5'} />
           </button>
         </div>
       </div>
     )
   }
+
+  const primaryReviewCard = reviewCards[0] ?? null
+  const secondaryReviewCards = reviewCards.slice(1)
+  const fudoStatusUi = fudoConnection.state === 'error'
+    ? {
+      label: 'Fudo bloqueado',
+      detail: fudoConnection.message ?? 'Requiere sincronización',
+      className: 'bg-[#fff7f7] text-[#ea504c] ring-[#f3d0cf]',
+      Icon: AlertTriangle,
+    }
+    : fudoConnection.state === 'warning'
+      ? {
+        label: 'Fudo con alertas',
+        detail: fudoConnection.message ?? 'Hay vínculos para revisar',
+        className: 'bg-[#fffaf2] text-[#d4943a] ring-[#f1dfba]',
+        Icon: AlertTriangle,
+      }
+    : fudoConnection.state === 'checking'
+      ? {
+        label: 'Verificando Fudo',
+        detail: 'Sincronización en curso',
+        className: 'bg-[#faf8f5] text-[#7d6c64] ring-[#ebe6df]',
+        Icon: Loader2,
+      }
+      : {
+        label: 'Fudo conectado',
+        detail: lastFudoSync ? `Última sync ${format(new Date(lastFudoSync), 'HH:mm')}` : 'Listo para controlar',
+        className: 'bg-[#e8f5f1] text-[#006d5a] ring-[#dcefe8]',
+        Icon: CheckCircle2,
+      }
+  const FudoStatusIcon = fudoStatusUi.Icon
 
   // Loading
   if (profileLoading || loading) {
@@ -1053,166 +1174,236 @@ export default function StockPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 pb-28">
+    <div className="mx-auto max-w-5xl space-y-4 pb-28">
       {/* Header */}
       <FadeIn>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Control de mercadería</h1>
-            <p className="section-label mt-0.5">
-              {counts.total} items
-              {lastFudoSync && (
-                <span className="ml-1 text-[#006d5a]">
-                  · Fudo {format(new Date(lastFudoSync), 'HH:mm')} · {fudoSyncCount} items
+        <div className="overflow-hidden rounded-[2rem] border border-[#ebe6df] bg-[radial-gradient(circle_at_top_left,#e8f5f1_0,#fbfaf8_34%,#ffffff_72%)] p-4 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="max-w-2xl">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-[#3d2c24] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white">
+                  Stock LVE
                 </span>
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold ring-1 ${fudoStatusUi.className}`}>
+                  <FudoStatusIcon className={`size-3.5 ${fudoConnection.state === 'checking' ? 'animate-spin' : ''}`} />
+                  {fudoStatusUi.label}
+                </span>
+              </div>
+              <h1 className="mt-3 font-display text-2xl tracking-tight text-[#3d2c24] sm:text-3xl">
+                Control de mercadería
+              </h1>
+              <p className="mt-2 max-w-xl text-sm leading-relaxed text-[#6f665f]">
+                Primero Radar: detecta anomalías. Después Conteo: corregí el stock físico.
+                Inventario queda como búsqueda completa, no como pantalla principal.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:min-w-[210px]">
+              <div className={`rounded-2xl px-3 py-2 text-sm font-bold ring-1 ${fudoStatusUi.className}`}>
+                <p>{fudoStatusUi.detail}</p>
+                {fudoConnection.issueCount > 0 && (
+                  <p className="mt-0.5 text-[11px] opacity-80">{fudoConnection.issueCount} incidentes abiertos</p>
+                )}
+              </div>
+              {isEncargado && (
+                <button
+                  onClick={() => void handleFudoSync()}
+                  disabled={syncing}
+                  className="flex items-center justify-center gap-2 rounded-2xl bg-[#006d5a] px-4 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#005447] disabled:opacity-50"
+                >
+                  {syncing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                  Traer datos de Fudo
+                </button>
               )}
-            </p>
+            </div>
           </div>
-          {isEncargado && (
+
+          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
             <button
-              onClick={async () => {
-                setSyncing(true)
-                setFudoConnection((current) => ({ ...current, state: 'checking', message: null }))
-                try {
-                  const res = await fetch('/api/stock/sync')
-                  const json = await res.json()
-                  if (res.ok && json.success && json.fudoConnected !== false) {
-                    const issueCount = Array.isArray(json.read?.errors) ? json.read.errors.length : 0
-                    setLastFudoSync(json.timestamp)
-                    setFudoSyncCount(json.read?.synced ?? 0)
-                    setFudoConnection({
-                      state: 'ok',
-                      message: issueCount > 0 ? `${issueCount} inconsistencias de mapeo Fudo` : null,
-                      issueCount,
-                      pendingEvents: 0,
-                      failedEvents: 0,
-                      criticalIncidents: 0,
-                      highIncidents: 0,
-                    })
-                    void loadFudoStatus().catch(() => null)
-                    toast.success(`Sincronizado con Fudo — ${json.read?.synced ?? 0} items`)
-                    await Promise.all([mutate(), loadIntelligence(), loadLots()])
-                  } else {
-                    const message = json.error || 'Error al sincronizar con Fudo'
-                    setFudoConnection({
-                      state: 'error',
-                      message,
-                      issueCount: 0,
-                      pendingEvents: 0,
-                      failedEvents: 0,
-                      criticalIncidents: 0,
-                      highIncidents: 0,
-                    })
-                    toast.error(message)
-                  }
-                } catch (err) {
-                  const message = err instanceof Error ? err.message : 'Error de conexión con Fudo'
-                  setFudoConnection({
-                    state: 'error',
-                    message,
-                    issueCount: 0,
-                    pendingEvents: 0,
-                    failedEvents: 0,
-                    criticalIncidents: 0,
-                    highIncidents: 0,
-                  })
-                  toast.error(message)
-                }
-                setSyncing(false)
-              }}
-              disabled={syncing}
-              className="flex items-center gap-1.5 rounded-xl bg-[#e8f5f1] px-3 py-1.5 text-[11px] font-bold text-[#006d5a] transition-colors hover:bg-[#c0e4da] disabled:opacity-50"
+              onClick={() => { setView('inventario'); setSourceFilter('all'); setSemaphoreFilter(null) }}
+              className="rounded-2xl bg-white/80 px-3 py-3 text-left ring-1 ring-[#ebe6df] transition hover:bg-white"
             >
-              {syncing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-              Traer Fudo
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Items activos</p>
+              <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.total}</p>
+              <p className="text-[11px] text-[#7d6c64]">{stockOverview.fudoLinked} vinculados a Fudo</p>
             </button>
-          )}
+            <button
+              onClick={() => { setView('conteo'); setSemaphoreFilter('red') }}
+              className="rounded-2xl bg-[#fff7f7] px-3 py-3 text-left ring-1 ring-[#f3d0cf] transition hover:bg-white"
+            >
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[#ea504c]">Críticos</p>
+              <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.red}</p>
+              <p className="text-[11px] text-[#7d6c64]">requieren conteo o reposición</p>
+            </button>
+            <button
+              onClick={() => { setView('inventario'); setSourceFilter('unmapped') }}
+              className="rounded-2xl bg-[#fffaf2] px-3 py-3 text-left ring-1 ring-[#f1dfba] transition hover:bg-white"
+            >
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Sin mapeo</p>
+              <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.unmapped}</p>
+              <p className="text-[11px] text-[#7d6c64]">bloqueados para escritura</p>
+            </button>
+            <button
+              onClick={() => setView('radar')}
+              className="rounded-2xl bg-[#f6fcfa] px-3 py-3 text-left ring-1 ring-[#dcefe8] transition hover:bg-white"
+            >
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[#006d5a]">Anomalías</p>
+              <p className="mt-1 text-2xl font-bold text-[#3d2c24]">
+                {loadingAnomalies ? '…' : anomalies?.summary.total ?? reviewCards.length}
+              </p>
+              <p className="text-[11px] text-[#7d6c64]">
+                {anomalies?.summary.pending_recipe_links
+                  ? `${anomalies.summary.pending_recipe_links} vínculos de receta pendientes`
+                  : `${fudoSyncCount} leídos de Fudo`}
+              </p>
+            </button>
+          </div>
         </div>
       </FadeIn>
 
       <FadeIn>
-        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-[#f3efe9] p-1">
+        <div className="grid grid-cols-3 gap-2 rounded-[1.35rem] border border-[#ebe6df] bg-white p-1 shadow-sm">
           {[
-            { key: 'radar' as const, label: 'Radar', detail: 'qué revisar' },
-            { key: 'conteo' as const, label: 'Conteo', detail: 'stock físico' },
-            { key: 'inventario' as const, label: 'Inventario', detail: 'lista completa' },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setView(tab.key)}
-              className={`rounded-xl px-2 py-2 text-center transition-all ${
-                view === tab.key
-                  ? 'bg-white text-[#3d2c24] shadow-sm'
-                  : 'text-[#8d847b] hover:bg-white/60'
-              }`}
-            >
-              <span className="block text-sm font-bold">{tab.label}</span>
-              <span className="block text-[10px] font-semibold uppercase tracking-wide">{tab.detail}</span>
-            </button>
-          ))}
+            { key: 'radar' as const, label: 'Radar', detail: `${reviewCards.length} alertas`, Icon: Activity },
+            { key: 'conteo' as const, label: 'Conteo', detail: 'stock físico', Icon: ClipboardList },
+            { key: 'inventario' as const, label: 'Inventario', detail: `${stockOverview.total} items`, Icon: ListChecks },
+          ].map((tab) => {
+            const Icon = tab.Icon
+
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setView(tab.key)}
+                className={`rounded-2xl px-2 py-2.5 text-left transition-all ${
+                  view === tab.key
+                    ? 'bg-[#3d2c24] text-white shadow-sm'
+                    : 'text-[#8d847b] hover:bg-[#faf8f5]'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Icon className="size-4" />
+                  <span className="text-sm font-bold">{tab.label}</span>
+                </span>
+                <span className={`mt-0.5 block pl-6 text-[10px] font-semibold uppercase tracking-wide ${
+                  view === tab.key ? 'text-white/70' : 'text-[#a39e97]'
+                }`}>
+                  {tab.detail}
+                </span>
+              </button>
+            )
+          })}
         </div>
       </FadeIn>
 
       {view === 'radar' && (
         <FadeIn>
-          <div className="space-y-3 rounded-3xl border border-[#ebe6df] bg-white p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
+          <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+            <section className="overflow-hidden rounded-[2rem] border border-[#ebe6df] bg-white shadow-sm">
+              <div className="border-b border-[#ebe6df] bg-[#fbfaf8] px-4 py-4">
                 <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">
-                  Radar operativo
+                  Prioridad inmediata
                 </p>
                 <h2 className="mt-1 text-xl font-bold tracking-tight text-[#3d2c24]">
-                  Revisar estos puntos primero
+                  Qué hay que mirar ahora
                 </h2>
-                <p className="mt-1 max-w-xl text-sm leading-relaxed text-[#6f665f]">
-                  Acá no va el inventario completo. Solo lo que puede generar errores entre Fudo,
-                  LVE y el conteo físico.
+                <p className="mt-1 text-sm leading-relaxed text-[#6f665f]">
+                  Una sola decisión principal para evitar que el encargado tenga que interpretar toda la lista.
                 </p>
               </div>
-              <div className={`rounded-2xl px-3 py-2 text-right text-[11px] font-bold ${
-                fudoConnection.state === 'error'
-                  ? 'bg-[#fef2f2] text-[#ea504c]'
-                  : fudoConnection.state === 'checking'
-                    ? 'bg-[#faf8f5] text-[#7d6c64]'
-                    : 'bg-[#e8f5f1] text-[#006d5a]'
-              }`}>
-                <p>{fudoConnection.state === 'error' ? 'Fudo bloqueado' : fudoConnection.state === 'checking' ? 'Fudo verificando' : 'Fudo OK'}</p>
-                {lastFudoSync && <p className="mt-0.5 text-[10px] opacity-80">{format(new Date(lastFudoSync), 'HH:mm')}</p>}
-              </div>
-            </div>
 
-            <div className="grid gap-2 sm:grid-cols-4">
-              <button onClick={() => { setSemaphoreFilter('red'); setView('conteo') }} className="rounded-2xl bg-[#fff7f7] px-3 py-3 text-left ring-1 ring-[#f3d0cf]">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-[#ea504c]">Crítico</p>
-                <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.red}</p>
-                <p className="text-[11px] text-[#7d6c64]">contar o reponer</p>
-              </button>
-              <button onClick={() => { setSourceFilter('unmapped'); setView('inventario') }} className="rounded-2xl bg-[#fffaf2] px-3 py-3 text-left ring-1 ring-[#f1dfba]">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Sin mapeo</p>
-                <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.unmapped}</p>
-                <p className="text-[11px] text-[#7d6c64]">bloqueados</p>
-              </button>
-              <button onClick={() => setView('radar')} className="rounded-2xl bg-[#fffaf2] px-3 py-3 text-left ring-1 ring-[#f1dfba]">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Vencen</p>
-                <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{expiringLotsCount}</p>
-                <p className="text-[11px] text-[#7d6c64]">usar o promover</p>
-              </button>
-              <button onClick={() => setView('radar')} className="rounded-2xl bg-[#faf8f5] px-3 py-3 text-left ring-1 ring-[#ebe6df]">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-[#7d6c64]">Alertas</p>
-                <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{reviewCards.length}</p>
-                <p className="text-[11px] text-[#7d6c64]">para auditar</p>
-              </button>
-            </div>
+              <div className="p-4">
+                {primaryReviewCard ? (
+                  renderReviewCard(primaryReviewCard, { featured: true })
+                ) : (
+                  <div className="rounded-[1.4rem] bg-[#f6fcfa] px-4 py-5 ring-1 ring-[#dcefe8]">
+                    <div className="flex items-start gap-3">
+                      <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-[#006d5a]" />
+                      <div>
+                        <p className="text-base font-bold text-[#3d2c24]">Sin anomalías relevantes</p>
+                        <p className="mt-1 text-sm leading-relaxed text-[#6f665f]">
+                          Fudo y LVE no muestran bloqueos críticos. Si querés auditar igual, entrá a Conteo.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setView('conteo')}
+                      className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-[#006d5a] px-4 py-2.5 text-sm font-bold text-white"
+                    >
+                      Ir a conteo físico
+                      <ArrowRight className="size-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
 
-            {reviewCards.length === 0 ? (
-              <div className="rounded-2xl bg-[#f6fcfa] px-4 py-4 text-sm font-semibold text-[#006d5a] ring-1 ring-[#dcefe8]">
-                Sin anomalías relevantes. Podés ir a Conteo para controlar stock físico.
+            <aside className="space-y-3">
+              <div className="rounded-[2rem] border border-[#ebe6df] bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">
+                      Mapa de riesgo
+                    </p>
+                    <h3 className="mt-1 text-lg font-bold text-[#3d2c24]">Dónde puede fallar</h3>
+                  </div>
+                  <Activity className="size-5 text-[#006d5a]" />
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <button
+                    onClick={() => { setSemaphoreFilter('red'); setView('conteo') }}
+                    className="flex w-full items-center justify-between rounded-2xl bg-[#fff7f7] px-3 py-3 text-left ring-1 ring-[#f3d0cf]"
+                  >
+                    <span>
+                      <span className="block text-[10px] font-bold uppercase tracking-wide text-[#ea504c]">Stock crítico</span>
+                      <span className="text-[12px] text-[#7d6c64]">contar o reponer</span>
+                    </span>
+                    <span className="text-2xl font-bold text-[#3d2c24]">{stockOverview.red}</span>
+                  </button>
+                  <button
+                    onClick={() => { setSourceFilter('unmapped'); setView('inventario') }}
+                    className="flex w-full items-center justify-between rounded-2xl bg-[#fffaf2] px-3 py-3 text-left ring-1 ring-[#f1dfba]"
+                  >
+                    <span>
+                      <span className="block text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Sin mapeo Fudo</span>
+                      <span className="text-[12px] text-[#7d6c64]">no se puede escribir</span>
+                    </span>
+                    <span className="text-2xl font-bold text-[#3d2c24]">{stockOverview.unmapped}</span>
+                  </button>
+                  <div className="flex items-center justify-between rounded-2xl bg-[#faf8f5] px-3 py-3 ring-1 ring-[#ebe6df]">
+                    <span>
+                      <span className="block text-[10px] font-bold uppercase tracking-wide text-[#7d6c64]">Vencimientos</span>
+                      <span className="text-[12px] text-[#7d6c64]">usar, promo o descarte</span>
+                    </span>
+                    <span className="text-2xl font-bold text-[#3d2c24]">{expiringLotsCount}</span>
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="space-y-2">
-                {reviewCards.map(renderReviewCard)}
+
+              <div className="rounded-[2rem] border border-[#ebe6df] bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">
+                      Cola de control
+                    </p>
+                    <h3 className="mt-1 text-lg font-bold text-[#3d2c24]">
+                      {secondaryReviewCards.length} pendientes
+                    </h3>
+                  </div>
+                  <ListChecks className="size-5 text-[#7d6c64]" />
+                </div>
+
+                {secondaryReviewCards.length === 0 ? (
+                  <p className="mt-3 rounded-2xl bg-[#faf8f5] px-3 py-3 text-sm text-[#7d6c64]">
+                    No hay cola adicional. El radar está limpio después de la prioridad principal.
+                  </p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {secondaryReviewCards.map((card) => renderReviewCard(card))}
+                  </div>
+                )}
               </div>
-            )}
+            </aside>
           </div>
         </FadeIn>
       )}
@@ -1230,6 +1421,8 @@ export default function StockPage() {
               ? fudoConnection.issueCount > 0
                 ? 'border-[#f1dfba] bg-[#fffaf2] text-[#8b5e34]'
                 : 'border-[#dcefe8] bg-[#f6fcfa] text-[#006d5a]'
+              : fudoConnection.state === 'warning'
+                ? 'border-[#f1dfba] bg-[#fffaf2] text-[#8b5e34]'
               : fudoConnection.state === 'checking'
                 ? 'border-[#ebe6df] bg-[#faf8f5] text-[#7d6c64]'
                 : 'border-[#f3d0cf] bg-[#fff7f7] text-[#ea504c]'
@@ -1238,6 +1431,8 @@ export default function StockPage() {
               <span className="font-semibold">
                 {fudoConnection.state === 'ok'
                   ? 'Fudo conectado'
+                  : fudoConnection.state === 'warning'
+                    ? 'Fudo con alertas'
                   : fudoConnection.state === 'checking'
                     ? 'Verificando Fudo'
                     : 'Fudo sin conexión'}
@@ -1518,10 +1713,10 @@ export default function StockPage() {
           const catCritical = catItems.filter(i => getSemaphore(i) === 'red').length
 
           return (
-            <div key={cat}>
+            <section key={cat} className="overflow-hidden rounded-[1.5rem] border border-[#ebe6df] bg-white shadow-sm">
               <button
                 onClick={() => toggleCat(cat)}
-                className="flex w-full items-center justify-between py-2"
+                className="flex w-full items-center justify-between bg-[#fbfaf8] px-4 py-3"
               >
                 <div className="flex items-center gap-2">
                   <span className="text-sm">{catConfig?.icon ?? '📦'}</span>
@@ -1539,7 +1734,7 @@ export default function StockPage() {
               </button>
 
               {!isCollapsed && (
-                <div className="space-y-1 mb-4">
+                <div className="space-y-2 p-2">
                   {catItems.map(item => {
                     const s = getSemaphore(item)
                     const c = COLORS[s]
@@ -1550,12 +1745,12 @@ export default function StockPage() {
                     return (
                       <div
                         key={item.id}
-                        className="rounded-xl border bg-card overflow-hidden"
+                        className="overflow-hidden rounded-[1.15rem] border border-[#ebe6df] bg-white transition hover:border-[#d8cfc6] hover:shadow-sm"
                         style={{ borderLeftWidth: 3, borderLeftColor: c.border.replace('border-[', '').replace(']', '') }}
                       >
                         <div className="flex items-center px-3 py-2.5">
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-[#3d2c24]">{item.name}</p>
+                            <p className="truncate text-sm font-bold text-[#3d2c24]">{item.name}</p>
                             {item.suppliers?.name && (
                               <p className="truncate text-[10px] text-[#a39e97]">{item.suppliers.name}</p>
                             )}
@@ -1592,11 +1787,11 @@ export default function StockPage() {
                               </button>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-1 ml-2">
+                            <div className="ml-2 flex items-center gap-1">
                               <button
                                 onClick={() => {
                                   if (!isEncargado) return
-                                  if (fudoConnection.state !== 'ok') {
+                                  if (source.kind === 'fudo' && (fudoConnection.state === 'checking' || fudoConnection.state === 'error')) {
                                     toast.error('Stock bloqueado: primero hay que reconectar con Fudo')
                                     return
                                   }
@@ -1609,11 +1804,11 @@ export default function StockPage() {
                                   setCountNote('')
                                 }}
                                 title={source.actionable ? `Editar ${source.label}` : 'Bloqueado: falta mapear a Fudo o marcar Local LVE'}
-                                className={`flex items-center gap-1 rounded-lg px-2.5 py-1 ${isEncargado && source.actionable ? 'hover:bg-[#f3efe9] cursor-pointer active:scale-95' : ''} ${fudoConnection.state !== 'ok' || !source.actionable ? 'opacity-60' : ''}`}
+                                className={`flex items-center gap-1 rounded-xl px-2.5 py-1.5 ${isEncargado && source.actionable ? 'cursor-pointer bg-[#faf8f5] hover:bg-[#f3efe9] active:scale-95' : ''} ${((source.kind === 'fudo' && (fudoConnection.state === 'checking' || fudoConnection.state === 'error')) || !source.actionable) ? 'opacity-60' : ''}`}
                               >
                                 <span className={`text-base font-bold tabular-nums ${c.text}`}>{formatQty(item.current_qty)}</span>
                                 <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
-                                <span className="ml-1 rounded-full bg-[#faf8f5] px-1.5 py-0.5 text-[9px] font-bold text-[#7d6c64]">
+                                <span className="ml-1 rounded-full bg-white px-1.5 py-0.5 text-[9px] font-bold text-[#7d6c64] ring-1 ring-[#ebe6df]">
                                   Contar
                                 </span>
                               </button>
@@ -1672,7 +1867,7 @@ export default function StockPage() {
                   })}
                 </div>
               )}
-            </div>
+            </section>
           )
         })
       )}

@@ -2,8 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { useRouter, usePathname } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { usePathname } from 'next/navigation'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -14,12 +13,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Settings, LogOut, ChevronDown } from 'lucide-react'
-import { toast } from 'sonner'
 import { ROLES } from '@/lib/constants'
-import { useState, useEffect, useId } from 'react'
+import { useState, useEffect } from 'react'
+import { signOutBrowserSession } from '@/lib/push/client'
 
 export function TopBar() {
-  const router = useRouter()
   const pathname = usePathname()
   const { profile } = useProfileContext()
   const [scrolled, setScrolled] = useState(false)
@@ -66,12 +64,9 @@ export function TopBar() {
     : '?'
 
   function handleLogout() {
-    // Sign out and redirect — don't wait for async
-    const supabase = createClient()
-    supabase.auth.signOut().finally(() => {
+    void signOutBrowserSession().finally(() => {
       window.location.href = '/login'
     })
-    // Also redirect immediately in case signOut hangs
     setTimeout(() => { window.location.href = '/login' }, 1500)
   }
 
