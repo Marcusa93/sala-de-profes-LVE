@@ -1,20 +1,33 @@
 // Service Worker — Sala de Profes PWA
-const CACHE_NAME = 'sala-de-profes-v1';
+const CACHE_NAME = 'sala-de-profes-v2';
 const OFFLINE_URL = '/offline.html';
 
-// App shell files to pre-cache during install
+// App shell files to pre-cache during install.
+// OJO: no incluir '/' — redirige (307) al login y cache.addAll exige 200,
+// lo que hacía fallar el install completo y dejaba el SW sin offline.html.
 const APP_SHELL = [
-  '/',
   '/offline.html',
 ];
+
+// Última respuesta de emergencia: nunca devolver undefined a respondWith().
+function offlineFallback(request) {
+  return caches.match(OFFLINE_URL).then((offline) => {
+    if (offline && request.mode === 'navigate') return offline;
+    return new Response('Sin conexión', {
+      status: 503,
+      statusText: 'Offline',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+  });
+}
 
 // ─── Install ────────────────────────────────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log('[SW] Pre-caching app shell');
-      return cache.addAll(APP_SHELL);
-    })
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .catch((err) => console.warn('[SW] Pre-cache falló:', err))
   );
   // Activate immediately without waiting for old SW to finish
   self.skipWaiting();
@@ -27,10 +40,7 @@ self.addEventListener('activate', (event) => {
       Promise.all(
         cacheNames
           .filter((name) => name !== CACHE_NAME)
-          .map((name) => {
-            console.log('[SW] Removing old cache:', name);
-            return caches.delete(name);
-          })
+          .map((name) => caches.delete(name))
       )
     )
   );
@@ -49,12 +59,9 @@ self.addEventListener('fetch', (event) => {
   // Skip chrome-extension, etc.
   if (!url.protocol.startsWith('http')) return;
 
-  // ── API calls & Supabase: network-first ──
-  if (
-    url.pathname.startsWith('/api/') ||
-    url.hostname.includes('supabase')
-  ) {
-    event.respondWith(networkFirst(request));
+  // ── API calls & Supabase: siempre red directa, sin cachear ──
+  // (datos operativos: cachearlos muestra stock/ventas viejos)
+  if (url.pathname.startsWith('/api/') || url.hostname.includes('supabase')) {
     return;
   }
 
@@ -69,12 +76,15 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          // Clone and cache the latest version
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
           return response;
         })
-        .catch(() => caches.match(OFFLINE_URL))
+        .catch(() =>
+          caches.match(request).then((cached) => cached || offlineFallback(request))
+        )
     );
     return;
   }
@@ -88,14 +98,16 @@ self.addEventListener('fetch', (event) => {
 function cacheFirst(request) {
   return caches.match(request).then((cached) => {
     if (cached) return cached;
-    return fetch(request).then((response) => {
-      // Only cache successful responses
-      if (response.ok) {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-      }
-      return response;
-    });
+    return fetch(request)
+      .then((response) => {
+        // Only cache successful responses
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+        }
+        return response;
+      })
+      .catch(() => offlineFallback(request));
   });
 }
 
@@ -108,7 +120,9 @@ function networkFirst(request) {
       }
       return response;
     })
-    .catch(() => caches.match(request));
+    .catch(() =>
+      caches.match(request).then((cached) => cached || offlineFallback(request))
+    );
 }
 
 // ─── Helpers ────────────────────────────────────────────

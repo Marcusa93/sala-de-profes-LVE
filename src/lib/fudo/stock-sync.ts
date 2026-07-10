@@ -430,11 +430,15 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     stockItems.map((item) => item.fudo_product_id),
   )
 
+  // Discrepancias de trazabilidad (vínculos faltantes/duplicados): se reportan
+  // pero NO son fallas de conexión — el evento de sync no debe marcarse failed.
+  const discrepancies: string[] = []
+
   for (const id of duplicateIngredientIds) {
-    result.errors.push(`Duplicate Fudo ingredient link detected: ${id}`)
+    discrepancies.push(`Duplicate Fudo ingredient link detected: ${id}`)
   }
   for (const id of duplicateProductIds) {
-    result.errors.push(`Duplicate Fudo product link detected: ${id}`)
+    discrepancies.push(`Duplicate Fudo product link detected: ${id}`)
   }
 
   const linkedIngredientIds = new Set(
@@ -451,13 +455,13 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
   for (const fudoItem of fudoItems) {
     if (!fudoItem.stockControl) continue
     if (!linkedIngredientIds.has(fudoItem.id)) {
-      result.errors.push(`Unmapped Fudo ingredient: ${fudoItem.name} (${fudoItem.id})`)
+      discrepancies.push(`Unmapped Fudo ingredient: ${fudoItem.name} (${fudoItem.id})`)
     }
   }
 
   for (const fudoProduct of fudoProducts) {
     if (!linkedProductIds.has(fudoProduct.id)) {
-      result.errors.push(`Unmapped Fudo product with stock control: ${fudoProduct.name} (${fudoProduct.id})`)
+      discrepancies.push(`Unmapped Fudo product with stock control: ${fudoProduct.name} (${fudoProduct.id})`)
     }
   }
 
@@ -478,13 +482,13 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     if (si.fudo_ingredient_id) {
       const fudoItem = fudoIngMap.get(si.fudo_ingredient_id)
       if (!fudoItem) {
-        result.errors.push(`Missing Fudo ingredient ${si.fudo_ingredient_id} for stock item ${si.id}`)
+        discrepancies.push(`Missing Fudo ingredient ${si.fudo_ingredient_id} for stock item ${si.id}`)
       }
       if (fudoItem?.stockControl && typeof fudoItem.stock === 'number') {
         fudoQty = Math.round(fudoItem.stock * 100) / 100
       }
       if (fudoItem?.stockControl && fudoItem.stock === null) {
-        result.errors.push(`Fudo ingredient ${si.fudo_ingredient_id} has null stock for stock item ${si.id}`)
+        discrepancies.push(`Fudo ingredient ${si.fudo_ingredient_id} has null stock for stock item ${si.id}`)
       }
       if (fudoItem) {
         fudoCost = typeof fudoItem.cost === 'number' && fudoItem.cost > 0 ? fudoItem.cost : null
@@ -496,7 +500,7 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     if (si.fudo_product_id) {
       const fudoProd = fudoProdMap.get(si.fudo_product_id)
       if (!fudoProd) {
-        result.errors.push(`Missing Fudo product ${si.fudo_product_id} for stock item ${si.id}`)
+        discrepancies.push(`Missing Fudo product ${si.fudo_product_id} for stock item ${si.id}`)
       }
       if (fudoProd) {
         fudoQty = Math.round(fudoProd.stock * 100) / 100
@@ -550,10 +554,21 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     }
   }
 
+  // Solo los errores reales (transporte / escritura en BD) marcan el evento como
+  // failed. Las discrepancias de mapeo son el reporte de trazabilidad, no una falla.
   await finishFudoSyncEvent(admin, eventId, result.errors.length > 0 ? 'failed' : 'success', {
-    responsePayload: { synced: result.synced, total: result.total, errors: result.errors },
-    errorMessage: result.errors.length > 0 ? `${result.errors.length} inconsistencias Fudo` : null,
+    responsePayload: {
+      synced: result.synced,
+      total: result.total,
+      errors: result.errors,
+      discrepancies,
+      discrepancy_count: discrepancies.length,
+    },
+    errorMessage: result.errors.length > 0 ? `${result.errors.length} errores de sync` : null,
   })
+
+  // El caller sigue recibiendo todo junto para mostrar el detalle en la UI.
+  result.errors.push(...discrepancies)
 
   return result
   } catch (err) {

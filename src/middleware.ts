@@ -75,8 +75,11 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
+     * - PWA assets (manifest.json, sw.js, offline.html, icons) — si pasan por
+     *   el middleware, la redirección a /login les devuelve HTML y el browser
+     *   reporta "Manifest: syntax error" / rompe el service worker
      * - public files (public folder)
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|offline.html|icons/|Logos/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
