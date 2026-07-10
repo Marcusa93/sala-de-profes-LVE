@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { motion, AnimatePresence } from 'framer-motion'
+import { signOutBrowserSession } from '@/lib/push/client'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -40,8 +41,7 @@ export default function LoginPage() {
     if (typeof window === 'undefined') return
     const params = new URLSearchParams(window.location.search)
     if (params.get('inactive') === '1') {
-      const supabase = createClient()
-      supabase.auth.signOut().finally(() => {
+      void signOutBrowserSession().finally(() => {
         toast.error('Tu cuenta está desactivada. Contactá al encargado.')
         const url = new URL(window.location.href)
         url.searchParams.delete('inactive')

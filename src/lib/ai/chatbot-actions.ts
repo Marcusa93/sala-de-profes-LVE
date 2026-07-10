@@ -403,7 +403,7 @@ export async function executeQuery(
       const lines: string[] = []
 
       for (const ing of ingredients) {
-        const si = (ing as {
+        const si = (ing as unknown as {
           stock_items?: { name: string; cost_per_unit: number | null; unit: string | null } | null
         }).stock_items
         if (!si) continue
@@ -1495,6 +1495,29 @@ export async function executeAction(
 
         if (result.errors.length > 0) result.success = false
       } else {
+        try {
+          const [criticalIncidents, failedWrites] = await Promise.all([
+            admin
+              .from('fudo_sync_incidents')
+              .select('id', { count: 'exact', head: true })
+              .eq('status', 'open')
+              .eq('severity', 'critical'),
+            admin
+              .from('fudo_sync_events')
+              .select('id', { count: 'exact', head: true })
+              .eq('status', 'failed')
+              .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+          ])
+
+          if ((criticalIncidents.count ?? 0) > 0 || (failedWrites.count ?? 0) > 0) {
+            result.success = false
+            result.errors.push(`Stock bloqueado por seguridad Fudo: ${criticalIncidents.count ?? 0} incidentes críticos abiertos y ${failedWrites.count ?? 0} escrituras fallidas en 24h. Revisá Control de mercadería antes de sobrescribir por chat.`)
+            return result
+          }
+        } catch {
+          // Guardrail tables may not exist until the migration is applied.
+        }
+
         const { fudo } = await import('@/lib/fudoClient')
         const fudoConnection = await fudo.testConnection()
         if (!fudoConnection.ok) {

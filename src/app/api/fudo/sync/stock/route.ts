@@ -47,6 +47,15 @@ export async function POST(request: Request) {
 
     const admin = createAdminClient()
     const result = await fullSync(admin)
+    let auditSummary: Record<string, unknown> | null = null
+    let auditError: string | null = null
+    try {
+      const { runFudoAudit } = await import('@/lib/fudo/audit')
+      const audit = await runFudoAudit(admin)
+      auditSummary = audit.summary
+    } catch (err) {
+      auditError = err instanceof Error ? err.message : 'No se pudo auditar Fudo'
+    }
     const hasErrors = result.read.errors.length > 0
 
     return NextResponse.json({
@@ -58,6 +67,8 @@ export async function POST(request: Request) {
       errors: result.read.errors.length,
       errorDetails: result.read.errors,
       read: result.read,
+      audit: auditSummary,
+      auditError,
       timestamp: result.timestamp,
       message: hasErrors
         ? 'Fudo respondió, pero hay inconsistencias para corregir'

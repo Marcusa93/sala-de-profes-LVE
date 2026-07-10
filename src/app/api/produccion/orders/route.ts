@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { Database } from '@/types/database'
+
+type ProductionOrderStatus = Database['public']['Tables']['production_orders']['Row']['status']
+const PRODUCTION_STATUSES: ProductionOrderStatus[] = ['draft', 'in_progress', 'pending_review', 'completed', 'cancelled']
 
 // ---------------------------------------------------------------------------
 // GET /api/produccion/orders
@@ -46,14 +50,19 @@ export async function GET(request: NextRequest) {
       .from('production_orders')
       .select(`
         id, name, status, parent_order_id, template_id, chef_id,
-        notes, started_at, completed_at, created_at, updated_at,
+        notes, started_at, completed_at, submitted_at, reviewed_at, created_at, updated_at,
         production_templates(name),
         profiles(first_name, last_name, role)
       `)
       .gte('created_at', since.toISOString())
       .order('created_at', { ascending: false })
 
-    if (status !== 'all') query = query.eq('status', status)
+    if (status !== 'all') {
+      if (!PRODUCTION_STATUSES.includes(status as ProductionOrderStatus)) {
+        return NextResponse.json({ error: 'Estado de producción inválido' }, { status: 400 })
+      }
+      query = query.eq('status', status as ProductionOrderStatus)
+    }
     if (chefId) query = query.eq('chef_id', chefId)
     if (parentFilter === 'only_root') query = query.is('parent_order_id', null)
 
@@ -65,19 +74,36 @@ export async function GET(request: NextRequest) {
 
     const [inputsRes, outputsRes] = await Promise.all([
       orderIds.length
-        ? admin.from('production_inputs').select('production_order_id, qty_used').in('production_order_id', orderIds)
+        ? admin
+          .from('production_inputs')
+          .select('production_order_id, qty_used, unit, stock_items(name, unit)')
+          .in('production_order_id', orderIds)
         : { data: [] },
       orderIds.length
-        ? admin.from('production_outputs').select('production_order_id, qty_produced, is_waste').in('production_order_id', orderIds)
+        ? admin
+          .from('production_outputs')
+          .select('production_order_id, output_name, qty_produced, unit, is_waste, stock_items(name, unit)')
+          .in('production_order_id', orderIds)
         : { data: [] },
     ])
 
     const inputTotals: Record<number, number> = {}
     const outputTotals: Record<number, number> = {}
     const wasteTotals: Record<number, number> = {}
+    const inputItems: Record<number, { name: string; qty: number; unit: string }[]> = {}
+    const outputItems: Record<number, { name: string; qty: number; unit: string; is_waste: boolean }[]> = {}
 
     for (const inp of inputsRes.data ?? []) {
       inputTotals[inp.production_order_id] = (inputTotals[inp.production_order_id] ?? 0) + inp.qty_used
+      const stockItem = inp.stock_items as unknown as { name?: string | null; unit?: string | null } | null
+      inputItems[inp.production_order_id] = [
+        ...(inputItems[inp.production_order_id] ?? []),
+        {
+          name: stockItem?.name ?? 'Insumo sin nombre',
+          qty: inp.qty_used,
+          unit: inp.unit || stockItem?.unit || '',
+        },
+      ]
     }
     for (const out of outputsRes.data ?? []) {
       if (out.is_waste) {
@@ -85,6 +111,16 @@ export async function GET(request: NextRequest) {
       } else {
         outputTotals[out.production_order_id] = (outputTotals[out.production_order_id] ?? 0) + out.qty_produced
       }
+      const stockItem = out.stock_items as unknown as { name?: string | null; unit?: string | null } | null
+      outputItems[out.production_order_id] = [
+        ...(outputItems[out.production_order_id] ?? []),
+        {
+          name: out.output_name || stockItem?.name || 'Salida sin nombre',
+          qty: out.qty_produced,
+          unit: out.unit || stockItem?.unit || '',
+          is_waste: Boolean(out.is_waste),
+        },
+      ]
     }
 
     const result = (orders ?? []).map((o) => {
@@ -101,12 +137,16 @@ export async function GET(request: NextRequest) {
         notes: o.notes,
         started_at: o.started_at,
         completed_at: o.completed_at,
+        submitted_at: o.submitted_at ?? null,
+        reviewed_at: o.reviewed_at ?? null,
         created_at: o.created_at,
         updated_at: o.updated_at,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         template_name: (o.production_templates as any)?.name ?? null,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         chef_name: o.profiles ? `${(o.profiles as any).first_name} ${(o.profiles as any).last_name}`.trim() : null,
+        inputs: inputItems[o.id] ?? [],
+        outputs: outputItems[o.id] ?? [],
         summary: {
           total_input_qty: inp,
           total_output_qty: outputTotals[o.id] ?? 0,

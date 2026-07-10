@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { syncFromFudo } from '@/lib/fudo/stock-sync'
-import { fudo } from '@/lib/fudoClient'
+import { importFudoSales } from '@/lib/fudo/sales-sync'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/fudo-sync
@@ -18,8 +18,8 @@ export const maxDuration = 60 // Allow up to 60s for full sync
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   const cronSecret = process.env.CRON_SECRET
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    if (process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production') {
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   }
@@ -30,6 +30,15 @@ export async function GET(request: NextRequest) {
   try {
     // ── 1) Sync stock from Fudo ──
     const stockResult = await syncFromFudo(admin)
+    let auditSummary: Record<string, unknown> | null = null
+    let auditError: string | null = null
+    try {
+      const { runFudoAudit } = await import('@/lib/fudo/audit')
+      const audit = await runFudoAudit(admin)
+      auditSummary = audit.summary
+    } catch (err) {
+      auditError = err instanceof Error ? err.message : 'No se pudo auditar Fudo'
+    }
 
     // ── 2) Import today's sales ──
     const today = new Date()
@@ -40,64 +49,13 @@ export async function GET(request: NextRequest) {
     let salesErrors: string[] = []
 
     try {
-      const fudoSales = await fudo.getSales({ from: todayStr })
-
-      if (fudoSales.length > 0) {
-        // Flatten sales into individual items
-        const flatRows: {
-          fudo_ticket_id: string
-          fudo_product_id: string
-          quantity: number
-          sold_at: string
-          raw_payload: Record<string, unknown>
-        }[] = []
-
-        for (const sale of fudoSales.slice(0, 300)) {
-          try {
-            const items = await fudo.getSaleItems(sale.id)
-            for (const item of items) {
-              const prodRel = (item._relationships?.product?.data ?? {}) as { id?: string }
-              flatRows.push({
-                fudo_ticket_id: sale.id,
-                fudo_product_id: String(prodRel?.id ?? item.id),
-                quantity: Number(item.quantity) || 1,
-                sold_at: String(sale.createdAt ?? sale.closedAt ?? new Date().toISOString()),
-                raw_payload: {
-                  sale_id: sale.id,
-                  item_name: item.name,
-                  price: item.price,
-                  sale_type: sale.saleType,
-                  cron: true,
-                },
-              })
-            }
-          } catch {
-            // Skip individual sale errors
-          }
-        }
-
-        // Dedup against existing
-        if (flatRows.length > 0) {
-          const { data: existing } = await admin
-            .from('fudo_sales')
-            .select('fudo_ticket_id, fudo_product_id')
-            .gte('sold_at', todayStr)
-
-          const existingSet = new Set(
-            (existing ?? []).map(s => `${s.fudo_ticket_id}__${s.fudo_product_id}`)
-          )
-          const newRows = flatRows.filter(
-            r => !existingSet.has(`${r.fudo_ticket_id}__${r.fudo_product_id}`)
-          )
-
-          for (let i = 0; i < newRows.length; i += 50) {
-            const batch = newRows.slice(i, i + 50)
-            const { error } = await admin.from('fudo_sales').insert(batch)
-            if (!error) salesImported += batch.length
-            else salesErrors.push(error.message)
-          }
-        }
-      }
+      const salesResult = await importFudoSales(admin, {
+        from: todayStr,
+        limit: 300,
+        operation: 'cron_sales_import',
+      })
+      salesImported = salesResult.imported
+      salesErrors = salesResult.errors
     } catch (err) {
       salesErrors.push(err instanceof Error ? err.message : 'Error al importar ventas')
     }
@@ -114,6 +72,7 @@ export async function GET(request: NextRequest) {
         description: `Cron sync: ${stockResult.synced} stock, ${salesImported} ventas (${elapsedMs}ms)`,
         metadata: {
           stock: stockResult,
+          audit: { summary: auditSummary, error: auditError },
           sales: { imported: salesImported, errors: salesErrors },
           elapsed_ms: elapsedMs,
         },
@@ -126,6 +85,10 @@ export async function GET(request: NextRequest) {
         synced: stockResult.synced,
         total: stockResult.total,
         errors: stockResult.errors.length,
+      },
+      audit: {
+        summary: auditSummary,
+        error: auditError,
       },
       sales: {
         imported: salesImported,

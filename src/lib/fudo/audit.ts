@@ -1,9 +1,16 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { fudo, type FudoIngredient, type FudoProduct } from '@/lib/fudoClient'
+import {
+  incidentKey,
+  recordFudoIncident,
+  resolveMissingFudoIncidents,
+  type FudoIncidentSeverity,
+} from '@/lib/fudo/sync-events'
 
 type StockItemAuditRow = {
   id: string
   name: string
+  unit: string
   current_qty: number
   fudo_ingredient_id: string | null
   fudo_product_id: string | null
@@ -39,6 +46,7 @@ export type FudoStockIssueCode =
   | 'ingredient_stockControl_false'
   | 'stock_mismatch_ge_1'
   | 'name_mismatch'
+  | 'unit_suspect_fractional_unit'
 
 export type FudoStockIssue = {
   id: string
@@ -161,11 +169,26 @@ function isSevereIssue(issue: FudoStockIssue) {
   ))
 }
 
+function stockIssueSeverity(code: FudoStockIssueCode): FudoIncidentSeverity {
+  if (
+    code === 'fudo_product_missing'
+    || code === 'fudo_ingredient_missing'
+    || code === 'product_stock_null'
+    || code === 'ingredient_stock_null'
+    || code === 'product_stockControl_false'
+    || code === 'ingredient_stockControl_false'
+    || code === 'stock_mismatch_ge_1'
+  ) {
+    return 'critical'
+  }
+  return 'medium'
+}
+
 export async function runFudoAudit(admin: SupabaseClient): Promise<FudoAuditReport> {
   const [stockItems, menuItems, suppliers, fudoProducts, fudoIngredients, fudoProviders] = await Promise.all([
     admin
       .from('stock_items')
-      .select('id, name, current_qty, fudo_ingredient_id, fudo_product_id, fudo_skip, is_active'),
+      .select('id, name, unit, current_qty, fudo_ingredient_id, fudo_product_id, fudo_skip, is_active'),
     admin
       .from('menu_items')
       .select('id, name, fudo_product_id, sale_price, is_active'),
@@ -248,6 +271,15 @@ export async function runFudoAudit(admin: SupabaseClient): Promise<FudoAuditRepo
 
     if (fudoName && normalizeName(fudoName) !== normalizeName(item.name)) {
       issues.push('name_mismatch')
+    }
+
+    if (
+      item.fudo_ingredient_id
+      && !item.fudo_product_id
+      && normalizeName(item.unit) === 'unidad'
+      && Math.abs(item.current_qty - Math.round(item.current_qty)) >= 0.01
+    ) {
+      issues.push('unit_suspect_fractional_unit')
     }
 
     if (issues.length === 0) continue
@@ -373,6 +405,189 @@ export async function runFudoAudit(admin: SupabaseClient): Promise<FudoAuditRepo
   supplierIssues.sort((a, b) => a.name.localeCompare(b.name))
 
   const severeStockIssues = stockIssues.filter(isSevereIssue)
+  const activeIncidentKeys = new Set<string>()
+
+  for (const issue of stockIssues) {
+    for (const code of issue.issues) {
+      const fudoType = issue.source ?? (issue.fudo_product_id ? 'product' : issue.fudo_ingredient_id ? 'ingredient' : null)
+      const fudoId = issue.fudo_product_id ?? issue.fudo_ingredient_id
+      const key = incidentKey({
+        source: 'audit',
+        code,
+        entity_type: 'stock_item',
+        entity_id: issue.id,
+        stock_item_id: issue.id,
+        fudo_type: fudoType,
+        fudo_id: fudoId,
+      })
+      activeIncidentKeys.add(key)
+      await recordFudoIncident(admin, {
+        source: 'audit',
+        code,
+        severity: stockIssueSeverity(code),
+        entityType: 'stock_item',
+        entityId: issue.id,
+        stockItemId: issue.id,
+        fudoType,
+        fudoId,
+        title: `${issue.name}: ${code}`,
+        detail: issue.fudo_name
+          ? `LVE: ${issue.current_qty}; Fudo ${issue.fudo_name}: ${issue.fudo_stock ?? 'sin stock'}`
+          : `LVE: ${issue.current_qty}; Fudo no disponible`,
+        payload: issue as unknown as Record<string, unknown>,
+      })
+    }
+  }
+
+  for (const duplicate of duplicateProductLinks) {
+    const key = incidentKey({
+      source: 'audit',
+      code: 'duplicate_product_link',
+      entity_type: 'fudo_product',
+      entity_id: duplicate.id,
+      fudo_type: 'product',
+      fudo_id: duplicate.id,
+    })
+    activeIncidentKeys.add(key)
+    await recordFudoIncident(admin, {
+      source: 'audit',
+      code: 'duplicate_product_link',
+      severity: 'critical',
+      entityType: 'fudo_product',
+      entityId: duplicate.id,
+      fudoType: 'product',
+      fudoId: duplicate.id,
+      title: `Producto Fudo duplicado en LVE: ${duplicate.id}`,
+      detail: duplicate.names.join(', '),
+      payload: { names: duplicate.names },
+    })
+  }
+
+  for (const duplicate of duplicateIngredientLinks) {
+    const key = incidentKey({
+      source: 'audit',
+      code: 'duplicate_ingredient_link',
+      entity_type: 'fudo_ingredient',
+      entity_id: duplicate.id,
+      fudo_type: 'ingredient',
+      fudo_id: duplicate.id,
+    })
+    activeIncidentKeys.add(key)
+    await recordFudoIncident(admin, {
+      source: 'audit',
+      code: 'duplicate_ingredient_link',
+      severity: 'critical',
+      entityType: 'fudo_ingredient',
+      entityId: duplicate.id,
+      fudoType: 'ingredient',
+      fudoId: duplicate.id,
+      title: `Insumo Fudo duplicado en LVE: ${duplicate.id}`,
+      detail: duplicate.names.join(', '),
+      payload: { names: duplicate.names },
+    })
+  }
+
+  for (const item of missingStockControlledProducts) {
+    const key = incidentKey({
+      source: 'audit',
+      code: 'missing_stock_controlled_product_in_lve',
+      entity_type: 'fudo_product',
+      entity_id: item.id,
+      fudo_type: 'product',
+      fudo_id: item.id,
+    })
+    activeIncidentKeys.add(key)
+    await recordFudoIncident(admin, {
+      source: 'audit',
+      code: 'missing_stock_controlled_product_in_lve',
+      severity: 'high',
+      entityType: 'fudo_product',
+      entityId: item.id,
+      fudoType: 'product',
+      fudoId: item.id,
+      title: `Producto Fudo con stock sin item LVE: ${item.name ?? item.id}`,
+      detail: `Stock Fudo: ${item.stock ?? 'sin valor'}`,
+      payload: item,
+    })
+  }
+
+  for (const item of missingStockControlledIngredients) {
+    const key = incidentKey({
+      source: 'audit',
+      code: 'missing_stock_controlled_ingredient_in_lve',
+      entity_type: 'fudo_ingredient',
+      entity_id: item.id,
+      fudo_type: 'ingredient',
+      fudo_id: item.id,
+    })
+    activeIncidentKeys.add(key)
+    await recordFudoIncident(admin, {
+      source: 'audit',
+      code: 'missing_stock_controlled_ingredient_in_lve',
+      severity: 'high',
+      entityType: 'fudo_ingredient',
+      entityId: item.id,
+      fudoType: 'ingredient',
+      fudoId: item.id,
+      title: `Insumo Fudo con stock sin item LVE: ${item.name ?? item.id}`,
+      detail: `Stock Fudo: ${item.stock ?? 'sin valor'}`,
+      payload: item,
+    })
+  }
+
+  for (const issue of menuIssues) {
+    for (const code of issue.issues) {
+      const key = incidentKey({
+        source: 'audit',
+        code: `menu_${code}`,
+        entity_type: 'menu_item',
+        entity_id: issue.id,
+        fudo_type: 'product',
+        fudo_id: issue.fudo_product_id,
+      })
+      activeIncidentKeys.add(key)
+      await recordFudoIncident(admin, {
+        source: 'audit',
+        code: `menu_${code}`,
+        severity: code === 'price_mismatch' ? 'high' : 'medium',
+        entityType: 'menu_item',
+        entityId: issue.id,
+        fudoType: 'product',
+        fudoId: issue.fudo_product_id,
+        title: `${issue.name}: ${code}`,
+        detail: issue.fudo_name ?? null,
+        payload: issue as unknown as Record<string, unknown>,
+      })
+    }
+  }
+
+  for (const issue of supplierIssues) {
+    for (const code of issue.issues) {
+      const key = incidentKey({
+        source: 'audit',
+        code: `supplier_${code}`,
+        entity_type: 'supplier',
+        entity_id: issue.id,
+        fudo_type: 'provider',
+        fudo_id: issue.fudo_provider_id,
+      })
+      activeIncidentKeys.add(key)
+      await recordFudoIncident(admin, {
+        source: 'audit',
+        code: `supplier_${code}`,
+        severity: code === 'provider_missing' ? 'high' : 'medium',
+        entityType: 'supplier',
+        entityId: issue.id,
+        fudoType: 'provider',
+        fudoId: issue.fudo_provider_id,
+        title: `${issue.name}: ${code}`,
+        detail: issue.fudo_name ?? null,
+        payload: issue as unknown as Record<string, unknown>,
+      })
+    }
+  }
+
+  await resolveMissingFudoIncidents(admin, 'audit', activeIncidentKeys)
 
   return {
     generatedAt: new Date().toISOString(),

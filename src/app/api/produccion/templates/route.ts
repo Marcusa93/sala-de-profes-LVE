@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { Database } from '@/types/database'
 
 // ---------------------------------------------------------------------------
 // GET /api/produccion/templates
@@ -10,6 +11,11 @@ import { createAdminClient } from '@/lib/supabase/admin'
 // Crea un nuevo template.
 // Body: { name, description?, input_stock_item_id?, input_unit?, outputs: [...] }
 // ---------------------------------------------------------------------------
+
+type TemplateOutputWithStock = Database['public']['Tables']['production_template_outputs']['Row'] & {
+  stock_items?: { id: string; name: string; unit: string } | null
+}
+type TemplateOutputInsert = Database['public']['Tables']['production_template_outputs']['Insert']
 
 async function authorize(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { data: { user } } = await supabase.auth.getUser()
@@ -48,23 +54,35 @@ export async function GET() {
       : { data: [] }
 
     // Fetch input stock item names
-    const { data: stockItems } = await admin
-      .from('stock_items')
-      .select('id, name, unit')
-      .in('id', (templates ?? []).map((t) => t.input_stock_item_id).filter(Boolean))
+    const inputItemIds = (templates ?? [])
+      .map((t) => t.default_input_stock_item_id)
+      .filter((id): id is string => Boolean(id))
+
+    const { data: stockItems } = inputItemIds.length
+      ? await admin
+        .from('stock_items')
+        .select('id, name, unit')
+        .in('id', inputItemIds)
+      : { data: [] }
 
     const stockMap = Object.fromEntries((stockItems ?? []).map((s) => [s.id, s]))
-    const outputsByTemplate: Record<number, typeof outputs> = {}
-    for (const o of outputs ?? []) {
+    const outputsByTemplate: Record<number, TemplateOutputWithStock[]> = {}
+    for (const o of (outputs ?? []) as unknown as TemplateOutputWithStock[]) {
       if (!outputsByTemplate[o.template_id]) outputsByTemplate[o.template_id] = []
       outputsByTemplate[o.template_id]!.push(o)
     }
 
-    const result = (templates ?? []).map((t) => ({
-      ...t,
-      input_stock_item: t.input_stock_item_id ? stockMap[t.input_stock_item_id] ?? null : null,
-      outputs: outputsByTemplate[t.id] ?? [],
-    }))
+    const result = (templates ?? []).map((t) => {
+      const inputId = t.default_input_stock_item_id
+      const inputUnit = t.default_input_unit ?? 'kg'
+      return {
+        ...t,
+        input_stock_item_id: inputId,
+        input_unit: inputUnit,
+        input_stock_item: inputId ? stockMap[inputId] ?? null : null,
+        outputs: outputsByTemplate[t.id] ?? [],
+      }
+    })
 
     return NextResponse.json({ templates: result, total: result.length })
   } catch (err) {
@@ -76,8 +94,8 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
-    const { user, profile, error: authErr } = await authorize(supabase)
-    if (authErr || !user) return authErr!
+    const { profile, error: authErr } = await authorize(supabase)
+    if (authErr) return authErr
     if (!['socio', 'encargado', 'chef'].includes(profile!.role)) {
       return NextResponse.json({ error: 'Sin permisos para crear templates' }, { status: 403 })
     }
@@ -94,10 +112,9 @@ export async function POST(request: NextRequest) {
       .insert({
         name: body.name,
         description: body.description ?? null,
-        input_stock_item_id: body.input_stock_item_id ?? null,
-        input_unit: body.input_unit ?? 'kg',
+        default_input_stock_item_id: body.input_stock_item_id ?? body.default_input_stock_item_id ?? null,
+        default_input_unit: body.input_unit ?? body.default_input_unit ?? 'kg',
         is_active: true,
-        created_by: user.id,
       })
       .select()
       .single()
@@ -107,15 +124,15 @@ export async function POST(request: NextRequest) {
     // Insert outputs if provided
     const outputs = Array.isArray(body.outputs) ? body.outputs : []
     if (outputs.length > 0) {
-      const outputRows = outputs.map((o: Record<string, unknown>, idx: number) => ({
+      const outputRows: TemplateOutputInsert[] = outputs.map((o: Record<string, unknown>, idx: number) => ({
         template_id: template.id,
-        stock_item_id: o.stock_item_id ?? null,
-        output_name: o.output_name ?? `Salida ${idx + 1}`,
+        stock_item_id: typeof o.stock_item_id === 'string' ? o.stock_item_id : null,
+        output_name: typeof o.output_name === 'string' ? o.output_name : `Salida ${idx + 1}`,
         theoretical_yield_pct: Number(o.theoretical_yield_pct ?? 0),
-        output_unit: o.output_unit ?? 'kg',
+        output_unit: typeof o.output_unit === 'string' ? o.output_unit : 'kg',
         is_waste: Boolean(o.is_waste),
         sort_order: idx,
-        notes: o.notes ?? null,
+        notes: typeof o.notes === 'string' ? o.notes : null,
       }))
 
       const { error: outputErr } = await admin

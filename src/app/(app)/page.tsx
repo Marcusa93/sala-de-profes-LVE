@@ -1,21 +1,17 @@
 'use client'
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback } from 'react'
 import { isManagerOrAbove, mustClockIn } from '@/lib/roles'
-import { DailyBriefing } from '@/components/ai/DailyBriefing'
-import { ActionCenter } from '@/components/ai/ActionCenter'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
-  Clock,
   CalendarDays,
   Bell,
   Users,
   AlertTriangle,
   LogIn,
   ArrowRight,
-  CheckCircle,
   UtensilsCrossed,
   Coffee,
   ShoppingCart,
@@ -26,6 +22,8 @@ import {
   BarChart3,
   FolderOpen,
   Package,
+  Hammer,
+  Armchair,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -33,8 +31,6 @@ import { useMyAttendance, useTeamAttendance } from '@/lib/hooks/use-attendance'
 import { useNextShift } from '@/lib/hooks/use-shifts'
 import { useAnnouncements } from '@/lib/hooks/use-announcements'
 import { useDashboardData } from '@/lib/hooks/use-dashboard'
-import { ROLES } from '@/lib/constants'
-import type { AppRole } from '@/types/database'
 import { DashboardSkeleton } from '@/components/ui/skeleton'
 import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
 import { ShiftReminder } from '@/components/notifications/ShiftReminder'
@@ -44,7 +40,6 @@ import {
   StaggerItem,
   ScalePress,
   AnimatedNumber,
-  PulseRing,
 } from '@/components/ui/motion'
 
 // ---------------------------------------------------------------------------
@@ -73,10 +68,8 @@ export default function DashboardPage() {
 
   // Derived from dashData
   const criticalStockCount = dashData?.criticalStockCount ?? 0
-  const stockItems = dashData?.stockItems ?? []
   const pendingOrders = dashData?.pendingOrders ?? 0
   const expedientesActivos = dashData?.expedientesActivos ?? 0
-  const expedientesData = dashData?.expedientesData ?? []
   const ventasHoy = dashData?.ventasHoy ?? null
   const fudoLastSync = dashData?.fudoLastSync ?? null
   const barUrgent = dashData?.barUrgent ?? 0
@@ -145,6 +138,56 @@ export default function DashboardPage() {
   const isCompleted = !!todayAttendance?.clock_out_at
   const isInProgress = !!todayAttendance && !todayAttendance.clock_out_at
   const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : '#ebe6df'
+  const primaryActions = isEncargado ? [
+    {
+      href: '/stock',
+      icon: Package,
+      label: 'Controlar stock',
+      description: criticalStockCount > 0
+        ? `${criticalStockCount} item${criticalStockCount === 1 ? '' : 's'} crítico${criticalStockCount === 1 ? '' : 's'} para resolver`
+        : 'Buscar mercadería, Fudo, vida útil y alertas',
+    },
+    {
+      href: '/stock/produccion',
+      icon: Hammer,
+      label: 'Registrar producción',
+      description: 'Lotes, cantidades producidas y vencimientos',
+    },
+    {
+      href: '/pedidos',
+      icon: ShoppingCart,
+      label: 'Revisar compras',
+      description: pendingOrders > 0
+        ? `${pendingOrders} pedido${pendingOrders === 1 ? '' : 's'} pendiente${pendingOrders === 1 ? '' : 's'}`
+        : 'Pedidos, reposición y proveedores',
+    },
+    {
+      href: '/asistente',
+      icon: Bot,
+      label: 'Preguntar a La Vieja',
+      description: 'Consultar stock, Fudo o pedir una acción por chat',
+    },
+  ] : profile?.role === 'chef' || profile?.role === 'cocina' ? [
+    { href: '/cocina', icon: UtensilsCrossed, label: 'Ver cocina', description: 'Pedidos y tareas del sector' },
+    { href: '/cocina/produccion', icon: Hammer, label: 'Registrar producción', description: 'Anotar producción hecha y faltantes' },
+    { href: '/cocina/pedidos', icon: ShoppingCart, label: 'Pedir mercadería', description: 'Solicitar lo que falta para producir' },
+    { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
+  ] : profile?.role === 'barista' ? [
+    { href: '/cocina/barra', icon: Coffee, label: 'Controlar barra', description: barUrgent > 0 ? `${barUrgent} urgente${barUrgent === 1 ? '' : 's'} en barra` : 'Stock, pedidos y faltantes' },
+    { href: '/vajilla', icon: Package, label: 'Controlar vajilla', description: 'Roturas, faltantes y reposición' },
+    { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
+    { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
+  ] : profile?.role === 'runner' ? [
+    { href: '/salon', icon: Armchair, label: 'Ver salón', description: 'Tareas del servicio' },
+    { href: '/vajilla', icon: Package, label: 'Controlar vajilla', description: 'Roturas, faltantes y reposición' },
+    { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
+    { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
+  ] : [
+    { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
+    { href: '/mis-horarios', icon: CalendarDays, label: 'Ver horarios', description: 'Próximos turnos asignados' },
+    { href: '/notificaciones', icon: Bell, label: 'Avisos', description: 'Comunicados pendientes' },
+    { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
+  ]
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-8">
@@ -397,30 +440,14 @@ export default function DashboardPage() {
       {/* Quick Actions                                                    */}
       {/* ---------------------------------------------------------------- */}
       <FadeIn delay={0.25}>
-        <h2 className="section-label mb-3">Acciones rápidas</h2>
+        <div className="mb-3">
+          <h2 className="section-label">Tareas principales</h2>
+          <p className="mt-1 text-xs text-[#8d8378]">
+            Operación diaria primero; lo administrativo queda agrupado en Más.
+          </p>
+        </div>
         <StaggerList className="flex flex-col gap-2.5" staggerDelay={0.06}>
-          {[
-            { href: '/mi-turno', icon: LogIn, label: 'Marcar Ingreso/Egreso' },
-            ...(profile?.role === 'socio' ? [
-              { href: '/ventas', icon: BarChart3, label: 'Ventas del día' },
-              { href: '/admin', icon: CalendarDays, label: 'Centro de Control' },
-              { href: '/pedidos', icon: ShoppingCart, label: 'Gestión de Compras' },
-              { href: '/expedientes', icon: FolderOpen, label: 'Expedientes' },
-            ] : isEncargado ? [
-              { href: '/admin', icon: CalendarDays, label: 'Centro de Control' },
-              { href: '/pedidos', icon: ShoppingCart, label: 'Gestión de Compras' },
-              { href: '/cocina', icon: UtensilsCrossed, label: 'Cocina' },
-              { href: '/stock', icon: Package, label: 'Stock' },
-            ] : profile?.role === 'chef' || profile?.role === 'cocina' ? [
-              { href: '/cocina', icon: UtensilsCrossed, label: 'Cocina' },
-              { href: '/cocina/pedidos', icon: ShoppingCart, label: 'Pedir mercadería' },
-            ] : profile?.role === 'barista' ? [
-              { href: '/cocina/barra', icon: Coffee, label: 'Barra — Stock y Pedidos' },
-            ] : [
-              { href: '/mis-horarios', icon: CalendarDays, label: 'Ver Horarios' },
-            ]),
-            { href: '/asistente', icon: Bot, label: 'La Vieja de Historia' },
-          ].map((action) => (
+          {primaryActions.map((action) => (
             <StaggerItem key={action.href}>
               <ScalePress>
                 <Link href={action.href}>
@@ -431,8 +458,13 @@ export default function DashboardPage() {
                         <div className="icon-btn flex items-center justify-center rounded-xl bg-[#f0f7f5]">
                           <action.icon className="size-4 text-[#006d5a]" />
                         </div>
-                        <span className="text-sm font-medium text-[#3d2c24]">
-                          {action.label}
+                        <span>
+                          <span className="block text-sm font-semibold text-[#3d2c24]">
+                            {action.label}
+                          </span>
+                          <span className="mt-0.5 block text-xs leading-snug text-[#8d8378]">
+                            {action.description}
+                          </span>
                         </span>
                       </span>
                       <ArrowRight className="size-4 text-[#d1cdc7]" />

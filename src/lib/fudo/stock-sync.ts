@@ -11,6 +11,13 @@
 // ---------------------------------------------------------------------------
 
 import { SupabaseClient } from '@supabase/supabase-js'
+import { getFudoToken } from '@/lib/fudoClient'
+import {
+  createFudoSyncEvent,
+  finishFudoSyncEvent,
+  recordFudoIncident,
+  type FudoEntityType,
+} from '@/lib/fudo/sync-events'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,12 +41,36 @@ export type SyncResult = {
   fudoConnected: boolean
 }
 
-// ---------------------------------------------------------------------------
-// Fudo Auth — get JWT token
-// ---------------------------------------------------------------------------
+type FudoWriteContext = {
+  admin: SupabaseClient
+  operation: string
+  stockItemId?: string | number | null
+  userId?: string | null
+  entityType?: string | null
+  entityId?: string | number | null
+  fudoType: FudoEntityType
+  fudoId: string
+  oldQty?: number | null
+  newQty: number
+  reason?: string | null
+  note?: string | null
+  idempotencyKey?: string | null
+}
 
-let cachedToken: string | null = null
-let tokenExpiry = 0
+type StockWriteOptions = {
+  reason?: 'physical_count' | 'manual_adjustment'
+  note?: string | null
+}
+
+function stockWriteNeedsNote(currentQty: number, newQty: number, unit?: string | null) {
+  const abs = Math.abs(newQty - currentQty)
+  const pct = currentQty > 0 ? abs / currentQty : abs > 0 ? 1 : 0
+  const normalizedUnit = (unit ?? '').toLowerCase()
+  const threshold = normalizedUnit.includes('kg') || normalizedUnit.includes('kilo')
+    ? Math.max(0.5, currentQty * 0.12)
+    : Math.max(2, currentQty * 0.15)
+  return abs >= threshold || pct >= 0.25
+}
 
 function asNullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
@@ -56,27 +87,6 @@ function findDuplicateIds(ids: Array<string | null | undefined>): Set<string> {
   }
 
   return duplicates
-}
-
-async function getFudoToken(): Promise<string> {
-  if (cachedToken && Date.now() < tokenExpiry) return cachedToken
-
-  const login = process.env.FUDO_LOGIN
-  const password = process.env.FUDO_PASSWORD
-  if (!login || !password) throw new Error('FUDO_LOGIN/FUDO_PASSWORD not configured')
-
-  const res = await fetch('https://auth.fu.do/authenticate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ login, password }),
-  })
-
-  if (!res.ok) throw new Error(`Fudo auth failed: ${res.status}`)
-
-  const { token } = await res.json()
-  cachedToken = token
-  tokenExpiry = Date.now() + 20 * 60 * 60 * 1000 // 20 hours
-  return token
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +154,28 @@ export async function readFudoStock(): Promise<FudoIngredient[]> {
 export async function writeFudoStock(
   fudoIngredientId: string,
   newQty: number,
+  context?: FudoWriteContext,
 ): Promise<{ success: boolean; error?: string }> {
+  const eventId = context
+    ? await createFudoSyncEvent(context.admin, {
+      operation: context.operation,
+      direction: 'lve_to_fudo',
+      entityType: context.entityType ?? 'stock_item',
+      entityId: context.entityId ?? context.stockItemId,
+      stockItemId: context.stockItemId,
+      fudoType: 'ingredient',
+      fudoId: fudoIngredientId,
+      idempotencyKey: context.idempotencyKey ?? null,
+      requestPayload: {
+        old_qty: context.oldQty ?? null,
+        new_qty: newQty,
+        reason: context.reason ?? null,
+        note: context.note ?? null,
+      },
+      createdBy: context.userId ?? null,
+    })
+    : null
+
   try {
     const token = await getFudoToken()
 
@@ -165,7 +196,24 @@ export async function writeFudoStock(
 
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      return { success: false, error: `Fudo ${res.status}: ${text.slice(0, 100)}` }
+      const error = `Fudo ${res.status}: ${text.slice(0, 100)}`
+      if (context) {
+        await finishFudoSyncEvent(context.admin, eventId, 'failed', { errorMessage: error })
+        await recordFudoIncident(context.admin, {
+          source: 'write_stock',
+          code: 'fudo_write_failed',
+          severity: 'critical',
+          entityType: context.entityType ?? 'stock_item',
+          entityId: context.entityId ?? context.stockItemId,
+          stockItemId: context.stockItemId,
+          fudoType: 'ingredient',
+          fudoId: fudoIngredientId,
+          title: 'Fudo rechazó una escritura de stock',
+          detail: error,
+          payload: { operation: context.operation, new_qty: newQty },
+        })
+      }
+      return { success: false, error }
     }
 
     const data = await res.json()
@@ -173,25 +221,140 @@ export async function writeFudoStock(
 
     // Verify the write
     if (typeof actualStock === 'number' && Math.abs(actualStock - newQty) > 0.01) {
-      return { success: false, error: `Fudo aceptó pero stock quedó en ${actualStock} (esperado: ${newQty})` }
+      const error = `Fudo aceptó pero stock quedó en ${actualStock} (esperado: ${newQty})`
+      if (context) {
+        await finishFudoSyncEvent(context.admin, eventId, 'failed', {
+          responsePayload: { actual_stock: actualStock },
+          errorMessage: error,
+        })
+        await recordFudoIncident(context.admin, {
+          source: 'write_stock',
+          code: 'fudo_write_verification_failed',
+          severity: 'critical',
+          entityType: context.entityType ?? 'stock_item',
+          entityId: context.entityId ?? context.stockItemId,
+          stockItemId: context.stockItemId,
+          fudoType: 'ingredient',
+          fudoId: fudoIngredientId,
+          title: 'Fudo no confirmó la cantidad esperada',
+          detail: error,
+          payload: { operation: context.operation, expected_qty: newQty, actual_stock: actualStock },
+        })
+      }
+      return { success: false, error }
+    }
+
+    if (context) {
+      await finishFudoSyncEvent(context.admin, eventId, 'success', {
+        responsePayload: { actual_stock: typeof actualStock === 'number' ? actualStock : newQty },
+      })
     }
 
     return { success: true }
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+    const error = err instanceof Error ? err.message : 'Error desconocido'
+    if (context) {
+      await finishFudoSyncEvent(context.admin, eventId, 'failed', { errorMessage: error })
+      await recordFudoIncident(context.admin, {
+        source: 'write_stock',
+        code: 'fudo_write_exception',
+        severity: 'critical',
+        entityType: context.entityType ?? 'stock_item',
+        entityId: context.entityId ?? context.stockItemId,
+        stockItemId: context.stockItemId,
+        fudoType: 'ingredient',
+        fudoId: fudoIngredientId,
+        title: 'No se pudo escribir stock en Fudo',
+        detail: error,
+        payload: { operation: context.operation, new_qty: newQty },
+      })
+    }
+    return { success: false, error }
   }
 }
 
 async function writeFudoProductStock(
   fudoProductId: string,
   newQty: number,
+  context?: FudoWriteContext,
 ): Promise<{ success: boolean; error?: string }> {
+  const eventId = context
+    ? await createFudoSyncEvent(context.admin, {
+      operation: context.operation,
+      direction: 'lve_to_fudo',
+      entityType: context.entityType ?? 'stock_item',
+      entityId: context.entityId ?? context.stockItemId,
+      stockItemId: context.stockItemId,
+      fudoType: 'product',
+      fudoId: fudoProductId,
+      idempotencyKey: context.idempotencyKey ?? null,
+      requestPayload: {
+        old_qty: context.oldQty ?? null,
+        new_qty: newQty,
+        reason: context.reason ?? null,
+        note: context.note ?? null,
+      },
+      createdBy: context.userId ?? null,
+    })
+    : null
+
   try {
     const { fudo: fudoClient } = await import('@/lib/fudoClient')
     await fudoClient.updateProductStock(fudoProductId, newQty)
+    const products = await fudoClient.getProducts()
+    const product = products.find((item) => String(item.id) === String(fudoProductId))
+    const actualStock = product?.stock
+
+    if (typeof actualStock === 'number' && Math.abs(actualStock - newQty) > 0.01) {
+      const error = `Fudo aceptó producto pero stock quedó en ${actualStock} (esperado: ${newQty})`
+      if (context) {
+        await finishFudoSyncEvent(context.admin, eventId, 'failed', {
+          responsePayload: { actual_stock: actualStock },
+          errorMessage: error,
+        })
+        await recordFudoIncident(context.admin, {
+          source: 'write_stock',
+          code: 'fudo_product_write_verification_failed',
+          severity: 'critical',
+          entityType: context.entityType ?? 'stock_item',
+          entityId: context.entityId ?? context.stockItemId,
+          stockItemId: context.stockItemId,
+          fudoType: 'product',
+          fudoId: fudoProductId,
+          title: 'Fudo producto no confirmó la cantidad esperada',
+          detail: error,
+          payload: { operation: context.operation, expected_qty: newQty, actual_stock: actualStock },
+        })
+      }
+      return { success: false, error }
+    }
+
+    if (context) {
+      await finishFudoSyncEvent(context.admin, eventId, 'success', {
+        responsePayload: { actual_stock: typeof actualStock === 'number' ? actualStock : newQty },
+      })
+    }
+
     return { success: true }
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Error desconocido' }
+    const error = err instanceof Error ? err.message : 'Error desconocido'
+    if (context) {
+      await finishFudoSyncEvent(context.admin, eventId, 'failed', { errorMessage: error })
+      await recordFudoIncident(context.admin, {
+        source: 'write_stock',
+        code: 'fudo_product_write_exception',
+        severity: 'critical',
+        entityType: context.entityType ?? 'stock_item',
+        entityId: context.entityId ?? context.stockItemId,
+        stockItemId: context.stockItemId,
+        fudoType: 'product',
+        fudoId: fudoProductId,
+        title: 'No se pudo escribir stock de producto en Fudo',
+        detail: error,
+        payload: { operation: context.operation, new_qty: newQty },
+      })
+    }
+    return { success: false, error }
   }
 }
 
@@ -201,6 +364,15 @@ async function writeFudoProductStock(
 
 export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['read']> {
   const result = { synced: 0, total: 0, errors: [] as string[] }
+  const eventId = await createFudoSyncEvent(admin, {
+    operation: 'stock_read_sync',
+    direction: 'fudo_to_lve',
+    entityType: 'stock',
+    entityId: 'all',
+    requestPayload: { source: 'syncFromFudo' },
+  })
+
+  try {
 
   // 1. Read all Fudo ingredients (now includes cost + providerId)
   // Transport/auth failures must bubble up. Stock cannot pretend it synced.
@@ -223,7 +395,12 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     .eq('is_active', true)
     .neq('fudo_skip', true)
 
-  if (!stockItems) return result
+  if (!stockItems) {
+    await finishFudoSyncEvent(admin, eventId, 'success', {
+      responsePayload: { synced: result.synced, total: result.total, errors: result.errors },
+    })
+    return result
+  }
 
   // 4. Build supplier map: fudo_provider_id → supplier.id
   const { data: suppliers } = await admin
@@ -373,7 +550,27 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     }
   }
 
+  await finishFudoSyncEvent(admin, eventId, result.errors.length > 0 ? 'failed' : 'success', {
+    responsePayload: { synced: result.synced, total: result.total, errors: result.errors },
+    errorMessage: result.errors.length > 0 ? `${result.errors.length} inconsistencias Fudo` : null,
+  })
+
   return result
+  } catch (err) {
+    const error = err instanceof Error ? err.message : 'Error desconocido'
+    await finishFudoSyncEvent(admin, eventId, 'failed', { errorMessage: error })
+    await recordFudoIncident(admin, {
+      source: 'stock_read_sync',
+      code: 'fudo_read_failed',
+      severity: 'critical',
+      entityType: 'stock',
+      entityId: 'all',
+      title: 'No se pudo leer stock desde Fudo',
+      detail: error,
+      payload: { operation: 'stock_read_sync' },
+    })
+    throw err
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -386,11 +583,12 @@ export async function syncToFudo(
   stockItemId: string,
   newQty: number,
   userId?: string,
+  options: StockWriteOptions = {},
 ): Promise<{ success: boolean; fudoSynced: boolean; error?: string }> {
   // 1. Get the stock_item to find fudo link
   const { data: item } = await admin
     .from('stock_items')
-    .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty')
+    .select('id, name, unit, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty')
     .eq('id', stockItemId)
     .single()
 
@@ -400,6 +598,17 @@ export async function syncToFudo(
   const skipFudo = (item as Record<string, unknown>).fudo_skip === true
 
   const fudoLink = item.fudo_ingredient_id || item.fudo_product_id
+  const writeReason = options.reason ?? 'physical_count'
+  const writeOperation = writeReason === 'physical_count' ? 'physical_stock_count' : 'manual_stock_write'
+  const note = options.note?.trim() || null
+
+  if (writeReason === 'physical_count' && stockWriteNeedsNote(item.current_qty, newQty, item.unit) && !note) {
+    return {
+      success: false,
+      fudoSynced: false,
+      error: 'La diferencia de conteo es relevante. Agregá una nota para auditoría.',
+    }
+  }
 
   if (!fudoLink && !skipFudo) {
     return {
@@ -412,8 +621,34 @@ export async function syncToFudo(
   // 2. Fudo-linked stock must write to Fudo first. If Fudo fails, local stock stays unchanged.
   if (fudoLink && !skipFudo) {
     const fudoResult = item.fudo_ingredient_id
-      ? await writeFudoStock(item.fudo_ingredient_id, newQty)
-      : await writeFudoProductStock(item.fudo_product_id!, newQty)
+      ? await writeFudoStock(item.fudo_ingredient_id, newQty, {
+        admin,
+        operation: writeOperation,
+        stockItemId,
+        userId,
+        entityType: 'stock_item',
+        entityId: stockItemId,
+        fudoType: 'ingredient',
+        fudoId: item.fudo_ingredient_id,
+        oldQty: item.current_qty,
+        newQty,
+        reason: writeReason,
+        note,
+      })
+      : await writeFudoProductStock(item.fudo_product_id!, newQty, {
+        admin,
+        operation: writeOperation,
+        stockItemId,
+        userId,
+        entityType: 'stock_item',
+        entityId: stockItemId,
+        fudoType: 'product',
+        fudoId: item.fudo_product_id!,
+        oldQty: item.current_qty,
+        newQty,
+        reason: writeReason,
+        note,
+      })
 
     if (!fudoResult.success) {
       console.error(`[FudoSync] Write failed for ${item.name}: ${fudoResult.error}`)
@@ -424,7 +659,7 @@ export async function syncToFudo(
         entity_type: 'stock_item',
         entity_id: stockItemId,
         description: `Stock NO actualizado en LVE porque Fudo falló para ${item.name}: ${fudoResult.error}`,
-        metadata: { fudo_id: fudoLink, attempted_qty: newQty, local_qty_kept: item.current_qty },
+        metadata: { fudo_id: fudoLink, attempted_qty: newQty, local_qty_kept: item.current_qty, reason: writeReason, note },
       })
 
       return { success: false, fudoSynced: false, error: fudoResult.error }
@@ -437,13 +672,29 @@ export async function syncToFudo(
     .update({ current_qty: newQty, updated_at: new Date().toISOString() })
     .eq('id', stockItemId)
 
-  if (dbError) return { success: false, fudoSynced: false, error: dbError.message }
+  if (dbError) {
+    await recordFudoIncident(admin, {
+      source: 'write_stock',
+      code: 'lve_update_after_fudo_failed',
+      severity: 'critical',
+      entityType: 'stock_item',
+      entityId: stockItemId,
+      stockItemId,
+      fudoType: item.fudo_ingredient_id ? 'ingredient' : 'product',
+      fudoId: fudoLink,
+      title: 'Fudo cambió pero LVE no pudo guardar el nuevo stock',
+      detail: dbError.message,
+      payload: { old_qty: item.current_qty, new_qty: newQty },
+    })
+
+    return { success: false, fudoSynced: false, error: dbError.message }
+  }
 
   // 4. Log the change
   await admin.from('stock_logs').insert({
     stock_item_id: stockItemId,
     user_id: userId ?? null,
-    action: 'update',
+    action: writeReason,
     old_qty: item.current_qty,
     new_qty: newQty,
   })
@@ -456,7 +707,7 @@ export async function syncToFudo(
       entity_type: 'stock_item',
       entity_id: stockItemId,
       description: `${item.name}: ${item.current_qty} → ${newQty} (sincronizado con Fudo)`,
-      metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: newQty, synced: true },
+      metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: newQty, synced: true, reason: writeReason, note },
     })
 
     return { success: true, fudoSynced: true }
@@ -504,16 +755,29 @@ export async function syncProductionToFudo(
     let fudoResult: { success: boolean; error?: string }
 
     if (item.fudo_ingredient_id) {
-      fudoResult = await writeFudoStock(item.fudo_ingredient_id, item.current_qty)
+      fudoResult = await writeFudoStock(item.fudo_ingredient_id, item.current_qty, {
+        admin,
+        operation: 'production_stock_write',
+        stockItemId: itemId,
+        userId,
+        entityType: 'production_movement',
+        entityId: itemId,
+        fudoType: 'ingredient',
+        fudoId: item.fudo_ingredient_id,
+        newQty: item.current_qty,
+      })
     } else {
-      // Product-linked item — push via product endpoint
-      try {
-        const { fudo: fudoClient } = await import('@/lib/fudoClient')
-        await fudoClient.updateProductStock(item.fudo_product_id!, item.current_qty)
-        fudoResult = { success: true }
-      } catch (err) {
-        fudoResult = { success: false, error: err instanceof Error ? err.message : 'Error' }
-      }
+      fudoResult = await writeFudoProductStock(item.fudo_product_id!, item.current_qty, {
+        admin,
+        operation: 'production_stock_write',
+        stockItemId: itemId,
+        userId,
+        entityType: 'production_movement',
+        entityId: itemId,
+        fudoType: 'product',
+        fudoId: item.fudo_product_id!,
+        newQty: item.current_qty,
+      })
     }
 
     if (fudoResult.success) {
@@ -525,7 +789,11 @@ export async function syncProductionToFudo(
         entity_type: 'stock_item',
         entity_id: String(itemId),
         description: `Producción: ${item.name} → ${item.current_qty} (sincronizado con Fudo)`,
-        metadata: { fudo_ingredient_id: item.fudo_ingredient_id, qty: item.current_qty },
+        metadata: {
+          fudo_ingredient_id: item.fudo_ingredient_id,
+          fudo_product_id: item.fudo_product_id,
+          qty: item.current_qty,
+        },
       })
     } else {
       result.errors.push(`${item.name}: ${fudoResult.error}`)
@@ -536,7 +804,11 @@ export async function syncProductionToFudo(
         entity_type: 'stock_item',
         entity_id: String(itemId),
         description: `Error sync producción ${item.name} con Fudo: ${fudoResult.error}`,
-        metadata: { fudo_ingredient_id: item.fudo_ingredient_id, attempted_qty: item.current_qty },
+        metadata: {
+          fudo_ingredient_id: item.fudo_ingredient_id,
+          fudo_product_id: item.fudo_product_id,
+          attempted_qty: item.current_qty,
+        },
       })
     }
   }

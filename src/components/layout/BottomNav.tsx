@@ -10,12 +10,10 @@ import {
   Bell,
   Package,
   MoreHorizontal,
-  MessageCircle,
   Users,
   Shield,
   ShieldAlert,
   Truck,
-  ChefHat,
   UtensilsCrossed,
   Bot,
   BookOpen,
@@ -23,7 +21,6 @@ import {
   Coffee,
   ShoppingCart,
   FolderOpen,
-  Lightbulb,
   Wine,
   BarChart3,
   X,
@@ -50,6 +47,7 @@ type NavItem = {
   label: string
   href: string
   icon: LucideIcon
+  description?: string
 }
 
 type NavGroup = {
@@ -69,61 +67,66 @@ type ExpandableNavItem = {
 
 const BASE_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
-  { label: 'Mi Turno', href: '/fichaje', icon: Clock },
+  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
   { label: 'Horarios', href: '/mis-horarios', icon: Calendar },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
+]
+
+const OPERATIONS_NAV: NavItem[] = [
+  { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Stock', href: '/stock', icon: Package },
+  { label: 'Producir', href: '/stock/produccion', icon: Hammer },
+  { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
 ]
 
 // Runners get Salón in main bar instead of Horarios
 const RUNNER_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
   { label: 'Salón', href: '/salon', icon: Armchair },
-  { label: 'Mi Turno', href: '/fichaje', icon: Clock },
+  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
-// SOCIO — todo accesible, 3 grupos
+// SOCIO — operaciones críticas fijas abajo; el resto queda agrupado por intención.
 const SOCIO_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'El local',
+      label: 'Operación del local',
       items: [
-        { label: 'Salón', href: '/salon', icon: Armchair },
-        { label: 'Ventas', href: '/ventas', icon: BarChart3 },
-        { label: 'Equipo', href: '/equipo', icon: Users },
-        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert },
-        { label: 'Turnos', href: '/equipo/turnos', icon: Calendar },
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
-        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck },
+        { label: 'Ventas', href: '/ventas', icon: BarChart3, description: 'Facturación y tickets sincronizados desde Fudo' },
+        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert, description: 'Incidencias que requieren decisión' },
+        { label: 'Equipo', href: '/equipo', icon: Users, description: 'Personas presentes, roles y estado del turno' },
+        { label: 'Turnos', href: '/equipo/turnos', icon: Calendar, description: 'Planificación semanal del equipo' },
       ],
     },
     {
-      label: 'Inventario',
+      label: 'Sectores',
       items: [
-        { label: 'Stock', href: '/stock', icon: Package },
-        { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp },
-        { label: 'Producción', href: '/stock/produccion', icon: Hammer },
-        { label: 'Vajilla', href: '/vajilla', icon: Wine },
-        { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
-        { label: 'Proveed.', href: '/proveedores', icon: Truck },
+        { label: 'Salón', href: '/salon', icon: Armchair, description: 'Tareas y control del servicio' },
+        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed, description: 'Pedidos, preparación y operación de cocina' },
+        { label: 'Barra', href: '/cocina/barra', icon: Coffee, description: 'Stock y tareas de barra' },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Control de roturas, faltantes y reposición' },
       ],
     },
     {
-      label: 'Gestión',
+      label: 'Administración',
       items: [
-        { label: 'Asistencia', href: '/admin/asistencia', icon: ScanFace },
-        { label: 'Fichaje', href: '/fichaje', icon: Clock },
-        { label: 'Auditoría', href: '/auditoria', icon: Shield },
+        { label: 'Control', href: '/admin', icon: LayoutDashboard, description: 'Panel administrativo general' },
+        { label: 'Asistencia', href: '/admin/asistencia', icon: ScanFace, description: 'Fichajes, anomalías y correcciones' },
+        { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Datos de proveedores y condiciones' },
+        { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp, description: 'Análisis de consumo y desvíos' },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Recetas, insumos y preparación' },
+        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Recetas y cambios por aprobar' },
+        { label: 'Expedientes', href: '/expedientes', icon: FolderOpen, description: 'Seguimiento de temas administrativos' },
+        { label: 'Auditoría', href: '/auditoria', icon: Shield, description: 'Historial de cambios sensibles' },
       ],
     },
     {
-      label: 'Herramientas',
+      label: 'Asistente',
       items: [
-        { label: 'La Vieja', href: '/asistente', icon: Bot },
+        { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar, buscar y operar sin navegar pantallas' },
       ],
     },
   ],
@@ -135,29 +138,31 @@ const ENCARGADO_MORE: ExpandableNavItem = {
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'El local',
+      label: 'Operación del local',
       items: [
-        { label: 'Salón', href: '/salon', icon: Armchair },
-        { label: 'Control', href: '/admin', icon: LayoutDashboard },
-        { label: 'Equipo', href: '/equipo', icon: Users },
-        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert },
-        { label: 'Asistencia', href: '/admin/asistencia', icon: ScanFace },
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
-        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck },
+        { label: 'Salón', href: '/salon', icon: Armchair, description: 'Servicio y tareas del salón' },
+        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed, description: 'Preparación y pedidos de cocina' },
+        { label: 'Barra', href: '/cocina/barra', icon: Coffee, description: 'Control operativo de barra' },
+        { label: 'Equipo', href: '/equipo', icon: Users, description: 'Presentes, ausentes y roles' },
+        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert, description: 'Problemas que requieren acción' },
+        { label: 'Asistencia', href: '/admin/asistencia', icon: ScanFace, description: 'Fichajes y anomalías' },
       ],
     },
     {
-      label: 'Inventario y compras',
+      label: 'Soporte de inventario',
       items: [
-        { label: 'Stock general', href: '/stock', icon: Package },
-        { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp },
-        { label: 'Producción', href: '/stock/produccion', icon: Hammer },
-        { label: 'Vajilla', href: '/vajilla', icon: Wine },
-        { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
-        { label: 'Proveedores', href: '/proveedores', icon: Truck },
-        { label: 'La Vieja', href: '/asistente', icon: Bot },
+        { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp, description: 'Consumos, rindes y desvíos' },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Faltantes, roturas y reposición' },
+        { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Contactos y condiciones de compra' },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Insumos y preparación estándar' },
+        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Cambios por aprobar' },
+      ],
+    },
+    {
+      label: 'Administración',
+      items: [
+        { label: 'Control', href: '/admin', icon: LayoutDashboard, description: 'Panel administrativo general' },
+        { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar y operar por chat' },
       ],
     },
   ],
@@ -171,18 +176,18 @@ const CHEF_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
-        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Stock cocina', href: '/cocina/stock', icon: Package },
-        { label: 'Producción', href: '/cocina/produccion', icon: Hammer },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
-        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck },
-        { label: 'La Vieja', href: '/asistente', icon: Bot },
+        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed, description: 'Pedidos y preparación del sector' },
+        { label: 'Stock cocina', href: '/cocina/stock', icon: Package, description: 'Faltantes de cocina' },
+        { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
+        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Cambios por revisar' },
+        { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
       ],
     },
     {
       label: 'Mi asistencia',
       items: [
-        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
+        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],
@@ -196,17 +201,17 @@ const COCINA_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
-        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed },
-        { label: 'Stock cocina', href: '/cocina/stock', icon: Package },
-        { label: 'Producción', href: '/cocina/produccion', icon: Hammer },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen },
-        { label: 'La Vieja', href: '/asistente', icon: Bot },
+        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed, description: 'Pedidos y preparación del sector' },
+        { label: 'Stock cocina', href: '/cocina/stock', icon: Package, description: 'Faltantes de cocina' },
+        { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
+        { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
       ],
     },
     {
       label: 'Mi asistencia',
       items: [
-        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
+        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],
@@ -220,15 +225,15 @@ const BARISTA_MORE: ExpandableNavItem = {
     {
       label: 'Mi sector',
       items: [
-        { label: 'Stock barra', href: '/cocina/barra', icon: Coffee },
-        { label: 'Vajilla', href: '/vajilla', icon: Wine },
-        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
+        { label: 'Stock barra', href: '/cocina/barra', icon: Coffee, description: 'Faltantes y pedidos de barra' },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
+        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
     {
       label: 'Herramientas',
       items: [
-        { label: 'La Vieja', href: '/asistente', icon: Bot },
+        { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
       ],
     },
   ],
@@ -242,15 +247,15 @@ const RUNNER_MORE: ExpandableNavItem = {
     {
       label: 'Salón',
       items: [
-        { label: 'Vajilla', href: '/vajilla', icon: Wine },
-        { label: 'Barra', href: '/cocina/barra', icon: Coffee },
-        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
+        { label: 'Barra', href: '/cocina/barra', icon: Coffee, description: 'Ver stock y pedidos de barra' },
+        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
     {
       label: 'Herramientas',
       items: [
-        { label: 'La Vieja', href: '/asistente', icon: Bot },
+        { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
       ],
     },
   ],
@@ -264,9 +269,9 @@ const BACHA_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
-        { label: 'Vajilla', href: '/vajilla', icon: Wine },
-        { label: 'Fichaje', href: '/fichaje', icon: ScanFace },
-        { label: 'La Vieja', href: '/asistente', icon: Bot },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
+        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
+        { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
       ],
     },
   ],
@@ -277,17 +282,9 @@ function getAllMoreItems(more?: ExpandableNavItem): NavItem[] {
   return more.groups.flatMap((g) => g.items)
 }
 
-// Socios: Inicio, Mi Turno, Control, Avisos + Más
-const SOCIO_NAV: NavItem[] = [
-  { label: 'Inicio', href: '/', icon: Home },
-  { label: 'Mi Turno', href: '/fichaje', icon: Clock },
-  { label: 'Control', href: '/admin', icon: LayoutDashboard },
-  { label: 'Avisos', href: '/notificaciones', icon: Bell },
-]
-
 function getNavItems(role?: AppRole): { items: NavItem[]; more?: ExpandableNavItem } {
-  if (role === 'socio') return { items: SOCIO_NAV, more: SOCIO_MORE }
-  if (role === 'encargado') return { items: BASE_NAV, more: ENCARGADO_MORE }
+  if (role === 'socio') return { items: OPERATIONS_NAV, more: SOCIO_MORE }
+  if (role === 'encargado') return { items: OPERATIONS_NAV, more: ENCARGADO_MORE }
   if (role === 'chef') return { items: BASE_NAV, more: CHEF_MORE }
   if (role === 'cocina') return { items: BASE_NAV, more: COCINA_MORE }
   if (role === 'barista') return { items: BASE_NAV, more: BARISTA_MORE }
@@ -308,9 +305,9 @@ export function BottomNav() {
 
   const nav = getNavItems(profile?.role)
   const more = nav.more
-  // Socio que debe fichar (p.ej. Ricardo): inyectamos "Mi Turno" en su nav
+  // Si un socio también ficha, mantenemos 4 accesos máximos para no saturar la barra.
   const items = profile?.role === 'socio' && mustClockIn(profile)
-    ? [nav.items[0], { label: 'Mi Turno', href: '/mi-turno', icon: Clock }, ...nav.items.slice(1)]
+    ? [nav.items[0], { label: 'Mi Turno', href: '/mi-turno', icon: Clock }, ...nav.items.slice(1, 3)]
     : nav.items
 
   // Fetch unread notification count
@@ -335,9 +332,14 @@ export function BottomNav() {
   }, [profile])
 
   useEffect(() => {
-    fetchUnread()
+    const firstFetch = window.setTimeout(() => {
+      void fetchUnread()
+    }, 0)
     const interval = setInterval(fetchUnread, 60_000)
-    return () => clearInterval(interval)
+    return () => {
+      window.clearTimeout(firstFetch)
+      clearInterval(interval)
+    }
   }, [fetchUnread])
 
   // Immediately decrement badge when a notification is marked as read
@@ -389,7 +391,7 @@ export function BottomNav() {
           >
             <div className="absolute inset-0 bg-black/20 backdrop-blur-[3px]" />
             <motion.div
-              className="absolute bottom-[4.5rem] left-3 right-3 glass rounded-2xl p-4 ring-1 ring-[#ebe6df]/50 shadow-xl"
+              className="absolute bottom-[4.5rem] left-3 right-3 max-h-[72vh] overflow-y-auto rounded-2xl border border-[#ebe6df] bg-[#fefcf9]/95 p-4 shadow-xl backdrop-blur-xl"
               onClick={(e) => e.stopPropagation()}
               initial={{ opacity: 0, y: 40, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -397,7 +399,12 @@ export function BottomNav() {
               transition={{ type: 'spring', stiffness: 400, damping: 30 }}
             >
               <div className="mb-3 flex items-center justify-between px-1">
-                <span className="section-label">Más opciones</span>
+                <div>
+                  <span className="section-label">Más opciones</span>
+                  <p className="mt-1 text-xs leading-snug text-muted-foreground">
+                    Stock, producción y compras quedan fijos abajo. Acá va lo secundario.
+                  </p>
+                </div>
                 <motion.button
                   onClick={() => setMoreOpen(false)}
                   aria-label="Cerrar"
@@ -411,11 +418,11 @@ export function BottomNav() {
                 {more.groups.map((group) => (
                   <StaggerItem key={group.label || 'default'}>
                     {group.label && (
-                      <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                      <p className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
                         {group.label}
                       </p>
                     )}
-                    <div className="grid grid-cols-3 gap-1.5">
+                    <div className="grid gap-2 sm:grid-cols-2">
                       {group.items.map((child) => {
                         const Icon = child.icon
                         const active = isActive(child.href)
@@ -425,14 +432,35 @@ export function BottomNav() {
                             href={child.href}
                             onClick={() => setMoreOpen(false)}
                             className={cn(
-                              'flex flex-col items-center gap-1.5 rounded-xl px-2 py-3 text-[11px] font-medium transition-all active:scale-95',
+                              'flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all active:scale-[0.98]',
                               active
-                                ? 'bg-[#006d5a] text-white'
-                                : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                                ? 'border-[#006d5a] bg-[#006d5a] text-white'
+                                : 'border-[#ebe6df] bg-white text-[#3d2c24] hover:border-[#cfe4dd] hover:bg-[#f7fbf9]',
                             )}
                           >
-                            <Icon className="size-5" strokeWidth={1.75} />
-                            {child.label}
+                            <span
+                              className={cn(
+                                'flex size-10 shrink-0 items-center justify-center rounded-xl',
+                                active ? 'bg-white/15' : 'bg-[#f0f7f5] text-[#006d5a]',
+                              )}
+                            >
+                              <Icon className="size-5" strokeWidth={1.75} />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block text-sm font-semibold leading-tight">
+                                {child.label}
+                              </span>
+                              {child.description && (
+                                <span
+                                  className={cn(
+                                    'mt-0.5 block text-[11px] leading-snug',
+                                    active ? 'text-white/75' : 'text-muted-foreground',
+                                  )}
+                                >
+                                  {child.description}
+                                </span>
+                              )}
+                            </span>
                           </Link>
                         )
                       })}

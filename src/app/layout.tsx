@@ -1,22 +1,7 @@
 import type { Metadata, Viewport } from 'next'
-import { Barlow, Playfair_Display } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import { RegisterSW } from '@/components/pwa/register-sw'
 import './globals.css'
-
-const barlow = Barlow({
-  variable: '--font-barlow',
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
-  display: 'swap',
-})
-
-const playfairDisplay = Playfair_Display({
-  variable: '--font-playfair',
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
-  display: 'swap',
-})
 
 export const metadata: Metadata = {
   title: 'Sala de Profes — La Vieja Escuela',
@@ -47,7 +32,7 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body
-        className={`${barlow.variable} ${playfairDisplay.variable} font-sans antialiased`}
+        className="font-sans antialiased"
       >
         <RegisterSW />
         {children}

@@ -17,11 +17,22 @@ export async function GET() {
 
     const admin = createAdminClient()
     const result = await fullSync(admin)
+    let auditSummary: Record<string, unknown> | null = null
+    let auditError: string | null = null
+    try {
+      const { runFudoAudit } = await import('@/lib/fudo/audit')
+      const audit = await runFudoAudit(admin)
+      auditSummary = audit.summary
+    } catch (err) {
+      auditError = err instanceof Error ? err.message : 'No se pudo auditar Fudo'
+    }
 
     return NextResponse.json({
       success: true,
-      fudoConnected: true,
       ...result,
+      fudoConnected: true,
+      audit: auditSummary,
+      auditError,
     })
   } catch (error) {
     console.error('[stock/sync GET]', error)
@@ -49,24 +60,15 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { stockItemId, newQty } = body
+    const reason = body?.reason === 'manual_adjustment' ? 'manual_adjustment' : 'physical_count'
+    const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 500) : null
 
     if (!stockItemId || typeof newQty !== 'number') {
       return NextResponse.json({ error: 'stockItemId y newQty requeridos' }, { status: 400 })
     }
 
     const admin = createAdminClient()
-    const { fudo } = await import('@/lib/fudoClient')
-    const fudoConnection = await fudo.testConnection()
-    if (!fudoConnection.ok) {
-      return NextResponse.json({
-        success: false,
-        fudoSynced: false,
-        error: `Fudo no está disponible: ${fudoConnection.error}`,
-        message: 'Stock no actualizado: Fudo no está disponible',
-      }, { status: 502 })
-    }
-
-    const result = await syncToFudo(admin, stockItemId, newQty, user.id)
+    const result = await syncToFudo(admin, stockItemId, newQty, user.id, { reason, note })
 
     return NextResponse.json({
       success: result.success,

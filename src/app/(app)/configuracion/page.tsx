@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { ROLES } from '@/lib/constants'
 import { logAuditClient } from '@/lib/audit'
+import { signOutBrowserSession } from '@/lib/push/client'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -176,8 +177,7 @@ export default function ConfiguracionPage() {
 
   function handleLogout() {
     setLoggingOut(true)
-    const supabase = createClient()
-    supabase.auth.signOut().finally(() => {
+    void signOutBrowserSession().finally(() => {
       window.location.href = '/login'
     })
     setTimeout(() => { window.location.href = '/login' }, 1500)
