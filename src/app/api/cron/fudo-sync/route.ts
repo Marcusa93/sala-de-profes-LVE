@@ -104,13 +104,13 @@ export async function GET(request: NextRequest) {
         entity_type: 'cron',
         entity_id: 'fudo-sync',
         description: `Cron sync: ${stockResult.synced} stock, ${salesImported} ventas, snapshot ${snapshotSaved ? 'OK' : 'FALLÓ'} (${elapsedMs}ms)`,
-        metadata: {
+        metadata: JSON.parse(JSON.stringify({
           stock: stockResult,
           audit: { summary: auditSummary, error: auditError },
           sales: { imported: salesImported, errors: salesErrors, from: yesterdayStr },
           snapshot: { saved: snapshotSaved, error: snapshotError },
           elapsed_ms: elapsedMs,
-        },
+        })),
       })
     } catch { /* audit is non-blocking */ }
 
