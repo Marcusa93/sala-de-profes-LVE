@@ -15,7 +15,7 @@ export type DashboardData = {
   pendingOrders: number
   expedientesActivos: number
   expedientesData: { id: string; code: string; title: string; status: string; urgency: string; target_date: string | null; updated_at: string; responsible_id: string | null }[]
-  ventasHoy: { total: number; tickets: number } | null
+  ventasHoy: { total: number; tickets: number; peakHour: string | null; peakRevenue: number } | null
   fudoLastSync: string | null
   barUrgent: number
 }
@@ -87,7 +87,17 @@ export function useDashboardData(
       let ventasHoy: DashboardData['ventasHoy'] = null
       let fudoLastSync: string | null = null
       if (ventasRes?.today) {
-        ventasHoy = { total: ventasRes.today.totalFacturado ?? 0, tickets: ventasRes.today.totalTickets ?? 0 }
+        const byHour = (ventasRes.today.byHour ?? []) as { hour: string; revenue: number }[]
+        const peak = byHour.reduce<{ hour: string; revenue: number } | null>(
+          (max, h) => (h.revenue > (max?.revenue ?? 0) ? h : max),
+          null,
+        )
+        ventasHoy = {
+          total: ventasRes.today.totalFacturado ?? 0,
+          tickets: ventasRes.today.totalTickets ?? 0,
+          peakHour: peak?.hour ?? null,
+          peakRevenue: peak?.revenue ?? 0,
+        }
         if (ventasRes.lastSync) fudoLastSync = ventasRes.lastSync
       }
 

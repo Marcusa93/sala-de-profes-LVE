@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
       total: number
       state: string
       createdAt: string
+      argHour: number
+      argDow: number
       items: Array<{ name: string; qty: number; price: number }>
     }> = []
 
@@ -58,8 +60,12 @@ export async function GET(request: NextRequest) {
         let foundBefore = false
         for (const sale of salesData) {
           const createdAt = String(sale.attributes?.createdAt ?? '')
-          // Convert to Argentina date
-          const argDate = new Date(createdAt).toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+          // Convert to Argentina date + hour + day of week
+          const saleDate = new Date(createdAt)
+          const argDate = saleDate.toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+          const argHour = Number(saleDate.toLocaleString('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false })) % 24
+          // 0=domingo … 6=sábado, calculado sobre la fecha argentina
+          const argDow = new Date(argDate + 'T12:00:00').getDay()
 
           if (argDate < startStr) { foundBefore = true; continue }
           if (argDate > endStr) continue
@@ -89,6 +95,8 @@ export async function GET(request: NextRequest) {
             total: Number(sale.attributes?.total ?? 0),
             state: String(sale.attributes?.saleState ?? 'UNKNOWN'),
             createdAt: argDate,
+            argHour,
+            argDow,
             items: saleItems,
           })
         }
@@ -121,6 +129,17 @@ export async function GET(request: NextRequest) {
       .map(([date, data]) => ({ date, ...data }))
       .sort((a, b) => a.date.localeCompare(b.date))
 
+    // Ventas por hora × día de semana (para "¿a qué hora vendemos más?")
+    const hourlyMap = new Map<string, { dow: number; hour: number; total: number; tickets: number }>()
+    for (const sale of closedSales) {
+      const key = `${sale.argDow}-${sale.argHour}`
+      const entry = hourlyMap.get(key) ?? { dow: sale.argDow, hour: sale.argHour, total: 0, tickets: 0 }
+      entry.total += sale.total
+      entry.tickets++
+      hourlyMap.set(key, entry)
+    }
+    const hourlyByDow = Array.from(hourlyMap.values()).sort((a, b) => a.dow - b.dow || a.hour - b.hour)
+
     // Top products across the whole month
     const productAgg = new Map<string, { qty: number; revenue: number }>()
     for (const sale of closedSales) {
@@ -152,6 +171,7 @@ export async function GET(request: NextRequest) {
       avgPerDay: activeDays > 0 ? Math.round(totalFacturado / activeDays) : 0,
       avgTicket: totalTickets > 0 ? Math.round(totalFacturado / totalTickets) : 0,
       dailyData,
+      hourlyByDow,
       topProducts: topProducts.slice(0, 30),
       topByRevenue: [...topProducts].sort((a, b) => b.revenue - a.revenue).slice(0, 30),
     })

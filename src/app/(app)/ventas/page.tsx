@@ -83,6 +83,8 @@ export default function VentasPage() {
     topByRevenue: { name: string; qty: number; revenue: number }[]
   } | null>(null)
   const [loadingMonth, setLoadingMonth] = useState(false)
+  const [hourlyByDow, setHourlyByDow] = useState<{ dow: number; hour: number; total: number; tickets: number }[]>([])
+  const [dowFilter, setDowFilter] = useState<number | 'all'>('all')
 
   // Compare mode
   const [compareDate, setCompareDate] = useState<Date>(subDays(new Date(), 1))
@@ -116,6 +118,7 @@ export default function VentasPage() {
       const json = await res.json()
       if (json.dailyData) {
         setMonthData(json.dailyData)
+        setHourlyByDow(json.hourlyByDow ?? [])
         setMonthSummary({
           totalFacturado: json.totalFacturado ?? 0,
           totalTickets: json.totalTickets ?? 0,
@@ -366,6 +369,42 @@ export default function VentasPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Ventas por hora — día vs día */}
+                {(data.byHour.length > 0 || compareData.byHour.length > 0) && (
+                  <ChartCard
+                    title="Ventas por hora"
+                    subtitle={`${format(selectedDate, 'EEE d', { locale: es })} vs ${format(compareDate, 'EEE d', { locale: es })}`}
+                  >
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart
+                        data={(() => {
+                          const map = new Map<string, { hour: string; a: number; b: number }>()
+                          for (const h of data.byHour) {
+                            map.set(h.hour, { hour: h.hour, a: h.revenue, b: 0 })
+                          }
+                          for (const h of compareData.byHour) {
+                            const row = map.get(h.hour) ?? { hour: h.hour, a: 0, b: 0 }
+                            row.b = h.revenue
+                            map.set(h.hour, row)
+                          }
+                          return Array.from(map.values()).sort((x, y) => Number(x.hour) - Number(y.hour))
+                        })()}
+                        margin={{ left: -15, right: 8 }}
+                      >
+                        <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#a39e97' }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fontSize: 10, fill: '#a39e97' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          formatter={(v: any, name: any) => [formatPrice(v), name === 'a' ? format(selectedDate, 'EEE d', { locale: es }) : format(compareDate, 'EEE d', { locale: es })]}
+                        />
+                        <Bar dataKey="a" fill="#006d5a" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="b" fill="#8b5e34" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </ChartCard>
+                )}
               </div>
             )}
 
@@ -425,6 +464,56 @@ export default function VentasPage() {
                   </BarChart>
                 </ResponsiveContainer>
               </ChartCard>
+
+              {/* ¿A qué hora vendemos más? — por hora, comparable entre días de semana */}
+              {hourlyByDow.length > 0 && (
+                <ChartCard
+                  title="¿A qué hora vendemos más?"
+                  subtitle={dowFilter === 'all' ? 'Todo el mes, por hora' : `Solo los ${['domingos', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados'][dowFilter]}`}
+                >
+                  <div className="-mx-1 mb-3 flex gap-1 overflow-x-auto px-1 pb-1 scrollbar-none">
+                    {([['all', 'Todos'], [1, 'Lun'], [2, 'Mar'], [3, 'Mié'], [4, 'Jue'], [5, 'Vie'], [6, 'Sáb'], [0, 'Dom']] as const).map(([value, label]) => (
+                      <button
+                        key={String(value)}
+                        onClick={() => setDowFilter(value as number | 'all')}
+                        className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                          dowFilter === value ? 'bg-[#3d2c24] text-white' : 'bg-[#f3efe9] text-[#a39e97]'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart
+                      data={(() => {
+                        const byHour = new Map<number, { total: number; tickets: number }>()
+                        for (const row of hourlyByDow) {
+                          if (dowFilter !== 'all' && row.dow !== dowFilter) continue
+                          const entry = byHour.get(row.hour) ?? { total: 0, tickets: 0 }
+                          entry.total += row.total
+                          entry.tickets += row.tickets
+                          byHour.set(row.hour, entry)
+                        }
+                        return Array.from(byHour.entries())
+                          .map(([hour, v]) => ({ hour: `${hour}`, ...v }))
+                          .sort((a, b) => Number(a.hour) - Number(b.hour))
+                      })()}
+                      margin={{ left: -15, right: 8 }}
+                    >
+                      <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#a39e97' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: '#a39e97' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                      <Tooltip
+                        contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        formatter={(v: any, name: any) => name === 'total' ? [formatPrice(v), 'Facturado'] : [v, 'Tickets']}
+                        labelFormatter={(l) => `${l}:00 hs`}
+                      />
+                      <Bar dataKey="total" fill="#006d5a" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+              )}
 
               {/* TOP PRODUCTS — by quantity */}
               {monthSummary.topProducts.length > 0 && (

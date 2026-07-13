@@ -251,6 +251,7 @@ export default function DashboardPage() {
                   </p>
                   <p className="text-[10px] text-[#a39e97]">
                     {ventasHoy.tickets} tickets
+                    {ventasHoy.peakHour && ` · pico ${ventasHoy.peakHour}hs`}
                     {fudoLastSync && ` · Fudo ${format(new Date(fudoLastSync), 'HH:mm')}`}
                   </p>
                 </div>
