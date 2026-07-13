@@ -1,13 +1,121 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Package, AlertTriangle } from 'lucide-react'
+import { Package, AlertTriangle, Trash2, RefreshCw, Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FadeIn, StaggerList, StaggerItem, AnimatedNumber } from '@/components/ui/motion'
 import { ChartCard } from '@/components/admin/ChartCard'
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts'
 import { getStockSemaphore } from '@/lib/contracts/stock'
+
+// ---------------------------------------------------------------------------
+// Mermas con costo — faltantes vs ventas, vencidos y desperdicio de producción
+// ---------------------------------------------------------------------------
+
+type WasteLine = { name: string; unit: string | null; qty: number; value: number | null; detail: string }
+type WasteReportResponse = {
+  windowDays: number
+  daysWithData: number
+  shrinkage: { lines: WasteLine[]; totalValue: number }
+  unexplainedGains: { lines: WasteLine[]; totalValue: number }
+  expiredLots: { lines: WasteLine[]; totalValue: number }
+  productionWaste: { lines: WasteLine[]; totalValue: number }
+  totalValue: number
+  analysis: string
+}
+
+const fmtPrice = (n: number) =>
+  new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n)
+
+function MermasCard() {
+  const [report, setReport] = useState<WasteReportResponse | null>(null)
+  const [loadingReport, setLoadingReport] = useState(true)
+  const [reportError, setReportError] = useState<string | null>(null)
+
+  const loadReport = async () => {
+    setLoadingReport(true)
+    setReportError(null)
+    try {
+      const res = await fetch('/api/ai/waste-report?days=7', { credentials: 'include' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'No se pudo generar el reporte')
+      setReport(json)
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Error al generar el reporte')
+    } finally {
+      setLoadingReport(false)
+    }
+  }
+
+  useEffect(() => { loadReport() }, [])
+
+  const sections = report ? [
+    { key: 'shrinkage', title: 'Faltantes sin explicar', data: report.shrinkage, tone: '#ea504c' },
+    { key: 'expired', title: 'Lotes vencidos', data: report.expiredLots, tone: '#d4943a' },
+    { key: 'prod', title: 'Merma de producción', data: report.productionWaste, tone: '#8b5e34' },
+    { key: 'gains', title: 'Entradas sin registrar', data: report.unexplainedGains, tone: '#4a90d9' },
+  ].filter(s => s.data.lines.length > 0) : []
+
+  return (
+    <div className="rounded-2xl bg-white ring-1 ring-[#ebe6df]">
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-2">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-[#ea504c]/10">
+            <Trash2 className="size-3.5 text-[#ea504c]" />
+          </div>
+          <div>
+            <p className="text-[13px] font-bold text-[#3d2c24]">Mermas de la semana</p>
+            <p className="text-[10px] text-[#a39e97]">
+              {loadingReport
+                ? 'Cruzando stock, ventas y lotes…'
+                : report
+                  ? `${report.daysWithData} día${report.daysWithData === 1 ? '' : 's'} con datos · total ${fmtPrice(report.totalValue)}`
+                  : 'Mermas con costo'}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={loadReport}
+          disabled={loadingReport}
+          className="rounded-lg bg-[#f3efe9] p-2 text-[#3d2c24] active:scale-95 disabled:opacity-50"
+        >
+          {loadingReport ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+        </button>
+      </div>
+
+      {reportError && <p className="px-4 pb-3 text-[11px] text-[#ea504c]">{reportError}</p>}
+
+      {report && !loadingReport && (
+        <div className="border-t border-[#ebe6df]/60 px-4 py-3">
+          <p className="whitespace-pre-line text-xs leading-relaxed text-[#3d2c24]">{report.analysis}</p>
+
+          {sections.map((s) => (
+            <div key={s.key} className="mt-3">
+              <p className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider" style={{ color: s.tone }}>
+                {s.title}
+                <span>{fmtPrice(s.data.totalValue)}</span>
+              </p>
+              <div className="space-y-1">
+                {s.data.lines.slice(0, 6).map((l, i) => (
+                  <div key={i} className="flex items-center justify-between rounded-lg bg-[#faf8f5] px-2.5 py-1.5 text-[11px]">
+                    <span className="min-w-0 truncate text-[#3d2c24]">
+                      {l.name}
+                      <span className="ml-1 text-[#a39e97]">· {l.detail}</span>
+                    </span>
+                    <span className="ml-2 shrink-0 font-bold tabular-nums text-[#3d2c24]">
+                      {Math.round(l.qty * 10) / 10} {l.unit ?? 'u'}{l.value != null ? ` · ${fmtPrice(l.value)}` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const SEMAPHORE_COLORS = { red: '#ea504c', yellow: '#d4943a', green: '#006d5a' }
 
@@ -82,6 +190,11 @@ export default function StockReportPage() {
       <FadeIn>
         <h2 className="font-display text-xl tracking-tight text-[#3d2c24]">Stock</h2>
         <p className="section-label mt-1">Estado actual del inventario</p>
+      </FadeIn>
+
+      {/* Mermas con costo (IA) */}
+      <FadeIn>
+        <MermasCard />
       </FadeIn>
 
       {/* KPI row */}

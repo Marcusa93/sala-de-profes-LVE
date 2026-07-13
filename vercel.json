@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/fudo-sync",
-      "schedule": "0 12 * * *"
+      "schedule": "0 6 * * *"
     },
     {
       "path": "/api/cron/auto-clockout",
