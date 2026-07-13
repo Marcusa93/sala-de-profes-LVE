@@ -79,6 +79,7 @@ export const STOCK_CATEGORIES = {
   verduras: { label: 'Verduras', icon: '🥬' },
   frutas: { label: 'Frutas', icon: '🍎' },
   panaderia: { label: 'Panadería', icon: '🍞' },
+  elaborados: { label: 'Elaborados', icon: '🥟' },
   condimentos: { label: 'Condimentos', icon: '🧂' },
   limpieza: { label: 'Limpieza', icon: '🧹' },
   desechables: { label: 'Desechables', icon: '🥡' },

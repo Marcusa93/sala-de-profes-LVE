@@ -101,7 +101,7 @@ const AREA_FILTERS = [
 ] as const
 type AreaFilter = (typeof AREA_FILTERS)[number]['value']
 const AREA_CATEGORIES: Record<Exclude<AreaFilter, 'all'>, string[]> = {
-  cocina: ['carnes', 'verduras', 'frutas', 'lacteos', 'condimentos'],
+  cocina: ['carnes', 'verduras', 'frutas', 'lacteos', 'condimentos', 'elaborados'],
   pasteleria: ['panaderia'],
 }
 type FudoStatusResponse = {
@@ -1661,13 +1661,13 @@ export default function StockPage() {
         </p>
       </div>
 
-      {/* Search */}
-      <div className="relative">
+      {/* Search — sticky para que siempre esté a mano mientras se recorre la lista */}
+      <div className="sticky top-2 z-20">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar insumo o producto..."
-          className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] py-2.5 pl-10 pr-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+          placeholder={view === 'conteo' ? 'Buscá el producto que estás contando...' : 'Buscar insumo o producto...'}
+          className="w-full rounded-xl border border-[#ebe6df] bg-white py-2.5 pl-10 pr-3 text-sm text-[#3d2c24] shadow-sm placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
         />
         <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
         {search && (
@@ -1808,6 +1808,11 @@ export default function StockPage() {
                                   Sin vida util
                                 </span>
                               ) : null}
+                              {item.current_qty < 0 && (
+                                <span className="rounded-full bg-[#fef2f2] px-2 py-0.5 text-[9px] font-bold text-[#ea504c]">
+                                  {getStockSource(item).kind === 'fudo' ? 'Negativo en Fudo — contar' : 'Negativo — contar'}
+                                </span>
+                              )}
                             </div>
                           </div>
 

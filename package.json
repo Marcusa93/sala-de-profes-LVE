@@ -41,6 +41,7 @@
     "eslint": "^9",
     "eslint-config-next": "^16.1.7",
     "pg": "^8.20.0",
+    "semver": "^7.8.5",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

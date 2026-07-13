@@ -25,7 +25,7 @@ export type KitchenOrderUrgencyValue = 'normal' | 'alta' | 'urgente'
 export type KitchenOrderStatusValue = 'pending' | 'ordered' | 'received' | 'cancelled'
 
 // Legacy enum types (UI existente los usa, se van a eliminar al migrar cada página)
-export type StockCategoryValue = 'bebidas' | 'lacteos' | 'carnes' | 'verduras' | 'frutas' | 'panaderia' | 'condimentos' | 'limpieza' | 'desechables' | 'otros'
+export type StockCategoryValue = 'bebidas' | 'lacteos' | 'carnes' | 'verduras' | 'frutas' | 'panaderia' | 'elaborados' | 'condimentos' | 'limpieza' | 'desechables' | 'otros'
 export type RecipeCategoryValue = 'bebidas' | 'platos' | 'postres' | 'snacks'
 export type MenuItemCategoryValue =
   | 'desayunos_meriendas'
