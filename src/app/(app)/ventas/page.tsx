@@ -84,7 +84,9 @@ export default function VentasPage() {
   } | null>(null)
   const [loadingMonth, setLoadingMonth] = useState(false)
   const [hourlyByDow, setHourlyByDow] = useState<{ dow: number; hour: number; total: number; tickets: number }[]>([])
-  const [dowFilter, setDowFilter] = useState<number | 'all'>('all')
+  const [dowSelection, setDowSelection] = useState<number[]>([])  // vacío = todos los días
+  const [hourFrom, setHourFrom] = useState<number | null>(null)
+  const [hourTo, setHourTo] = useState<number | null>(null)
 
   // Compare mode
   const [compareDate, setCompareDate] = useState<Date>(subDays(new Date(), 1))
@@ -457,7 +459,8 @@ export default function VentasPage() {
                     <YAxis tick={{ fontSize: 9, fill: '#a39e97' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
                     <Tooltip
                       contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 11 }}
-                      formatter={(v: number) => [formatPrice(v), 'Facturado']}
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      formatter={(v: any) => [formatPrice(v), 'Facturado']}
                       labelFormatter={(l) => `Día ${l}`}
                     />
                     <Bar dataKey="total" fill="#006d5a" radius={[4, 4, 0, 0]} />
@@ -465,55 +468,155 @@ export default function VentasPage() {
                 </ResponsiveContainer>
               </ChartCard>
 
-              {/* ¿A qué hora vendemos más? — por hora, comparable entre días de semana */}
-              {hourlyByDow.length > 0 && (
-                <ChartCard
-                  title="¿A qué hora vendemos más?"
-                  subtitle={dowFilter === 'all' ? 'Todo el mes, por hora' : `Solo los ${['domingos', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados'][dowFilter]}`}
-                >
-                  <div className="-mx-1 mb-3 flex gap-1 overflow-x-auto px-1 pb-1 scrollbar-none">
-                    {([['all', 'Todos'], [1, 'Lun'], [2, 'Mar'], [3, 'Mié'], [4, 'Jue'], [5, 'Vie'], [6, 'Sáb'], [0, 'Dom']] as const).map(([value, label]) => (
+              {/* Horarios de venta — pico y valle, comparable entre días y por franja */}
+              {hourlyByDow.length > 0 && (() => {
+                const DOW_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+                const SERIES_COLORS = ['#006d5a', '#8b5e34', '#d4943a']
+
+                // Días transcurridos del mes por día de semana (para promediar en serio:
+                // un mes con 5 lunes no puede "ganarle" a uno con 4 martes por volumen)
+                const dowCounts = [0, 0, 0, 0, 0, 0, 0]
+                for (const d of monthData) dowCounts[new Date(d.date + 'T12:00:00').getDay()]++
+                const activeDays = monthData.filter(d => d.total > 0).length || 1
+
+                // Rango horario con ventas en el mes (default del selector)
+                const hoursWithSales = [...new Set(hourlyByDow.filter(r => r.tickets > 0).map(r => r.hour))].sort((a, b) => a - b)
+                if (hoursWithSales.length === 0) return null
+                const minH = hoursWithSales[0]
+                const maxH = hoursWithSales[hoursWithSales.length - 1]
+                const from = Math.max(minH, Math.min(hourFrom ?? minH, maxH))
+                const to = Math.max(from, Math.min(hourTo ?? maxH, maxH))
+                const hours = Array.from({ length: to - from + 1 }, (_, i) => from + i)
+
+                const selected = dowSelection
+                const seriesKeys = selected.length === 0 ? ['todos'] : selected.map(d => `d${d}`)
+                const seriesLabels = selected.length === 0 ? ['Promedio general'] : selected.map(d => DOW_LABELS[d])
+
+                const rows = hours.map(h => {
+                  const row: Record<string, number | string> = { hour: `${h}` }
+                  if (selected.length === 0) {
+                    const total = hourlyByDow.filter(r => r.hour === h).reduce((s, r) => s + r.total, 0)
+                    row.todos = Math.round(total / activeDays)
+                  } else {
+                    for (const dow of selected) {
+                      const total = hourlyByDow.filter(r => r.dow === dow && r.hour === h).reduce((s, r) => s + r.total, 0)
+                      row[`d${dow}`] = dowCounts[dow] > 0 ? Math.round(total / dowCounts[dow]) : 0
+                    }
+                  }
+                  return row
+                })
+
+                // Pico y valle por serie, dentro de la franja elegida
+                const stats = seriesKeys.map((key, i) => {
+                  const vals = rows.map(r => ({ hour: String(r.hour), v: Number(r[key] ?? 0) }))
+                  const pico = vals.reduce((m, x) => (x.v > m.v ? x : m), vals[0])
+                  const valle = vals.reduce((m, x) => (x.v < m.v ? x : m), vals[0])
+                  return { label: seriesLabels[i], color: SERIES_COLORS[i] ?? '#006d5a', pico, valle }
+                })
+
+                const toggleDow = (dow: number) => {
+                  setDowSelection(prev => {
+                    if (prev.includes(dow)) return prev.filter(d => d !== dow)
+                    const next = [...prev, dow]
+                    return next.length > 3 ? next.slice(1) : next  // máx 3 series legibles
+                  })
+                }
+
+                const labelFor = (key: string) =>
+                  key === 'todos' ? 'Promedio general' : DOW_LABELS[Number(key.slice(1))]
+
+                return (
+                  <ChartCard
+                    title="Horarios de venta"
+                    subtitle="Promedio por día en cada hora — elegí días para comparar y una franja"
+                  >
+                    {/* Chips de días (multi-selección, hasta 3) */}
+                    <div className="-mx-1 mb-2 flex gap-1 overflow-x-auto px-1 pb-1 scrollbar-none">
                       <button
-                        key={String(value)}
-                        onClick={() => setDowFilter(value as number | 'all')}
+                        onClick={() => setDowSelection([])}
                         className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all ${
-                          dowFilter === value ? 'bg-[#3d2c24] text-white' : 'bg-[#f3efe9] text-[#a39e97]'
+                          selected.length === 0 ? 'bg-[#3d2c24] text-white' : 'bg-[#f3efe9] text-[#a39e97]'
                         }`}
                       >
-                        {label}
+                        Todos
                       </button>
-                    ))}
-                  </div>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <BarChart
-                      data={(() => {
-                        const byHour = new Map<number, { total: number; tickets: number }>()
-                        for (const row of hourlyByDow) {
-                          if (dowFilter !== 'all' && row.dow !== dowFilter) continue
-                          const entry = byHour.get(row.hour) ?? { total: 0, tickets: 0 }
-                          entry.total += row.total
-                          entry.tickets += row.tickets
-                          byHour.set(row.hour, entry)
-                        }
-                        return Array.from(byHour.entries())
-                          .map(([hour, v]) => ({ hour: `${hour}`, ...v }))
-                          .sort((a, b) => Number(a.hour) - Number(b.hour))
-                      })()}
-                      margin={{ left: -15, right: 8 }}
-                    >
-                      <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#a39e97' }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 10, fill: '#a39e97' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                      <Tooltip
-                        contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        formatter={(v: any, name: any) => name === 'total' ? [formatPrice(v), 'Facturado'] : [v, 'Tickets']}
-                        labelFormatter={(l) => `${l}:00 hs`}
-                      />
-                      <Bar dataKey="total" fill="#006d5a" radius={[6, 6, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </ChartCard>
-              )}
+                      {[1, 2, 3, 4, 5, 6, 0].map(dow => {
+                        const idx = selected.indexOf(dow)
+                        return (
+                          <button
+                            key={dow}
+                            onClick={() => toggleDow(dow)}
+                            className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all"
+                            style={idx >= 0
+                              ? { backgroundColor: SERIES_COLORS[idx], color: 'white' }
+                              : { backgroundColor: '#f3efe9', color: '#a39e97' }}
+                          >
+                            {DOW_LABELS[dow]}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {/* Franja horaria */}
+                    <div className="mb-3 flex items-center gap-2 text-xs text-[#7d6c64]">
+                      <span>Franja:</span>
+                      <select
+                        value={from}
+                        onChange={(e) => setHourFrom(Number(e.target.value))}
+                        className="rounded-lg border border-[#ebe6df] bg-white px-2 py-1 text-xs focus:border-[#006d5a] focus:outline-none"
+                      >
+                        {hoursWithSales.map(h => <option key={h} value={h}>{h}:00</option>)}
+                      </select>
+                      <span>a</span>
+                      <select
+                        value={to}
+                        onChange={(e) => setHourTo(Number(e.target.value))}
+                        className="rounded-lg border border-[#ebe6df] bg-white px-2 py-1 text-xs focus:border-[#006d5a] focus:outline-none"
+                      >
+                        {hoursWithSales.filter(h => h >= from).map(h => <option key={h} value={h}>{h}:59</option>)}
+                      </select>
+                      {(hourFrom !== null || hourTo !== null) && (
+                        <button
+                          onClick={() => { setHourFrom(null); setHourTo(null) }}
+                          className="rounded-lg bg-[#f3efe9] px-2 py-1 text-[11px] font-semibold text-[#7d6c64]"
+                        >
+                          Todo el día
+                        </button>
+                      )}
+                    </div>
+
+                    <ResponsiveContainer width="100%" height={200}>
+                      <BarChart data={rows} margin={{ left: -15, right: 8 }}>
+                        <XAxis dataKey="hour" tick={{ fontSize: 10, fill: '#a39e97' }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fontSize: 10, fill: '#a39e97' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', fontSize: 12 }}
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          formatter={(v: any, name: any) => [formatPrice(v), labelFor(String(name))]}
+                          labelFormatter={(l) => `${l}:00 a ${l}:59 hs`}
+                        />
+                        {seriesKeys.map((key, i) => (
+                          <Bar key={key} dataKey={key} fill={SERIES_COLORS[i] ?? '#006d5a'} radius={[4, 4, 0, 0]} />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+
+                    {/* Pico y valle por serie — para armar personal y promos */}
+                    <div className="mt-2 space-y-1">
+                      {stats.map((s) => (
+                        <div key={s.label} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
+                          <span className="flex items-center gap-1.5 font-semibold text-[#3d2c24]">
+                            <span className="size-2 rounded-full" style={{ backgroundColor: s.color }} />
+                            {s.label}
+                          </span>
+                          <span className="text-[#006d5a]">▲ pico {s.pico.hour}hs · {formatPrice(s.pico.v)}</span>
+                          <span className="text-[#ea504c]">▼ valle {s.valle.hour}hs · {formatPrice(s.valle.v)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </ChartCard>
+                )
+              })()}
 
               {/* TOP PRODUCTS — by quantity */}
               {monthSummary.topProducts.length > 0 && (
