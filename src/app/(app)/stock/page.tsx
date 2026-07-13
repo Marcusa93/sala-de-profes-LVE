@@ -92,6 +92,18 @@ type SemaphoreColor = 'red' | 'yellow' | 'green'
 type FudoConnectionState = 'checking' | 'ok' | 'warning' | 'error'
 type StockSourceFilter = 'all' | 'fudo' | 'local' | 'unmapped'
 type StockView = 'radar' | 'conteo' | 'inventario'
+
+// Áreas operativas: cocina maneja proteínas/verduras/etc; pastelería lo horneado.
+const AREA_FILTERS = [
+  { value: 'all', label: 'Todo' },
+  { value: 'cocina', label: 'Cocina' },
+  { value: 'pasteleria', label: 'Pastelería' },
+] as const
+type AreaFilter = (typeof AREA_FILTERS)[number]['value']
+const AREA_CATEGORIES: Record<Exclude<AreaFilter, 'all'>, string[]> = {
+  cocina: ['carnes', 'verduras', 'frutas', 'lacteos', 'condimentos'],
+  pasteleria: ['panaderia'],
+}
 type FudoStatusResponse = {
   state: 'ok' | 'warning' | 'error'
   last_sync_at: string | null
@@ -284,6 +296,7 @@ export default function StockPage() {
   const [search, setSearch] = useState('')
   const [view, setView] = useState<StockView>('radar')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [areaFilter, setAreaFilter] = useState<AreaFilter>('all')
   const [semaphoreFilter, setSemaphoreFilter] = useState<SemaphoreColor | null>(null)
   const [sourceFilter, setSourceFilter] = useState<StockSourceFilter>('all')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -540,6 +553,9 @@ export default function StockPage() {
         i.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q)
       )
     }
+    if (areaFilter !== 'all') {
+      result = result.filter(i => AREA_CATEGORIES[areaFilter].includes(i.category))
+    }
     if (categoryFilter !== 'all') {
       result = result.filter(i => i.category === categoryFilter)
     }
@@ -550,7 +566,7 @@ export default function StockPage() {
       result = result.filter(i => getSemaphore(i) === semaphoreFilter)
     }
     return result
-  }, [items, search, categoryFilter, sourceFilter, semaphoreFilter])
+  }, [items, search, areaFilter, categoryFilter, sourceFilter, semaphoreFilter])
 
   // Counts
   const counts = useMemo(() => {
@@ -1184,10 +1200,13 @@ export default function StockPage() {
                 <span className="rounded-full bg-[#3d2c24] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white">
                   Stock LVE
                 </span>
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold ring-1 ${fudoStatusUi.className}`}>
+                <button
+                  onClick={() => { if (isEncargado) router.push('/admin/fudo') }}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold ring-1 transition-transform ${fudoStatusUi.className} ${isEncargado ? 'active:scale-95' : 'cursor-default'}`}
+                >
                   <FudoStatusIcon className={`size-3.5 ${fudoConnection.state === 'checking' ? 'animate-spin' : ''}`} />
                   {fudoStatusUi.label}
-                </span>
+                </button>
               </div>
               <h1 className="mt-3 font-display text-2xl tracking-tight text-[#3d2c24] sm:text-3xl">
                 Control de mercadería
@@ -1658,6 +1677,26 @@ export default function StockPage() {
         )}
       </div>
 
+      {/* Área pills: Cocina vs Pastelería */}
+      <div className="flex gap-2">
+        {AREA_FILTERS.map((area) => (
+          <button
+            key={area.value}
+            onClick={() => {
+              setAreaFilter(area.value)
+              setCategoryFilter('all')
+            }}
+            className={`flex-1 rounded-xl border py-2 text-xs font-bold transition-all ${
+              areaFilter === area.value
+                ? 'border-[#006d5a] bg-[#e8f5f1] text-[#006d5a]'
+                : 'border-[#ebe6df] bg-white text-[#a39e97] hover:bg-[#faf8f5]'
+            }`}
+          >
+            {area.label}
+          </button>
+        ))}
+      </div>
+
       {/* Semaphore pills */}
       <div className="flex gap-2">
         {(['red', 'yellow', 'green'] as const).map((color) => {
@@ -1690,7 +1729,9 @@ export default function StockPage() {
         >
           Todas
         </button>
-        {STOCK_CATEGORY_OPTIONS.map(opt => (
+        {STOCK_CATEGORY_OPTIONS.filter(opt =>
+          areaFilter === 'all' || (AREA_CATEGORIES[areaFilter] as readonly string[]).includes(opt.value)
+        ).map(opt => (
           <button
             key={opt.value}
             onClick={() => setCategoryFilter(opt.value)}

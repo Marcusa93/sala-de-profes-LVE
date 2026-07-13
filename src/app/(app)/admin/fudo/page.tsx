@@ -29,7 +29,7 @@ type MenuCategory = {
 }
 
 type MenuItem = {
-  id: number
+  id: string
   name: string
   sale_price: number | null
   fudo_product_id: string | null
@@ -349,6 +349,14 @@ export default function FudoAdminPage() {
         </div>
       )}
 
+      {/* Discrepancias LVE ↔ Fudo */}
+      <div className="space-y-2 pt-2">
+        <h2 className="text-xs font-bold uppercase tracking-wide text-[#a39e97]">
+          Discrepancias con Fudo
+        </h2>
+        <DiscrepanciasSection />
+      </div>
+
       {/* Fudo info cards */}
       <div className="space-y-2 pt-2">
         <h2 className="text-xs font-bold uppercase tracking-wide text-[#a39e97]">
@@ -356,6 +364,212 @@ export default function FudoAdminPage() {
         </h2>
         <FudoInfoCards />
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Discrepancias LVE ↔ Fudo — reporte de /api/admin/fudo/audit en 4 grupos
+// simples, cada uno con su acción para resolver.
+// ---------------------------------------------------------------------------
+
+type AuditIssueItem = { key: string; name: string; detail: string }
+type AuditGroup = {
+  id: string
+  title: string
+  action: { label: string; href: string } | null
+  hint: string
+  items: AuditIssueItem[]
+}
+
+const STOCK_ISSUE_LABELS: Record<string, string> = {
+  fudo_product_missing: 'el producto ya no existe en Fudo',
+  fudo_ingredient_missing: 'el ingrediente ya no existe en Fudo',
+  product_stock_null: 'sin stock cargado en Fudo',
+  ingredient_stock_null: 'sin stock cargado en Fudo',
+  product_stockControl_false: 'sin control de stock activado en Fudo',
+  ingredient_stockControl_false: 'sin control de stock activado en Fudo',
+  stock_mismatch_ge_1: 'stock LVE ≠ stock Fudo',
+  name_mismatch: 'nombre distinto en Fudo',
+  unit_suspect_fractional_unit: 'cantidad fraccionada en unidad entera',
+}
+
+function DiscrepanciasSection() {
+  const [groups, setGroups] = useState<AuditGroup[] | null>(null)
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null)
+  const [loadingAudit, setLoadingAudit] = useState(false)
+  const [auditError, setAuditError] = useState<string | null>(null)
+  const [openGroup, setOpenGroup] = useState<string | null>(null)
+
+  const loadAudit = useCallback(async () => {
+    setLoadingAudit(true)
+    setAuditError(null)
+    try {
+      const res = await fetch('/api/admin/fudo/audit')
+      const report = await res.json()
+      if (!res.ok) throw new Error(report.error ?? 'No se pudo correr la auditoría')
+
+      const missing: AuditIssueItem[] = [
+        ...(report.missingStockControlledProducts ?? []).map((p: { id: string; name: string | null; stock: number | null }) => ({
+          key: `mp-${p.id}`,
+          name: p.name ?? `Producto ${p.id}`,
+          detail: `producto Fudo con stock ${p.stock ?? '—'} sin item en LVE`,
+        })),
+        ...(report.missingStockControlledIngredients ?? []).map((i: { id: string; name: string | null; stock: number | null }) => ({
+          key: `mi-${i.id}`,
+          name: i.name ?? `Ingrediente ${i.id}`,
+          detail: `ingrediente Fudo con stock ${i.stock ?? '—'} sin item en LVE`,
+        })),
+      ]
+
+      const stockIssues: AuditIssueItem[] = (report.stockIssues ?? []).map((issue: { id: string; name: string; issues: string[]; fudo_stock: number | null; current_qty: number }) => ({
+        key: `si-${issue.id}`,
+        name: issue.name,
+        detail: issue.issues.map((code) => STOCK_ISSUE_LABELS[code] ?? code).join(' · ')
+          + (issue.issues.includes('stock_mismatch_ge_1') ? ` (LVE ${issue.current_qty} / Fudo ${issue.fudo_stock ?? '—'})` : ''),
+      }))
+
+      const menuIssues: AuditIssueItem[] = (report.menuIssues ?? []).map((issue: { id: string; name: string; issues: string[]; app_price: number | null; fudo_price: number | null; fudo_name: string | null }) => ({
+        key: `me-${issue.id}`,
+        name: issue.name,
+        detail: issue.issues
+          .map((code) => code === 'price_mismatch'
+            ? `precio LVE $${issue.app_price ?? '—'} / Fudo $${issue.fudo_price ?? '—'}`
+            : code === 'name_mismatch'
+              ? `en Fudo se llama “${issue.fudo_name}”`
+              : 'activo/inactivo distinto en Fudo')
+          .join(' · '),
+      }))
+
+      const duplicates: AuditIssueItem[] = [
+        ...(report.duplicateProductLinks ?? []).map((d: { id: string; names: string[] }) => ({
+          key: `dp-${d.id}`,
+          name: d.names.join(' + '),
+          detail: `mismo producto Fudo (${d.id}) vinculado a varios items`,
+        })),
+        ...(report.duplicateIngredientLinks ?? []).map((d: { id: string; names: string[] }) => ({
+          key: `di-${d.id}`,
+          name: d.names.join(' + '),
+          detail: `mismo ingrediente Fudo (${d.id}) vinculado a varios items`,
+        })),
+      ]
+
+      setGroups([
+        {
+          id: 'missing',
+          title: 'Faltan en LVE',
+          hint: 'Tienen control de stock en Fudo pero ningún item acá. Se crean/vinculan desde Mapeo.',
+          action: { label: 'Ir a Mapeo', href: '/admin/stock/mapeo' },
+          items: missing,
+        },
+        {
+          id: 'stock',
+          title: 'Stock / vínculos con problemas',
+          hint: 'Diferencias entre lo que dice LVE y lo que dice Fudo. Un “Traer datos de Fudo” en Stock suele alinearlos; si persiste, revisá el vínculo.',
+          action: { label: 'Abrir Stock', href: '/stock' },
+          items: stockIssues,
+        },
+        {
+          id: 'menu',
+          title: 'Menú: nombre o precio distinto',
+          hint: 'Se corrigen solos con el botón Sincronizar de arriba (Fudo manda).',
+          action: null,
+          items: menuIssues,
+        },
+        {
+          id: 'dup',
+          title: 'Vínculos duplicados',
+          hint: 'Dos items apuntando al mismo producto/ingrediente de Fudo: hay que desvincular uno en Mapeo.',
+          action: { label: 'Ir a Mapeo', href: '/admin/stock/mapeo' },
+          items: duplicates,
+        },
+      ])
+      setGeneratedAt(report.generatedAt ?? null)
+    } catch (err) {
+      setAuditError(err instanceof Error ? err.message : 'Error al auditar')
+    } finally {
+      setLoadingAudit(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadAudit()
+  }, [loadAudit])
+
+  const totalIssues = (groups ?? []).reduce((sum, g) => sum + g.items.length, 0)
+
+  return (
+    <div className="rounded-2xl bg-white ring-1 ring-[#ebe6df]">
+      <div className="flex items-center justify-between border-b border-[#ebe6df]/60 px-4 py-3">
+        <div>
+          <p className="text-sm font-bold text-[#3d2c24]">
+            {loadingAudit && !groups
+              ? 'Comparando LVE con Fudo…'
+              : totalIssues === 0
+                ? 'Todo alineado con Fudo ✓'
+                : `${totalIssues} discrepancias para resolver`}
+          </p>
+          {generatedAt && (
+            <p className="text-[10px] text-[#a39e97]">
+              Última auditoría: {new Date(generatedAt).toLocaleTimeString('es-AR')}
+            </p>
+          )}
+        </div>
+        <button
+          onClick={loadAudit}
+          disabled={loadingAudit}
+          className="flex items-center gap-1.5 rounded-xl bg-[#f3efe9] px-3 py-2 text-xs font-semibold text-[#3d2c24] transition-all active:scale-95 disabled:opacity-50"
+        >
+          {loadingAudit ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+          Auditar
+        </button>
+      </div>
+
+      {auditError && (
+        <p className="px-4 py-3 text-xs text-[#ea504c]">{auditError}</p>
+      )}
+
+      {groups?.filter((g) => g.items.length > 0).map((group) => {
+        const open = openGroup === group.id
+        return (
+          <div key={group.id} className="border-b border-[#ebe6df]/50 last:border-b-0">
+            <button
+              onClick={() => setOpenGroup(open ? null : group.id)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <span className="text-sm font-semibold text-[#3d2c24]">
+                {group.title}
+                <span className="ml-2 rounded-full bg-[#fff7f7] px-2 py-0.5 text-[11px] font-bold text-[#ea504c] ring-1 ring-[#f3d0cf]">
+                  {group.items.length}
+                </span>
+              </span>
+              {open ? <ChevronDown className="size-4 text-[#a39e97]" /> : <ChevronRight className="size-4 text-[#a39e97]" />}
+            </button>
+            {open && (
+              <div className="px-4 pb-3">
+                <p className="mb-2 text-[11px] leading-relaxed text-[#a39e97]">{group.hint}</p>
+                <div className="space-y-1.5">
+                  {group.items.map((item) => (
+                    <div key={item.key} className="rounded-xl bg-[#faf8f5] px-3 py-2">
+                      <p className="text-xs font-semibold text-[#3d2c24]">{item.name}</p>
+                      <p className="text-[11px] text-[#7d6c64]">{item.detail}</p>
+                    </div>
+                  ))}
+                </div>
+                {group.action && (
+                  <a
+                    href={group.action.href}
+                    className="mt-2 inline-flex items-center gap-1 rounded-xl bg-[#006d5a] px-3 py-2 text-xs font-semibold text-white active:scale-95"
+                  >
+                    {group.action.label}
+                    <ChevronRight className="size-3.5" />
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
