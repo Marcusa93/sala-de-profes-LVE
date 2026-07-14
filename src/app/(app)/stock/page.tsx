@@ -24,6 +24,8 @@ import {
   CheckCircle2,
   ClipboardList,
   ListChecks,
+  Trash2,
+  TrendingDown,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -92,6 +94,16 @@ type SemaphoreColor = 'red' | 'yellow' | 'green'
 type FudoConnectionState = 'checking' | 'ok' | 'warning' | 'error'
 type StockSourceFilter = 'all' | 'fudo' | 'local' | 'unmapped'
 type StockView = 'radar' | 'conteo' | 'inventario'
+type WasteReason = 'vencido' | 'roto' | 'consumo_interno' | 'otro'
+
+type ReconciliationRow = {
+  stock_item_id: string
+  name: string
+  unit: string
+  expected_closing: number
+  actual_closing: number
+  variance: number
+}
 
 // Áreas operativas: cocina maneja proteínas/verduras/etc; pastelería lo horneado.
 const AREA_FILTERS = [
@@ -319,6 +331,13 @@ export default function StockPage() {
   const [savingMeta, setSavingMeta] = useState(false)
   const [lotsData, setLotsData] = useState<StockLotsResponse | null>(null)
   const [loadingLots, setLoadingLots] = useState(false)
+  const [wastingId, setWastingId] = useState<string | null>(null)
+  const [wasteQty, setWasteQty] = useState('')
+  const [wasteReason, setWasteReason] = useState<WasteReason | ''>('')
+  const [wasteNote, setWasteNote] = useState('')
+  const [savingWaste, setSavingWaste] = useState(false)
+  const [reconciliationRows, setReconciliationRows] = useState<ReconciliationRow[]>([])
+  const [loadingReconciliation, setLoadingReconciliation] = useState(false)
 
   const isEncargado = isManagerOrAbove(profile?.role)
   const [lastFudoSync, setLastFudoSync] = useState<string | null>(null)
@@ -375,6 +394,25 @@ export default function StockPage() {
       toast.error(err instanceof Error ? err.message : 'Error al cargar lotes')
     } finally {
       setLoadingLots(false)
+    }
+  }, [])
+
+  const loadReconciliation = useCallback(async () => {
+    setLoadingReconciliation(true)
+    try {
+      const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+      const res = await fetch(`/api/stock/reconciliation?view=stock&from=${from}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const rows = ((data.items ?? []) as ReconciliationRow[])
+        .filter(r => Math.abs(r.variance) > 0.1)
+        .sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance))
+        .slice(0, 5)
+      setReconciliationRows(rows)
+    } catch {
+      // silencioso — no bloquea el flujo principal
+    } finally {
+      setLoadingReconciliation(false)
     }
   }, [])
 
@@ -455,6 +493,47 @@ export default function StockPage() {
     }
   }, [loadAnomalies, loadIntelligence, loadLots, metaCategory, metaNotes, metaShelfLife, mutate])
 
+  const handleWasteSave = async (itemId: string) => {
+    const qty = parseFloat(wasteQty)
+    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad de merma inválida'); return }
+    if (!wasteReason) { toast.error('Seleccioná un motivo de merma'); return }
+    const currentItem = items.find(i => i.id === itemId)
+    if (!currentItem) return
+    if (qty > currentItem.current_qty + 0.001) {
+      toast.error(`No podés dar de baja más de lo que hay (${formatQty(currentItem.current_qty)} ${currentItem.unit})`)
+      return
+    }
+    setSavingWaste(true)
+    try {
+      const res = await fetch('/api/stock/waste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stockItemId: itemId, qty, wasteReason, note: wasteNote.trim() || undefined }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) throw new Error(data.error || 'No se pudo registrar la merma')
+      logAuditClient({
+        userId: profile?.id ?? null,
+        userName: profile?.first_name ?? null,
+        action: 'register_waste',
+        module: 'stock',
+        entityType: 'stock_item',
+        entityId: itemId,
+        description: `Merma ${formatQty(qty)} ${currentItem.unit} de ${currentItem.name} (${wasteReason})`,
+      })
+      toast.success(data.fudoSynced ? 'Merma registrada y sincronizada con Fudo ✓' : 'Merma registrada')
+      setWastingId(null)
+      setWasteQty('')
+      setWasteReason('')
+      setWasteNote('')
+      await Promise.all([mutate(), loadReconciliation()])
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al registrar merma')
+    } finally {
+      setSavingWaste(false)
+    }
+  }
+
   // Fudo sync on first load
   useEffect(() => {
     let cancelled = false
@@ -484,6 +563,7 @@ export default function StockPage() {
           void loadIntelligence()
           void loadAnomalies()
           void loadLots()
+          void loadReconciliation()
         } else {
           setFudoConnection({
             state: 'error',
@@ -514,7 +594,7 @@ export default function StockPage() {
     }
     doSync()
     return () => { cancelled = true }
-  }, [loadAnomalies, loadFudoStatus, loadIntelligence, loadLots, mutate])
+  }, [loadAnomalies, loadFudoStatus, loadIntelligence, loadLots, loadReconciliation, mutate])
 
   useEffect(() => {
     void loadIntelligence()
@@ -527,6 +607,10 @@ export default function StockPage() {
   useEffect(() => {
     void loadLots()
   }, [loadLots])
+
+  useEffect(() => {
+    void loadReconciliation()
+  }, [loadReconciliation])
 
   // Load history for an item
   const loadHistory = async (itemId: string) => {
@@ -656,16 +740,42 @@ export default function StockPage() {
       })
     }
 
-    if (expiringLotsCount > 0) {
-      const firstLot = lotsData?.lots[0]
+    // Cards individuales por lote vencido o que vence hoy
+    const expiredLots = lotsData?.lots.filter(l => l.expires_in_days < 0) ?? []
+    const todayLots = lotsData?.lots.filter(l => l.expires_in_days === 0) ?? []
+    const windowLots = lotsData?.lots.filter(l => l.expires_in_days > 0) ?? []
+
+    for (const lot of expiredLots.slice(0, 3)) {
+      const lotItem = items.find(e => e.id === lot.stock_item_id) ?? null
       cards.push({
-        id: 'lots:expiring',
-        item: firstLot ? items.find((entry) => entry.id === firstLot.stock_item_id) ?? null : null,
-        priority: lotsData?.summary.expired ? 'critico' : 'accion',
-        title: `${expiringLotsCount} lotes por vencer`,
-        detail: firstLot
-          ? `${firstLot.stock_item_name}: ${formatLotCountdown(firstLot.expires_in_days)} (${formatQty(firstLot.qty_remaining)} ${firstLot.unit}).`
-          : 'Revisá vencimientos y definí promoción, uso prioritario o descarte.',
+        id: `lot:expired:${lot.id}`,
+        item: lotItem,
+        priority: 'critico',
+        title: `${lot.stock_item_name}: lote vencido`,
+        detail: `Lote ${lot.lot_code} venció hace ${Math.abs(lot.expires_in_days)}d. Quedan ${formatQty(lot.qty_remaining)} ${lot.unit}. Descartar o verificar uso urgente.`,
+        primaryAction: lotItem ? 'count' : 'watch',
+      })
+    }
+    for (const lot of todayLots.slice(0, 2)) {
+      const lotItem = items.find(e => e.id === lot.stock_item_id) ?? null
+      cards.push({
+        id: `lot:today:${lot.id}`,
+        item: lotItem,
+        priority: 'accion',
+        title: `${lot.stock_item_name}: vence hoy`,
+        detail: `Lote ${lot.lot_code}. Quedan ${formatQty(lot.qty_remaining)} ${lot.unit}. Usarlo hoy, armar promo o descartar.`,
+        primaryAction: lotItem ? 'count' : 'watch',
+      })
+    }
+    if (windowLots.length > 0) {
+      cards.push({
+        id: 'lots:window',
+        item: windowLots[0] ? items.find(e => e.id === windowLots[0].stock_item_id) ?? null : null,
+        priority: 'revisar',
+        title: `${windowLots.length} lote${windowLots.length > 1 ? 's' : ''} vencen en los próximos ${lotsData?.summary.window_days ?? 7}d`,
+        detail: windowLots[0]
+          ? `${windowLots[0].stock_item_name}: vence en ${windowLots[0].expires_in_days}d (${formatQty(windowLots[0].qty_remaining)} ${windowLots[0].unit}).`
+          : 'Revisá vencimientos para definir promoción o uso prioritario.',
         primaryAction: 'watch',
       })
     }
@@ -677,10 +787,9 @@ export default function StockPage() {
   }, [
     anomalies?.items,
     anomalyCards,
-    expiringLotsCount,
     items,
     lotsData?.lots,
-    lotsData?.summary.expired,
+    lotsData?.summary.window_days,
     setupIssues,
   ])
 
@@ -834,6 +943,7 @@ export default function StockPage() {
       toast.error('Stock bloqueado: item sin mapeo Fudo ni Local LVE')
       return
     }
+    setWastingId(null)
     setView('conteo')
     setEditingId(item.id)
     setEditQty('')
@@ -1035,6 +1145,113 @@ export default function StockPage() {
     )
   }
 
+  const WASTE_REASON_OPTIONS: { value: WasteReason; label: string }[] = [
+    { value: 'vencido', label: 'Venció' },
+    { value: 'roto', label: 'Roto / dañado' },
+    { value: 'consumo_interno', label: 'Consumo interno' },
+    { value: 'otro', label: 'Otro' },
+  ]
+
+  const renderWasteEditor = (item: StockItem) => {
+    if (wastingId !== item.id) return null
+    const source = getStockSource(item)
+    return (
+      <div className="border-t border-[#ebe6df] bg-[#fffaf4] px-3 py-3">
+        <div className="flex items-start gap-2 rounded-xl bg-white p-3 ring-1 ring-[#f1dfba]">
+          <Trash2 className="mt-0.5 size-4 shrink-0 text-[#d4943a]" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-[#3d2c24]">Registrar merma de {item.name}</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-[#7d6c64]">
+              {source.kind === 'fudo'
+                ? 'Se descuenta del sistema y se sincroniza con Fudo.'
+                : 'Se descuenta del sistema. Este item es Local LVE.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-[#ebe6df]">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Stock actual</p>
+            <p className="mt-0.5 text-base font-bold tabular-nums text-[#3d2c24]">{formatQty(item.current_qty)}</p>
+            <p className="text-[10px] text-[#a39e97]">{item.unit}</p>
+          </div>
+          <label className="rounded-xl bg-white px-3 py-2 ring-1 ring-[#f1dfba]">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Cantidad a dar de baja</span>
+            <input
+              value={wasteQty}
+              onChange={(e) => setWasteQty(e.target.value)}
+              inputMode="decimal"
+              placeholder="0"
+              className="mt-0.5 w-full bg-transparent text-base font-bold tabular-nums text-[#3d2c24] outline-none placeholder:text-[#c8bfb6]"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setWastingId(null)
+                  setWasteQty('')
+                  setWasteReason('')
+                  setWasteNote('')
+                }
+              }}
+            />
+            <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+          </label>
+        </div>
+
+        <div className="mt-3">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Motivo</span>
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+            {WASTE_REASON_OPTIONS.map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => setWasteReason(value)}
+                className={`rounded-xl px-2.5 py-2 text-left text-[11px] font-semibold transition-all ${
+                  wasteReason === value
+                    ? 'bg-[#3d2c24] text-white'
+                    : 'bg-[#faf8f5] text-[#7d6c64] hover:bg-[#f3efe9]'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <label className="mt-3 block space-y-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Nota (opcional)</span>
+          <textarea
+            value={wasteNote}
+            onChange={(e) => setWasteNote(e.target.value)}
+            rows={2}
+            placeholder="Ej. encontrado vencido al abrir, se rompió el frasco, degustación..."
+            className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-2 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none"
+          />
+        </label>
+
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <button
+            onClick={() => {
+              setWastingId(null)
+              setWasteQty('')
+              setWasteReason('')
+              setWasteNote('')
+            }}
+            className="rounded-lg px-3 py-2 text-[11px] font-semibold text-[#7d6c64] hover:bg-[#f3efe9]"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={() => void handleWasteSave(item.id)}
+            disabled={savingWaste || !wasteQty || !wasteReason}
+            className="flex items-center gap-1.5 rounded-lg bg-[#d4943a] px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50"
+          >
+            {savingWaste ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+            Registrar merma
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const renderReviewCard = (card: StockReviewCard, options?: { featured?: boolean }) => {
     const featured = Boolean(options?.featured)
     const tone = card.priority === 'critico'
@@ -1069,6 +1286,10 @@ export default function StockPage() {
       if (card.primaryAction === 'map') {
         setSourceFilter('unmapped')
         setView('inventario')
+        return
+      }
+      if (card.primaryAction === 'watch') {
+        setView('conteo')
         return
       }
       setView('radar')
@@ -1422,6 +1643,50 @@ export default function StockPage() {
                   </div>
                 )}
               </div>
+              {reconciliationRows.length > 0 && (
+                <div className="rounded-[2rem] border border-[#ebe6df] bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">
+                        Diferencias (7 días)
+                      </p>
+                      <h3 className="mt-1 text-lg font-bold text-[#3d2c24]">Fudo vs físico</h3>
+                    </div>
+                    {loadingReconciliation
+                      ? <Loader2 className="size-5 animate-spin text-[#a39e97]" />
+                      : <TrendingDown className="size-5 text-[#d4943a]" />
+                    }
+                  </div>
+                  <div className="mt-3 space-y-1.5">
+                    {reconciliationRows.map(row => {
+                      const isDeficit = row.variance > 0
+                      const absVariance = Math.abs(row.variance)
+                      const pct = row.expected_closing > 0 ? absVariance / row.expected_closing : 1
+                      const tone = pct > 0.2
+                        ? isDeficit
+                          ? 'bg-[#fff7f7] ring-[#f3d0cf]'
+                          : 'bg-[#f6fcfa] ring-[#dcefe8]'
+                        : 'bg-[#fffaf2] ring-[#f1dfba]'
+                      const varColor = pct > 0.2
+                        ? isDeficit ? 'text-[#ea504c]' : 'text-[#006d5a]'
+                        : 'text-[#d4943a]'
+                      return (
+                        <div key={row.stock_item_id} className={`rounded-xl px-3 py-2 ring-1 ${tone}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="min-w-0 truncate text-[12px] font-semibold text-[#3d2c24]">{row.name}</p>
+                            <span className={`shrink-0 text-[12px] font-bold tabular-nums ${varColor}`}>
+                              {isDeficit ? '−' : '+'}{formatQty(absVariance)} {row.unit}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-[10px] text-[#7d6c64]">
+                            Esperado {formatQty(row.expected_closing)} · Real {formatQty(row.actual_closing)} {row.unit}
+                          </p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </aside>
           </div>
         </FadeIn>
@@ -1845,6 +2110,7 @@ export default function StockPage() {
                                     toast.error('Stock bloqueado: item sin mapeo Fudo ni Local LVE')
                                     return
                                   }
+                                  setWastingId(null)
                                   setEditingId(item.id)
                                   setEditQty('')
                                   setCountNote('')
@@ -1865,6 +2131,27 @@ export default function StockPage() {
                               >
                                 <History className="size-3.5" />
                               </button>
+                              {isEncargado && (
+                                <button
+                                  onClick={() => {
+                                    setEditingId(null)
+                                    setEditQty('')
+                                    setCountNote('')
+                                    if (wastingId === item.id) {
+                                      setWastingId(null)
+                                    } else {
+                                      setWastingId(item.id)
+                                      setWasteQty('')
+                                      setWasteReason('')
+                                      setWasteNote('')
+                                    }
+                                  }}
+                                  className={`rounded-lg p-1.5 ${wastingId === item.id ? 'bg-[#fff7f7] text-[#d4943a]' : 'text-[#a39e97] hover:bg-[#f3efe9]'}`}
+                                  title="Registrar merma"
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </button>
+                              )}
                               <button
                                 onClick={() => openMetadataEditor(item.id, 'item')}
                                 className={`rounded-lg p-1.5 ${editingMetaId === item.id && editingMetaSource === 'item' ? 'bg-[#f3efe9] text-[#3d2c24]' : 'text-[#a39e97] hover:bg-[#f3efe9]'}`}
@@ -1877,6 +2164,7 @@ export default function StockPage() {
                         </div>
 
                         {renderPhysicalCountEditor(item)}
+                        {renderWasteEditor(item)}
                         {renderMetadataEditor(item.id, 'item')}
 
                         {showHistory && (

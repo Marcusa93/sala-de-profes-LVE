@@ -58,7 +58,7 @@ type FudoWriteContext = {
 }
 
 type StockWriteOptions = {
-  reason?: 'physical_count' | 'manual_adjustment'
+  reason?: 'physical_count' | 'manual_adjustment' | 'waste'
   note?: string | null
 }
 
