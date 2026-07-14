@@ -116,10 +116,21 @@ const AREA_CATEGORIES: Record<Exclude<AreaFilter, 'all'>, string[]> = {
   cocina: ['carnes', 'verduras', 'frutas', 'lacteos', 'condimentos', 'elaborados'],
   pasteleria: ['panaderia'],
 }
+type FudoIncidentSample = {
+  id: string
+  severity: string
+  code: string
+  title: string
+  entity_type: string | null
+  fudo_type: string | null
+  fudo_id: string | null
+  last_seen_at: string
+}
+
 type FudoStatusResponse = {
   state: 'ok' | 'warning' | 'error'
   last_sync_at: string | null
-  incidents: { open: number; critical: number; high: number }
+  incidents: { open: number; critical: number; high: number; sample: FudoIncidentSample[] }
   events: { pending: number; failed_last_24h: number }
 }
 
@@ -350,6 +361,7 @@ export default function StockPage() {
     failedEvents: number
     criticalIncidents: number
     highIncidents: number
+    incidentSample: FudoIncidentSample[]
   }>({
     state: 'checking',
     message: null,
@@ -358,6 +370,7 @@ export default function StockPage() {
     failedEvents: 0,
     criticalIncidents: 0,
     highIncidents: 0,
+    incidentSample: [],
   })
 
   const loadFudoStatus = useCallback(async () => {
@@ -380,6 +393,7 @@ export default function StockPage() {
       failedEvents: data.events.failed_last_24h,
       criticalIncidents: data.incidents.critical,
       highIncidents: data.incidents.high,
+      incidentSample: data.incidents.sample ?? [],
     }))
   }, [])
 
@@ -1752,6 +1766,22 @@ export default function StockPage() {
             )}
             {fudoConnection.state === 'error' && (
               <p className="mt-0.5 text-[11px]">Las escrituras de stock quedan bloqueadas hasta sincronizar.</p>
+            )}
+            {fudoConnection.incidentSample.length > 0 && (fudoConnection.state === 'error' || fudoConnection.state === 'warning') && (
+              <div className="mt-2 space-y-1">
+                {fudoConnection.incidentSample.slice(0, 8).map(inc => (
+                  <div key={inc.id} className={`rounded px-2 py-1 text-[10px] leading-snug ${inc.severity === 'critical' ? 'bg-[#fef2f2] text-[#3d2c24]' : 'bg-[#fffaf2] text-[#3d2c24]'}`}>
+                    <span className={`font-bold mr-1 ${inc.severity === 'critical' ? 'text-[#ea504c]' : 'text-[#d4943a]'}`}>
+                      {inc.severity === 'critical' ? '● CRIT' : '● ALTO'}
+                    </span>
+                    {inc.title}
+                    <span className="ml-1 text-[9px] opacity-50">{inc.code}</span>
+                  </div>
+                ))}
+                {fudoConnection.incidentSample.length > 8 && (
+                  <p className="text-[10px] text-[#7d6c64]">…y {fudoConnection.incidentSample.length - 8} incidentes más</p>
+                )}
+              </div>
             )}
           </div>
 
