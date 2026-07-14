@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
+import { PRODUCTION_BATCHES, matchIngredientToStock, type ProductionBatch } from '@/lib/recipes/production-batches'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,6 +63,13 @@ type InputRow = {
   stock_item_name: string
   qty_used: string
   unit: string
+  fromBatch?: boolean
+  batchIngredientName?: string  // nombre original en la receta, para hint y re-escala
+}
+
+// Mapea unidades del recetario a las del wizard
+const BATCH_UNIT_MAP: Record<string, string> = {
+  g: 'g', ml: 'ml', kg: 'kg', lt: 'lt', u: 'unidad', unidad: 'unidad',
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +260,7 @@ export default function NuevaProduccionPage() {
   const [orderName, setOrderName] = useState('')
   const [productionMode, setProductionMode] = useState<'template' | 'free'>('free')
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
+  const [selectedBatch, setSelectedBatch] = useState<ProductionBatch | null>(null)
   const [notes, setNotes] = useState('')
 
   // Step 1 — outputs
@@ -317,6 +326,46 @@ export default function NuevaProduccionPage() {
       setOrderName(`${primaryInputItem.name} — ${date}`)
     }
   }, [primaryInputItem, productionDate])
+
+  // Cuando cambia la receta de producción: agregar/reemplazar filas secundarias del recetario
+  useEffect(() => {
+    if (!selectedBatch) {
+      setInputs(prev => prev.filter(i => !i.fromBatch))
+      return
+    }
+    const fudoItems = stockItems.filter(item => isFudoLinked(item))
+    setInputs(prev => {
+      const nonBatch = prev.filter(i => !i.fromBatch)
+      const batchRows: InputRow[] = selectedBatch.secondary.map(si => {
+        const matched = matchIngredientToStock(si.name, fudoItems)
+        return {
+          localId: nextId(),
+          stock_item_id: matched?.id ?? null,
+          stock_item_name: matched?.name ?? '',
+          qty_used: '',  // se calcula cuando el usuario ponga la qty principal
+          unit: matched?.unit ?? BATCH_UNIT_MAP[si.unit] ?? si.unit,
+          fromBatch: true,
+          batchIngredientName: si.name,
+        }
+      })
+      return [...nonBatch, ...batchRows]
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBatch, stockItems])
+
+  // Cuando cambia la qty del insumo principal: re-escalar las qty secundarias del lote
+  useEffect(() => {
+    if (!selectedBatch || primaryInputQty <= 0) return
+    const ratio = primaryInputQty / selectedBatch.baseQty
+    setInputs(prev => prev.map(input => {
+      if (!input.fromBatch || !input.batchIngredientName) return input
+      const si = selectedBatch.secondary.find(s => s.name === input.batchIngredientName)
+      if (!si) return input
+      return { ...input, qty_used: formatQty(si.qty * ratio) }
+    }))
+  // primaryInputQty es derivado — no queremos que esto reaccione a cambios en inputs (loop)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryInputQty, selectedBatch])
 
   // When template selected, set input item and unit
   useEffect(() => {
@@ -654,6 +703,7 @@ export default function NuevaProduccionPage() {
                     onClick={() => {
                       setProductionMode('free')
                       setSelectedTemplate(null)
+                      setSelectedBatch(null)
                     }}
                     className={cn(
                       'rounded-2xl border px-3 py-3 text-left transition-all',
@@ -696,6 +746,47 @@ export default function NuevaProduccionPage() {
                 {selectedTemplate?.description && (
                   <p className="mt-1.5 text-[12px] text-muted-foreground">{selectedTemplate.description}</p>
                 )}
+
+                {/* Batch picker: recetario de proporciones (funciona independiente del modo) */}
+                <div className="mt-3 border-t border-[#ebe6df] pt-3">
+                  <label className="mb-1 block text-[12px] font-medium text-[#3d2c24]">
+                    Recetario de proporciones <span className="font-normal text-muted-foreground">(opcional)</span>
+                  </label>
+                  <select
+                    value={selectedBatch?.slug ?? ''}
+                    onChange={(e) => {
+                      const batch = PRODUCTION_BATCHES.find(b => b.slug === e.target.value) ?? null
+                      setSelectedBatch(batch)
+                    }}
+                    className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                  >
+                    <option value="">Sin receta — cargo libre</option>
+                    {PRODUCTION_BATCHES.map(b => (
+                      <option key={b.slug} value={b.slug}>{b.displayName}</option>
+                    ))}
+                  </select>
+                  {selectedBatch && (
+                    <div className="mt-2 rounded-xl bg-[#e8f5f1] px-3 py-2 text-[11px] text-[#006d5a]">
+                      <p className="font-semibold">
+                        Base: {selectedBatch.baseQty} {selectedBatch.baseUnit} de {selectedBatch.mainIngredientName}
+                        {primaryInputQty > 0 && (
+                          <span className="ml-2 rounded-full bg-[#006d5a] px-2 py-0.5 text-[10px] text-white font-bold">
+                            ×{formatQty(primaryInputQty / selectedBatch.baseQty)} escala
+                          </span>
+                        )}
+                      </p>
+                      {selectedBatch.secondary.length > 0 && (
+                        <p className="mt-0.5 opacity-75">
+                          {selectedBatch.secondary.length} insumos precargados del recetario
+                          {primaryInputQty > 0 && ' — cantidades ajustadas'}
+                        </p>
+                      )}
+                      {selectedBatch.yieldNote && (
+                        <p className="mt-0.5 italic opacity-60">{selectedBatch.yieldNote}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
@@ -725,13 +816,34 @@ export default function NuevaProduccionPage() {
                       ? stockItems.find((stockItem) => stockItem.id === input.stock_item_id) ?? null
                       : null
                     const qty = parseFloat(input.qty_used)
+                    const isBatch = Boolean(input.fromBatch)
+                    const searchPlaceholder = isBatch && input.batchIngredientName
+                      ? `Buscar "${input.batchIngredientName}"...`
+                      : idx === 0
+                        ? 'Buscar materia prima (ej: Nalga, pan rallado, huevo)...'
+                        : 'Buscar insumo...'
 
                     return (
-                      <div key={input.localId} className="rounded-2xl border border-[#ebe6df] bg-[#faf8f5] p-3">
-                        <div className="mb-2 flex items-center justify-between">
-                          <p className="text-[11px] font-bold uppercase tracking-wider text-[#7d6c64]">
-                            Materia prima {idx + 1}
-                          </p>
+                      <div
+                        key={input.localId}
+                        className={cn(
+                          'rounded-2xl border p-3',
+                          isBatch
+                            ? 'border-[#006d5a]/30 bg-[#e8f5f1]/40'
+                            : 'border-[#ebe6df] bg-[#faf8f5]',
+                        )}
+                      >
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-[11px] font-bold uppercase tracking-wider text-[#7d6c64]">
+                              Materia prima {idx + 1}
+                            </p>
+                            {isBatch && (
+                              <span className="rounded-full bg-[#006d5a] px-2 py-0.5 text-[9px] font-bold text-white">
+                                Del recetario
+                              </span>
+                            )}
+                          </div>
                           {inputs.length > 1 && (
                             <button
                               type="button"
@@ -755,7 +867,7 @@ export default function NuevaProduccionPage() {
                             stock_item_name: item?.name ?? '',
                             unit: item?.unit ?? input.unit,
                           })}
-                          placeholder="Buscar materia prima (ej: Nalga, pan rallado, huevo)..."
+                          placeholder={searchPlaceholder}
                           requireFudoLink
                           helperText="Autocompletado cerrado: solo aparecen items vinculados a Fudo."
                           emptyText="No encontré ese item con vínculo Fudo. Primero mapealo en stock."
