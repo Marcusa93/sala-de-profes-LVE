@@ -676,110 +676,72 @@ export default function NuevaProduccionPage() {
 
               <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
                 <div className="mb-3">
-                  <h2 className="text-[13px] font-semibold text-[#3d2c24]">Tipo de carga</h2>
+                  <h2 className="text-[13px] font-semibold text-[#3d2c24]">Recetario</h2>
                   <p className="mt-0.5 text-[12px] text-muted-foreground">
-                    Usá una receta de producción si ya está preseteada. Si no, cargá libre y después se puede convertir en preset.
+                    Elegí una receta para precargar los insumos proporcionales, o cargá libre si no está en el recetario.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setProductionMode('template')
-                    }}
-                    className={cn(
-                      'rounded-2xl border px-3 py-3 text-left transition-all',
-                      productionMode === 'template'
-                        ? 'border-[#006d5a] bg-[#e8f5f1] text-[#006d5a]'
-                        : 'border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24]',
-                    )}
-                  >
-                    <p className="text-[13px] font-bold">Receta de producción</p>
-                    <p className="mt-0.5 text-[11px] opacity-75">Preset validado</p>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setProductionMode('free')
-                      setSelectedTemplate(null)
-                      setSelectedBatch(null)
-                    }}
-                    className={cn(
-                      'rounded-2xl border px-3 py-3 text-left transition-all',
-                      productionMode === 'free'
-                        ? 'border-[#006d5a] bg-[#e8f5f1] text-[#006d5a]'
-                        : 'border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24]',
-                    )}
-                  >
-                    <p className="text-[13px] font-bold">Registro libre</p>
-                    <p className="mt-0.5 text-[11px] opacity-75">Carga manual</p>
-                  </button>
-                </div>
+                <select
+                  value={selectedBatch?.slug ?? ''}
+                  onChange={(e) => {
+                    const batch = PRODUCTION_BATCHES.find(b => b.slug === e.target.value) ?? null
+                    setSelectedBatch(batch)
+                    if (batch) setProductionMode('template')
+                    else { setProductionMode('free'); setSelectedTemplate(null) }
+                  }}
+                  className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                >
+                  <option value="">Sin receta — cargo libre</option>
+                  {PRODUCTION_BATCHES.map(b => (
+                    <option key={b.slug} value={b.slug}>{b.displayName}</option>
+                  ))}
+                </select>
 
-                {productionMode === 'template' && (
-                  <div className="mt-3">
-                    {templates.length > 0 && (
-                      <>
-                        <select
-                          value={selectedTemplate?.id ?? ''}
-                          onChange={(e) => {
-                            const tmpl = templates.find((t) => t.id === Number(e.target.value)) ?? null
-                            setSelectedTemplate(tmpl)
-                          }}
-                          className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                        >
-                          <option value="">Elegí receta preseteada</option>
-                          {templates.map((t) => (
-                            <option key={t.id} value={t.id}>{t.name}</option>
-                          ))}
-                        </select>
-                        {selectedTemplate?.description && (
-                          <p className="mt-1.5 text-[12px] text-muted-foreground">{selectedTemplate.description}</p>
-                        )}
-                        <div className="mt-3 border-t border-[#ebe6df] pt-3" />
-                      </>
+                {selectedBatch && (
+                  <div className="mt-2 rounded-xl bg-[#e8f5f1] px-3 py-2 text-[11px] text-[#006d5a]">
+                    <p className="font-semibold">
+                      Base: {selectedBatch.baseQty} {selectedBatch.baseUnit} de {selectedBatch.mainIngredientName}
+                      {primaryInputQty > 0 && (
+                        <span className="ml-2 rounded-full bg-[#006d5a] px-2 py-0.5 text-[10px] text-white font-bold">
+                          ×{formatQty(primaryInputQty / selectedBatch.baseQty)} escala
+                        </span>
+                      )}
+                    </p>
+                    {selectedBatch.secondary.length > 0 && (
+                      <p className="mt-0.5 opacity-75">
+                        {selectedBatch.secondary.length} insumos precargados
+                        {primaryInputQty > 0 && ' — cantidades ajustadas'}
+                      </p>
                     )}
+                    {selectedBatch.yieldNote && (
+                      <p className="mt-0.5 italic opacity-60">{selectedBatch.yieldNote}</p>
+                    )}
+                  </div>
+                )}
 
-                    {/* Recetario de proporciones — precarga insumos secundarios escalados */}
-                    <label className="mb-1 block text-[12px] font-medium text-[#3d2c24]">
-                      {templates.length > 0
-                        ? <>Recetario de proporciones <span className="font-normal text-muted-foreground">(opcional)</span></>
-                        : 'Elegí una receta del recetario'}
+                {/* DB templates (cuando existan) */}
+                {templates.length > 0 && (
+                  <div className="mt-3 border-t border-[#ebe6df] pt-3">
+                    <label className="mb-1 block text-[12px] font-medium text-muted-foreground">
+                      Plantilla de rendimientos (opcional)
                     </label>
                     <select
-                      value={selectedBatch?.slug ?? ''}
+                      value={selectedTemplate?.id ?? ''}
                       onChange={(e) => {
-                        const batch = PRODUCTION_BATCHES.find(b => b.slug === e.target.value) ?? null
-                        setSelectedBatch(batch)
+                        const tmpl = templates.find((t) => t.id === Number(e.target.value)) ?? null
+                        setSelectedTemplate(tmpl)
+                        setProductionMode(tmpl ? 'template' : 'free')
                       }}
                       className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
                     >
-                      <option value="">Elegí una receta...</option>
-                      {PRODUCTION_BATCHES.map(b => (
-                        <option key={b.slug} value={b.slug}>{b.displayName}</option>
+                      <option value="">Sin plantilla</option>
+                      {templates.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
                       ))}
                     </select>
-                    {selectedBatch && (
-                      <div className="mt-2 rounded-xl bg-[#e8f5f1] px-3 py-2 text-[11px] text-[#006d5a]">
-                        <p className="font-semibold">
-                          Base: {selectedBatch.baseQty} {selectedBatch.baseUnit} de {selectedBatch.mainIngredientName}
-                          {primaryInputQty > 0 && (
-                            <span className="ml-2 rounded-full bg-[#006d5a] px-2 py-0.5 text-[10px] text-white font-bold">
-                              ×{formatQty(primaryInputQty / selectedBatch.baseQty)} escala
-                            </span>
-                          )}
-                        </p>
-                        {selectedBatch.secondary.length > 0 && (
-                          <p className="mt-0.5 opacity-75">
-                            {selectedBatch.secondary.length} insumos precargados del recetario
-                            {primaryInputQty > 0 && ' — cantidades ajustadas'}
-                          </p>
-                        )}
-                        {selectedBatch.yieldNote && (
-                          <p className="mt-0.5 italic opacity-60">{selectedBatch.yieldNote}</p>
-                        )}
-                      </div>
+                    {selectedTemplate?.description && (
+                      <p className="mt-1.5 text-[12px] text-muted-foreground">{selectedTemplate.description}</p>
                     )}
                   </div>
                 )}
