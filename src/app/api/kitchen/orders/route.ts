@@ -231,7 +231,7 @@ export async function POST(request: NextRequest) {
         receivedQty: string
         unitCost?: number
         expiresAt?: string
-        stockItemId?: number
+        stockItemId?: string
       }
 
       if (typeof orderId !== 'number' || !source || !receivedQty) {
@@ -274,22 +274,23 @@ export async function POST(request: NextRequest) {
       if (stockItemId) {
         const numericQty = parseFloat(String(receivedQty).replace(',', '.'))
         if (!isNaN(numericQty) && numericQty > 0) {
-          const { data: si } = await admin.from('stock_items').select('current_qty').eq('id', String(stockItemId)).single()
+          const { data: si } = await admin.from('stock_items').select('current_qty').eq('id', stockItemId).single()
+          const prevQty = si?.current_qty ?? 0
+          const newQty = prevQty + numericQty
           if (si) {
             await admin.from('stock_items').update({
-              current_qty: (si.current_qty ?? 0) + numericQty,
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              last_counted_at: new Date().toISOString() as any,
-            }).eq('id', String(stockItemId))
+              current_qty: newQty,
+              last_counted_at: new Date().toISOString(),
+            }).eq('id', stockItemId)
           }
 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (admin.from('stock_movements') as any).insert({
+          await admin.from('stock_movements').insert({
             stock_item_id: stockItemId,
-            change: numericQty,
+            movement_type: 'in',
+            qty: numericQty,
+            previous_qty: prevQty,
+            new_qty: newQty,
             reason: 'compra',
-            reference_type: source === 'barra' ? 'bar_order' : 'kitchen_order',
-            reference_id: String(orderId),
             note: `Recepción: ${order.product_name}${unitCost ? ` — $${unitCost}/u` : ''}`,
             created_by: user.id,
           })

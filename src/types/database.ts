@@ -412,13 +412,19 @@ export type Database = {
           bar_stock_item_id: number | null
           category: string
           created_at: string
+          expires_at: string | null
           id: number
           note: string | null
           product_name: string
           quantity: string
+          received_at: string | null
+          received_by: string | null
+          received_qty: string | null
           requested_by: string | null
           status: string
+          stock_item_id: string | null
           supplier_id: string | null
+          unit_cost: number | null
           updated_at: string
           urgency: string
         }
@@ -426,13 +432,19 @@ export type Database = {
           bar_stock_item_id?: number | null
           category?: string
           created_at?: string
+          expires_at?: string | null
           id?: number
           note?: string | null
           product_name: string
           quantity?: string
+          received_at?: string | null
+          received_by?: string | null
+          received_qty?: string | null
           requested_by?: string | null
           status?: string
+          stock_item_id?: string | null
           supplier_id?: string | null
+          unit_cost?: number | null
           updated_at?: string
           urgency?: string
         }
@@ -440,13 +452,19 @@ export type Database = {
           bar_stock_item_id?: number | null
           category?: string
           created_at?: string
+          expires_at?: string | null
           id?: number
           note?: string | null
           product_name?: string
           quantity?: string
+          received_at?: string | null
+          received_by?: string | null
+          received_qty?: string | null
           requested_by?: string | null
           status?: string
+          stock_item_id?: string | null
           supplier_id?: string | null
+          unit_cost?: number | null
           updated_at?: string
           urgency?: string
         }
@@ -456,6 +474,20 @@ export type Database = {
             columns: ["bar_stock_item_id"]
             isOneToOne: false
             referencedRelation: "bar_stock_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bar_orders_received_by_fkey"
+            columns: ["received_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bar_orders_stock_item_id_fkey"
+            columns: ["stock_item_id"]
+            isOneToOne: false
+            referencedRelation: "stock_items"
             referencedColumns: ["id"]
           },
           {
@@ -1294,12 +1326,18 @@ export type Database = {
           category: string
           created_at: string
           created_by: string | null
+          expires_at: string | null
           id: number
           note: string | null
           product_name: string
           quantity: string
+          received_at: string | null
+          received_by: string | null
+          received_qty: string | null
           status: string
+          stock_item_id: string | null
           supplier_id: string | null
+          unit_cost: number | null
           updated_at: string
           urgency: string
         }
@@ -1307,12 +1345,18 @@ export type Database = {
           category?: string
           created_at?: string
           created_by?: string | null
+          expires_at?: string | null
           id?: number
           note?: string | null
           product_name: string
           quantity: string
+          received_at?: string | null
+          received_by?: string | null
+          received_qty?: string | null
           status?: string
+          stock_item_id?: string | null
           supplier_id?: string | null
+          unit_cost?: number | null
           updated_at?: string
           urgency?: string
         }
@@ -1320,12 +1364,18 @@ export type Database = {
           category?: string
           created_at?: string
           created_by?: string | null
+          expires_at?: string | null
           id?: number
           note?: string | null
           product_name?: string
           quantity?: string
+          received_at?: string | null
+          received_by?: string | null
+          received_qty?: string | null
           status?: string
+          stock_item_id?: string | null
           supplier_id?: string | null
+          unit_cost?: number | null
           updated_at?: string
           urgency?: string
         }
@@ -1335,6 +1385,20 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kitchen_orders_received_by_fkey"
+            columns: ["received_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kitchen_orders_stock_item_id_fkey"
+            columns: ["stock_item_id"]
+            isOneToOne: false
+            referencedRelation: "stock_items"
             referencedColumns: ["id"]
           },
           {
@@ -2545,6 +2609,7 @@ export type Database = {
           fudo_skip: boolean
           id: string
           is_active: boolean
+          last_counted_at: string | null
           last_ordered_at: string | null
           min_qty: number
           name: string
@@ -2567,6 +2632,7 @@ export type Database = {
           fudo_skip?: boolean
           id?: string
           is_active?: boolean
+          last_counted_at?: string | null
           last_ordered_at?: string | null
           min_qty?: number
           name: string
@@ -2589,6 +2655,7 @@ export type Database = {
           fudo_skip?: boolean
           id?: string
           is_active?: boolean
+          last_counted_at?: string | null
           last_ordered_at?: string | null
           min_qty?: number
           name?: string
@@ -2749,6 +2816,7 @@ export type Database = {
           id: string
           movement_type: string
           new_qty: number
+          note: string | null
           previous_qty: number
           qty: number
           reason: string | null
@@ -2761,6 +2829,7 @@ export type Database = {
           id?: string
           movement_type: string
           new_qty: number
+          note?: string | null
           previous_qty: number
           qty: number
           reason?: string | null
@@ -2773,6 +2842,7 @@ export type Database = {
           id?: string
           movement_type?: string
           new_qty?: number
+          note?: string | null
           previous_qty?: number
           qty?: number
           reason?: string | null

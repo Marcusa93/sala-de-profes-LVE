@@ -45,11 +45,11 @@ type Order = {
   unit_cost: number | null
   expires_at: string | null
   received_at: string | null
-  stock_item_id: number | null
+  stock_item_id: string | null
 }
 
 type StockItem = {
-  id: number
+  id: string
   name: string
   unit: string
   current_qty: number
@@ -567,7 +567,7 @@ function ReceiveDialog({
   const [receivedQty, setReceivedQty] = useState(order.quantity)
   const [unitCost, setUnitCost] = useState('')
   const [expiresAt, setExpiresAt] = useState('')
-  const [stockItemId, setStockItemId] = useState<number | null>(null)
+  const [stockItemId, setStockItemId] = useState<string | null>(null)
   const [stockSearch, setStockSearch] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)

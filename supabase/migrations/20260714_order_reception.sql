@@ -4,7 +4,7 @@
 
 -- kitchen_orders: campos de recepción + link a stock_items
 ALTER TABLE public.kitchen_orders
-  ADD COLUMN IF NOT EXISTS stock_item_id bigint REFERENCES public.stock_items(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS stock_item_id uuid REFERENCES public.stock_items(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS received_qty  text,
   ADD COLUMN IF NOT EXISTS unit_cost     numeric,
   ADD COLUMN IF NOT EXISTS expires_at    date,
@@ -17,7 +17,7 @@ CREATE INDEX IF NOT EXISTS idx_kitchen_orders_stock_item
 
 -- bar_orders: mismos campos + link a stock_items (la tabla unificada, no bar_stock_items)
 ALTER TABLE public.bar_orders
-  ADD COLUMN IF NOT EXISTS stock_item_id bigint REFERENCES public.stock_items(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS stock_item_id uuid REFERENCES public.stock_items(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS received_qty  text,
   ADD COLUMN IF NOT EXISTS unit_cost     numeric,
   ADD COLUMN IF NOT EXISTS expires_at    date,

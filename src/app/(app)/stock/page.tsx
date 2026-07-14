@@ -62,12 +62,12 @@ type StockLog = {
 }
 
 type StockMovement = {
-  id: number
+  id: string
   change: number
-  reason: string
-  reference_type: string | null
+  movement_type: string
+  reason: string | null
   note: string | null
-  created_at: string
+  created_at: string | null
   profiles?: { first_name: string; last_name: string } | null
 }
 
