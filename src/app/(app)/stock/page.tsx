@@ -26,6 +26,8 @@ import {
   ListChecks,
   Trash2,
   TrendingDown,
+  ShoppingCart,
+  CalendarClock,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -55,6 +57,16 @@ type StockLog = {
   id: number
   old_qty: number | null
   new_qty: number | null
+  created_at: string
+  profiles?: { first_name: string; last_name: string } | null
+}
+
+type StockMovement = {
+  id: number
+  change: number
+  reason: string
+  reference_type: string | null
+  note: string | null
   created_at: string
   profiles?: { first_name: string; last_name: string } | null
 }
@@ -329,7 +341,9 @@ export default function StockPage() {
   const [syncing, setSyncing] = useState(false)
   const [historyItemId, setHistoryItemId] = useState<string | null>(null)
   const [historyLogs, setHistoryLogs] = useState<StockLog[]>([])
+  const [historyMovements, setHistoryMovements] = useState<StockMovement[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [historyTab, setHistoryTab] = useState<'movimientos' | 'conteos'>('movimientos')
   const [intelligence, setIntelligence] = useState<StockIntelligenceResponse | null>(null)
   const [loadingIntelligence, setLoadingIntelligence] = useState(false)
   const [anomalies, setAnomalies] = useState<StockAnomaliesResponse | null>(null)
@@ -626,19 +640,23 @@ export default function StockPage() {
     void loadReconciliation()
   }, [loadReconciliation])
 
-  // Load history for an item
+  // Load history for an item (conteos desde stock_logs + movimientos desde stock_movements)
   const loadHistory = async (itemId: string) => {
     if (historyItemId === itemId) { setHistoryItemId(null); return }
     setHistoryItemId(itemId)
     setLoadingHistory(true)
     const supabase = createClient()
-    const { data } = await supabase
-      .from('stock_logs')
-      .select('id, old_qty, new_qty, created_at, profiles:user_id(first_name, last_name)')
-      .eq('stock_item_id', itemId)
-      .order('created_at', { ascending: false })
-      .limit(15)
-    setHistoryLogs((data as unknown as StockLog[]) ?? [])
+    const [logsRes, movRes] = await Promise.all([
+      supabase
+        .from('stock_logs')
+        .select('id, old_qty, new_qty, created_at, profiles:user_id(first_name, last_name)')
+        .eq('stock_item_id', itemId)
+        .order('created_at', { ascending: false })
+        .limit(15),
+      fetch(`/api/stock/movements?itemId=${itemId}&limit=20`).then(r => r.json()).catch(() => ({ movements: [] })),
+    ])
+    setHistoryLogs((logsRes.data as unknown as StockLog[]) ?? [])
+    setHistoryMovements((movRes.movements ?? []) as StockMovement[])
     setLoadingHistory(false)
   }
 
@@ -1368,13 +1386,24 @@ export default function StockPage() {
               </div>
             )}
           </div>
-          <button
-            onClick={onPrimaryAction}
-            className={`${featured ? 'rounded-2xl px-4 py-3 text-sm' : 'rounded-xl px-3 py-2 text-[11px]'} flex w-full shrink-0 items-center justify-center gap-1.5 bg-[#3d2c24] font-bold text-white transition-transform group-active:scale-[0.98] sm:w-auto`}
-          >
-            {card.actionLabel ?? actionLabel[card.primaryAction]}
-            <ArrowRight className={featured ? 'size-4' : 'size-3.5'} />
-          </button>
+          <div className="flex flex-col gap-1.5 sm:items-end">
+            <button
+              onClick={onPrimaryAction}
+              className={`${featured ? 'rounded-2xl px-4 py-3 text-sm' : 'rounded-xl px-3 py-2 text-[11px]'} flex w-full shrink-0 items-center justify-center gap-1.5 bg-[#3d2c24] font-bold text-white transition-transform group-active:scale-[0.98] sm:w-auto`}
+            >
+              {card.actionLabel ?? actionLabel[card.primaryAction]}
+              <ArrowRight className={featured ? 'size-4' : 'size-3.5'} />
+            </button>
+            {card.priority === 'critico' && card.primaryAction === 'count' && card.item && (
+              <button
+                onClick={() => router.push('/pedidos')}
+                className={`${featured ? 'rounded-2xl px-4 py-3 text-sm' : 'rounded-xl px-3 py-2 text-[11px]'} flex w-full shrink-0 items-center justify-center gap-1.5 bg-[#fdf6ec] font-bold text-[#d4943a] ring-1 ring-[#f1dfba] transition-transform group-active:scale-[0.98] sm:w-auto`}
+              >
+                <ShoppingCart className={featured ? 'size-4' : 'size-3.5'} />
+                Pedir
+              </button>
+            )}
+          </div>
         </div>
       </div>
     )
@@ -1956,6 +1985,62 @@ export default function StockPage() {
         </p>
       </div>
 
+      {/* Conteo programado — items prioritarios según días sin contar */}
+      {view === 'conteo' && !search && (() => {
+        const now = Date.now()
+        const priority = filtered
+          .map(item => {
+            const daysSince = item.last_counted_at
+              ? Math.floor((now - new Date(item.last_counted_at).getTime()) / 86400000)
+              : null
+            return { item, daysSince }
+          })
+          .filter(({ daysSince, item }) => {
+            // Mostrar items no contados en más de 3 días, o nunca contados si tienen stock bajo
+            if (daysSince === null) return item.current_qty <= item.min_qty * 1.5
+            return daysSince >= 3
+          })
+          .sort((a, b) => {
+            // Sin conteo nunca → primero; luego por días desc
+            if (a.daysSince === null && b.daysSince !== null) return -1
+            if (a.daysSince !== null && b.daysSince === null) return 1
+            return (b.daysSince ?? 0) - (a.daysSince ?? 0)
+          })
+          .slice(0, 6)
+
+        if (priority.length === 0) return null
+        return (
+          <div className="rounded-2xl border border-[#ebe6df] bg-white px-4 py-3">
+            <div className="mb-3 flex items-center gap-2">
+              <CalendarClock className="size-4 text-[#d4943a]" />
+              <div>
+                <p className="text-[11px] font-bold text-[#3d2c24]">Prioridad de conteo</p>
+                <p className="text-[10px] text-[#a39e97]">Items sin contar hace más tiempo o nunca contados</p>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              {priority.map(({ item, daysSince }) => {
+                const sem = getSemaphore(item)
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => startPhysicalCount(item)}
+                    className="flex w-full items-center gap-3 rounded-xl bg-[#faf8f5] px-3 py-2.5 text-left transition-colors hover:bg-[#f3efe9] active:scale-[0.99]"
+                  >
+                    <span className={`size-2 shrink-0 rounded-full ${sem === 'red' ? 'bg-[#ea504c]' : sem === 'yellow' ? 'bg-[#d4943a]' : 'bg-[#006d5a]'}`} />
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[#3d2c24]">{item.name}</span>
+                    <span className="shrink-0 text-[10px] font-bold text-[#a39e97]">
+                      {daysSince === null ? 'Sin conteo' : `${daysSince}d`}
+                    </span>
+                    <ArrowRight className="size-3.5 shrink-0 text-[#a39e97]" />
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Search — sticky para que siempre esté a mano mientras se recorre la lista */}
       <div className="sticky top-2 z-20">
         <input
@@ -2201,28 +2286,72 @@ export default function StockPage() {
                           <div className="border-t bg-[#faf8f5] px-3 py-2.5">
                             {loadingHistory ? (
                               <Loader2 className="size-4 animate-spin text-[#a39e97] mx-auto" />
-                            ) : historyLogs.length === 0 ? (
-                              <p className="text-[11px] text-[#a39e97] text-center">Sin movimientos registrados</p>
                             ) : (
-                              <div className="space-y-1.5">
-                                {historyLogs.map(log => (
-                                  <div key={log.id} className="flex items-center justify-between text-[11px]">
-                                    <div className="flex items-center gap-1.5">
-                                      <User className="size-2.5 text-[#a39e97]" />
-                                      <span className="font-medium text-[#3d2c24]">
-                                        {log.profiles?.first_name ?? '?'}
-                                      </span>
-                                      <span className="text-[#a39e97]">
-                                        {log.old_qty} → {log.new_qty}
-                                      </span>
+                              <>
+                                <div className="mb-2 flex gap-1.5">
+                                  {(['movimientos', 'conteos'] as const).map(tab => (
+                                    <button
+                                      key={tab}
+                                      onClick={() => setHistoryTab(tab)}
+                                      className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold transition-colors ${historyTab === tab ? 'bg-[#3d2c24] text-white' : 'bg-[#ebe6df] text-[#7d6c64]'}`}
+                                    >
+                                      {tab === 'movimientos' ? `Movimientos (${historyMovements.length})` : `Conteos (${historyLogs.length})`}
+                                    </button>
+                                  ))}
+                                </div>
+                                {historyTab === 'movimientos' ? (
+                                  historyMovements.length === 0 ? (
+                                    <p className="text-[11px] text-[#a39e97] text-center">Sin movimientos registrados</p>
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      {historyMovements.map(mv => {
+                                        const isEntry = mv.change > 0
+                                        const reasonLabels: Record<string, string> = {
+                                          compra: 'Compra', merma: 'Merma', waste: 'Merma',
+                                          produccion_input: 'Producción ↓', produccion_output: 'Producción ↑',
+                                          manual_adjustment: 'Ajuste', conteo: 'Conteo', sale: 'Venta',
+                                        }
+                                        return (
+                                          <div key={mv.id} className="flex items-start justify-between gap-2 text-[11px]">
+                                            <div className="min-w-0 flex-1">
+                                              <span className={`font-bold ${isEntry ? 'text-[#006d5a]' : 'text-[#ea504c]'}`}>
+                                                {isEntry ? '+' : ''}{mv.change > 0 ? `+${mv.change}` : mv.change}
+                                              </span>
+                                              <span className="ml-1.5 rounded-full bg-[#ebe6df] px-1.5 py-0.5 text-[9px] font-semibold text-[#7d6c64]">
+                                                {reasonLabels[mv.reason] ?? mv.reason}
+                                              </span>
+                                              {mv.note && <p className="mt-0.5 truncate text-[10px] text-[#a39e97]">{mv.note}</p>}
+                                            </div>
+                                            <span className="shrink-0 text-[10px] text-[#a39e97]">
+                                              {format(new Date(mv.created_at), 'd MMM HH:mm', { locale: es })}
+                                            </span>
+                                          </div>
+                                        )
+                                      })}
                                     </div>
-                                    <span className="flex items-center gap-1 text-[#a39e97]">
-                                      <Clock className="size-2.5" />
-                                      {format(new Date(log.created_at), 'd MMM HH:mm', { locale: es })}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
+                                  )
+                                ) : (
+                                  historyLogs.length === 0 ? (
+                                    <p className="text-[11px] text-[#a39e97] text-center">Sin conteos registrados</p>
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      {historyLogs.map(log => (
+                                        <div key={log.id} className="flex items-center justify-between text-[11px]">
+                                          <div className="flex items-center gap-1.5">
+                                            <User className="size-2.5 text-[#a39e97]" />
+                                            <span className="font-medium text-[#3d2c24]">{log.profiles?.first_name ?? '?'}</span>
+                                            <span className="text-[#a39e97]">{log.old_qty} → {log.new_qty}</span>
+                                          </div>
+                                          <span className="flex items-center gap-1 text-[#a39e97]">
+                                            <Clock className="size-2.5" />
+                                            {format(new Date(log.created_at), 'd MMM HH:mm', { locale: es })}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )
+                                )}
+                              </>
                             )}
                           </div>
                         )}

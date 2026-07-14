@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   ShoppingCart, Truck, Check, X, Phone, MessageCircle,
   Coffee, UtensilsCrossed, ChevronDown, ChevronUp,
-  Loader2, Package, Clock, Filter, AlertTriangle,
+  Loader2, Package, Clock, Filter, AlertTriangle, Search,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -40,6 +40,19 @@ type Order = {
   created_by: string | null
   created_at: string
   source: 'barra' | 'cocina'
+  // campos de recepción
+  received_qty: string | null
+  unit_cost: number | null
+  expires_at: string | null
+  received_at: string | null
+  stock_item_id: number | null
+}
+
+type StockItem = {
+  id: number
+  name: string
+  unit: string
+  current_qty: number
 }
 
 type Supplier = {
@@ -82,19 +95,22 @@ export default function PedidosPage() {
   const [kitchenOrders, setKitchenOrders] = useState<Order[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [stockItems, setStockItems] = useState<StockItem[]>([])
   const [filter, setFilter] = useState<'all' | 'barra' | 'cocina'>('all')
   const [assignDialog, setAssignDialog] = useState<{ order: Order } | null>(null)
+  const [receiveDialog, setReceiveDialog] = useState<{ order: Order } | null>(null)
   const [expandedSupplier, setExpandedSupplier] = useState<number | null>(null)
 
   const canManage = isManagerOrAbove(profile?.role)
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
-    const [barRes, kitchenRes, suppRes, profRes] = await Promise.all([
+    const [barRes, kitchenRes, suppRes, profRes, stockRes] = await Promise.all([
       supabase.from('bar_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }),
       supabase.from('kitchen_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }),
       supabase.from('suppliers').select('id, name, phone, contact_name').eq('is_active', true).order('name'),
       supabase.from('profiles').select('id, first_name, last_name').eq('is_active', true),
+      supabase.from('stock_items').select('id, name, unit, current_qty').eq('is_active', true).order('name'),
     ])
 
     const bar = (barRes.data ?? []).map((o) => ({ ...o, source: 'barra' as const, supplier_id: (o as Record<string, unknown>).supplier_id as number | null ?? null })) as unknown as Order[]
@@ -103,6 +119,7 @@ export default function PedidosPage() {
     setKitchenOrders(kitchen)
     setSuppliers((suppRes.data ?? []) as unknown as Supplier[])
     setProfiles((profRes.data ?? []) as unknown as Profile[])
+    setStockItems((stockRes.data ?? []) as unknown as StockItem[])
     setLoading(false)
   }, [])
 
@@ -148,24 +165,21 @@ export default function PedidosPage() {
   // ---- Actions ----
 
   async function updateStatus(order: Order, newStatus: string) {
+    // El flujo de recepción pasa por el dialog — no llegar acá con 'received'
+    if (newStatus === 'received') {
+      setReceiveDialog({ order })
+      return
+    }
     try {
-      if (order.source === 'barra') {
-        const res = await fetch('/api/kitchen/bar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'update_order_status', orderId: order.id, status: newStatus }),
-        })
-        if (!res.ok) throw new Error('Error')
-      } else {
-        // Use the API endpoint — handles notifications + stock update
-        const res = await fetch('/api/kitchen/orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'update_status', orderId: order.id, status: newStatus }),
-        })
-        if (!res.ok) throw new Error('Error')
-      }
-      toast.success(newStatus === 'ordered' ? 'Marcado como pedido' : newStatus === 'received' ? 'Recibido ✓' : 'Cancelado')
+      const endpoint = order.source === 'barra' ? '/api/kitchen/bar' : '/api/kitchen/orders'
+      const action = order.source === 'barra' ? 'update_order_status' : 'update_status'
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, orderId: order.id, status: newStatus }),
+      })
+      if (!res.ok) throw new Error('Error')
+      toast.success(newStatus === 'ordered' ? 'Marcado como pedido' : 'Cancelado')
       fetchData()
     } catch {
       toast.error('Error al actualizar')
@@ -387,6 +401,16 @@ export default function PedidosPage() {
         </FadeIn>
       )}
 
+      {/* Receive dialog */}
+      {receiveDialog && (
+        <ReceiveDialog
+          order={receiveDialog.order}
+          stockItems={stockItems}
+          onClose={() => setReceiveDialog(null)}
+          onDone={() => { setReceiveDialog(null); fetchData() }}
+        />
+      )}
+
       {/* Assign supplier dialog */}
       <Dialog open={!!assignDialog} onOpenChange={() => setAssignDialog(null)}>
         <DialogContent className="max-w-sm rounded-2xl">
@@ -522,5 +546,188 @@ function OrderRow({
         </div>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ReceiveDialog — corroboración y carga al stock
+// ---------------------------------------------------------------------------
+
+function ReceiveDialog({
+  order,
+  stockItems,
+  onClose,
+  onDone,
+}: {
+  order: Order
+  stockItems: StockItem[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [receivedQty, setReceivedQty] = useState(order.quantity)
+  const [unitCost, setUnitCost] = useState('')
+  const [expiresAt, setExpiresAt] = useState('')
+  const [stockItemId, setStockItemId] = useState<number | null>(null)
+  const [stockSearch, setStockSearch] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  const filteredStock = stockItems.filter((s) =>
+    s.name.toLowerCase().includes(stockSearch.toLowerCase()) ||
+    order.product_name.toLowerCase().split(' ').some((w) => w.length > 2 && s.name.toLowerCase().includes(w))
+  ).slice(0, 8)
+
+  async function handleConfirm() {
+    if (!receivedQty.trim()) return
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/kitchen/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'receive_order',
+          orderId: order.id,
+          source: order.source,
+          receivedQty: receivedQty.trim(),
+          unitCost: unitCost ? parseFloat(unitCost) : undefined,
+          expiresAt: expiresAt || undefined,
+          stockItemId: stockItemId ?? undefined,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Error al confirmar')
+      toast.success(json.stockUpdated ? '✅ Recibido y stock actualizado' : '✅ Recepción registrada')
+      onDone()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al confirmar recepción')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const selectedItem = stockItems.find((s) => s.id === stockItemId)
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-sm rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-base">Confirmar recepción</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="rounded-xl bg-[#f3efe9] px-3 py-2.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Pedido</p>
+            <p className="mt-0.5 text-sm font-semibold text-[#3d2c24]">{order.product_name}</p>
+            <p className="text-[11px] text-[#7d6c64]">
+              Cantidad pedida: <span className="font-bold">{order.quantity}</span>
+              {order.source === 'barra' ? ' · Barra' : ' · Cocina'}
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-[#3d2c24]">
+              Cantidad recibida <span className="text-[#ea504c]">*</span>
+            </label>
+            <input
+              type="text"
+              value={receivedQty}
+              onChange={(e) => setReceivedQty(e.target.value)}
+              placeholder="ej: 5kg, 12 unidades"
+              className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm focus:border-[#006d5a] focus:outline-none"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-[#3d2c24]">
+              Costo unitario <span className="text-[10px] font-normal text-[#a39e97]">(opcional)</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
+              <input
+                type="number"
+                value={unitCost}
+                onChange={(e) => setUnitCost(e.target.value)}
+                placeholder="0"
+                min="0"
+                className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-[#3d2c24]">
+              Fecha de vencimiento <span className="text-[10px] font-normal text-[#a39e97]">(opcional)</span>
+            </label>
+            <input
+              type="date"
+              value={expiresAt}
+              onChange={(e) => setExpiresAt(e.target.value)}
+              className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm focus:border-[#006d5a] focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-[#3d2c24]">
+              Actualizar stock de
+              <span className="ml-1 text-[10px] font-normal text-[#a39e97]">(opcional — suma al stock existente)</span>
+            </label>
+            {selectedItem ? (
+              <div className="flex items-center gap-2 rounded-xl border border-[#006d5a] bg-[#e8f5f1] px-3 py-2">
+                <Package className="size-4 shrink-0 text-[#006d5a]" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-[#006d5a]">{selectedItem.name}</p>
+                  <p className="text-[10px] text-[#006d5a]/70">Actual: {selectedItem.current_qty} {selectedItem.unit}</p>
+                </div>
+                <button onClick={() => { setStockItemId(null); setStockSearch('') }} className="shrink-0 text-[#a39e97]">
+                  <X className="size-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[#a39e97]" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={stockSearch}
+                  onChange={(e) => setStockSearch(e.target.value)}
+                  placeholder={`Buscar "${order.product_name}"…`}
+                  className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-8 pr-3 text-sm focus:border-[#006d5a] focus:outline-none"
+                />
+                {stockSearch && filteredStock.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full rounded-xl border border-[#ebe6df] bg-white shadow-lg">
+                    {filteredStock.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => { setStockItemId(item.id); setStockSearch('') }}
+                        className="flex w-full items-center gap-2.5 px-3 py-2 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-[#f8f5f0]"
+                      >
+                        <Package className="size-3.5 shrink-0 text-[#006d5a]" />
+                        <span className="flex-1 truncate text-sm font-medium text-[#3d2c24]">{item.name}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-[#a39e97]">{item.current_qty} {item.unit}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter className="mt-2 gap-2">
+          <DialogClose className="rounded-xl px-4 py-2 text-sm font-medium text-[#7d6c64] hover:text-[#3d2c24]">
+            Cancelar
+          </DialogClose>
+          <button
+            onClick={handleConfirm}
+            disabled={submitting || !receivedQty.trim()}
+            className="flex items-center gap-2 rounded-xl bg-[#006d5a] px-5 py-2 text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-60"
+          >
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+            {submitting ? 'Cargando…' : 'Confirmar recepción'}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

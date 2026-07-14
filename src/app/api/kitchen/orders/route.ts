@@ -218,11 +218,112 @@ export async function POST(request: NextRequest) {
           } catch { /* email optional */ }
         }
 
-        // NOTE: Stock does NOT auto-update on "received".
-        // Chef/cocina manually updates stock after verifying the delivery.
       }
 
       return NextResponse.json({ success: true })
+    }
+
+    // ----- RECEIVE ORDER (encargado only) -----
+    if (body.action === 'receive_order') {
+      const { orderId, source, receivedQty, unitCost, expiresAt, stockItemId } = body as {
+        orderId: number
+        source: 'cocina' | 'barra'
+        receivedQty: string
+        unitCost?: number
+        expiresAt?: string
+        stockItemId?: number
+      }
+
+      if (typeof orderId !== 'number' || !source || !receivedQty) {
+        return NextResponse.json({ success: false, error: 'Faltan datos requeridos' }, { status: 400 })
+      }
+
+      const { data: profile } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
+      if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
+        return NextResponse.json({ success: false, error: 'Solo encargados pueden confirmar recepciones' }, { status: 403 })
+      }
+
+      const table = source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+      const creatorField = source === 'barra' ? 'requested_by' : 'created_by'
+
+      const { data: order, error: fetchErr } = await admin
+        .from(table)
+        .select('id, product_name, quantity, status')
+        .eq('id', orderId)
+        .single()
+
+      if (fetchErr || !order) return NextResponse.json({ success: false, error: 'Pedido no encontrado' }, { status: 404 })
+      if (order.status === 'received') return NextResponse.json({ success: false, error: 'El pedido ya fue recibido' }, { status: 409 })
+
+      const { error: updateErr } = await admin
+        .from(table)
+        .update({
+          status: 'received',
+          received_qty: receivedQty,
+          unit_cost: unitCost ?? null,
+          expires_at: expiresAt ?? null,
+          stock_item_id: stockItemId ?? null,
+          received_by: user.id,
+          received_at: new Date().toISOString(),
+        })
+        .eq('id', orderId)
+
+      if (updateErr) throw updateErr
+
+      // Actualizar stock si hay item vinculado
+      if (stockItemId) {
+        const numericQty = parseFloat(String(receivedQty).replace(',', '.'))
+        if (!isNaN(numericQty) && numericQty > 0) {
+          const { data: si } = await admin.from('stock_items').select('current_qty').eq('id', String(stockItemId)).single()
+          if (si) {
+            await admin.from('stock_items').update({
+              current_qty: (si.current_qty ?? 0) + numericQty,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              last_counted_at: new Date().toISOString() as any,
+            }).eq('id', String(stockItemId))
+          }
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (admin.from('stock_movements') as any).insert({
+            stock_item_id: stockItemId,
+            change: numericQty,
+            reason: 'compra',
+            reference_type: source === 'barra' ? 'bar_order' : 'kitchen_order',
+            reference_id: String(orderId),
+            note: `Recepción: ${order.product_name}${unitCost ? ` — $${unitCost}/u` : ''}`,
+            created_by: user.id,
+          })
+        }
+      }
+
+      // Notificar al creador
+      const { data: fullOrder } = await admin.from(table).select(creatorField).eq('id', orderId).single()
+      const creatorId = fullOrder ? (fullOrder as unknown as Record<string, unknown>)[creatorField] as string | null : null
+      if (creatorId) {
+        await admin.from('announcements').insert({
+          author_id: user.id,
+          type: 'operativo',
+          priority: 'baja',
+          title: '📦 Mercadería recibida',
+          body: `${order.product_name} (${receivedQty}) — recibido${stockItemId ? ' y stock actualizado' : ''}`,
+          scope: 'user',
+          target_user_id: creatorId,
+          is_active: true,
+        })
+      }
+
+      logAudit(admin, {
+        userId: user.id,
+        userName: `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null,
+        action: 'receive_order',
+        module: 'pedidos',
+        entityType: table,
+        entityId: String(orderId),
+        description: `Recibido pedido #${orderId}: ${order.product_name} — ${receivedQty}${stockItemId ? ' → stock actualizado' : ''}`,
+        metadata: { orderId, source, receivedQty, unitCost, expiresAt, stockItemId },
+      }).catch(() => {})
+
+      return NextResponse.json({ success: true, stockUpdated: !!stockItemId })
     }
 
     return NextResponse.json({ success: false, error: 'Acción no reconocida' }, { status: 400 })
