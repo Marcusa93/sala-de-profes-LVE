@@ -640,98 +640,87 @@ export default function VentasPage() {
                       ))}
                     </div>
 
+                    {/* Analizar con IA — integrado al gráfico de horarios */}
+                    <div className="mt-4 border-t border-[#ebe6df] pt-4">
+                      <button
+                        onClick={async () => {
+                          setLoadingAi(true)
+                          setAiError(null)
+                          try {
+                            const res = await fetch('/api/ai/sales-analysis', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              credentials: 'include',
+                              body: JSON.stringify({
+                                month: format(selectedDate, 'yyyy-MM'),
+                                dows: dowSelection,
+                                hourFrom: from,
+                                hourTo: to,
+                              }),
+                            })
+                            const json = await res.json()
+                            if (!res.ok) throw new Error(json.error ?? 'No se pudo generar el análisis')
+                            setAiResult(json)
+                          } catch (err) {
+                            setAiError(err instanceof Error ? err.message : 'Error al analizar')
+                          } finally {
+                            setLoadingAi(false)
+                          }
+                        }}
+                        disabled={loadingAi}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3d2c24] py-2.5 text-xs font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-60"
+                      >
+                        {loadingAi ? <Loader2 className="size-3.5 animate-spin" /> : <Star className="size-3.5" />}
+                        {loadingAi
+                          ? 'Analizando…'
+                          : dowSelection.length > 0
+                            ? `Analizar con IA — ${seriesLabels.join(', ')} · ${from}–${to}hs`
+                            : `Analizar con IA — todo el mes · ${from}–${to}hs`
+                        }
+                      </button>
+                      {aiError && (
+                        <p className="mt-2 text-[11px] text-[#ea504c]">{aiError}</p>
+                      )}
+                      {aiResult && !loadingAi && (
+                        <div className="mt-3 space-y-3 rounded-xl bg-[#faf8f5] p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-[#a39e97]">
+                            Análisis — {aiResult.stats.windowLabel}
+                          </p>
+                          <p className="whitespace-pre-line text-xs leading-relaxed text-[#3d2c24]">
+                            {aiResult.analysis}
+                          </p>
+                          {aiResult.stats.categoryMix.length > 0 && (
+                            <div>
+                              <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#a39e97]">Por tipo de producto</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {aiResult.stats.categoryMix.slice(0, 6).map((c) => (
+                                  <span key={c.category} className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df]">
+                                    {c.category} · {formatPrice(c.revenue)}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {aiResult.stats.byWeek.length > 1 && (
+                            <div>
+                              <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#a39e97]">Semana a semana</p>
+                              <div className="space-y-0.5">
+                                {aiResult.stats.byWeek.map((w) => (
+                                  <div key={w.week} className="flex items-center justify-between text-[11px]">
+                                    <span className="text-[#7d6c64]">{w.week}</span>
+                                    <span className="font-bold tabular-nums text-[#3d2c24]">{formatPrice(w.total)} · {w.tickets} tickets</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                   </ChartCard>
                 )
               })()}
-
-              {/* Análisis IA — siempre visible en vista mes */}
-              <div className="rounded-2xl border border-[#ebe6df] bg-white p-4">
-                <div className="mb-3 flex items-center gap-2">
-                  <Star className="size-4 text-[#d4943a]" />
-                  <div>
-                    <p className="text-[11px] font-bold text-[#3d2c24]">Análisis IA del mes</p>
-                    {hourlyByDow.length > 0 && (
-                      <p className="text-[10px] text-muted-foreground">
-                        {dowSelection.length > 0 ? 'Con días seleccionados arriba' : 'Mes completo — filtrá por día/horario arriba para acotar'}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <button
-                  onClick={async () => {
-                    setLoadingAi(true)
-                    setAiError(null)
-                    const hoursWithSalesAi = [...new Set(hourlyByDow.filter(r => r.tickets > 0).map(r => r.hour))].sort((a, b) => a - b)
-                    const minH = hoursWithSalesAi[0] ?? 0
-                    const maxH = hoursWithSalesAi[hoursWithSalesAi.length - 1] ?? 23
-                    const from = hourFrom !== null ? Math.max(minH, Math.min(hourFrom, maxH)) : minH
-                    const to = hourTo !== null ? Math.max(from, Math.min(hourTo, maxH)) : maxH
-                    try {
-                      const res = await fetch('/api/ai/sales-analysis', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify({
-                          month: format(selectedDate, 'yyyy-MM'),
-                          dows: dowSelection,
-                          hourFrom: from,
-                          hourTo: to,
-                        }),
-                      })
-                      const json = await res.json()
-                      if (!res.ok) throw new Error(json.error ?? 'No se pudo generar el análisis')
-                      setAiResult(json)
-                    } catch (err) {
-                      setAiError(err instanceof Error ? err.message : 'Error al analizar')
-                    } finally {
-                      setLoadingAi(false)
-                    }
-                  }}
-                  disabled={loadingAi}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3d2c24] py-2.5 text-xs font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-60"
-                >
-                  {loadingAi ? <Loader2 className="size-3.5 animate-spin" /> : <Star className="size-3.5" />}
-                  {loadingAi ? 'Analizando…' : 'Analizar con IA'}
-                </button>
-                {aiError && (
-                  <p className="mt-2 text-[11px] text-[#ea504c]">{aiError}</p>
-                )}
-                {aiResult && !loadingAi && (
-                  <div className="mt-3 space-y-3 rounded-xl bg-[#faf8f5] p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-[#a39e97]">
-                      Análisis — {aiResult.stats.windowLabel}
-                    </p>
-                    <p className="whitespace-pre-line text-xs leading-relaxed text-[#3d2c24]">
-                      {aiResult.analysis}
-                    </p>
-                    {aiResult.stats.categoryMix.length > 0 && (
-                      <div>
-                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#a39e97]">Por tipo de producto</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {aiResult.stats.categoryMix.slice(0, 6).map((c) => (
-                            <span key={c.category} className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df]">
-                              {c.category} · {formatPrice(c.revenue)}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {aiResult.stats.byWeek.length > 1 && (
-                      <div>
-                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#a39e97]">Semana a semana</p>
-                        <div className="space-y-0.5">
-                          {aiResult.stats.byWeek.map((w) => (
-                            <div key={w.week} className="flex items-center justify-between text-[11px]">
-                              <span className="text-[#7d6c64]">{w.week}</span>
-                              <span className="font-bold tabular-nums text-[#3d2c24]">{formatPrice(w.total)} · {w.tickets} tickets</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
 
               {/* TOP PRODUCTS — by quantity */}
               {monthSummary.topProducts.length > 0 && (
