@@ -12,8 +12,6 @@ import {
   AlertTriangle,
   LogIn,
   ArrowRight,
-  UtensilsCrossed,
-  Coffee,
   ShoppingCart,
   Bot,
   Send,
@@ -22,7 +20,6 @@ import {
   BarChart3,
   FolderOpen,
   Package,
-  Hammer,
   Armchair,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -72,7 +69,6 @@ export default function DashboardPage() {
   const expedientesActivos = dashData?.expedientesActivos ?? 0
   const ventasHoy = dashData?.ventasHoy ?? null
   const fudoLastSync = dashData?.fudoLastSync ?? null
-  const barUrgent = dashData?.barUrgent ?? 0
 
   // Report dialog state
   const [reportOpen, setReportOpen] = useState(false)
@@ -168,12 +164,10 @@ export default function DashboardPage() {
       description: 'Consultar stock, Fudo o pedir una acción por chat',
     },
   ] : profile?.role === 'chef' || profile?.role === 'cocina' ? [
-    { href: '/cocina', icon: UtensilsCrossed, label: 'Ver cocina', description: 'Pedidos y tareas del sector' },
-    { href: '/cocina/produccion', icon: Hammer, label: 'Registrar producción', description: 'Anotar producción hecha y faltantes' },
-    { href: '/cocina/pedidos', icon: ShoppingCart, label: 'Pedir mercadería', description: 'Solicitar lo que falta para producir' },
+    { href: '/recetas', icon: ShoppingCart, label: 'Ver recetario', description: 'Recetas, insumos y preparación' },
+    { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
     { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
   ] : profile?.role === 'barista' ? [
-    { href: '/cocina/barra', icon: Coffee, label: 'Controlar barra', description: barUrgent > 0 ? `${barUrgent} urgente${barUrgent === 1 ? '' : 's'} en barra` : 'Stock, pedidos y faltantes' },
     { href: '/vajilla', icon: Package, label: 'Controlar vajilla', description: 'Roturas, faltantes y reposición' },
     { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
     { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
@@ -369,27 +363,6 @@ export default function DashboardPage() {
           </StaggerItem>
         )}
 
-        {/* Barista: Stock Barra */}
-        {profile?.role === 'barista' && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/cocina/barra">
-                <div className="kpi-card rounded-xl p-4" style={barUrgent > 0 ? { borderLeftWidth: 3, borderLeftColor: '#ea504c' } : {}}>
-                  <div className="flex items-center gap-2">
-                    <Coffee className={`size-3.5 ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`} />
-                    <span className="section-label">Stock Barra</span>
-                  </div>
-                  <p className={`mt-2 font-display text-2xl font-bold tabular-nums ${barUrgent > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}>
-                    {barUrgent > 0 ? <AnimatedNumber value={barUrgent} /> : '✓'}
-                  </p>
-                  <p className="text-[10px] text-[#a39e97]">
-                    {barUrgent === 0 ? 'Todo OK' : 'urgentes'}
-                  </p>
-                </div>
-              </Link>
-            </ScalePress>
-          </StaggerItem>
-        )}
 
         {/* Barista/Runner: Vajilla */}
         {(profile?.role === 'barista' || profile?.role === 'runner') && (

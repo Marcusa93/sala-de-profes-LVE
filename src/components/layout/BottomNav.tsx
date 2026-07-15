@@ -14,11 +14,9 @@ import {
   Shield,
   ShieldAlert,
   Truck,
-  UtensilsCrossed,
   Bot,
   BookOpen,
   LayoutDashboard,
-  Coffee,
   ShoppingCart,
   FolderOpen,
   Wine,
@@ -105,8 +103,6 @@ const SOCIO_MORE: ExpandableNavItem = {
       label: 'Sectores',
       items: [
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Tareas y control del servicio' },
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed, description: 'Pedidos, preparación y operación de cocina' },
-        { label: 'Barra', href: '/cocina/barra', icon: Coffee, description: 'Stock y tareas de barra' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Control de roturas, faltantes y reposición' },
       ],
     },
@@ -141,8 +137,6 @@ const ENCARGADO_MORE: ExpandableNavItem = {
       label: 'Operación del local',
       items: [
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Servicio y tareas del salón' },
-        { label: 'Cocina', href: '/cocina', icon: UtensilsCrossed, description: 'Preparación y pedidos de cocina' },
-        { label: 'Barra', href: '/cocina/barra', icon: Coffee, description: 'Control operativo de barra' },
         { label: 'Equipo', href: '/equipo', icon: Users, description: 'Presentes, ausentes y roles' },
         { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert, description: 'Problemas que requieren acción' },
         { label: 'Asistencia', href: '/admin/asistencia', icon: ScanFace, description: 'Fichajes y anomalías' },
@@ -168,94 +162,66 @@ const ENCARGADO_MORE: ExpandableNavItem = {
   ],
 }
 
-// CHEF — cocina y pedidos
+// CHEF — recetario y herramientas mientras cocina no está activo
 const CHEF_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Cocina',
+      label: 'Herramientas',
       items: [
-        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed, description: 'Pedidos y preparación del sector' },
-        { label: 'Stock cocina', href: '/cocina/stock', icon: Package, description: 'Faltantes de cocina' },
-        { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
         { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Cambios por revisar' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
-      ],
-    },
-    {
-      label: 'Mi asistencia',
-      items: [
         { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],
 }
 
-// COCINA — igual que chef
+// COCINA — igual que chef simplificado
 const COCINA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Cocina',
+      label: 'Herramientas',
       items: [
-        { label: 'Mi cocina', href: '/cocina', icon: UtensilsCrossed, description: 'Pedidos y preparación del sector' },
-        { label: 'Stock cocina', href: '/cocina/stock', icon: Package, description: 'Faltantes de cocina' },
-        { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
-      ],
-    },
-    {
-      label: 'Mi asistencia',
-      items: [
         { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],
 }
 
-// BARISTA — barra, vajilla y herramientas
+// BARISTA — vajilla y herramientas
 const BARISTA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Mi sector',
-      items: [
-        { label: 'Stock barra', href: '/cocina/barra', icon: Coffee, description: 'Faltantes y pedidos de barra' },
-        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
-        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
-      ],
-    },
-    {
       label: 'Herramientas',
       items: [
+        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
+        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],
 }
 
-// RUNNER — vajilla + barra (Agustín necesita ver barra) + chatbot
+// RUNNER — vajilla + chatbot
 const RUNNER_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Salón',
-      items: [
-        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
-        { label: 'Barra', href: '/cocina/barra', icon: Coffee, description: 'Ver stock y pedidos de barra' },
-        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
-      ],
-    },
-    {
       label: 'Herramientas',
       items: [
+        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
+        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],

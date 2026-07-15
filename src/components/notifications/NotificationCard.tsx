@@ -92,8 +92,7 @@ export function NotificationCard({
       const searchParam = codeMatch ? `?search=${codeMatch[0]}` : ''
       return { href: `/expedientes${searchParam}`, label: 'Ver expediente' }
     }
-    if (t.includes('pedido de cocina')) return { href: '/cocina/pedidos', label: 'Ver pedidos' }
-    if (t.includes('pedido de barra') || b.includes('pedido fue enviado') || b.includes('ya llegó')) return { href: '/cocina/barra', label: 'Ver barra' }
+    if (t.includes('pedido de cocina') || t.includes('pedido de barra') || b.includes('pedido fue enviado') || b.includes('ya llegó')) return { href: '/pedidos', label: 'Ver pedidos' }
     if (t.includes('stock') || t.includes('faltante')) return { href: '/stock', label: 'Ver stock' }
     if (t.includes('alerta')) return { href: '/alertas', label: 'Ver alertas' }
     return null
