@@ -2873,6 +2873,82 @@ export type Database = {
           },
         ]
       }
+      stock_receipts: {
+        Row: {
+          id: number
+          stock_item_id: string | null
+          supplier_id: string | null
+          order_source: string | null
+          order_id: number | null
+          qty: number
+          unit: string | null
+          cost_total: number | null
+          cost_per_unit: number | null
+          freeze_qty: number | null
+          expires_at: string | null
+          note: string | null
+          received_by: string | null
+          received_date: string
+          received_at: string
+        }
+        Insert: {
+          id?: number
+          stock_item_id?: string | null
+          supplier_id?: string | null
+          order_source?: string | null
+          order_id?: number | null
+          qty: number
+          unit?: string | null
+          cost_total?: number | null
+          cost_per_unit?: number | null
+          freeze_qty?: number | null
+          expires_at?: string | null
+          note?: string | null
+          received_by?: string | null
+          received_date: string
+          received_at?: string
+        }
+        Update: {
+          id?: number
+          stock_item_id?: string | null
+          supplier_id?: string | null
+          order_source?: string | null
+          order_id?: number | null
+          qty?: number
+          unit?: string | null
+          cost_total?: number | null
+          cost_per_unit?: number | null
+          freeze_qty?: number | null
+          expires_at?: string | null
+          note?: string | null
+          received_by?: string | null
+          received_date?: string
+          received_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_receipts_stock_item_id_fkey"
+            columns: ["stock_item_id"]
+            isOneToOne: false
+            referencedRelation: "stock_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_receipts_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_receipts_received_by_fkey"
+            columns: ["received_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stock_snapshots: {
         Row: {
           created_at: string

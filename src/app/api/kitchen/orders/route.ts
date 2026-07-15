@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyOrderToEncargados } from '@/lib/email/send'
 import { logAudit } from '@/lib/audit'
+import { syncToFudo } from '@/lib/fudo/stock-sync'
+import { normalizeToStockUnit } from '@/lib/produccion/units'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -255,6 +257,94 @@ export async function POST(request: NextRequest) {
       if (fetchErr || !order) return NextResponse.json({ success: false, error: 'Pedido no encontrado' }, { status: 404 })
       if (order.status === 'received') return NextResponse.json({ success: false, error: 'El pedido ya fue recibido' }, { status: 409 })
 
+      // Actualizar stock ANTES de marcar recibido: si Fudo rechaza la escritura,
+      // el pedido queda pendiente y el encargado ve el error (nada se pierde).
+      let stockWritten = false
+      if (stockItemId) {
+        const numericQty = parseFloat(String(receivedQty).replace(',', '.'))
+        if (!isNaN(numericQty) && numericQty > 0) {
+          const { data: si } = await admin
+            .from('stock_items')
+            .select('id, name, unit, current_qty, cost_per_unit, supplier_id')
+            .eq('id', stockItemId)
+            .single()
+
+          if (si) {
+            // Si el pedido trae unidad (ej: "5 kg"), convertir a la unidad del stock
+            const unitMatch = String(receivedQty).toLowerCase().match(/\b(kg|g|lt|l|ml|unidad(?:es)?|u)\b/)
+            const receivedUnit = unitMatch ? (unitMatch[1] === 'u' || unitMatch[1].startsWith('unidad') ? 'unidad' : unitMatch[1]) : si.unit
+            const normalized = normalizeToStockUnit(numericQty, receivedUnit, si)
+            if (!normalized.ok) {
+              return NextResponse.json({ success: false, error: normalized.error }, { status: 409 })
+            }
+            const qty = normalized.qty
+            const prevQty = Number(si.current_qty ?? 0)
+            const newQty = Math.round((prevQty + qty) * 100) / 100
+
+            // Fudo primero (guardrails): si está vinculado y Fudo falla, abortar
+            const write = await syncToFudo(admin, stockItemId, newQty, user.id, {
+              reason: 'reception',
+              note: `Recepción: ${order.product_name} (+${qty} ${si.unit})`,
+            })
+            if (!write.success) {
+              return NextResponse.json({ success: false, error: write.error ?? 'No se pudo actualizar el stock' }, { status: 502 })
+            }
+            stockWritten = true
+
+            await admin.from('stock_movements').insert({
+              stock_item_id: stockItemId,
+              movement_type: 'in',
+              qty,
+              previous_qty: prevQty,
+              new_qty: newQty,
+              reason: 'compra',
+              note: `Recepción: ${order.product_name}${unitCost ? ` — $${unitCost}/u` : ''}`,
+              created_by: user.id,
+            })
+
+            // Registro de la entrada: base de mermas y de frecuencia/costo de compra
+            const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+            const costPerUnit = typeof unitCost === 'number' && unitCost > 0 ? unitCost : null
+            const { error: receiptErr } = await admin.from('stock_receipts').insert({
+              stock_item_id: stockItemId,
+              supplier_id: si.supplier_id ?? null,
+              order_source: source,
+              order_id: orderId,
+              qty,
+              unit: si.unit,
+              cost_total: costPerUnit != null ? Math.round(costPerUnit * qty * 100) / 100 : null,
+              cost_per_unit: costPerUnit,
+              expires_at: expiresAt ?? null,
+              note: `Pedido: ${order.product_name} (${order.quantity})`,
+              received_by: user.id,
+              received_date: receivedDate,
+            })
+            if (receiptErr) console.error('[receive_order] receipt no registrado:', receiptErr.message)
+
+            // Costo unitario del item se actualiza con el último precio de compra
+            if (costPerUnit != null && costPerUnit !== si.cost_per_unit) {
+              await admin.from('stock_items').update({ cost_per_unit: costPerUnit }).eq('id', stockItemId)
+            }
+
+            // Vencimiento informado → lote para el radar de vencimientos
+            if (expiresAt) {
+              await admin.from('stock_lots').insert({
+                stock_item_id: stockItemId,
+                lot_code: `REC-${receivedDate}-${si.name.slice(0, 12).replace(/\s+/g, '').toUpperCase()}`,
+                qty_original: qty,
+                qty_remaining: qty,
+                unit: si.unit,
+                produced_at: new Date().toISOString(),
+                expires_at: expiresAt,
+                status: 'active',
+                notes: 'Recepción de mercadería',
+                created_by: user.id,
+              }).then(({ error }) => { if (error) console.error('[receive_order] lote no creado:', error.message) })
+            }
+          }
+        }
+      }
+
       const { error: updateErr } = await admin
         .from(table)
         .update({
@@ -269,33 +359,6 @@ export async function POST(request: NextRequest) {
         .eq('id', orderId)
 
       if (updateErr) throw updateErr
-
-      // Actualizar stock si hay item vinculado
-      if (stockItemId) {
-        const numericQty = parseFloat(String(receivedQty).replace(',', '.'))
-        if (!isNaN(numericQty) && numericQty > 0) {
-          const { data: si } = await admin.from('stock_items').select('current_qty').eq('id', stockItemId).single()
-          const prevQty = si?.current_qty ?? 0
-          const newQty = prevQty + numericQty
-          if (si) {
-            await admin.from('stock_items').update({
-              current_qty: newQty,
-              last_counted_at: new Date().toISOString(),
-            }).eq('id', stockItemId)
-          }
-
-          await admin.from('stock_movements').insert({
-            stock_item_id: stockItemId,
-            movement_type: 'in',
-            qty: numericQty,
-            previous_qty: prevQty,
-            new_qty: newQty,
-            reason: 'compra',
-            note: `Recepción: ${order.product_name}${unitCost ? ` — $${unitCost}/u` : ''}`,
-            created_by: user.id,
-          })
-        }
-      }
 
       // Notificar al creador
       const { data: fullOrder } = await admin.from(table).select(creatorField).eq('id', orderId).single()
@@ -324,7 +387,7 @@ export async function POST(request: NextRequest) {
         metadata: { orderId, source, receivedQty, unitCost, expiresAt, stockItemId },
       }).catch(() => {})
 
-      return NextResponse.json({ success: true, stockUpdated: !!stockItemId })
+      return NextResponse.json({ success: true, stockUpdated: stockWritten })
     }
 
     return NextResponse.json({ success: false, error: 'Acción no reconocida' }, { status: 400 })

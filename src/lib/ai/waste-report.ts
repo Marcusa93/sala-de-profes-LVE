@@ -81,6 +81,19 @@ export async function buildWasteReport(admin: SupabaseClient, windowDays = 7): P
     soldByProductDate.set(key, (soldByProductDate.get(key) ?? 0) + Number(row.quantity))
   }
 
+  // --- Entradas registradas (recepciones de mercadería) ---
+  const { data: receiptRows } = await admin
+    .from('stock_receipts')
+    .select('stock_item_id, qty, received_date')
+    .gte('received_date', sinceStr)
+
+  const receivedByItemDate = new Map<string, number>() // `${itemId}|${argDate}` → qty
+  for (const row of (receiptRows ?? []) as { stock_item_id: string | null; qty: number; received_date: string }[]) {
+    if (!row.stock_item_id) continue
+    const key = `${row.stock_item_id}|${row.received_date}`
+    receivedByItemDate.set(key, (receivedByItemDate.get(key) ?? 0) + Number(row.qty))
+  }
+
   // --- Diferencias día a día ---
   // El snapshot de la fecha D se toma a las 03:00 AR → refleja el cierre de D-1.
   // Entre snapshot(D) y snapshot(D+1) pasan las ventas del día D.
@@ -97,8 +110,10 @@ export async function buildWasteReport(admin: SupabaseClient, windowDays = 7): P
       if (!a || !b.fudo_product_id) continue // solo items espejados por producto (venta directa)
 
       const sold = soldByProductDate.get(`${b.fudo_product_id}|${day}`) ?? 0
+      const received = receivedByItemDate.get(`${id}|${day}`) ?? 0
       const actualChange = Number(a.current_qty) - Number(b.current_qty)
-      const unexplained = actualChange + sold // esperado: -sold → unexplained = actual - (-sold)
+      // esperado: entradas − ventas → lo no explicado es la diferencia contra eso
+      const unexplained = actualChange + sold - received
 
       if (Math.abs(unexplained) < 0.5) continue // ruido de redondeo
 

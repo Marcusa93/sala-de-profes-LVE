@@ -58,7 +58,7 @@ type FudoWriteContext = {
 }
 
 type StockWriteOptions = {
-  reason?: 'physical_count' | 'manual_adjustment' | 'waste'
+  reason?: 'physical_count' | 'manual_adjustment' | 'waste' | 'reception'
   note?: string | null
 }
 
@@ -614,7 +614,11 @@ export async function syncToFudo(
 
   const fudoLink = item.fudo_ingredient_id || item.fudo_product_id
   const writeReason = options.reason ?? 'physical_count'
-  const writeOperation = writeReason === 'physical_count' ? 'physical_stock_count' : 'manual_stock_write'
+  const writeOperation = writeReason === 'physical_count'
+    ? 'physical_stock_count'
+    : writeReason === 'reception'
+      ? 'stock_reception'
+      : 'manual_stock_write'
   const note = options.note?.trim() || null
 
   if (writeReason === 'physical_count' && stockWriteNeedsNote(item.current_qty, newQty, item.unit) && !note) {

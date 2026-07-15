@@ -5,9 +5,8 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
-  // TODO: Remove once the remaining ~190 type errors are fixed.
-  // database.ts ya se regeneró desde el esquema real (2026-07-10); los errores
-  // que quedan son discrepancias reales código↔esquema, no tipos faltantes.
+  // 2026-07-15: quedan ~155 errores de tipos legacy (recharts formatters,
+  // logAudit params, páginas admin). Bajarlos a 0 y borrar este bloque.
   typescript: {
     ignoreBuildErrors: true,
   },
