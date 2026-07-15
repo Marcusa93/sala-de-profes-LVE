@@ -21,6 +21,7 @@ import {
   FolderOpen,
   Package,
   Armchair,
+  Hammer,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
