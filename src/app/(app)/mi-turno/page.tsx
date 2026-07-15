@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
-  Clock, LogIn, LogOut, CheckCircle, AlertCircle, Loader2,
+  Clock, LogIn, LogOut, CheckCircle, Loader2,
   History, Timer, MapPin, Shield, ShieldAlert, ShieldCheck,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, RefreshCw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { errorToast } from '@/lib/toast-helpers'
@@ -18,15 +18,16 @@ import { useMyAttendance, useAttendanceHistory } from '@/lib/hooks/use-attendanc
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { SuccessBurst } from '@/components/ui/success-burst'
 import { playSchoolBell } from '@/lib/sounds'
-import {
-  getGeolocation, getDeviceFingerprint, getNetworkInfo,
-  type GeoResult,
-} from '@/lib/attendance/security'
+import { getDeviceFingerprint, getNetworkInfo } from '@/lib/attendance/security'
+import { getCurrentPosition, calculateDistance } from '@/lib/attendance/geolocation'
+import { VENUE } from '@/lib/attendance/venue'
 import { logAuditClient } from '@/lib/audit'
+import { cn } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
 type TodayStatus = 'not_clocked_in' | 'clocked_in' | 'completed'
 type FlowState = 'idle' | 'working' | 'done'
+type GeoState = 'checking' | 'ok' | 'too_far' | 'denied' | 'unavailable'
 
 // ---------------------------------------------------------------------------
 function getGreeting(d: Date) {
@@ -41,14 +42,6 @@ function fmtDuration(start: string, end?: string | null) {
   return h === 0 ? `${m}m` : `${h}h ${m}m`
 }
 
-function humanErr(e: unknown) {
-  const m = e instanceof Error ? e.message : String(e)
-  if (m.includes('abierto')) return m
-  if (m.includes('No hay')) return m
-  if (m.includes('auth') || m.includes('JWT')) return 'Sesión expirada. Recargá la página.'
-  return m || 'Error inesperado'
-}
-
 // ---------------------------------------------------------------------------
 export default function MiTurnoPage() {
   const { profile, loading: profileLoading } = useProfileContext()
@@ -60,6 +53,10 @@ export default function MiTurnoPage() {
   const [flowState, setFlowState] = useState<FlowState>('idle')
   const [flowMsg, setFlowMsg] = useState('')
 
+  // Geo state
+  const [geoState, setGeoState] = useState<GeoState>('checking')
+  const [geoDistance, setGeoDistance] = useState<number | null>(null)
+
   const todayStr = useMemo(() =>
     new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }),
   [])
@@ -70,7 +67,7 @@ export default function MiTurnoPage() {
 
   const loading = loadingToday || loadingHistory
 
-  // Live clock — pausa cuando la pestaña no está visible
+  // Live clock
   useEffect(() => {
     let i: ReturnType<typeof setInterval> | null = null
     const start = () => {
@@ -82,11 +79,32 @@ export default function MiTurnoPage() {
     const onVisibility = () => { if (document.hidden) stop(); else start() }
     start()
     document.addEventListener('visibilitychange', onVisibility)
-    return () => {
-      stop()
-      document.removeEventListener('visibilitychange', onVisibility)
-    }
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility) }
   }, [])
+
+  // Geo check — runs on load and every 30s
+  const checkGeo = useCallback(async () => {
+    setGeoState('checking')
+    const result = await getCurrentPosition()
+    if (result.status === 'denied') {
+      setGeoState('denied')
+      return
+    }
+    if (result.status !== 'success' || result.lat == null || result.lng == null) {
+      setGeoState('unavailable')
+      return
+    }
+    const dist = calculateDistance(result.lat, result.lng, VENUE.lat, VENUE.lng)
+    setGeoDistance(dist)
+    setGeoState(dist <= VENUE.radiusM ? 'ok' : 'too_far')
+  }, [])
+
+  useEffect(() => {
+    if (!mustClockIn(profile ?? undefined)) return
+    checkGeo()
+    const interval = setInterval(checkGeo, 30_000)
+    return () => clearInterval(interval)
+  }, [checkGeo, profile])
 
   // Status
   const status: TodayStatus = !todayRecord
@@ -102,45 +120,53 @@ export default function MiTurnoPage() {
   }, [todayRecord, status, now])
 
   // ------------------------------------------
-  // Flujo completo: verificar + enviar
+  // Flujo de fichaje
   // ------------------------------------------
   async function handleClock(action: 'in' | 'out') {
     setFlowState('working')
-    setFlowMsg('Verificando ubicación...')
+    setFlowMsg('Obteniendo ubicación...')
 
-    // 1. GPS
-    let geo: GeoResult | null = null
-    try {
-      geo = await getGeolocation(10000)
-      setFlowMsg('Registrando dispositivo...')
-    } catch {
-      setFlowMsg('GPS no disponible, continuando...')
+    // GPS — obligatorio
+    const geoResult = await getCurrentPosition()
+    if (geoResult.status !== 'success' || !geoResult.lat || !geoResult.lng) {
+      toast.error('No se pudo obtener tu ubicación. Activá el GPS e intentá de nuevo.')
+      setFlowState('idle')
+      return
     }
 
-    // 2. Device + network
+    // Device + network
+    setFlowMsg('Registrando dispositivo...')
     const dev = getDeviceFingerprint()
     const net = getNetworkInfo()
+    void net // collected for future use
+
     setFlowMsg('Registrando fichaje...')
 
-    // 3. Send
     try {
       const res = await fetch('/api/attendance/clock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           event_type: action === 'in' ? 'clock_in' : 'clock_out',
-          gps_lat: geo?.lat,
-          gps_lng: geo?.lng,
-          gps_accuracy: geo?.accuracy,
-          wifi_ssid: net.effectiveType ?? undefined,
+          gps_lat: geoResult.lat,
+          gps_lng: geoResult.lng,
+          gps_accuracy: geoResult.accuracy,
           device_fingerprint: dev.id,
         }),
       })
 
       const data = await res.json()
 
-      if (!res.ok || data.error) {
-        errorToast('No pudimos registrar tu fichaje', data.error ?? 'Error')
+      if (!res.ok) {
+        if (data.code === 'OUT_OF_RANGE') {
+          toast.error(`Estás a ${data.distance_m}m del local. Necesitás estar en La Vieja Escuela.`)
+        } else if (data.code === 'GPS_REQUIRED') {
+          toast.error('Activá el GPS de tu dispositivo para poder fichar.')
+        } else {
+          errorToast('No pudimos registrar tu fichaje', data.error)
+        }
+        // Refresh geo after a failed attempt
+        void checkGeo()
         setFlowState('idle')
         return
       }
@@ -154,13 +180,11 @@ export default function MiTurnoPage() {
         action: action === 'in' ? 'clock_in' : 'clock_out',
         module: 'asistencia',
         entityType: 'clock_event',
-        description: action === 'in' ? 'User fichó entrada' : 'User fichó salida',
+        description: action === 'in' ? 'Fichaje de entrada' : 'Fichaje de salida',
       })
 
-      // Revalidate both SWR caches
       mutateToday()
       mutateHistory()
-
       setTimeout(() => setFlowState('idle'), 2000)
     } catch (err) {
       errorToast('Error de conexión', err, { retry: () => handleClock(action) })
@@ -169,8 +193,6 @@ export default function MiTurnoPage() {
   }
 
   // ------------------------------------------
-  // Loading
-  // ------------------------------------------
   if (profileLoading || loading) return <LoadingState message="Cargando tu turno..." />
   if (!profile) return (
     <div className="flex min-h-[60vh] items-center justify-center">
@@ -178,9 +200,7 @@ export default function MiTurnoPage() {
     </div>
   )
 
-  // ------------------------------------------
   // Working overlay
-  // ------------------------------------------
   if (flowState === 'working') {
     return (
       <div className="mx-auto max-w-lg flex flex-col items-center gap-6 pt-20 pb-28">
@@ -200,7 +220,7 @@ export default function MiTurnoPage() {
     )
   }
 
-  // Socios (excepto Ricardo) no fichan
+  // Sin fichaje requerido
   if (!mustClockIn(profile)) {
     return (
       <div className="mx-auto max-w-lg pb-28 pt-10 text-center">
@@ -208,22 +228,31 @@ export default function MiTurnoPage() {
           <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-2xl bg-[#f0f7f5]">
             <CheckCircle className="size-8 text-[#006d5a]" strokeWidth={1.5} />
           </div>
-          <p className="font-display text-xl font-semibold text-[#3d2c24]">
-            Sin fichaje
-          </p>
-          <p className="mt-2 text-sm text-[#a39e97]">
-            Tu rol no requiere marcar ingreso ni egreso.
-          </p>
+          <p className="font-display text-xl font-semibold text-[#3d2c24]">Sin fichaje</p>
+          <p className="mt-2 text-sm text-[#a39e97]">Tu rol no requiere marcar ingreso ni egreso.</p>
         </div>
       </div>
     )
   }
 
   // ------------------------------------------
-  // Main render
+  // Geo status indicator config
+  // ------------------------------------------
+  const geoBlocked = geoState === 'too_far' || geoState === 'denied'
+
+  const GEO_CONFIG = {
+    ok:          { icon: ShieldCheck, text: `En ${VENUE.name} ✓`,                 cls: 'bg-[#e8f5f1] text-[#006d5a]' },
+    checking:    { icon: Loader2,     text: 'Verificando ubicación...',            cls: 'bg-[#f8f5f0] text-[#a39e97]' },
+    too_far:     { icon: MapPin,      text: geoDistance ? `Estás a ${geoDistance}m · Necesitás estar en el local` : 'Fuera del local', cls: 'bg-[#fef2f2] text-[#ea504c]' },
+    denied:      { icon: ShieldAlert, text: 'Permiso de GPS denegado — activalo en ajustes', cls: 'bg-[#fef2f2] text-[#ea504c]' },
+    unavailable: { icon: MapPin,      text: 'GPS no disponible',                  cls: 'bg-[#fdf6ec] text-[#d4943a]' },
+  }
+  const geo = GEO_CONFIG[geoState]
+  const GeoIcon = geo.icon
+
   // ------------------------------------------
   return (
-    <div className="mx-auto max-w-lg space-y-8 pb-28">
+    <div className="mx-auto max-w-lg space-y-5 pb-28">
       <SuccessBurst show={showSuccess} onComplete={() => setShowSuccess(false)} />
 
       {/* Hero Clock */}
@@ -237,6 +266,21 @@ export default function MiTurnoPage() {
         </p>
       </FadeIn>
 
+      {/* Geo status banner */}
+      <FadeIn delay={0.05}>
+        <div className={cn('flex items-center justify-between gap-2 rounded-xl px-4 py-3', geo.cls)}>
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <GeoIcon className={cn('size-4 shrink-0', geoState === 'checking' && 'animate-spin')} />
+            <span>{geo.text}</span>
+          </div>
+          {(geoState === 'unavailable' || geoState === 'too_far') && (
+            <button onClick={checkGeo} className="shrink-0 rounded-lg p-1.5 hover:bg-black/5" aria-label="Reintentar">
+              <RefreshCw className="size-3.5" />
+            </button>
+          )}
+        </div>
+      </FadeIn>
+
       {/* Status Card */}
       <FadeIn delay={0.1}>
         <div
@@ -245,31 +289,31 @@ export default function MiTurnoPage() {
             borderLeftWidth: '4px',
             borderLeftColor:
               status === 'clocked_in' ? '#d4943a' :
-              status === 'completed' ? '#006d5a' : 'transparent',
+              status === 'completed'  ? '#006d5a' : 'transparent',
           }}
         >
           {/* NOT CLOCKED IN */}
           {status === 'not_clocked_in' && (
             <div className="flex flex-col items-center gap-6">
-              <div className="flex size-20 items-center justify-center rounded-2xl bg-[#f0f7f5]">
-                <LogIn className="size-9 text-[#006d5a]" strokeWidth={1.5} />
+              <div className={cn('flex size-20 items-center justify-center rounded-2xl', geoBlocked ? 'bg-[#fef2f2]' : 'bg-[#f0f7f5]')}>
+                <LogIn className={cn('size-9', geoBlocked ? 'text-[#ea504c]' : 'text-[#006d5a]')} strokeWidth={1.5} />
               </div>
               <div className="text-center">
-                <p className="font-display text-lg font-semibold text-[#3d2c24]">
-                  {getGreeting(now)}
-                </p>
+                <p className="font-display text-lg font-semibold text-[#3d2c24]">{getGreeting(now)}</p>
                 <p className="mt-1 text-sm text-[#a39e97]">No registraste ingreso hoy.</p>
-              </div>
-              <div className="flex items-center gap-2 rounded-xl bg-[#e8f5f1] px-3 py-1.5 text-xs text-[#006d5a]">
-                <ShieldCheck className="size-3.5" />
-                <span>Fichaje verificado: ubicación + dispositivo</span>
               </div>
               <Button
                 onClick={() => handleClock('in')}
-                className="h-16 w-full rounded-2xl bg-[#006d5a] text-base font-semibold text-white shadow-md hover:bg-[#005a4a] active:scale-[0.98]"
+                disabled={geoBlocked}
+                className={cn(
+                  'h-16 w-full rounded-2xl text-base font-semibold text-white shadow-md active:scale-[0.98]',
+                  geoBlocked
+                    ? 'bg-[#a39e97] cursor-not-allowed'
+                    : 'bg-[#006d5a] hover:bg-[#005a4a]',
+                )}
               >
                 <LogIn className="mr-2.5 size-5" />
-                Marcar Ingreso
+                {geoBlocked ? 'Debés estar en el local' : 'Marcar Ingreso'}
               </Button>
             </div>
           )}
@@ -288,32 +332,27 @@ export default function MiTurnoPage() {
                 {liveDuration && (
                   <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-[#fdf6ec] px-3 py-1">
                     <Timer className="size-3.5 text-[#d4943a]" />
-                    <span className="text-sm font-semibold tabular-nums text-[#d4943a]">
-                      {liveDuration} trabajando
-                    </span>
+                    <span className="text-sm font-semibold tabular-nums text-[#d4943a]">{liveDuration} trabajando</span>
                   </div>
                 )}
-                <div className="mt-3 flex items-center justify-center gap-2">
-                  <span className={`flex items-center gap-1 text-xs ${todayRecord.clock_in_lat ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
-                    <MapPin className="size-3" />
-                    {todayRecord.clock_in_lat ? 'GPS ✓' : 'GPS ⚠'}
-                  </span>
-                  {todayRecord.is_suspicious && (
-                    <>
-                      <span className="text-[#ebe6df]">·</span>
-                      <span className="flex items-center gap-1 text-xs text-amber-600">
-                        <ShieldAlert className="size-3" /> Con advertencias
-                      </span>
-                    </>
-                  )}
-                </div>
+                {todayRecord.is_suspicious && (
+                  <div className="mt-3 flex items-center justify-center gap-1 text-xs text-amber-600">
+                    <ShieldAlert className="size-3" /> Con advertencias
+                  </div>
+                )}
               </div>
               <Button
                 onClick={() => handleClock('out')}
-                className="h-16 w-full rounded-2xl bg-[#d4943a] text-base font-semibold text-white shadow-md hover:bg-[#c0852f] active:scale-[0.98]"
+                disabled={geoBlocked}
+                className={cn(
+                  'h-16 w-full rounded-2xl text-base font-semibold text-white shadow-md active:scale-[0.98]',
+                  geoBlocked
+                    ? 'bg-[#a39e97] cursor-not-allowed'
+                    : 'bg-[#d4943a] hover:bg-[#c0852f]',
+                )}
               >
                 <LogOut className="mr-2.5 size-5" />
-                Marcar Egreso
+                {geoBlocked ? 'Debés estar en el local' : 'Marcar Egreso'}
               </Button>
             </div>
           )}
@@ -337,18 +376,14 @@ export default function MiTurnoPage() {
                   <div className="text-center">
                     <p className="section-label">Egreso</p>
                     <p className="mt-1 font-display text-3xl font-bold tabular-nums text-[#3d2c24]">
-                      {todayRecord.clock_out_at
-                        ? format(new Date(todayRecord.clock_out_at), 'HH:mm')
-                        : '--:--'}
+                      {todayRecord.clock_out_at ? format(new Date(todayRecord.clock_out_at), 'HH:mm') : '--:--'}
                     </p>
                   </div>
                 </div>
                 {liveDuration && (
                   <div className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1">
                     <Timer className="size-3.5 text-[#006d5a]" />
-                    <span className="text-sm font-semibold tabular-nums text-[#006d5a]">
-                      {liveDuration} trabajados
-                    </span>
+                    <span className="text-sm font-semibold tabular-nums text-[#006d5a]">{liveDuration} trabajados</span>
                   </div>
                 )}
                 {todayRecord.is_suspicious && (
@@ -409,12 +444,12 @@ export default function MiTurnoPage() {
                           )}
                         </div>
                       </div>
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                      <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium',
                         r.is_suspicious ? 'bg-amber-50 text-amber-700' :
-                        r.clock_out_at ? 'bg-[#e8f5f1] text-[#006d5a]' :
+                        r.clock_out_at  ? 'bg-[#e8f5f1] text-[#006d5a]' :
                         'bg-red-50 text-[#ea504c]'
-                      }`}>
-                        {r.is_suspicious ? '⚠ Sospechoso' : r.clock_out_at ? '✓ Completo' : 'Sin egreso'}
+                      )}>
+                        {r.is_suspicious ? '⚠ Con advertencias' : r.clock_out_at ? '✓ Completo' : 'Sin egreso'}
                       </span>
                     </div>
                   </StaggerItem>

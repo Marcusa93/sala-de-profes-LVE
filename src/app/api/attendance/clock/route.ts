@@ -2,6 +2,19 @@ import { NextResponse } from 'next/server'
 import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { VENUE } from '@/lib/attendance/venue'
+
+// ---------------------------------------------------------------------------
+// Haversine — server-safe, no browser APIs
+// ---------------------------------------------------------------------------
+function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000
+  const toRad = (d: number) => d * Math.PI / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/attendance/clock
@@ -36,6 +49,42 @@ export async function POST(request: Request) {
   }
 
   const admin = createAdminClient()
+
+  // -------------------------------------------------------------------------
+  // GEO VALIDATION — server-side block
+  // Lee el venue de la config de BD; usa VENUE como fallback
+  // -------------------------------------------------------------------------
+  const { data: venueConfig } = await admin
+    .from('attendance_config')
+    .select('value')
+    .eq('key', 'location')
+    .maybeSingle()
+
+  type VenueConfig = { lat: number; lng: number; radius_meters: number; name?: string }
+  const venue: VenueConfig = venueConfig?.value
+    ? (venueConfig.value as VenueConfig)
+    : { lat: VENUE.lat, lng: VENUE.lng, radius_meters: VENUE.radiusM, name: VENUE.name }
+
+  // GPS es obligatorio cuando hay configuración de local
+  if (!gps_lat || !gps_lng) {
+    return NextResponse.json({
+      error: 'Necesitás activar el GPS para fichar. Asegurate de darle permiso de ubicación a la app.',
+      code: 'GPS_REQUIRED',
+    }, { status: 403 })
+  }
+
+  const distM = distanceMeters(venue.lat, venue.lng, gps_lat, gps_lng)
+
+  if (distM > venue.radius_meters) {
+    return NextResponse.json({
+      error: `Estás a ${distM}m de ${venue.name ?? 'el local'}. Solo podés fichar estando en el lugar.`,
+      code: 'OUT_OF_RANGE',
+      distance_m: distM,
+      radius_m: venue.radius_meters,
+    }, { status: 403 })
+  }
+
+  // -------------------------------------------------------------------------
   const nowISO = new Date().toISOString()
   const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
 
@@ -46,7 +95,6 @@ export async function POST(request: Request) {
   // CLOCK IN
   // -----------------------------------------------------------------------
   if (event_type === 'clock_in') {
-    // Check no open record
     const { data: existing } = await admin
       .from('attendance_logs')
       .select('id')
@@ -65,8 +113,8 @@ export async function POST(request: Request) {
         user_id: user.id,
         operative_date: todayStr,
         clock_in_at: nowISO,
-        clock_in_lat: gps_lat ?? null,
-        clock_in_lng: gps_lng ?? null,
+        clock_in_lat: gps_lat,
+        clock_in_lng: gps_lng,
         clock_in_accuracy: gps_accuracy ?? null,
         clock_in_type: 'normal',
         device_fingerprint: device_fingerprint ?? null,
@@ -81,13 +129,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No se pudo registrar el ingreso' }, { status: 500 })
     }
 
-    return NextResponse.json({
-      success: true,
-      event: record,
-      anomaly_count: 0,
-      anomaly_flags: [],
-      verified: true,
-    })
+    return NextResponse.json({ success: true, event: record, distance_m: distM })
   }
 
   // -----------------------------------------------------------------------
@@ -110,8 +152,8 @@ export async function POST(request: Request) {
     .from('attendance_logs')
     .update({
       clock_out_at: nowISO,
-      clock_out_lat: gps_lat ?? null,
-      clock_out_lng: gps_lng ?? null,
+      clock_out_lat: gps_lat,
+      clock_out_lng: gps_lng,
       clock_out_accuracy: gps_accuracy ?? null,
       clock_out_type: 'normal',
       status: 'closed',
@@ -125,11 +167,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'No se pudo registrar el egreso' }, { status: 500 })
   }
 
-  return NextResponse.json({
-    success: true,
-    event: updated,
-    anomaly_count: 0,
-    anomaly_flags: [],
-    verified: true,
-  })
+  return NextResponse.json({ success: true, event: updated, distance_m: distM })
 }
