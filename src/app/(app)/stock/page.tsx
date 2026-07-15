@@ -11,29 +11,20 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
-  History,
-  User,
   Clock,
   AlertTriangle,
-  Settings2,
-  Save,
-  ClipboardCheck,
   ShieldCheck,
   Activity,
   ArrowRight,
   CheckCircle2,
   ClipboardList,
   ListChecks,
-  Trash2,
   TrendingDown,
-  ShoppingCart,
   CalendarClock,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import { toast } from 'sonner'
-import { createClient } from '@/lib/supabase/client'
-import { logAuditClient } from '@/lib/audit'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { useStockItems, type StockItem } from '@/lib/hooks/use-stock'
 import { STOCK_CATEGORIES, STOCK_CATEGORY_OPTIONS } from '@/lib/constants'
@@ -42,34 +33,37 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { FadeIn } from '@/components/ui/motion'
 import {
   type StockIntelligenceResponse,
-  type StockPriority,
 } from '@/lib/stock/intelligence'
 import type {
   StockAnomaliesResponse,
-  StockAnomalyItem,
 } from '@/lib/contracts/stock-anomalies'
+import {
+  AREA_FILTERS,
+  AREA_CATEGORIES,
+  COLORS,
+  PRIORITY_STYLES,
+  getSemaphore,
+  isPerishableForUi,
+  getStockSource,
+  formatPriority,
+  lotTone,
+  priorityFromAnomaly,
+  formatLotCountdown,
+  formatQty,
+  getQuantityReview,
+  type SemaphoreColor,
+  type StockSourceFilter,
+  type StockView,
+  type AreaFilter,
+  type StockReviewCard,
+} from '@/lib/stock/helpers'
+import { StockItemRow } from './_components/StockItemRow'
+import { ReviewCard } from './_components/ReviewCard'
+import { MetadataEditor } from './_components/MetadataEditor'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-type StockLog = {
-  id: number
-  old_qty: number | null
-  new_qty: number | null
-  created_at: string
-  profiles?: { first_name: string; last_name: string } | null
-}
-
-type StockMovement = {
-  id: string
-  change: number
-  movement_type: string
-  reason: string | null
-  note: string | null
-  created_at: string | null
-  profiles?: { first_name: string; last_name: string } | null
-}
 
 type StockLot = {
   id: number
@@ -102,11 +96,7 @@ type StockLotsResponse = {
   requires_migration?: boolean
 }
 
-type SemaphoreColor = 'red' | 'yellow' | 'green'
 type FudoConnectionState = 'checking' | 'ok' | 'warning' | 'error'
-type StockSourceFilter = 'all' | 'fudo' | 'local' | 'unmapped'
-type StockView = 'radar' | 'conteo' | 'inventario'
-type WasteReason = 'vencido' | 'roto' | 'consumo_interno' | 'otro'
 
 type ReconciliationRow = {
   stock_item_id: string
@@ -117,17 +107,6 @@ type ReconciliationRow = {
   variance: number
 }
 
-// Áreas operativas: cocina maneja proteínas/verduras/etc; pastelería lo horneado.
-const AREA_FILTERS = [
-  { value: 'all', label: 'Todo' },
-  { value: 'cocina', label: 'Cocina' },
-  { value: 'pasteleria', label: 'Pastelería' },
-] as const
-type AreaFilter = (typeof AREA_FILTERS)[number]['value']
-const AREA_CATEGORIES: Record<Exclude<AreaFilter, 'all'>, string[]> = {
-  cocina: ['carnes', 'verduras', 'frutas', 'lacteos', 'condimentos', 'elaborados'],
-  pasteleria: ['panaderia'],
-}
 type FudoIncidentSample = {
   id: string
   severity: string
@@ -146,180 +125,6 @@ type FudoStatusResponse = {
   events: { pending: number; failed_last_24h: number }
 }
 
-type StockReviewCard = {
-  id: string
-  item: StockItem | null
-  priority: 'critico' | 'revisar' | 'accion'
-  title: string
-  detail: string
-  primaryAction: 'sync' | 'count' | 'configure' | 'map' | 'watch'
-  actionLabel?: string
-  actionHref?: string | null
-}
-
-function getSemaphore(item: StockItem): SemaphoreColor {
-  if (item.current_qty === 0) return 'red'
-  if (item.current_qty <= item.min_qty) return 'red'
-  if (item.current_qty <= item.min_qty * 1.5) return 'yellow'
-  return 'green'
-}
-
-const COLORS: Record<SemaphoreColor, { text: string; bg: string; border: string; dot: string }> = {
-  red: { text: 'text-[#ea504c]', bg: 'bg-[#fef2f2]', border: 'border-[#ea504c]', dot: 'bg-[#ea504c]' },
-  yellow: { text: 'text-[#d4943a]', bg: 'bg-[#fdf6ec]', border: 'border-[#d4943a]', dot: 'bg-[#d4943a]' },
-  green: { text: 'text-[#006d5a]', bg: 'bg-[#e8f5f1]', border: 'border-[#006d5a]', dot: 'bg-[#006d5a]' },
-}
-
-const PERISHABLE_CATEGORIES = new Set<StockCategoryValue>([
-  'bebidas',
-  'lacteos',
-  'carnes',
-  'verduras',
-  'frutas',
-  'panaderia',
-])
-
-const PRIORITY_STYLES: Record<StockPriority, string> = {
-  high: 'bg-[#fef2f2] text-[#ea504c]',
-  medium: 'bg-[#fdf6ec] text-[#d4943a]',
-  low: 'bg-[#f3efe9] text-[#7d6c64]',
-}
-
-function isPerishableForUi(item: StockItem) {
-  return Boolean(item.fudo_product_id) || PERISHABLE_CATEGORIES.has(item.category)
-}
-
-function getStockSource(item: StockItem) {
-  if (item.fudo_product_id) {
-    return { label: 'Fudo producto', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true, kind: 'fudo' as const }
-  }
-  if (item.fudo_ingredient_id) {
-    return { label: 'Fudo insumo', tone: 'bg-[#e8f5f1] text-[#006d5a]', actionable: true, kind: 'fudo' as const }
-  }
-  if (item.fudo_skip === true) {
-    return { label: 'Local LVE', tone: 'bg-[#f3efe9] text-[#7d6c64]', actionable: true, kind: 'local' as const }
-  }
-  return { label: 'Sin mapeo Fudo', tone: 'bg-[#fef2f2] text-[#ea504c]', actionable: false, kind: 'unmapped' as const }
-}
-
-function formatPriority(priority: StockPriority) {
-  if (priority === 'high') return 'Alta'
-  if (priority === 'medium') return 'Media'
-  return 'Baja'
-}
-
-function lotTone(expiresInDays: number) {
-  if (expiresInDays < 0) return {
-    pill: 'bg-[#fef2f2] text-[#ea504c]',
-    panel: 'border-[#ea504c]/20 bg-[#fff7f7]',
-  }
-  if (expiresInDays <= 2) return {
-    pill: 'bg-[#fdf6ec] text-[#d4943a]',
-    panel: 'border-[#d4943a]/20 bg-[#fffaf2]',
-  }
-  return {
-    pill: 'bg-[#e8f5f1] text-[#006d5a]',
-    panel: 'border-[#dcefe8] bg-[#f7fcfa]',
-  }
-}
-
-function priorityFromAnomaly(anomaly: StockAnomalyItem): StockReviewCard['priority'] {
-  if (anomaly.severity === 'critical') return 'critico'
-  if (anomaly.severity === 'high') return 'accion'
-  return 'revisar'
-}
-
-function formatLotCountdown(expiresInDays: number) {
-  if (expiresInDays < 0) return `Vencido hace ${Math.abs(expiresInDays)}d`
-  if (expiresInDays === 0) return 'Vence hoy'
-  if (expiresInDays === 1) return 'Vence mañana'
-  return `Vence en ${expiresInDays}d`
-}
-
-function formatQty(qty: number) {
-  if (Number.isInteger(qty)) return String(qty)
-  return qty.toLocaleString('es-AR', { maximumFractionDigits: 2 })
-}
-
-function getVariance(item: StockItem, countedQty: number) {
-  const diff = countedQty - item.current_qty
-  const abs = Math.abs(diff)
-  const pct = item.current_qty > 0 ? abs / item.current_qty : abs > 0 ? 1 : 0
-  return { diff, abs, pct }
-}
-
-function needsVarianceNote(item: StockItem, countedQty: number) {
-  const { abs, pct } = getVariance(item, countedQty)
-  const unit = item.unit.toLowerCase()
-  const threshold = unit.includes('kg') || unit.includes('kilo')
-    ? Math.max(0.5, item.current_qty * 0.12)
-    : Math.max(2, item.current_qty * 0.15)
-  return abs >= threshold || pct >= 0.25
-}
-
-function getQuantityReview(item: StockItem): StockReviewCard | null {
-  const source = getStockSource(item)
-
-  if (source.kind === 'unmapped') {
-    return {
-      id: `unmapped:${item.id}`,
-      item,
-      priority: 'critico',
-      title: `${item.name}: falta vínculo Fudo`,
-      detail: 'No se puede corregir stock hasta vincularlo a Fudo o marcarlo como Local LVE.',
-      primaryAction: 'map',
-    }
-  }
-
-  if (item.current_qty < 0) {
-    return {
-      id: `negative:${item.id}`,
-      item,
-      priority: 'critico',
-      title: `${item.name}: stock negativo`,
-      detail: `Figura ${formatQty(item.current_qty)} ${item.unit}. Contá físicamente y corregí contra Fudo.`,
-      primaryAction: 'count',
-    }
-  }
-
-  if (getSemaphore(item) === 'red') {
-    return {
-      id: `low:${item.id}`,
-      item,
-      priority: 'critico',
-      title: `${item.name}: stock crítico`,
-      detail: `Hay ${formatQty(item.current_qty)} ${item.unit}; mínimo operativo ${formatQty(item.min_qty)}.`,
-      primaryAction: 'count',
-    }
-  }
-
-  const unit = item.unit.toLowerCase()
-  if (item.fudo_ingredient_id && unit.includes('unidad') && !Number.isInteger(item.current_qty)) {
-    return {
-      id: `unit:${item.id}`,
-      item,
-      priority: 'revisar',
-      title: `${item.name}: unidad sospechosa`,
-      detail: `Figura ${formatQty(item.current_qty)} unidad. Si es fiambre/carne/lácteo por peso debería estar en kg.`,
-      primaryAction: 'configure',
-    }
-  }
-
-  const highStockThreshold = Math.max(item.min_qty * 4, isPerishableForUi(item) ? 12 : 80)
-  if (item.current_qty >= highStockThreshold && item.current_qty > 0) {
-    return {
-      id: `high:${item.id}`,
-      item,
-      priority: isPerishableForUi(item) ? 'accion' : 'revisar',
-      title: `${item.name}: cantidad alta`,
-      detail: `Hay ${formatQty(item.current_qty)} ${item.unit}. Confirmá si es normal o si hay que accionar.`,
-      primaryAction: 'count',
-    }
-  }
-
-  return null
-}
-
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -335,32 +140,18 @@ export default function StockPage() {
   const [semaphoreFilter, setSemaphoreFilter] = useState<SemaphoreColor | null>(null)
   const [sourceFilter, setSourceFilter] = useState<StockSourceFilter>('all')
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editQty, setEditQty] = useState('')
-  const [countNote, setCountNote] = useState('')
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
   const [syncing, setSyncing] = useState(false)
-  const [historyItemId, setHistoryItemId] = useState<string | null>(null)
-  const [historyLogs, setHistoryLogs] = useState<StockLog[]>([])
-  const [historyMovements, setHistoryMovements] = useState<StockMovement[]>([])
-  const [loadingHistory, setLoadingHistory] = useState(false)
-  const [historyTab, setHistoryTab] = useState<'movimientos' | 'conteos'>('movimientos')
   const [intelligence, setIntelligence] = useState<StockIntelligenceResponse | null>(null)
   const [loadingIntelligence, setLoadingIntelligence] = useState(false)
   const [anomalies, setAnomalies] = useState<StockAnomaliesResponse | null>(null)
   const [loadingAnomalies, setLoadingAnomalies] = useState(false)
   const [editingMetaId, setEditingMetaId] = useState<string | null>(null)
   const [editingMetaSource, setEditingMetaSource] = useState<'setup' | 'item' | null>(null)
-  const [metaShelfLife, setMetaShelfLife] = useState('')
-  const [metaCategory, setMetaCategory] = useState<StockCategoryValue | ''>('')
-  const [metaNotes, setMetaNotes] = useState('')
-  const [savingMeta, setSavingMeta] = useState(false)
+  const [metaInitial, setMetaInitial] = useState<{ shelfLife?: number | null; category?: StockCategoryValue | null }>({})
   const [lotsData, setLotsData] = useState<StockLotsResponse | null>(null)
   const [loadingLots, setLoadingLots] = useState(false)
   const [wastingId, setWastingId] = useState<string | null>(null)
-  const [wasteQty, setWasteQty] = useState('')
-  const [wasteReason, setWasteReason] = useState<WasteReason | ''>('')
-  const [wasteNote, setWasteNote] = useState('')
-  const [savingWaste, setSavingWaste] = useState(false)
   const [reconciliationRows, setReconciliationRows] = useState<ReconciliationRow[]>([])
   const [loadingReconciliation, setLoadingReconciliation] = useState(false)
 
@@ -472,6 +263,12 @@ export default function StockPage() {
     }
   }, [])
 
+  const reloadAll = useCallback(() =>
+    Promise.all([mutate(), loadIntelligence(), loadAnomalies(), loadLots(), loadReconciliation()])
+  , [mutate, loadIntelligence, loadAnomalies, loadLots, loadReconciliation])
+
+  const handleItemUpdated = reloadAll
+
   const openMetadataEditor = useCallback((itemId: string, source: 'setup' | 'item', options?: {
     shelfLife?: number | null
     category?: StockCategoryValue | null
@@ -487,186 +284,64 @@ export default function StockPage() {
 
     setEditingMetaId(itemId)
     setEditingMetaSource(source)
-    setMetaShelfLife(String(options?.shelfLife ?? item.shelf_life_days ?? ''))
-    setMetaCategory(options?.category ?? item.category)
-    setMetaNotes(item.notes ?? '')
+    setMetaInitial({ shelfLife: options?.shelfLife, category: options?.category })
   }, [editingMetaId, editingMetaSource, items])
 
-  const handleMetadataSave = useCallback(async (itemId: string) => {
-    setSavingMeta(true)
+  // Única función de sync — usada tanto en el mount inicial como en el botón manual
+  const runSync = useCallback(async (opts?: { silent?: boolean }) => {
+    setSyncing(true)
+    setFudoConnection((c) => ({ ...c, state: 'checking', message: null }))
+    const fudoError = (msg: string) => ({
+      state: 'error' as const, message: msg,
+      issueCount: 0, pendingEvents: 0, failedEvents: 0,
+      criticalIncidents: 0, highIncidents: 0, incidentSample: [],
+    })
     try {
-      const shelfLife = metaShelfLife.trim()
-      const payload = {
-        shelf_life_days: shelfLife ? Number(shelfLife) : null,
-        category: metaCategory || undefined,
-        notes: metaNotes.trim() || null,
-      }
-
-      const res = await fetch(`/api/stock/items/${itemId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
+      const res  = await fetch('/api/stock/sync')
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'No se pudo guardar la configuración')
-
-      toast.success('Configuración de stock actualizada')
-      setEditingMetaId(null)
-      setEditingMetaSource(null)
-      await Promise.all([mutate(), loadIntelligence(), loadAnomalies(), loadLots()])
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al guardar configuración')
-    } finally {
-      setSavingMeta(false)
-    }
-  }, [loadAnomalies, loadIntelligence, loadLots, metaCategory, metaNotes, metaShelfLife, mutate])
-
-  const handleWasteSave = async (itemId: string) => {
-    const qty = parseFloat(wasteQty)
-    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad de merma inválida'); return }
-    if (!wasteReason) { toast.error('Seleccioná un motivo de merma'); return }
-    const currentItem = items.find(i => i.id === itemId)
-    if (!currentItem) return
-    if (qty > currentItem.current_qty + 0.001) {
-      toast.error(`No podés dar de baja más de lo que hay (${formatQty(currentItem.current_qty)} ${currentItem.unit})`)
-      return
-    }
-    setSavingWaste(true)
-    try {
-      const res = await fetch('/api/stock/waste', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stockItemId: itemId, qty, wasteReason, note: wasteNote.trim() || undefined }),
-      })
-      const data = await res.json()
-      if (!res.ok || !data.success) throw new Error(data.error || 'No se pudo registrar la merma')
-      logAuditClient({
-        userId: profile?.id ?? null,
-        userName: profile?.first_name ?? null,
-        action: 'register_waste',
-        module: 'stock',
-        entityType: 'stock_item',
-        entityId: itemId,
-        description: `Merma ${formatQty(qty)} ${currentItem.unit} de ${currentItem.name} (${wasteReason})`,
-      })
-      toast.success(data.fudoSynced ? 'Merma registrada y sincronizada con Fudo ✓' : 'Merma registrada')
-      setWastingId(null)
-      setWasteQty('')
-      setWasteReason('')
-      setWasteNote('')
-      await Promise.all([mutate(), loadReconciliation()])
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al registrar merma')
-    } finally {
-      setSavingWaste(false)
-    }
-  }
-
-  // Fudo sync on first load
-  useEffect(() => {
-    let cancelled = false
-    async function doSync() {
-      setSyncing(true)
-      setFudoConnection((current) => ({ ...current, state: 'checking', message: null }))
-      try {
-        const syncRes = await fetch('/api/stock/sync')
-        const syncData = await syncRes.json()
-        if (cancelled) return
-
-        if (syncRes.ok && syncData.success && syncData.fudoConnected !== false) {
-          const issueCount = Array.isArray(syncData.read?.errors) ? syncData.read.errors.length : 0
-          setLastFudoSync(syncData.timestamp)
-          setFudoSyncCount(syncData.read?.synced ?? 0)
-          setFudoConnection({
-            state: 'ok',
-            message: issueCount > 0 ? `${issueCount} inconsistencias de mapeo Fudo` : null,
-            issueCount,
-            pendingEvents: 0,
-            failedEvents: 0,
-            criticalIncidents: 0,
-            highIncidents: 0,
-          })
-          mutate() // revalidate stock items with fresh Fudo data
-          void loadFudoStatus().catch(() => null)
-          void loadIntelligence()
-          void loadAnomalies()
-          void loadLots()
-          void loadReconciliation()
-        } else {
-          setFudoConnection({
-            state: 'error',
-            message: syncData.error || 'No se pudo sincronizar con Fudo',
-            issueCount: 0,
-            pendingEvents: 0,
-            failedEvents: 0,
-            criticalIncidents: 0,
-            highIncidents: 0,
-          })
-          void loadAnomalies()
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setFudoConnection({
-            state: 'error',
-            message: err instanceof Error ? err.message : 'No se pudo sincronizar con Fudo',
-            issueCount: 0,
-            pendingEvents: 0,
-            failedEvents: 0,
-            criticalIncidents: 0,
-            highIncidents: 0,
-          })
-          void loadAnomalies()
-        }
+      if (res.ok && data.success && data.fudoConnected !== false) {
+        const issueCount = Array.isArray(data.read?.errors) ? data.read.errors.length : 0
+        setLastFudoSync(data.timestamp)
+        setFudoSyncCount(data.read?.synced ?? 0)
+        setFudoConnection({
+          state: 'ok',
+          message: issueCount > 0 ? `${issueCount} inconsistencias de mapeo Fudo` : null,
+          issueCount, pendingEvents: 0, failedEvents: 0,
+          criticalIncidents: 0, highIncidents: 0, incidentSample: [],
+        })
+        mutate()
+        void loadFudoStatus().catch(() => null)
+        void reloadAll()
+        if (!opts?.silent) toast.success(`Sincronizado con Fudo — ${data.read?.synced ?? 0} items`)
+      } else {
+        const msg = data.error || 'No se pudo sincronizar con Fudo'
+        setFudoConnection(fudoError(msg))
+        void reloadAll()
+        if (!opts?.silent) toast.error(msg)
       }
-      if (!cancelled) setSyncing(false)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Error de conexión con Fudo'
+      setFudoConnection(fudoError(msg))
+      void reloadAll()
+      if (!opts?.silent) toast.error(msg)
+    } finally {
+      setSyncing(false)
     }
-    doSync()
-    return () => { cancelled = true }
-  }, [loadAnomalies, loadFudoStatus, loadIntelligence, loadLots, loadReconciliation, mutate])
+  }, [loadFudoStatus, mutate, reloadAll])
 
+  // Sync silencioso al montar
   useEffect(() => {
-    void loadIntelligence()
-  }, [loadIntelligence])
-
-  useEffect(() => {
-    void loadAnomalies()
-  }, [loadAnomalies])
-
-  useEffect(() => {
-    void loadLots()
-  }, [loadLots])
-
-  useEffect(() => {
-    void loadReconciliation()
-  }, [loadReconciliation])
-
-  // Load history for an item (conteos desde stock_logs + movimientos desde stock_movements)
-  const loadHistory = async (itemId: string) => {
-    if (historyItemId === itemId) { setHistoryItemId(null); return }
-    setHistoryItemId(itemId)
-    setLoadingHistory(true)
-    const supabase = createClient()
-    const [logsRes, movRes] = await Promise.all([
-      supabase
-        .from('stock_logs')
-        .select('id, old_qty, new_qty, created_at, profiles:user_id(first_name, last_name)')
-        .eq('stock_item_id', itemId)
-        .order('created_at', { ascending: false })
-        .limit(15),
-      fetch(`/api/stock/movements?itemId=${itemId}&limit=20`).then(r => r.json()).catch(() => ({ movements: [] })),
-    ])
-    setHistoryLogs((logsRes.data as unknown as StockLog[]) ?? [])
-    setHistoryMovements((movRes.movements ?? []) as StockMovement[])
-    setLoadingHistory(false)
-  }
+    void runSync({ silent: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Filter
   const filtered = useMemo(() => {
     let result = items
     if (search.trim()) {
-      const q = search.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      const q = search.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
       result = result.filter(i =>
-        i.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q)
+        i.name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(q)
       )
     }
     if (areaFilter !== 'all') {
@@ -844,117 +519,6 @@ export default function StockPage() {
     return map
   }, [filtered])
 
-  // Update qty — writes to Supabase + Fudo (bidirectional)
-  const handleSave = async (itemId: string) => {
-    const newQty = parseFloat(editQty)
-    if (isNaN(newQty) || newQty < 0) { toast.error('Cantidad inválida'); return }
-    const currentItem = items.find(i => i.id === itemId)
-    if (!currentItem) { toast.error('Item no encontrado'); return }
-    if (Math.abs(newQty - currentItem.current_qty) < 0.001) {
-      toast.info('Sin cambios de stock')
-      setEditingId(null)
-      setEditQty('')
-      setCountNote('')
-      return
-    }
-    const note = countNote.trim()
-    if (needsVarianceNote(currentItem, newQty) && note.length < 6) {
-      toast.error('La diferencia es relevante: agregá una nota corta del conteo')
-      return
-    }
-    const source = getStockSource(currentItem)
-    if (source.kind === 'fudo' && (fudoConnection.state === 'checking' || fudoConnection.state === 'error')) {
-      toast.error('Stock bloqueado: primero hay que reconectar con Fudo')
-      return
-    }
-    try {
-      const res = await fetch('/api/stock/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stockItemId: itemId, newQty, reason: 'physical_count', note }),
-      })
-      const data = await res.json()
-      if (!res.ok || !data.success) throw new Error(data.error || data.message)
-
-      const updatedItem = items.find(i => i.id === itemId)
-      logAuditClient({
-        userId: profile?.id ?? null,
-        userName: profile?.first_name ?? null,
-        action: 'update_stock_qty',
-        module: 'stock',
-        entityType: 'stock_item',
-        entityId: itemId,
-        description: `${profile?.first_name ?? 'User'} actualizó stock de ${updatedItem?.name ?? itemId}: ${updatedItem?.current_qty ?? '?'} -> ${newQty} ${updatedItem?.unit ?? 'unidad'}`,
-      })
-
-      if (data.fudoSynced) {
-        toast.success('Stock actualizado — sincronizado con Fudo ✓')
-      } else {
-        toast.success('Stock actualizado')
-      }
-      setEditingId(null)
-      setEditQty('')
-      setCountNote('')
-      await Promise.all([mutate(), loadIntelligence(), loadAnomalies(), loadLots()])
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al guardar')
-    }
-  }
-
-  const handleFudoSync = async () => {
-    setSyncing(true)
-    setFudoConnection((current) => ({ ...current, state: 'checking', message: null }))
-    try {
-      const res = await fetch('/api/stock/sync')
-      const json = await res.json()
-      if (res.ok && json.success && json.fudoConnected !== false) {
-        const issueCount = Array.isArray(json.read?.errors) ? json.read.errors.length : 0
-        setLastFudoSync(json.timestamp)
-        setFudoSyncCount(json.read?.synced ?? 0)
-        setFudoConnection({
-          state: 'ok',
-          message: issueCount > 0 ? `${issueCount} inconsistencias de mapeo Fudo` : null,
-          issueCount,
-          pendingEvents: 0,
-          failedEvents: 0,
-          criticalIncidents: 0,
-          highIncidents: 0,
-        })
-        void loadFudoStatus().catch(() => null)
-        toast.success(`Sincronizado con Fudo — ${json.read?.synced ?? 0} items`)
-        await Promise.all([mutate(), loadIntelligence(), loadAnomalies(), loadLots()])
-      } else {
-        const message = json.error || 'Error al sincronizar con Fudo'
-        setFudoConnection({
-          state: 'error',
-          message,
-          issueCount: 0,
-          pendingEvents: 0,
-          failedEvents: 0,
-          criticalIncidents: 0,
-          highIncidents: 0,
-        })
-        toast.error(message)
-        void loadAnomalies()
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Error de conexión con Fudo'
-      setFudoConnection({
-        state: 'error',
-        message,
-        issueCount: 0,
-        pendingEvents: 0,
-        failedEvents: 0,
-        criticalIncidents: 0,
-        highIncidents: 0,
-      })
-      toast.error(message)
-      void loadAnomalies()
-    } finally {
-      setSyncing(false)
-    }
-  }
-
   const toggleCat = (cat: string) => {
     setCollapsedCats(prev => {
       const next = new Set(prev)
@@ -978,435 +542,6 @@ export default function StockPage() {
     setWastingId(null)
     setView('conteo')
     setEditingId(item.id)
-    setEditQty('')
-    setCountNote('')
-  }
-
-  const renderMetadataEditor = (itemId: string, source: 'setup' | 'item') => {
-    if (editingMetaId !== itemId || editingMetaSource !== source) return null
-
-    return (
-      <div className="border-t bg-[#faf8f5] px-3 py-3 space-y-3">
-        <div className="grid grid-cols-2 gap-2">
-          <label className="space-y-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
-              Vida util (dias)
-            </span>
-            <input
-              value={metaShelfLife}
-              onChange={(e) => setMetaShelfLife(e.target.value)}
-              inputMode="numeric"
-              placeholder="Ej. 7"
-              className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-2 text-sm text-[#3d2c24] focus:border-[#006d5a] focus:outline-none"
-            />
-          </label>
-
-          <label className="space-y-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
-              Categoria
-            </span>
-            <select
-              value={metaCategory}
-              onChange={(e) => setMetaCategory(e.target.value as StockCategoryValue)}
-              className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-2 text-sm text-[#3d2c24] focus:border-[#006d5a] focus:outline-none"
-            >
-              <option value="" disabled>Elegir</option>
-              {STOCK_CATEGORY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <label className="space-y-1 block">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
-            Nota operativa
-          </span>
-          <textarea
-            value={metaNotes}
-            onChange={(e) => setMetaNotes(e.target.value)}
-            rows={2}
-            placeholder="Ej. Sale mejor por porcion o promo en merienda"
-            className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-2 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none"
-          />
-        </label>
-
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[11px] text-[#a39e97]">
-            Esto alimenta alertas, sugerencias por sector y decisiones de stock.
-          </p>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => {
-                setEditingMetaId(null)
-                setEditingMetaSource(null)
-              }}
-              className="rounded-lg px-2.5 py-2 text-[11px] font-semibold text-[#7d6c64] hover:bg-[#f3efe9]"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={() => void handleMetadataSave(itemId)}
-              disabled={savingMeta}
-              className="flex items-center gap-1 rounded-lg bg-[#3d2c24] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-50"
-            >
-              {savingMeta ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-              Guardar
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  const renderPhysicalCountEditor = (item: StockItem) => {
-    if (editingId !== item.id) return null
-
-    const countedQty = parseFloat(editQty)
-    const hasCount = !Number.isNaN(countedQty) && countedQty >= 0
-    const variance = hasCount ? getVariance(item, countedQty) : null
-    const noteRequired = hasCount ? needsVarianceNote(item, countedQty) : false
-    const source = getStockSource(item)
-
-    return (
-      <div className="border-t border-[#ebe6df] bg-[#fbfaf8] px-3 py-3">
-        <div className="flex items-start gap-2 rounded-xl bg-white p-3 ring-1 ring-[#ebe6df]">
-          <ClipboardCheck className="mt-0.5 size-4 shrink-0 text-[#006d5a]" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-[#3d2c24]">Conteo físico de {item.name}</p>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-[#7d6c64]">
-              {source.kind === 'fudo'
-                ? 'Primero se escribe en Fudo y solo después se actualiza LVE. Si Fudo no confirma, no se guarda.'
-                : 'Este item es Local LVE: no toca Fudo. Usalo solo para descartables o controles internos.'}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-[#ebe6df]">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Sistema</p>
-            <p className="mt-0.5 text-base font-bold tabular-nums text-[#3d2c24]">
-              {formatQty(item.current_qty)}
-            </p>
-            <p className="text-[10px] text-[#a39e97]">{item.unit}</p>
-          </div>
-
-          <label className="rounded-xl bg-white px-3 py-2 ring-1 ring-[#006d5a]/25">
-            <span className="text-[10px] font-bold uppercase tracking-wide text-[#006d5a]">Conteo real</span>
-            <input
-              value={editQty}
-              onChange={(e) => setEditQty(e.target.value)}
-              inputMode="decimal"
-              placeholder="0"
-              className="mt-0.5 w-full bg-transparent text-base font-bold tabular-nums text-[#3d2c24] outline-none placeholder:text-[#c8bfb6]"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleSave(item.id)
-                if (e.key === 'Escape') {
-                  setEditingId(null)
-                  setEditQty('')
-                  setCountNote('')
-                }
-              }}
-            />
-            <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
-          </label>
-
-          <div className={`rounded-xl px-3 py-2 ring-1 ${
-            !variance || variance.abs < 0.001
-              ? 'bg-[#faf8f5] ring-[#ebe6df]'
-              : variance.diff < 0
-                ? 'bg-[#fff7f7] ring-[#f3d0cf]'
-                : 'bg-[#f6fcfa] ring-[#dcefe8]'
-          }`}>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Diferencia</p>
-            <p className={`mt-0.5 text-base font-bold tabular-nums ${
-              !variance || variance.abs < 0.001
-                ? 'text-[#7d6c64]'
-                : variance.diff < 0
-                  ? 'text-[#ea504c]'
-                  : 'text-[#006d5a]'
-            }`}>
-              {variance ? `${variance.diff > 0 ? '+' : ''}${formatQty(variance.diff)}` : '-'}
-            </p>
-            <p className="text-[10px] text-[#a39e97]">{item.unit}</p>
-          </div>
-        </div>
-
-        <label className="mt-3 block space-y-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
-            Nota del conteo {noteRequired ? '(obligatoria)' : '(opcional)'}
-          </span>
-          <textarea
-            value={countNote}
-            onChange={(e) => setCountNote(e.target.value)}
-            rows={2}
-            placeholder="Ej. conteo cierre, caja abierta, merma detectada, proveedor entregó..."
-            className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-2 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none"
-          />
-        </label>
-
-        {noteRequired && (
-          <p className="mt-2 rounded-lg bg-[#fff8eb] px-3 py-2 text-[11px] font-semibold text-[#8b5e34]">
-            La diferencia supera el margen normal. Dejamos nota para auditar si fue venta, merma, error de carga o diferencia física.
-          </p>
-        )}
-
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <button
-            onClick={() => {
-              setEditingId(null)
-              setEditQty('')
-              setCountNote('')
-            }}
-            className="rounded-lg px-3 py-2 text-[11px] font-semibold text-[#7d6c64] hover:bg-[#f3efe9]"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={() => void handleSave(item.id)}
-            disabled={!hasCount || (noteRequired && countNote.trim().length < 6)}
-            className="rounded-lg bg-[#006d5a] px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50"
-          >
-            Guardar conteo
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  const WASTE_REASON_OPTIONS: { value: WasteReason; label: string }[] = [
-    { value: 'vencido', label: 'Venció' },
-    { value: 'roto', label: 'Roto / dañado' },
-    { value: 'consumo_interno', label: 'Consumo interno' },
-    { value: 'otro', label: 'Otro' },
-  ]
-
-  const renderWasteEditor = (item: StockItem) => {
-    if (wastingId !== item.id) return null
-    const source = getStockSource(item)
-    return (
-      <div className="border-t border-[#ebe6df] bg-[#fffaf4] px-3 py-3">
-        <div className="flex items-start gap-2 rounded-xl bg-white p-3 ring-1 ring-[#f1dfba]">
-          <Trash2 className="mt-0.5 size-4 shrink-0 text-[#d4943a]" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-[#3d2c24]">Registrar merma de {item.name}</p>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-[#7d6c64]">
-              {source.kind === 'fudo'
-                ? 'Se descuenta del sistema y se sincroniza con Fudo.'
-                : 'Se descuenta del sistema. Este item es Local LVE.'}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-[#ebe6df]">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Stock actual</p>
-            <p className="mt-0.5 text-base font-bold tabular-nums text-[#3d2c24]">{formatQty(item.current_qty)}</p>
-            <p className="text-[10px] text-[#a39e97]">{item.unit}</p>
-          </div>
-          <label className="rounded-xl bg-white px-3 py-2 ring-1 ring-[#f1dfba]">
-            <span className="text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Cantidad a dar de baja</span>
-            <input
-              value={wasteQty}
-              onChange={(e) => setWasteQty(e.target.value)}
-              inputMode="decimal"
-              placeholder="0"
-              className="mt-0.5 w-full bg-transparent text-base font-bold tabular-nums text-[#3d2c24] outline-none placeholder:text-[#c8bfb6]"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  setWastingId(null)
-                  setWasteQty('')
-                  setWasteReason('')
-                  setWasteNote('')
-                }
-              }}
-            />
-            <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
-          </label>
-        </div>
-
-        <div className="mt-3">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Motivo</span>
-          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-            {WASTE_REASON_OPTIONS.map(({ value, label }) => (
-              <button
-                key={value}
-                onClick={() => setWasteReason(value)}
-                className={`rounded-xl px-2.5 py-2 text-left text-[11px] font-semibold transition-all ${
-                  wasteReason === value
-                    ? 'bg-[#3d2c24] text-white'
-                    : 'bg-[#faf8f5] text-[#7d6c64] hover:bg-[#f3efe9]'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <label className="mt-3 block space-y-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Nota (opcional)</span>
-          <textarea
-            value={wasteNote}
-            onChange={(e) => setWasteNote(e.target.value)}
-            rows={2}
-            placeholder="Ej. encontrado vencido al abrir, se rompió el frasco, degustación..."
-            className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-2 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none"
-          />
-        </label>
-
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <button
-            onClick={() => {
-              setWastingId(null)
-              setWasteQty('')
-              setWasteReason('')
-              setWasteNote('')
-            }}
-            className="rounded-lg px-3 py-2 text-[11px] font-semibold text-[#7d6c64] hover:bg-[#f3efe9]"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={() => void handleWasteSave(item.id)}
-            disabled={savingWaste || !wasteQty || !wasteReason}
-            className="flex items-center gap-1.5 rounded-lg bg-[#d4943a] px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50"
-          >
-            {savingWaste ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-            Registrar merma
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  const renderReviewCard = (card: StockReviewCard, options?: { featured?: boolean }) => {
-    const featured = Boolean(options?.featured)
-    const tone = card.priority === 'critico'
-      ? 'border-[#f3d0cf] bg-[#fff7f7]'
-      : card.priority === 'accion'
-        ? 'border-[#f1dfba] bg-[#fffaf2]'
-        : 'border-[#ebe6df] bg-white'
-    const pill = card.priority === 'critico'
-      ? 'bg-[#fef2f2] text-[#ea504c]'
-      : card.priority === 'accion'
-        ? 'bg-[#fdf6ec] text-[#d4943a]'
-        : 'bg-[#f3efe9] text-[#7d6c64]'
-
-    const onPrimaryAction = () => {
-      if (card.actionHref) {
-        router.push(card.actionHref)
-        return
-      }
-      if (card.primaryAction === 'sync') {
-        setView('radar')
-        void handleFudoSync()
-        return
-      }
-      if (card.primaryAction === 'count' && card.item) {
-        startPhysicalCount(card.item)
-        return
-      }
-      if (card.primaryAction === 'configure' && card.item) {
-        openMetadataEditor(card.item.id, 'item')
-        return
-      }
-      if (card.primaryAction === 'map') {
-        setSourceFilter('unmapped')
-        setView('inventario')
-        return
-      }
-      if (card.primaryAction === 'watch') {
-        setView('conteo')
-        return
-      }
-      setView('radar')
-    }
-
-    const actionLabel: Record<StockReviewCard['primaryAction'], string> = {
-      sync: 'Traer Fudo',
-      count: 'Contar',
-      configure: 'Configurar',
-      map: 'Ver sin mapeo',
-      watch: 'Ver detalle',
-    }
-
-    const source = card.item ? getStockSource(card.item) : null
-
-    return (
-      <div
-        key={card.id}
-        className={`group overflow-hidden rounded-[1.4rem] border ${featured ? 'p-4 shadow-sm' : 'p-3'} ${tone}`}
-      >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${pill}`}>
-                {card.priority === 'critico' ? 'Crítico' : card.priority === 'accion' ? 'Acción' : 'Revisar'}
-              </span>
-              {source && (
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${source.tone}`}>
-                  {source.label}
-                </span>
-              )}
-            </div>
-            <h3 className={`${featured ? 'mt-3 text-lg' : 'mt-2 text-sm'} font-bold leading-snug text-[#3d2c24]`}>
-              {card.title}
-            </h3>
-            <p className={`${featured ? 'mt-2 text-sm' : 'mt-1 text-[12px]'} leading-relaxed text-[#6f665f]`}>
-              {card.detail}
-            </p>
-            {featured && card.item && (
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                <div className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-black/5">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Sistema</p>
-                  <p className="mt-0.5 text-base font-bold tabular-nums text-[#3d2c24]">
-                    {formatQty(card.item.current_qty)}
-                  </p>
-                  <p className="text-[10px] text-[#7d6c64]">{card.item.unit}</p>
-                </div>
-                <div className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-black/5">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Mínimo</p>
-                  <p className="mt-0.5 text-base font-bold tabular-nums text-[#3d2c24]">
-                    {formatQty(card.item.min_qty)}
-                  </p>
-                  <p className="text-[10px] text-[#7d6c64]">{card.item.unit}</p>
-                </div>
-                <div className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-black/5">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Origen</p>
-                  <p className="mt-0.5 truncate text-xs font-bold text-[#3d2c24]">
-                    {source?.kind === 'fudo' ? 'Fudo' : source?.kind === 'local' ? 'Local' : 'Sin mapeo'}
-                  </p>
-                  <p className="text-[10px] text-[#7d6c64]">control</p>
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col gap-1.5 sm:items-end">
-            <button
-              onClick={onPrimaryAction}
-              className={`${featured ? 'rounded-2xl px-4 py-3 text-sm' : 'rounded-xl px-3 py-2 text-[11px]'} flex w-full shrink-0 items-center justify-center gap-1.5 bg-[#3d2c24] font-bold text-white transition-transform group-active:scale-[0.98] sm:w-auto`}
-            >
-              {card.actionLabel ?? actionLabel[card.primaryAction]}
-              <ArrowRight className={featured ? 'size-4' : 'size-3.5'} />
-            </button>
-            {card.priority === 'critico' && card.primaryAction === 'count' && card.item && (
-              <button
-                onClick={() => router.push('/pedidos')}
-                className={`${featured ? 'rounded-2xl px-4 py-3 text-sm' : 'rounded-xl px-3 py-2 text-[11px]'} flex w-full shrink-0 items-center justify-center gap-1.5 bg-[#fdf6ec] font-bold text-[#d4943a] ring-1 ring-[#f1dfba] transition-transform group-active:scale-[0.98] sm:w-auto`}
-              >
-                <ShoppingCart className={featured ? 'size-4' : 'size-3.5'} />
-                Pedir
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    )
   }
 
   const primaryReviewCard = reviewCards[0] ?? null
@@ -1439,6 +574,19 @@ export default function StockPage() {
         Icon: CheckCircle2,
       }
   const FudoStatusIcon = fudoStatusUi.Icon
+
+  const renderReviewCard = (card: StockReviewCard, options?: { featured?: boolean }) => (
+    <ReviewCard
+      key={card.id}
+      card={card}
+      featured={options?.featured}
+      onSync={() => { setView('radar'); void runSync({}) }}
+      onCount={(item) => startPhysicalCount(item)}
+      onConfigure={(itemId) => openMetadataEditor(itemId, 'item')}
+      onMap={() => { setSourceFilter('unmapped'); setView('inventario') }}
+      onWatch={() => setView('conteo')}
+    />
+  )
 
   // Loading
   if (profileLoading || loading) {
@@ -1490,7 +638,7 @@ export default function StockPage() {
               </div>
               {isEncargado && (
                 <button
-                  onClick={() => void handleFudoSync()}
+                  onClick={() => void runSync()}
                   disabled={syncing}
                   className="flex items-center justify-center gap-2 rounded-2xl bg-[#006d5a] px-4 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#005447] disabled:opacity-50"
                 >
@@ -1938,33 +1086,52 @@ export default function StockPage() {
               </span>
             </div>
 
-            {setupIssues.map((issue) => (
-              <div key={issue.id} className="overflow-hidden rounded-lg border border-[#ebe6df] bg-white">
-                <div className="flex items-center justify-between gap-3 px-3 py-2.5">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-semibold text-[#3d2c24]">{issue.stock_item_name}</p>
-                      <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${PRIORITY_STYLES[issue.severity]}`}>
-                        {formatPriority(issue.severity)}
-                      </span>
+            {setupIssues.map((issue) => {
+              const issueItem = items.find((entry) => entry.id === issue.stock_item_id) ?? null
+              const metaOpen = editingMetaId === issue.stock_item_id && editingMetaSource === 'setup'
+              return (
+                <div key={issue.id} className="overflow-hidden rounded-lg border border-[#ebe6df] bg-white">
+                  <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-semibold text-[#3d2c24]">{issue.stock_item_name}</p>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${PRIORITY_STYLES[issue.severity]}`}>
+                          {formatPriority(issue.severity)}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate text-[11px] text-[#7d6c64]">{issue.title}</p>
                     </div>
-                    <p className="mt-0.5 truncate text-[11px] text-[#7d6c64]">{issue.title}</p>
+
+                    <button
+                      onClick={() => openMetadataEditor(issue.stock_item_id, 'setup', {
+                        shelfLife: issue.suggested_shelf_life_days,
+                        category: issue.suggested_category,
+                      })}
+                      className="shrink-0 rounded-lg bg-[#3d2c24] px-2.5 py-2 text-[11px] font-semibold text-white"
+                    >
+                      Configurar
+                    </button>
                   </div>
 
-                  <button
-                    onClick={() => openMetadataEditor(issue.stock_item_id, 'setup', {
-                      shelfLife: issue.suggested_shelf_life_days,
-                      category: issue.suggested_category,
-                    })}
-                    className="shrink-0 rounded-lg bg-[#3d2c24] px-2.5 py-2 text-[11px] font-semibold text-white"
-                  >
-                    Configurar
-                  </button>
+                  {metaOpen && issueItem && (
+                    <MetadataEditor
+                      item={issueItem}
+                      initialShelfLife={metaInitial.shelfLife}
+                      initialCategory={metaInitial.category}
+                      onSaved={() => {
+                        setEditingMetaId(null)
+                        setEditingMetaSource(null)
+                        void handleItemUpdated()
+                      }}
+                      onCancel={() => {
+                        setEditingMetaId(null)
+                        setEditingMetaSource(null)
+                      }}
+                    />
+                  )}
                 </div>
-
-                {renderMetadataEditor(issue.stock_item_id, 'setup')}
-              </div>
-            ))}
+              )
+            })}
           </div>
         </FadeIn>
       )}
@@ -2156,208 +1323,24 @@ export default function StockPage() {
 
               {!isCollapsed && (
                 <div className="space-y-2 p-2">
-                  {catItems.map(item => {
-                    const s = getSemaphore(item)
-                    const c = COLORS[s]
-                    const isEditing = editingId === item.id
-                    const showHistory = historyItemId === item.id
-                    const source = getStockSource(item)
-
-                    return (
-                      <div
-                        key={item.id}
-                        className="overflow-hidden rounded-[1.15rem] border border-[#ebe6df] bg-white transition hover:border-[#d8cfc6] hover:shadow-sm"
-                        style={{ borderLeftWidth: 3, borderLeftColor: c.border.replace('border-[', '').replace(']', '') }}
-                      >
-                        <div className="flex items-center px-3 py-2.5">
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-bold text-[#3d2c24]">{item.name}</p>
-                            {item.suppliers?.name && (
-                              <p className="truncate text-[10px] text-[#a39e97]">{item.suppliers.name}</p>
-                            )}
-                            <div className="mt-1 flex flex-wrap gap-1.5">
-                              <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${source.tone}`}>
-                                {source.label}
-                              </span>
-                              {item.shelf_life_days != null ? (
-                                <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[9px] font-bold text-[#d4943a]">
-                                  Vida util {item.shelf_life_days}d
-                                </span>
-                              ) : isPerishableForUi(item) ? (
-                                <span className="rounded-full bg-[#fef2f2] px-2 py-0.5 text-[9px] font-bold text-[#ea504c]">
-                                  Sin vida util
-                                </span>
-                              ) : null}
-                              {item.current_qty < 0 && (
-                                <span className="rounded-full bg-[#fef2f2] px-2 py-0.5 text-[9px] font-bold text-[#ea504c]">
-                                  {getStockSource(item).kind === 'fudo' ? 'Negativo en Fudo — contar' : 'Negativo — contar'}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {isEditing ? (
-                            <div className="ml-2 flex items-center gap-1">
-                              <span className="rounded-lg bg-[#e8f5f1] px-2 py-1 text-[10px] font-bold text-[#006d5a]">
-                                Contando
-                              </span>
-                              <button
-                                onClick={() => {
-                                  setEditingId(null)
-                                  setEditQty('')
-                                  setCountNote('')
-                                }}
-                                className="rounded-lg px-1.5 py-1.5 text-[#a39e97]"
-                              >
-                                <X className="size-3" />
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="ml-2 flex items-center gap-1">
-                              <button
-                                onClick={() => {
-                                  if (!isEncargado) return
-                                  if (source.kind === 'fudo' && (fudoConnection.state === 'checking' || fudoConnection.state === 'error')) {
-                                    toast.error('Stock bloqueado: primero hay que reconectar con Fudo')
-                                    return
-                                  }
-                                  if (!source.actionable) {
-                                    toast.error('Stock bloqueado: item sin mapeo Fudo ni Local LVE')
-                                    return
-                                  }
-                                  setWastingId(null)
-                                  setEditingId(item.id)
-                                  setEditQty('')
-                                  setCountNote('')
-                                }}
-                                title={source.actionable ? `Editar ${source.label}` : 'Bloqueado: falta mapear a Fudo o marcar Local LVE'}
-                                className={`flex items-center gap-1 rounded-xl px-2.5 py-1.5 ${isEncargado && source.actionable ? 'cursor-pointer bg-[#faf8f5] hover:bg-[#f3efe9] active:scale-95' : ''} ${((source.kind === 'fudo' && (fudoConnection.state === 'checking' || fudoConnection.state === 'error')) || !source.actionable) ? 'opacity-60' : ''}`}
-                              >
-                                <span className={`text-base font-bold tabular-nums ${c.text}`}>{formatQty(item.current_qty)}</span>
-                                <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
-                                <span className="ml-1 rounded-full bg-white px-1.5 py-0.5 text-[9px] font-bold text-[#7d6c64] ring-1 ring-[#ebe6df]">
-                                  Contar
-                                </span>
-                              </button>
-                              <button
-                                onClick={() => loadHistory(item.id)}
-                                className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9]"
-                                title="Ver historial"
-                              >
-                                <History className="size-3.5" />
-                              </button>
-                              {isEncargado && (
-                                <button
-                                  onClick={() => {
-                                    setEditingId(null)
-                                    setEditQty('')
-                                    setCountNote('')
-                                    if (wastingId === item.id) {
-                                      setWastingId(null)
-                                    } else {
-                                      setWastingId(item.id)
-                                      setWasteQty('')
-                                      setWasteReason('')
-                                      setWasteNote('')
-                                    }
-                                  }}
-                                  className={`rounded-lg p-1.5 ${wastingId === item.id ? 'bg-[#fff7f7] text-[#d4943a]' : 'text-[#a39e97] hover:bg-[#f3efe9]'}`}
-                                  title="Registrar merma"
-                                >
-                                  <Trash2 className="size-3.5" />
-                                </button>
-                              )}
-                              <button
-                                onClick={() => openMetadataEditor(item.id, 'item')}
-                                className={`rounded-lg p-1.5 ${editingMetaId === item.id && editingMetaSource === 'item' ? 'bg-[#f3efe9] text-[#3d2c24]' : 'text-[#a39e97] hover:bg-[#f3efe9]'}`}
-                                title="Editar configuración"
-                              >
-                                <Settings2 className="size-3.5" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        {renderPhysicalCountEditor(item)}
-                        {renderWasteEditor(item)}
-                        {renderMetadataEditor(item.id, 'item')}
-
-                        {showHistory && (
-                          <div className="border-t bg-[#faf8f5] px-3 py-2.5">
-                            {loadingHistory ? (
-                              <Loader2 className="size-4 animate-spin text-[#a39e97] mx-auto" />
-                            ) : (
-                              <>
-                                <div className="mb-2 flex gap-1.5">
-                                  {(['movimientos', 'conteos'] as const).map(tab => (
-                                    <button
-                                      key={tab}
-                                      onClick={() => setHistoryTab(tab)}
-                                      className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold transition-colors ${historyTab === tab ? 'bg-[#3d2c24] text-white' : 'bg-[#ebe6df] text-[#7d6c64]'}`}
-                                    >
-                                      {tab === 'movimientos' ? `Movimientos (${historyMovements.length})` : `Conteos (${historyLogs.length})`}
-                                    </button>
-                                  ))}
-                                </div>
-                                {historyTab === 'movimientos' ? (
-                                  historyMovements.length === 0 ? (
-                                    <p className="text-[11px] text-[#a39e97] text-center">Sin movimientos registrados</p>
-                                  ) : (
-                                    <div className="space-y-1.5">
-                                      {historyMovements.map(mv => {
-                                        const isEntry = mv.change > 0
-                                        const reasonLabels: Record<string, string> = {
-                                          compra: 'Compra', merma: 'Merma', waste: 'Merma',
-                                          produccion_input: 'Producción ↓', produccion_output: 'Producción ↑',
-                                          manual_adjustment: 'Ajuste', conteo: 'Conteo', sale: 'Venta',
-                                        }
-                                        return (
-                                          <div key={mv.id} className="flex items-start justify-between gap-2 text-[11px]">
-                                            <div className="min-w-0 flex-1">
-                                              <span className={`font-bold ${isEntry ? 'text-[#006d5a]' : 'text-[#ea504c]'}`}>
-                                                {isEntry ? '+' : ''}{mv.change > 0 ? `+${mv.change}` : mv.change}
-                                              </span>
-                                              <span className="ml-1.5 rounded-full bg-[#ebe6df] px-1.5 py-0.5 text-[9px] font-semibold text-[#7d6c64]">
-                                                {reasonLabels[mv.reason] ?? mv.reason}
-                                              </span>
-                                              {mv.note && <p className="mt-0.5 truncate text-[10px] text-[#a39e97]">{mv.note}</p>}
-                                            </div>
-                                            <span className="shrink-0 text-[10px] text-[#a39e97]">
-                                              {format(new Date(mv.created_at), 'd MMM HH:mm', { locale: es })}
-                                            </span>
-                                          </div>
-                                        )
-                                      })}
-                                    </div>
-                                  )
-                                ) : (
-                                  historyLogs.length === 0 ? (
-                                    <p className="text-[11px] text-[#a39e97] text-center">Sin conteos registrados</p>
-                                  ) : (
-                                    <div className="space-y-1.5">
-                                      {historyLogs.map(log => (
-                                        <div key={log.id} className="flex items-center justify-between text-[11px]">
-                                          <div className="flex items-center gap-1.5">
-                                            <User className="size-2.5 text-[#a39e97]" />
-                                            <span className="font-medium text-[#3d2c24]">{log.profiles?.first_name ?? '?'}</span>
-                                            <span className="text-[#a39e97]">{log.old_qty} → {log.new_qty}</span>
-                                          </div>
-                                          <span className="flex items-center gap-1 text-[#a39e97]">
-                                            <Clock className="size-2.5" />
-                                            {format(new Date(log.created_at), 'd MMM HH:mm', { locale: es })}
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )
-                                )}
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                  {catItems.map(item => (
+                    <StockItemRow
+                      key={item.id}
+                      item={item}
+                      isEncargado={isEncargado}
+                      fudoState={fudoConnection.state}
+                      profile={profile ? { id: profile.id, first_name: profile.first_name } : null}
+                      countOpen={editingId === item.id}
+                      wasteOpen={wastingId === item.id}
+                      metaOpen={editingMetaId === item.id && editingMetaSource === 'item'}
+                      onRequestCount={() => setEditingId(item.id)}
+                      onCloseCount={() => setEditingId(null)}
+                      onRequestWaste={() => setWastingId(item.id)}
+                      onCloseWaste={() => setWastingId(null)}
+                      onToggleMeta={() => openMetadataEditor(item.id, 'item')}
+                      onUpdated={() => void handleItemUpdated()}
+                    />
+                  ))}
                 </div>
               )}
             </section>
