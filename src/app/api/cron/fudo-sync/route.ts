@@ -16,7 +16,9 @@ import { importFudoSales } from '@/lib/fudo/sales-sync'
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60 // Allow up to 60s for full sync
+// El sync completo (ventas + stock + snapshot + auditoría) supera los 60s;
+// el 2026-07-14 el cron murió a mitad de camino por este límite.
+export const maxDuration = 300
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
@@ -56,15 +58,6 @@ export async function GET(request: NextRequest) {
 
     // ── 2) Sync stock from Fudo ──
     const stockResult = await syncFromFudo(admin)
-    let auditSummary: Record<string, unknown> | null = null
-    let auditError: string | null = null
-    try {
-      const { runFudoAudit } = await import('@/lib/fudo/audit')
-      const audit = await runFudoAudit(admin)
-      auditSummary = audit.summary
-    } catch (err) {
-      auditError = err instanceof Error ? err.message : 'No se pudo auditar Fudo'
-    }
 
     // ── 3) Snapshot diario de stock (base del cálculo de mermas) ──
     let snapshotSaved = false
@@ -92,6 +85,17 @@ export async function GET(request: NextRequest) {
       }
     } catch (err) {
       snapshotError = err instanceof Error ? err.message : 'Error al guardar snapshot'
+    }
+
+    // ── 4) Auditoría de discrepancias (lo menos crítico va último) ──
+    let auditSummary: Record<string, unknown> | null = null
+    let auditError: string | null = null
+    try {
+      const { runFudoAudit } = await import('@/lib/fudo/audit')
+      const audit = await runFudoAudit(admin)
+      auditSummary = audit.summary
+    } catch (err) {
+      auditError = err instanceof Error ? err.message : 'No se pudo auditar Fudo'
     }
 
     const elapsedMs = Date.now() - startTime

@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
-import { fudo, type FudoSale } from '@/lib/fudoClient'
+import { fudo } from '@/lib/fudoClient'
 import {
   createFudoSyncEvent,
   finishFudoSyncEvent,
@@ -56,40 +56,71 @@ export async function importFudoSales(
   })
 
   try {
-    const fudoSales: FudoSale[] = await fudo.getSales({ from: options.from, to: options.to })
-    result.totalSales = fudoSales.length
-
-    if (fudoSales.length === 0) {
-      await finishFudoSyncEvent(admin, eventId, 'success', { responsePayload: result })
-      return result
-    }
-
+    // Una sola pasada paginada con include=items.product: el endpoint
+    // /sales/{id}/items devuelve 404 en la API real de Fudo (verificado
+    // 2026-07-14) y además hacía N+1 requests que superaban el timeout.
     const flatRows: FudoSaleRow[] = []
+    let salesCount = 0
 
-    for (const sale of fudoSales.slice(0, options.limit ?? 300)) {
-      try {
-        const items = await fudo.getSaleItems(sale.id)
-        for (const item of items) {
-          const prodRel = (item._relationships?.product?.data ?? {}) as { id?: string }
+    type JsonApiRow = { type: string; id: string; attributes?: Record<string, unknown>; relationships?: Record<string, { data: unknown }> }
+
+    let page = 1
+    while (page <= 30) {
+      const res = await fudo.fetch<{ data?: JsonApiRow[]; included?: JsonApiRow[] }>(
+        `/sales?include=items.product&sort=-createdAt&page[size]=200&page[number]=${page}`
+      )
+      const salesData = res.data ?? []
+      const included = res.included ?? []
+
+      const itemMap = new Map<string, JsonApiRow>()
+      for (const r of included) {
+        if (r.type === 'Item') itemMap.set(r.id, r)
+      }
+
+      let allBeforeRange = salesData.length > 0
+      for (const sale of salesData) {
+        const createdAt = String(sale.attributes?.createdAt ?? '')
+        const argDate = new Date(createdAt).toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+
+        if (options.from && argDate >= options.from) allBeforeRange = false
+        if (options.from && argDate < options.from) continue
+        if (!options.from) allBeforeRange = false
+        if (options.to && argDate > options.to) continue
+        if (String(sale.attributes?.saleState) !== 'CLOSED') continue
+
+        salesCount++
+        const refs = (sale.relationships?.items?.data ?? []) as Array<{ id: string }>
+        for (const ref of refs) {
+          const item = itemMap.get(ref.id)
+          if (!item || item.attributes?.canceled) continue
+          const prodRef = (item.relationships as Record<string, { data: unknown }> | undefined)?.product?.data as { id?: string } | undefined
           flatRows.push({
             fudo_sale_item_id: item.id,
             fudo_ticket_id: sale.id,
-            fudo_product_id: String(prodRel?.id ?? item.id),
-            quantity: Number(item.quantity) || 1,
-            sold_at: String(sale.createdAt ?? sale.closedAt ?? new Date().toISOString()),
+            fudo_product_id: String(prodRef?.id ?? item.id),
+            quantity: Number(item.attributes?.quantity ?? 1) || 1,
+            sold_at: createdAt || new Date().toISOString(),
             raw_payload: {
               sale_id: sale.id,
               sale_item_id: item.id,
-              item_name: item.name,
-              price: item.price,
-              sale_type: sale.saleType,
+              item_name: item.attributes?.name ?? null,
+              price: Number(item.attributes?.price ?? 0),
+              sale_type: sale.attributes?.saleType ?? null,
               operation: options.operation ?? 'sales_import',
             },
           })
         }
-      } catch (err) {
-        result.errors.push(`Venta ${sale.id}: ${err instanceof Error ? err.message : 'error al leer items'}`)
       }
+
+      if (allBeforeRange || salesData.length < 200) break
+      page++
+    }
+
+    result.totalSales = salesCount
+
+    if (salesCount === 0) {
+      await finishFudoSyncEvent(admin, eventId, 'success', { responsePayload: result })
+      return result
     }
 
     result.totalItems = flatRows.length
