@@ -91,18 +91,20 @@ const SOCIO_MORE: ExpandableNavItem = {
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Operación del local',
+      label: 'Equipo',
       items: [
-        { label: 'Ventas', href: '/ventas', icon: BarChart3, description: 'Facturación y tickets sincronizados desde Fudo' },
-        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert, description: 'Incidencias que requieren decisión' },
         { label: 'Equipo', href: '/equipo', icon: Users, description: 'Personas presentes, roles y estado del turno' },
         { label: 'Turnos', href: '/equipo/turnos', icon: Calendar, description: 'Planificación semanal del equipo' },
+        { label: 'Asistencia', href: '/equipo/asistencia', icon: ScanFace, description: 'Fichajes y correcciones de hoy' },
+        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert, description: 'Incidencias que requieren decisión' },
       ],
     },
     {
-      label: 'Sectores',
+      label: 'Operación',
       items: [
+        { label: 'Ventas', href: '/ventas', icon: BarChart3, description: 'Facturación y tickets sincronizados desde Fudo' },
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Tareas y control del servicio' },
+        { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Control de roturas, faltantes y reposición' },
       ],
     },
@@ -110,7 +112,7 @@ const SOCIO_MORE: ExpandableNavItem = {
       label: 'Administración',
       items: [
         { label: 'Control', href: '/admin', icon: LayoutDashboard, description: 'Panel administrativo general' },
-        { label: 'Asistencia', href: '/admin/asistencia', icon: ScanFace, description: 'Fichajes, anomalías y correcciones' },
+        { label: 'Asistencia avanzada', href: '/admin/asistencia', icon: Shield, description: 'Dispositivos, WiFi y configuración' },
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Datos de proveedores y condiciones' },
         { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp, description: 'Análisis de consumo y desvíos' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Recetas, insumos y preparación' },
@@ -134,19 +136,26 @@ const ENCARGADO_MORE: ExpandableNavItem = {
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Operación del local',
+      label: 'Equipo',
       items: [
-        { label: 'Salón', href: '/salon', icon: Armchair, description: 'Servicio y tareas del salón' },
         { label: 'Equipo', href: '/equipo', icon: Users, description: 'Presentes, ausentes y roles' },
+        { label: 'Turnos', href: '/equipo/turnos', icon: Calendar, description: 'Planificación semanal del equipo' },
+        { label: 'Asistencia', href: '/equipo/asistencia', icon: ScanFace, description: 'Fichajes y correcciones de hoy' },
         { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert, description: 'Problemas que requieren acción' },
-        { label: 'Asistencia', href: '/admin/asistencia', icon: ScanFace, description: 'Fichajes y anomalías' },
       ],
     },
     {
-      label: 'Soporte de inventario',
+      label: 'Operación',
+      items: [
+        { label: 'Salón', href: '/salon', icon: Armchair, description: 'Servicio y tareas del salón' },
+        { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
+        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Faltantes, roturas y reposición' },
+      ],
+    },
+    {
+      label: 'Inventario',
       items: [
         { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp, description: 'Consumos, rindes y desvíos' },
-        { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Faltantes, roturas y reposición' },
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Contactos y condiciones de compra' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Insumos y preparación estándar' },
         { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Cambios por aprobar' },
@@ -162,16 +171,23 @@ const ENCARGADO_MORE: ExpandableNavItem = {
   ],
 }
 
-// CHEF — recetario y herramientas mientras cocina no está activo
+// CHEF — producción, stock y recetario
 const CHEF_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
-      label: 'Herramientas',
+      label: 'Cocina',
       items: [
+        { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
+        { label: 'Stock cocina', href: '/cocina/stock', icon: Package, description: 'Faltantes e insumos del sector' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
         { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Cambios por revisar' },
+      ],
+    },
+    {
+      label: 'Herramientas',
+      items: [
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
         { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
@@ -179,15 +195,22 @@ const CHEF_MORE: ExpandableNavItem = {
   ],
 }
 
-// COCINA — igual que chef simplificado
+// COCINA — producción y stock del sector
 const COCINA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
     {
+      label: 'Cocina',
+      items: [
+        { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
+        { label: 'Stock cocina', href: '/cocina/stock', icon: Package, description: 'Faltantes e insumos del sector' },
+        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
+      ],
+    },
+    {
       label: 'Herramientas',
       items: [
-        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
         { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
