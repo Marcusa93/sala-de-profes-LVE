@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Loader2, Save } from 'lucide-react'
 import { toast } from 'sonner'
 import type { StockItem } from '@/lib/hooks/use-stock'
-import { STOCK_CATEGORY_OPTIONS } from '@/lib/constants'
+import { STOCK_CATEGORY_OPTIONS, STOCK_UNITS } from '@/lib/constants'
 import type { StockCategoryValue } from '@/types/database'
 
 type Props = {
@@ -19,12 +19,14 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
   const [metaShelfLife, setMetaShelfLife] = useState(String(initialShelfLife ?? item.shelf_life_days ?? ''))
   const [metaCategory, setMetaCategory] = useState<StockCategoryValue | ''>(initialCategory ?? item.category)
   const [metaNotes, setMetaNotes] = useState(item.notes ?? '')
+  const [metaUnit, setMetaUnit] = useState(item.unit ?? 'kg')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     setMetaShelfLife(String(initialShelfLife ?? item.shelf_life_days ?? ''))
     setMetaCategory(initialCategory ?? item.category)
     setMetaNotes(item.notes ?? '')
+    setMetaUnit(item.unit ?? 'kg')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id])
 
@@ -36,6 +38,7 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
         shelf_life_days: shelfLife ? Number(shelfLife) : null,
         category: metaCategory || undefined,
         notes: metaNotes.trim() || null,
+        unit: metaUnit,
       }
 
       const res = await fetch(`/api/stock/items/${item.id}`, {
@@ -57,7 +60,22 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
 
   return (
     <div className="border-t bg-[#faf8f5] px-3 py-3 space-y-3">
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-2">
+        <label className="space-y-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
+            Unidad
+          </span>
+          <select
+            value={metaUnit}
+            onChange={(e) => setMetaUnit(e.target.value)}
+            className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2 py-2 text-sm text-[#3d2c24] focus:border-[#006d5a] focus:outline-none"
+          >
+            {STOCK_UNITS.map((u) => (
+              <option key={u.value} value={u.value}>{u.value}</option>
+            ))}
+          </select>
+        </label>
+
         <label className="space-y-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
             Vida util (dias)
@@ -78,7 +96,7 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
           <select
             value={metaCategory}
             onChange={(e) => setMetaCategory(e.target.value as StockCategoryValue)}
-            className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-2 text-sm text-[#3d2c24] focus:border-[#006d5a] focus:outline-none"
+            className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2 py-2 text-sm text-[#3d2c24] focus:border-[#006d5a] focus:outline-none"
           >
             <option value="" disabled>Elegir</option>
             {STOCK_CATEGORY_OPTIONS.map((option) => (

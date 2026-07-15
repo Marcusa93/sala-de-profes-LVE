@@ -3,11 +3,14 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
 import { STOCK_CATEGORY_OPTIONS } from '@/lib/constants'
+import { STOCK_UNITS } from '@/lib/constants'
 import type { StockCategoryValue } from '@/types/database'
 
 const VALID_CATEGORIES = new Set(
   STOCK_CATEGORY_OPTIONS.map((option) => option.value),
 )
+
+const VALID_UNITS = new Set(STOCK_UNITS.map((u) => u.value))
 
 export async function PATCH(
   request: NextRequest,
@@ -70,6 +73,13 @@ export async function PATCH(
       update.category = body.category as StockCategoryValue
     }
 
+    if ('unit' in body) {
+      if (!body.unit || typeof body.unit !== 'string' || !VALID_UNITS.has(body.unit)) {
+        return NextResponse.json({ error: 'Unidad inválida' }, { status: 400 })
+      }
+      update.unit = body.unit
+    }
+
     if ('min_qty' in body) {
       const value = body.min_qty == null || body.min_qty === '' ? 0 : Number(body.min_qty)
       if (!Number.isFinite(value) || value < 0 || value > 999999) {
@@ -129,7 +139,7 @@ export async function PATCH(
       .from('stock_items')
       .update(update)
       .eq('id', id)
-      .select('id, name, category, min_qty, supplier_id, purchase_lead_time_days, shelf_life_days, notes')
+      .select('id, name, unit, category, min_qty, supplier_id, purchase_lead_time_days, shelf_life_days, notes')
       .single()
 
     if (error) throw error
