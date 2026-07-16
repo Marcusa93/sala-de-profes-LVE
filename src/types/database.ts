@@ -2609,6 +2609,7 @@ export type Database = {
           fudo_skip: boolean
           id: string
           is_active: boolean
+          is_produced: boolean
           last_counted_at: string | null
           last_ordered_at: string | null
           min_qty: number
@@ -2632,6 +2633,7 @@ export type Database = {
           fudo_skip?: boolean
           id?: string
           is_active?: boolean
+          is_produced?: boolean
           last_counted_at?: string | null
           last_ordered_at?: string | null
           min_qty?: number
@@ -2655,6 +2657,7 @@ export type Database = {
           fudo_skip?: boolean
           id?: string
           is_active?: boolean
+          is_produced?: boolean
           last_counted_at?: string | null
           last_ordered_at?: string | null
           min_qty?: number

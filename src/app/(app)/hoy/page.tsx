@@ -12,8 +12,9 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   ShoppingCart, Truck, ChefHat, ClipboardList, ChevronRight,
-  AlertTriangle, Check, Loader2, Sparkles,
+  AlertTriangle, Check, Loader2, Sparkles, Minus, Plus, Ban, Send,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
@@ -44,6 +45,9 @@ export default function HoyPage() {
   const { profile, loading: profileLoading } = useProfileContext()
   const [data, setData] = useState<HoyData | null>(null)
   const [loading, setLoading] = useState(true)
+  // Armador manual de producción: cantidades editables sobre la sugerencia
+  const [planQty, setPlanQty] = useState<Record<string, number>>({})
+  const [sendingPlan, setSendingPlan] = useState(false)
 
   useEffect(() => {
     if (!profile) return
@@ -72,10 +76,65 @@ export default function HoyPage() {
         countNegative: stock.filter(i => Number(i.current_qty) < 0).slice(0, 6),
         countCritical: stock.filter(i => isStockCritical(Number(i.current_qty ?? 0), Number(i.min_qty ?? 0))).length,
       })
+      // Las sugerencias IA son el punto de partida editable del armador
+      const initialQty: Record<string, number> = {}
+      for (const item of (planRes?.items ?? []) as PlanItem[]) initialQty[item.stock_item_id] = item.suggested_qty
+      setPlanQty(initialQty)
       setLoading(false)
     }
     load()
   }, [profile])
+
+  // --- Armador de producción: acciones manuales ---
+
+  async function markAsBought(item: PlanItem) {
+    const supabase = createClient()
+    const { error } = await supabase.from('stock_items').update({ is_produced: false }).eq('id', item.stock_item_id)
+    if (error) { toast.error('No se pudo actualizar'); return }
+    setData(prev => prev ? {
+      ...prev,
+      plan: prev.plan ? { ...prev.plan, items: prev.plan.items.filter(i => i.stock_item_id !== item.stock_item_id) } : null,
+    } : prev)
+    toast.success(`${item.name} marcado como comprado a proveedor — va a aparecer en Pedir`)
+  }
+
+  async function sendPlanToKitchen() {
+    if (!profile || !data?.plan) return
+    const lines = data.plan.items
+      .filter(i => (planQty[i.stock_item_id] ?? 0) > 0)
+      .map(i => `• ${i.name}: ${planQty[i.stock_item_id]} ${i.unit}`)
+    if (lines.length === 0) { toast.error('No hay cantidades cargadas'); return }
+
+    setSendingPlan(true)
+    try {
+      const supabase = createClient()
+      const body = [
+        `Plan de producción para hoy ${format(new Date(), "EEEE d 'de' MMMM", { locale: es })}:`,
+        '',
+        ...lines,
+        '',
+        'Registrar lo producido en Cocina → Producción.',
+      ].join('\n')
+
+      const { error } = await supabase.from('announcements').insert({
+        author_id: profile.id,
+        type: 'operativo',
+        priority: 'alta',
+        title: '👨‍🍳 Plan de producción de hoy',
+        body,
+        scope: 'role',
+        target_role: 'cocina',
+        is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      })
+      if (error) throw error
+      toast.success('Plan enviado a cocina 📣')
+    } catch {
+      toast.error('No se pudo enviar el plan')
+    } finally {
+      setSendingPlan(false)
+    }
+  }
 
   if (profileLoading || (loading && !data)) return <LoadingState message="Armando tu día..." />
 
@@ -143,20 +202,69 @@ export default function HoyPage() {
       cta: 'Ver plan y producir',
       tone: (data.plan?.sellingWithoutStock.length ?? 0) > 0 ? 'urgent' : (data.plan?.items.length ?? 0) > 0 ? 'action' : 'ok',
       body: data.plan ? (
-        <div className="space-y-1">
+        <div className="space-y-2">
           {data.plan.sellingWithoutStock.length > 0 && (
             <p className="flex items-center gap-1 text-[11px] font-bold text-[#ea504c]">
               <AlertTriangle className="size-3" />
               Venden sin stock digital: {data.plan.sellingWithoutStock.slice(0, 3).map(s => s.name).join(', ')} — contar primero
             </p>
           )}
-          {data.plan.items.slice(0, 4).map(i => (
-            <p key={i.stock_item_id} className="text-xs text-[#3d2c24]">
-              🥟 <span className="font-bold">{i.name}</span>: +{i.suggested_qty} {i.unit}
-            </p>
-          ))}
+
+          {/* Armador manual: la IA sugiere, vos decidís con +/- */}
+          {data.plan.items.map(i => {
+            const qty = planQty[i.stock_item_id] ?? 0
+            return (
+              <div key={i.stock_item_id} className="flex items-center gap-2 rounded-xl bg-[#faf8f5] px-2.5 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-[#3d2c24]">{i.name}</p>
+                  <p className="truncate text-[10px] text-[#a39e97]">{i.reason}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    onClick={() => setPlanQty(prev => ({ ...prev, [i.stock_item_id]: Math.max(0, (prev[i.stock_item_id] ?? 0) - 1) }))}
+                    className="flex size-7 items-center justify-center rounded-lg bg-white ring-1 ring-[#ebe6df] active:scale-90"
+                  >
+                    <Minus className="size-3 text-[#3d2c24]" />
+                  </button>
+                  <span className={`w-9 text-center text-sm font-bold tabular-nums ${qty > 0 ? 'text-[#006d5a]' : 'text-[#a39e97]'}`}>
+                    {qty}
+                  </span>
+                  <button
+                    onClick={() => setPlanQty(prev => ({ ...prev, [i.stock_item_id]: (prev[i.stock_item_id] ?? 0) + 1 }))}
+                    className="flex size-7 items-center justify-center rounded-lg bg-white ring-1 ring-[#ebe6df] active:scale-90"
+                  >
+                    <Plus className="size-3 text-[#3d2c24]" />
+                  </button>
+                  <button
+                    onClick={() => markAsBought(i)}
+                    title="No se produce acá: se compra a un proveedor"
+                    className="ml-1 flex size-7 items-center justify-center rounded-lg bg-white ring-1 ring-[#f3d0cf] active:scale-90"
+                  >
+                    <Ban className="size-3 text-[#ea504c]" />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+
+          {data.plan.items.length > 0 && (
+            <>
+              <button
+                onClick={sendPlanToKitchen}
+                disabled={sendingPlan}
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#006d5a] py-2.5 text-xs font-bold text-white active:scale-[0.98] disabled:opacity-50"
+              >
+                {sendingPlan ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                Enviar plan a cocina
+              </button>
+              <p className="text-center text-[10px] text-[#a39e97]">
+                El botón 🚫 marca un producto como &quot;comprado a proveedor&quot; y lo pasa a Pedir.
+              </p>
+            </>
+          )}
+
           {data.plan.items.length === 0 && data.plan.sellingWithoutStock.length === 0 && (
-            <p className="text-xs text-[#7d6c64]">El stock cubre la venta esperada de hoy.</p>
+            <p className="text-xs text-[#7d6c64]">El stock de lo que producís cubre la venta esperada de hoy.</p>
           )}
         </div>
       ) : (

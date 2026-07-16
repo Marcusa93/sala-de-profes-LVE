@@ -10,8 +10,8 @@ import { fetchMonthSales, type MonthSale } from '@/lib/fudo/month-sales'
 
 const DOW_LABELS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
 
-// Categorías que produce la casa (lo que tiene sentido "producir")
-const PRODUCIBLE_CATEGORIES = ['elaborados', 'panaderia']
+// Solo entra al plan lo que la casa PRODUCE (stock_items.is_produced).
+// Lo comprado hecho (budines de tercero, etc.) va al copiloto de compras.
 
 export type ProductionPlanItem = {
   stock_item_id: string
@@ -75,13 +75,13 @@ export async function buildProductionPlan(admin: SupabaseClient): Promise<Produc
     }
   }
 
-  // --- 2) Stock actual de los producibles ---
+  // --- 2) Stock actual de lo que la casa produce ---
   const { data: stockItems } = await admin
     .from('stock_items')
     .select('id, name, unit, category, current_qty, shelf_life_days, fudo_product_id')
     .eq('is_active', true)
+    .eq('is_produced', true)
     .not('fudo_product_id', 'is', null)
-    .in('category', PRODUCIBLE_CATEGORIES)
 
   // --- 3) Producción ya en curso (no sugerir lo que ya se está haciendo) ---
   const { data: openOrders } = await admin
