@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from 'react'
 import { isManagerOrAbove } from '@/lib/roles'
 import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, eachDayOfInterval } from 'date-fns'
 import { es } from 'date-fns/locale/es'
-import { ChevronLeft, ChevronRight, Plus, Loader2, ShieldAlert, Upload } from 'lucide-react'
+import Link from 'next/link'
+import { ChevronLeft, ChevronRight, Plus, Loader2, ShieldAlert, Upload, CalendarDays } from 'lucide-react'
 import { toast } from 'sonner'
 import { errorToast } from '@/lib/toast-helpers'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -322,9 +323,16 @@ export default function EquipoTurnosPage() {
           <p className="section-label mt-2">Gestiona los horarios de todo tu equipo</p>
         </div>
         <div className="flex gap-2">
+          <Link
+            href="/equipo/turnos/cargar"
+            className="flex items-center gap-1.5 rounded-xl bg-[#3d2c24] px-3 py-2 text-xs font-semibold text-white transition-transform active:scale-95"
+          >
+            <CalendarDays className="size-4" />
+            <span className="hidden sm:inline">Cargar semana</span>
+          </Link>
           <label className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-xs font-semibold text-[#3d2c24] transition-colors hover:border-[#006d5a] hover:text-[#006d5a]">
             {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-            <span className="hidden sm:inline">Subir Excel</span>
+            <span className="hidden sm:inline">Excel</span>
             <input type="file" accept=".xlsx,.xls,.csv" onChange={handleExcelUpload} className="hidden" disabled={uploading} />
           </label>
           <button onClick={openCreateDialog} className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#005a4a]">
