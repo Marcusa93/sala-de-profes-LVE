@@ -5,8 +5,8 @@ import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   ShoppingCart, Truck, Check, X, Phone, MessageCircle,
-  Coffee, UtensilsCrossed, ChevronDown, ChevronUp,
-  Loader2, Package, Clock, Filter, AlertTriangle, Search,
+  ChevronDown, ChevronUp,
+  Loader2, Package, Clock, AlertTriangle, Search,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -96,7 +96,8 @@ export default function PedidosPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [stockItems, setStockItems] = useState<StockItem[]>([])
-  const [filter, setFilter] = useState<'all' | 'barra' | 'cocina'>('all')
+  // Un paso por pantalla: pedir → en camino → recibido (el ciclo real)
+  const [step, setStep] = useState<'pedir' | 'camino' | 'recibido'>('pedir')
   const [assignDialog, setAssignDialog] = useState<{ order: Order } | null>(null)
   const [receiveDialog, setReceiveDialog] = useState<{ order: Order } | null>(null)
   const [expandedSupplier, setExpandedSupplier] = useState<number | null>(null)
@@ -125,20 +126,14 @@ export default function PedidosPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // All orders filtered
-  const allOrders = useMemo(() => {
-    const combined = [...barOrders, ...kitchenOrders]
-    if (filter === 'barra') return combined.filter((o) => o.source === 'barra')
-    if (filter === 'cocina') return combined.filter((o) => o.source === 'cocina')
-    return combined
-  }, [barOrders, kitchenOrders, filter])
+  const allOrders = useMemo(() => [...barOrders, ...kitchenOrders], [barOrders, kitchenOrders])
 
-  // Group by supplier
+  // Agrupar por proveedor SOLO lo pendiente de pedir (el paso "Pedir")
   const grouped = useMemo(() => {
     const supplierMap = new Map<number, { supplier: Supplier; orders: Order[] }>()
     const noSupplier: Order[] = []
 
-    for (const order of allOrders) {
+    for (const order of allOrders.filter((o) => o.status === 'pending')) {
       if (order.supplier_id) {
         const supp = suppliers.find((s) => s.id === order.supplier_id)
         if (supp) {
@@ -235,65 +230,41 @@ export default function PedidosPage() {
         <p className="section-label mt-0.5">Pedidos de barra y cocina</p>
       </FadeIn>
 
-      {/* KPIs */}
+      {/* Los 3 pasos del ciclo — un paso por pantalla */}
       <FadeIn delay={0.05}>
-        <div className="grid grid-cols-4 gap-2">
-          <div className="rounded-xl bg-[#fdf6ec] p-3 text-center">
-            <p className="font-display text-lg font-bold tabular-nums text-[#d4943a]"><AnimatedNumber value={pending.length} /></p>
-            <p className="text-[8px] font-semibold uppercase tracking-wider text-[#d4943a]">Pendientes</p>
-          </div>
-          <div className="rounded-xl bg-[#eef4fc] p-3 text-center">
-            <p className="font-display text-lg font-bold tabular-nums text-[#4a90d9]"><AnimatedNumber value={ordered.length} /></p>
-            <p className="text-[8px] font-semibold uppercase tracking-wider text-[#4a90d9]">Pedidos</p>
-          </div>
-          <div className="rounded-xl bg-[#e8f5f1] p-3 text-center">
-            <p className="font-display text-lg font-bold tabular-nums text-[#006d5a]"><AnimatedNumber value={received.length} /></p>
-            <p className="text-[8px] font-semibold uppercase tracking-wider text-[#006d5a]">Recibidos</p>
-          </div>
-          <div className={cn('rounded-xl p-3 text-center', grouped.noSupplier.length > 0 ? 'bg-[#fef2f2]' : 'bg-[#f3efe9]')}>
-            <p className={cn('font-display text-lg font-bold tabular-nums', grouped.noSupplier.length > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]')}>
-              <AnimatedNumber value={grouped.noSupplier.length} />
-            </p>
-            <p className={cn('text-[8px] font-semibold uppercase tracking-wider', grouped.noSupplier.length > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]')}>
-              Sin asignar
-            </p>
-          </div>
-        </div>
-      </FadeIn>
-
-      {/* AI Purchase Order Copilot */}
-      {canManage && (
-        <FadeIn delay={0.08}>
-          <PurchaseOrderCopilot />
-        </FadeIn>
-      )}
-
-      {/* Filter */}
-      <FadeIn delay={0.10}>
-        <div className="flex gap-1.5">
-          {(['all', 'barra', 'cocina'] as const).map((f) => (
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            { key: 'pedir' as const, label: 'Pedir', count: pending.length, Icon: ShoppingCart, tone: '#d4943a' },
+            { key: 'camino' as const, label: 'En camino', count: ordered.length, Icon: Truck, tone: '#4a90d9' },
+            { key: 'recibido' as const, label: 'Recibidos', count: received.length, Icon: Check, tone: '#006d5a' },
+          ]).map(({ key, label, count, Icon, tone }) => (
             <button
-              key={f}
-              onClick={() => setFilter(f)}
+              key={key}
+              onClick={() => setStep(key)}
               className={cn(
-                'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all',
-                filter === f ? 'bg-[#006d5a] text-white' : 'bg-secondary text-muted-foreground',
+                'rounded-2xl p-3 text-center transition-all ring-1',
+                step === key ? 'bg-white shadow-sm' : 'bg-[#faf8f5] ring-transparent opacity-60',
               )}
+              style={step === key ? { boxShadow: `inset 0 -3px 0 ${tone}`, borderColor: tone } : undefined}
             >
-              {f === 'all' && <Filter className="size-3" />}
-              {f === 'barra' && <Coffee className="size-3" />}
-              {f === 'cocina' && <UtensilsCrossed className="size-3" />}
-              {f === 'all' ? 'Todos' : f === 'barra' ? 'Barra' : 'Cocina'}
-              <span className="tabular-nums">
-                ({f === 'all' ? allOrders.length : allOrders.filter((o) => o.source === f).length})
-              </span>
+              <Icon className="mx-auto size-4" style={{ color: tone }} />
+              <p className="mt-1 font-display text-lg font-bold tabular-nums" style={{ color: tone }}>
+                <AnimatedNumber value={count} />
+              </p>
+              <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">{label}</p>
             </button>
           ))}
         </div>
       </FadeIn>
 
-      {/* Grouped by supplier */}
-      {grouped.groups.map(({ supplier, orders }) => {
+      {/* PASO 1 — PEDIR: sugerencias IA + pendientes agrupados por proveedor */}
+      {step === 'pedir' && canManage && (
+        <FadeIn delay={0.08}>
+          <PurchaseOrderCopilot />
+        </FadeIn>
+      )}
+
+      {step === 'pedir' && grouped.groups.map(({ supplier, orders }) => {
         const isExpanded = expandedSupplier === supplier.id
         const whatsappUrl = buildWhatsAppUrl(supplier, orders)
 
@@ -363,7 +334,7 @@ export default function PedidosPage() {
       })}
 
       {/* Unassigned orders */}
-      {grouped.noSupplier.length > 0 && (
+      {step === 'pedir' && grouped.noSupplier.length > 0 && (
         <FadeIn>
           <div className="rounded-2xl bg-white ring-1 ring-[#ea504c]/30 overflow-hidden">
             <div className="flex items-center gap-3 bg-[#fef2f2]/50 px-4 py-3">
@@ -391,14 +362,74 @@ export default function PedidosPage() {
         </FadeIn>
       )}
 
-      {allOrders.length === 0 && (
+      {step === 'pedir' && pending.length === 0 && (
         <FadeIn>
-          <div className="flex flex-col items-center py-12 text-center">
+          <div className="flex flex-col items-center py-10 text-center">
             <ShoppingCart className="size-10 text-[#ebe6df]" />
-            <p className="mt-4 text-sm font-medium text-[#a39e97]">Sin pedidos pendientes</p>
-            <p className="mt-1 text-xs text-[#a39e97]/70">Los pedidos de barra y cocina aparecerán acá</p>
+            <p className="mt-4 text-sm font-medium text-[#a39e97]">Nada pendiente de pedir</p>
+            <p className="mt-1 text-xs text-[#a39e97]/70">Lo que pida barra o cocina aparece acá, agrupado por proveedor</p>
           </div>
         </FadeIn>
+      )}
+
+      {/* PASO 2 — EN CAMINO: lo pedido, esperando que llegue */}
+      {step === 'camino' && (
+        ordered.length > 0 ? (
+          <FadeIn>
+            <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
+              <div className="divide-y">
+                {ordered.map((order) => (
+                  <OrderRow
+                    key={`${order.source}-${order.id}`}
+                    order={order}
+                    canManage={canManage}
+                    getProfileName={getProfileName}
+                    onUpdateStatus={updateStatus}
+                  />
+                ))}
+              </div>
+            </div>
+            <p className="mt-2 text-center text-[11px] text-[#a39e97]">
+              Cuando llegue la mercadería, tocá &quot;Recibido&quot; para cargarla al stock.
+            </p>
+          </FadeIn>
+        ) : (
+          <FadeIn>
+            <div className="flex flex-col items-center py-10 text-center">
+              <Truck className="size-10 text-[#ebe6df]" />
+              <p className="mt-4 text-sm font-medium text-[#a39e97]">Nada en camino</p>
+              <p className="mt-1 text-xs text-[#a39e97]/70">Los pedidos ya enviados al proveedor aparecen acá</p>
+            </div>
+          </FadeIn>
+        )
+      )}
+
+      {/* PASO 3 — RECIBIDOS: historial reciente */}
+      {step === 'recibido' && (
+        received.length > 0 ? (
+          <FadeIn>
+            <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
+              <div className="divide-y">
+                {received.slice(0, 20).map((order) => (
+                  <OrderRow
+                    key={`${order.source}-${order.id}`}
+                    order={order}
+                    canManage={canManage}
+                    getProfileName={getProfileName}
+                    onUpdateStatus={updateStatus}
+                  />
+                ))}
+              </div>
+            </div>
+          </FadeIn>
+        ) : (
+          <FadeIn>
+            <div className="flex flex-col items-center py-10 text-center">
+              <Check className="size-10 text-[#ebe6df]" />
+              <p className="mt-4 text-sm font-medium text-[#a39e97]">Sin recepciones todavía</p>
+            </div>
+          </FadeIn>
+        )
       )}
 
       {/* Receive dialog */}

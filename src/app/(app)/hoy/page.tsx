@@ -37,6 +37,8 @@ type HoyData = {
   otherOrders: number
   incoming: { id: number; product_name: string; quantity: string; source: string }[]
   plan: { items: PlanItem[]; sellingWithoutStock: { name: string }[]; analysis: string } | null
+  /** todo lo que la casa produce — para armar el plan a mano */
+  producedItems: { id: string; name: string; unit: string; current_qty: number }[]
   countNegative: { id: string; name: string; current_qty: number; unit: string }[]
   countCritical: number
 }
@@ -48,6 +50,9 @@ export default function HoyPage() {
   // Armador manual de producción: cantidades editables sobre la sugerencia
   const [planQty, setPlanQty] = useState<Record<string, number>>({})
   const [sendingPlan, setSendingPlan] = useState(false)
+  const [addSearch, setAddSearch] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
+  const [showAiAdvice, setShowAiAdvice] = useState(false)
 
   useEffect(() => {
     if (!profile) return
@@ -59,11 +64,11 @@ export default function HoyPage() {
         fetch('/api/ai/production-plan', { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null),
         supabase.from('kitchen_orders').select('id, product_name, quantity').eq('status', 'ordered').limit(10),
         supabase.from('bar_orders').select('id, product_name, quantity').eq('status', 'ordered').limit(10),
-        supabase.from('stock_items').select('id, name, current_qty, min_qty, unit').eq('is_active', true),
+        supabase.from('stock_items').select('id, name, current_qty, min_qty, unit, is_produced').eq('is_active', true),
       ])
 
       const orders = (purchaseRes?.orders ?? []) as PurchaseOrderLite[]
-      const stock = (stockRes.data ?? []) as { id: string; name: string; current_qty: number; min_qty: number; unit: string }[]
+      const stock = (stockRes.data ?? []) as { id: string; name: string; current_qty: number; min_qty: number; unit: string; is_produced: boolean }[]
 
       setData({
         orderToday: orders.filter(o => o.is_order_day),
@@ -73,6 +78,7 @@ export default function HoyPage() {
           ...(barRes.data ?? []).map(o => ({ ...o, source: 'barra' })),
         ],
         plan: planRes ? { items: planRes.items ?? [], sellingWithoutStock: planRes.sellingWithoutStock ?? [], analysis: planRes.analysis ?? '' } : null,
+        producedItems: stock.filter(i => i.is_produced).map(({ id, name, unit, current_qty }) => ({ id, name, unit, current_qty })),
         countNegative: stock.filter(i => Number(i.current_qty) < 0).slice(0, 6),
         countCritical: stock.filter(i => isStockCritical(Number(i.current_qty ?? 0), Number(i.min_qty ?? 0))).length,
       })
@@ -87,22 +93,24 @@ export default function HoyPage() {
 
   // --- Armador de producción: acciones manuales ---
 
-  async function markAsBought(item: PlanItem) {
+  async function markAsBought(itemId: string, itemName: string) {
     const supabase = createClient()
-    const { error } = await supabase.from('stock_items').update({ is_produced: false }).eq('id', item.stock_item_id)
+    const { error } = await supabase.from('stock_items').update({ is_produced: false }).eq('id', itemId)
     if (error) { toast.error('No se pudo actualizar'); return }
     setData(prev => prev ? {
       ...prev,
-      plan: prev.plan ? { ...prev.plan, items: prev.plan.items.filter(i => i.stock_item_id !== item.stock_item_id) } : null,
+      producedItems: prev.producedItems.filter(i => i.id !== itemId),
+      plan: prev.plan ? { ...prev.plan, items: prev.plan.items.filter(i => i.stock_item_id !== itemId) } : null,
     } : prev)
-    toast.success(`${item.name} marcado como comprado a proveedor — va a aparecer en Pedir`)
+    setPlanQty(prev => { const next = { ...prev }; delete next[itemId]; return next })
+    toast.success(`${itemName} marcado como comprado a proveedor — va a aparecer en Pedir`)
   }
 
   async function sendPlanToKitchen() {
-    if (!profile || !data?.plan) return
-    const lines = data.plan.items
-      .filter(i => (planQty[i.stock_item_id] ?? 0) > 0)
-      .map(i => `• ${i.name}: ${planQty[i.stock_item_id]} ${i.unit}`)
+    if (!profile || !data) return
+    const lines = data.producedItems
+      .filter(i => (planQty[i.id] ?? 0) > 0)
+      .map(i => `• ${i.name}: ${planQty[i.id]} ${i.unit}`)
     if (lines.length === 0) { toast.error('No hay cantidades cargadas'); return }
 
     setSendingPlan(true)
@@ -201,75 +209,127 @@ export default function HoyPage() {
       href: '/cocina/produccion',
       cta: 'Ver plan y producir',
       tone: (data.plan?.sellingWithoutStock.length ?? 0) > 0 ? 'urgent' : (data.plan?.items.length ?? 0) > 0 ? 'action' : 'ok',
-      body: data.plan ? (
-        <div className="space-y-2">
-          {data.plan.sellingWithoutStock.length > 0 && (
-            <p className="flex items-center gap-1 text-[11px] font-bold text-[#ea504c]">
-              <AlertTriangle className="size-3" />
-              Venden sin stock digital: {data.plan.sellingWithoutStock.slice(0, 3).map(s => s.name).join(', ')} — contar primero
-            </p>
-          )}
+      body: (() => {
+        const suggestionById = new Map((data.plan?.items ?? []).map(i => [i.stock_item_id, i]))
+        // Filas visibles: lo sugerido por IA + lo agregado a mano (qty en planQty)
+        const visibleIds = new Set<string>([
+          ...(data.plan?.items ?? []).map(i => i.stock_item_id),
+          ...Object.keys(planQty).filter(id => (planQty[id] ?? 0) > 0),
+        ])
+        const rows = data.producedItems.filter(i => visibleIds.has(i.id))
+        const addCandidates = data.producedItems.filter(i =>
+          !visibleIds.has(i.id)
+          && (!addSearch.trim() || i.name.toLowerCase().includes(addSearch.toLowerCase())),
+        )
+        const totalPlanned = rows.reduce((s, i) => s + (planQty[i.id] ?? 0), 0)
 
-          {/* Armador manual: la IA sugiere, vos decidís con +/- */}
-          {data.plan.items.map(i => {
-            const qty = planQty[i.stock_item_id] ?? 0
-            return (
-              <div key={i.stock_item_id} className="flex items-center gap-2 rounded-xl bg-[#faf8f5] px-2.5 py-2">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold text-[#3d2c24]">{i.name}</p>
-                  <p className="truncate text-[10px] text-[#a39e97]">{i.reason}</p>
+        return (
+          <div className="space-y-2">
+            {(data.plan?.sellingWithoutStock.length ?? 0) > 0 && (
+              <p className="flex items-center gap-1 text-[11px] font-bold text-[#ea504c]">
+                <AlertTriangle className="size-3" />
+                Venden sin stock digital: {data.plan!.sellingWithoutStock.slice(0, 3).map(s => s.name).join(', ')} — contar primero
+              </p>
+            )}
+
+            {rows.length === 0 && (
+              <p className="text-xs text-[#7d6c64]">Armá el plan de hoy: agregá productos con el botón de abajo.</p>
+            )}
+
+            {rows.map(i => {
+              const qty = planQty[i.id] ?? 0
+              const suggestion = suggestionById.get(i.id)
+              return (
+                <div key={i.id} className="flex items-center gap-2 rounded-xl bg-[#faf8f5] px-2.5 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-[#3d2c24]">{i.name}</p>
+                    <p className="truncate text-[10px] text-[#a39e97]">
+                      Hay {i.current_qty} {i.unit}
+                      {suggestion && <span className="text-[#8b5e34]"> · IA sugiere {suggestion.suggested_qty}</span>}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      onClick={() => setPlanQty(prev => ({ ...prev, [i.id]: Math.max(0, (prev[i.id] ?? 0) - 1) }))}
+                      className="flex size-7 items-center justify-center rounded-lg bg-white ring-1 ring-[#ebe6df] active:scale-90"
+                    >
+                      <Minus className="size-3 text-[#3d2c24]" />
+                    </button>
+                    <span className={`w-9 text-center text-sm font-bold tabular-nums ${qty > 0 ? 'text-[#006d5a]' : 'text-[#a39e97]'}`}>
+                      {qty}
+                    </span>
+                    <button
+                      onClick={() => setPlanQty(prev => ({ ...prev, [i.id]: (prev[i.id] ?? 0) + 1 }))}
+                      className="flex size-7 items-center justify-center rounded-lg bg-white ring-1 ring-[#ebe6df] active:scale-90"
+                    >
+                      <Plus className="size-3 text-[#3d2c24]" />
+                    </button>
+                    <button
+                      onClick={() => markAsBought(i.id, i.name)}
+                      title="No se produce acá: se compra a un proveedor"
+                      className="ml-1 flex size-7 items-center justify-center rounded-lg bg-white ring-1 ring-[#f3d0cf] active:scale-90"
+                    >
+                      <Ban className="size-3 text-[#ea504c]" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  <button
-                    onClick={() => setPlanQty(prev => ({ ...prev, [i.stock_item_id]: Math.max(0, (prev[i.stock_item_id] ?? 0) - 1) }))}
-                    className="flex size-7 items-center justify-center rounded-lg bg-white ring-1 ring-[#ebe6df] active:scale-90"
-                  >
-                    <Minus className="size-3 text-[#3d2c24]" />
-                  </button>
-                  <span className={`w-9 text-center text-sm font-bold tabular-nums ${qty > 0 ? 'text-[#006d5a]' : 'text-[#a39e97]'}`}>
-                    {qty}
-                  </span>
-                  <button
-                    onClick={() => setPlanQty(prev => ({ ...prev, [i.stock_item_id]: (prev[i.stock_item_id] ?? 0) + 1 }))}
-                    className="flex size-7 items-center justify-center rounded-lg bg-white ring-1 ring-[#ebe6df] active:scale-90"
-                  >
-                    <Plus className="size-3 text-[#3d2c24]" />
-                  </button>
-                  <button
-                    onClick={() => markAsBought(i)}
-                    title="No se produce acá: se compra a un proveedor"
-                    className="ml-1 flex size-7 items-center justify-center rounded-lg bg-white ring-1 ring-[#f3d0cf] active:scale-90"
-                  >
-                    <Ban className="size-3 text-[#ea504c]" />
-                  </button>
+              )
+            })}
+
+            {/* Agregar cualquier producto propio a mano */}
+            {showAdd ? (
+              <div className="rounded-xl bg-white p-2 ring-1 ring-[#ebe6df]">
+                <input
+                  autoFocus
+                  value={addSearch}
+                  onChange={e => setAddSearch(e.target.value)}
+                  placeholder="Buscar producto propio..."
+                  className="w-full rounded-lg border border-[#ebe6df] bg-[#faf8f5] px-3 py-2 text-xs focus:border-[#006d5a] focus:outline-none"
+                />
+                <div className="mt-1 max-h-36 space-y-0.5 overflow-y-auto">
+                  {addCandidates.slice(0, 6).map(i => (
+                    <button
+                      key={i.id}
+                      onClick={() => {
+                        setPlanQty(prev => ({ ...prev, [i.id]: 1 }))
+                        setShowAdd(false)
+                        setAddSearch('')
+                      }}
+                      className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-[#faf8f5]"
+                    >
+                      <span className="truncate text-[#3d2c24]">{i.name}</span>
+                      <span className="ml-2 shrink-0 text-[10px] text-[#a39e97]">{i.current_qty} {i.unit}</span>
+                    </button>
+                  ))}
+                  {addCandidates.length === 0 && (
+                    <p className="px-2 py-1.5 text-[11px] text-[#a39e97]">
+                      Sin resultados. Si falta un producto que producen, marcalo como &quot;producción propia&quot; en Stock.
+                    </p>
+                  )}
                 </div>
               </div>
-            )
-          })}
+            ) : (
+              <button
+                onClick={() => setShowAdd(true)}
+                className="flex w-full items-center justify-center gap-1 rounded-xl border border-dashed border-[#d4c8bc] py-2 text-xs font-semibold text-[#7d6c64] active:scale-[0.98]"
+              >
+                <Plus className="size-3.5" /> Agregar producto
+              </button>
+            )}
 
-          {data.plan.items.length > 0 && (
-            <>
+            {totalPlanned > 0 && (
               <button
                 onClick={sendPlanToKitchen}
                 disabled={sendingPlan}
                 className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#006d5a] py-2.5 text-xs font-bold text-white active:scale-[0.98] disabled:opacity-50"
               >
                 {sendingPlan ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                Enviar plan a cocina
+                Enviar plan a cocina ({totalPlanned})
               </button>
-              <p className="text-center text-[10px] text-[#a39e97]">
-                El botón 🚫 marca un producto como &quot;comprado a proveedor&quot; y lo pasa a Pedir.
-              </p>
-            </>
-          )}
-
-          {data.plan.items.length === 0 && data.plan.sellingWithoutStock.length === 0 && (
-            <p className="text-xs text-[#7d6c64]">El stock de lo que producís cubre la venta esperada de hoy.</p>
-          )}
-        </div>
-      ) : (
-        <p className="text-xs text-[#a39e97]">No se pudo calcular el plan (¿Fudo caído?).</p>
-      ),
+            )}
+          </div>
+        )
+      })(),
     },
     {
       key: 'contar',
@@ -350,15 +410,27 @@ export default function HoyPage() {
         })}
       </StaggerList>
 
-      {/* Consejo del plan IA (si hay) */}
+      {/* Consejo del plan IA — colapsado, opcional */}
       {data.plan?.analysis && data.plan.items.length > 0 && (
         <FadeIn>
-          <div className="rounded-2xl bg-[#3d2c24] p-4">
-            <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-white/60">
-              <Sparkles className="size-3" /> El plan de hoy, en criollo
-            </p>
-            <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-white/90">{data.plan.analysis}</p>
-          </div>
+          {showAiAdvice ? (
+            <div className="rounded-2xl bg-[#3d2c24] p-4">
+              <button onClick={() => setShowAiAdvice(false)} className="flex w-full items-center justify-between">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-white/60">
+                  <Sparkles className="size-3" /> Consejo IA de hoy
+                </p>
+                <span className="text-[10px] text-white/50">ocultar</span>
+              </button>
+              <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-white/90">{data.plan.analysis}</p>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowAiAdvice(true)}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#f3efe9] py-2 text-[11px] font-semibold text-[#7d6c64] active:scale-[0.98]"
+            >
+              <Sparkles className="size-3" /> Ver consejo IA de hoy
+            </button>
+          )}
         </FadeIn>
       )}
     </div>
