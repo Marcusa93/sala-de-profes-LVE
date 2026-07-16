@@ -137,6 +137,12 @@ export default function DashboardPage() {
   const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : '#ebe6df'
   const primaryActions = isEncargado ? [
     {
+      href: '/hoy',
+      icon: CalendarDays,
+      label: 'Hoy: tu día de un vistazo',
+      description: 'Pedir → recibir → producir → contar, en una pantalla',
+    },
+    {
       href: '/stock',
       icon: Package,
       label: 'Controlar stock',
@@ -165,6 +171,7 @@ export default function DashboardPage() {
       description: 'Consultar stock, Fudo o pedir una acción por chat',
     },
   ] : profile?.role === 'chef' || profile?.role === 'cocina' ? [
+    { href: '/hoy', icon: CalendarDays, label: 'Hoy: qué producir', description: 'El plan del día: producir y contar' },
     { href: '/recetas', icon: ShoppingCart, label: 'Ver recetario', description: 'Recetas, insumos y preparación' },
     { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
     { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
