@@ -181,8 +181,16 @@ export function PurchaseOrderCopilot() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-[#3d2c24]">{order.supplier_name}</p>
-                <p className="text-[10px] text-[#a39e97]">{order.total_items} item{order.total_items > 1 ? 's' : ''}</p>
+                <p className="text-[10px] text-[#a39e97]">
+                  {order.total_items} item{order.total_items > 1 ? 's' : ''}
+                  {order.coverage_days != null && ` · la compra cubre ${order.coverage_days} días`}
+                </p>
               </div>
+              {order.is_order_day && (
+                <span className="rounded-full bg-[#3d2c24] px-2 py-0.5 text-[9px] font-bold text-white">
+                  📅 Hoy toca pedir
+                </span>
+              )}
               <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${style.badge}`}>{style.label}</span>
               {isExpanded ? <ChevronUp className="size-3.5 text-[#a39e97]" /> : <ChevronDown className="size-3.5 text-[#a39e97]" />}
             </button>
@@ -195,7 +203,14 @@ export function PurchaseOrderCopilot() {
                     <div key={item.item_id} className="flex items-center justify-between rounded-lg bg-[#faf8f5] px-3 py-2">
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium text-[#3d2c24] truncate">{item.item_name}</p>
-                        <p className="text-[10px] text-[#a39e97]">Tiene {item.current_qty} · Mín {item.min_qty}</p>
+                        <p className="text-[10px] text-[#a39e97]">
+                          Tiene {item.current_qty} · Mín {item.min_qty}
+                          {item.days_left != null && (
+                            <span className={item.days_left <= 2 ? 'font-bold text-[#ea504c]' : ''}>
+                              {' '}· ~{item.days_left} días de stock
+                            </span>
+                          )}
+                        </p>
                       </div>
                       <span className="ml-2 rounded-full bg-[#006d5a] px-2.5 py-0.5 text-[10px] font-bold text-white">
                         {item.suggested_qty} {item.unit}

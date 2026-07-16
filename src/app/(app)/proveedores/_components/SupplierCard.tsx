@@ -1,7 +1,8 @@
 'use client'
 
-import { Phone, Mail, MessageCircle, Pencil, Trash2, Package, AlertTriangle } from 'lucide-react'
+import { Phone, Mail, MessageCircle, Pencil, Trash2, Package, AlertTriangle, CalendarDays } from 'lucide-react'
 import type { Supplier, LowStockItem } from './types'
+import { DOW_SHORT } from './types'
 import { LowStockRow } from './LowStockRow'
 
 function stripNonDigits(phone: string): string {
@@ -47,6 +48,12 @@ export function SupplierCard({ supplier, isEncargado, lowStockItems, linkedCount
               <span className="inline-flex items-center gap-1 rounded-full bg-[#faf8f5] px-2 py-0.5 text-[10px] font-medium text-[#a39e97]">
                 <Package className="size-2.5" />
                 {linkedCount}
+              </span>
+            )}
+            {(supplier.order_days ?? []).length > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[10px] font-semibold text-[#d4943a]">
+                <CalendarDays className="size-2.5" />
+                {(supplier.order_days ?? []).map((d) => DOW_SHORT[d]).join(' · ')}
               </span>
             )}
           </div>

@@ -22,6 +22,10 @@ export type PurchaseItem = {
   suggested_qty: number
   reasoning: string
   priority_score: number
+  /** venta promedio por día (últimos 14 días), null si no hay historial */
+  daily_sales: number | null
+  /** días de stock que quedan al ritmo actual, null si no hay historial */
+  days_left: number | null
 }
 
 export type PurchaseOrder = {
@@ -34,6 +38,12 @@ export type PurchaseOrder = {
   priority: 'alta' | 'media' | 'baja'
   priority_score: number
   message: string | null // AI-generated
+  /** hoy es día de pedido de este proveedor */
+  is_order_day: boolean
+  /** días de pedido configurados (0=dom … 6=sáb) */
+  order_days: number[]
+  /** horizonte que tiene que cubrir la compra (días hasta la próxima entrega) */
+  coverage_days: number | null
 }
 
 export type PurchaseOrderResult = {
@@ -123,28 +133,109 @@ function itemPriorityScore(item: { current_qty: number; min_qty: number; categor
 }
 
 // ---------------------------------------------------------------------------
+// Calendario: días hasta la próxima entrega de un proveedor
+// ---------------------------------------------------------------------------
+
+function daysUntilNextDelivery(orderDays: number[], todayDow: number, leadTime: number | null): number | null {
+  if (!orderDays || orderDays.length === 0) return null
+  // Próximo día de pedido DESPUÉS de hoy (si hoy es día de pedido, lo que se
+  // compra hoy tiene que durar hasta la entrega del próximo pedido)
+  let delta = 7
+  for (let d = 1; d <= 7; d++) {
+    if (orderDays.includes((todayDow + d) % 7)) { delta = d; break }
+  }
+  return delta + (leadTime ?? 0)
+}
+
+// ---------------------------------------------------------------------------
 // Generate purchase orders grouped by supplier
 // ---------------------------------------------------------------------------
+
+type SupplierData = {
+  id: string; name: string; phone: string | null; email: string | null
+  order_days: number[]; lead_time_days: number | null
+}
 
 export async function generatePurchaseOrders(): Promise<PurchaseOrderResult> {
   const admin = createAdminClient()
 
+  const todayDow = new Date(
+    new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10) + 'T12:00:00',
+  ).getDay()
+
   // Fetch stock items that need attention (below minimum * 1.2)
   const { data: items } = await admin
     .from('stock_items')
-    .select('id, name, category, unit, current_qty, min_qty, supplier_id, suppliers(id, name, phone, email)')
+    .select('id, name, category, unit, current_qty, min_qty, supplier_id, fudo_product_id, suppliers(id, name, phone, email, order_days, lead_time_days)')
     .eq('is_active', true)
 
   if (!items) return { orders: [], unassigned: [], generatedAt: new Date().toISOString(), sources: [] }
 
-  // Filter to items that need replenishment
-  const needsOrder = items.filter(i => i.current_qty <= i.min_qty * 1.2 && i.min_qty > 0)
+  // Velocidad de consumo real: ventas de los últimos 14 días por producto Fudo
+  const since = new Date()
+  since.setDate(since.getDate() - 14)
+  const sinceStr = since.toISOString().slice(0, 10)
+  const soldByProduct = new Map<string, number>()
+  const activeDates = new Set<string>()
+  for (let offset = 0; offset < 20000; offset += 1000) {
+    const { data: batch } = await admin
+      .from('fudo_sales')
+      .select('fudo_product_id, quantity, sold_at')
+      .gte('sold_at', sinceStr)
+      .range(offset, offset + 999)
+    if (!batch || batch.length === 0) break
+    for (const row of batch as { fudo_product_id: string; quantity: number; sold_at: string }[]) {
+      soldByProduct.set(row.fudo_product_id, (soldByProduct.get(row.fudo_product_id) ?? 0) + Number(row.quantity))
+      activeDates.add(row.sold_at.slice(0, 10))
+    }
+    if (batch.length < 1000) break
+  }
+  const activeDays = Math.max(activeDates.size, 1)
+
+  // Filter to items that need replenishment (por mínimo) O que se acaban pronto (por consumo)
+  const enriched = items.map(item => {
+    const fudoProductId = (item as { fudo_product_id?: string | null }).fudo_product_id ?? null
+    const sold = fudoProductId ? soldByProduct.get(fudoProductId) ?? 0 : 0
+    const dailySales = sold > 0 ? Math.round((sold / activeDays) * 10) / 10 : null
+    const daysLeft = dailySales && dailySales > 0
+      ? Math.round((Math.max(item.current_qty, 0) / dailySales) * 10) / 10
+      : null
+    return { ...item, dailySales, daysLeft }
+  })
+
+  const needsOrder = enriched.filter(i =>
+    (i.current_qty <= i.min_qty * 1.2 && i.min_qty > 0)
+    || (i.daysLeft !== null && i.daysLeft <= 4),
+  )
 
   // Build purchase items
-  const purchaseItems: (PurchaseItem & { supplier_id: string | null; supplier_data: { id: string; name: string; phone: string | null; email: string | null } | null })[] =
+  const purchaseItems: (PurchaseItem & { supplier_id: string | null; supplier_data: SupplierData | null })[] =
     needsOrder.map(item => {
-      const { qty, reasoning } = suggestQuantity(item)
-      const supplierData = item.suppliers as { id: string; name: string; phone: string | null; email: string | null } | null
+      const supplierData = item.suppliers as unknown as SupplierData | null
+      const coverage = supplierData
+        ? daysUntilNextDelivery(supplierData.order_days ?? [], todayDow, supplierData.lead_time_days)
+        : null
+
+      // Cantidad: si conocemos el consumo, cubrir hasta la próxima entrega + 20%;
+      // si no, la heurística por mínimos de siempre
+      let qty: number
+      let reasoning: string
+      if (item.dailySales && item.dailySales > 0 && coverage) {
+        const target = item.dailySales * coverage * 1.2
+        qty = Math.max(0, Math.ceil(target - Math.max(item.current_qty, 0)))
+        reasoning = `Vendés ~${item.dailySales}/día y la próxima entrega es en ${coverage} días (te quedan ~${item.daysLeft} días de stock)`
+      } else if (item.dailySales && item.dailySales > 0 && item.daysLeft !== null && item.daysLeft <= 4) {
+        qty = Math.max(0, Math.ceil(item.dailySales * 7 * 1.2 - Math.max(item.current_qty, 0)))
+        reasoning = `Al ritmo actual (~${item.dailySales}/día) te quedan ~${item.daysLeft} días de stock`
+      } else {
+        const suggestion = suggestQuantity(item)
+        qty = suggestion.qty
+        reasoning = suggestion.reasoning
+      }
+
+      let score = itemPriorityScore(item)
+      if (item.daysLeft !== null && item.daysLeft <= 2) score = Math.min(score + 30, 100)
+
       return {
         item_id: item.id,
         item_name: item.name,
@@ -154,7 +245,9 @@ export async function generatePurchaseOrders(): Promise<PurchaseOrderResult> {
         min_qty: item.min_qty,
         suggested_qty: qty,
         reasoning,
-        priority_score: itemPriorityScore(item),
+        priority_score: score,
+        daily_sales: item.dailySales,
+        days_left: item.daysLeft,
         supplier_id: item.supplier_id,
         supplier_data: supplierData,
       }
@@ -169,7 +262,7 @@ export async function generatePurchaseOrders(): Promise<PurchaseOrderResult> {
     .map(({ supplier_id, supplier_data, ...rest }) => rest)
 
   // Group by supplier
-  const supplierGroups = new Map<string, { supplier: { id: string; name: string; phone: string | null; email: string | null }; items: PurchaseItem[] }>()
+  const supplierGroups = new Map<string, { supplier: SupplierData; items: PurchaseItem[] }>()
 
   for (const item of assigned) {
     const sid = item.supplier_id!
@@ -180,10 +273,12 @@ export async function generatePurchaseOrders(): Promise<PurchaseOrderResult> {
     supplierGroups.get(sid)!.items.push(purchaseItem)
   }
 
-  // Build orders
+  // Build orders — los proveedores cuyo día de pedido es HOY van primero
   const orders: PurchaseOrder[] = Array.from(supplierGroups.values())
     .map(({ supplier, items: orderItems }) => {
       const { priority, score } = calculateOrderPriority(orderItems)
+      const orderDays = supplier.order_days ?? []
+      const isOrderDay = orderDays.includes(todayDow)
       return {
         supplier_id: supplier.id,
         supplier_name: supplier.name,
@@ -192,17 +287,20 @@ export async function generatePurchaseOrders(): Promise<PurchaseOrderResult> {
         items: orderItems,
         total_items: orderItems.length,
         priority,
-        priority_score: score,
+        priority_score: isOrderDay ? Math.min(score + 25, 100) : score,
         message: null, // Generated separately via AI
+        is_order_day: isOrderDay,
+        order_days: orderDays,
+        coverage_days: daysUntilNextDelivery(orderDays, todayDow, supplier.lead_time_days),
       }
     })
-    .sort((a, b) => b.priority_score - a.priority_score)
+    .sort((a, b) => (Number(b.is_order_day) - Number(a.is_order_day)) || (b.priority_score - a.priority_score))
 
   return {
     orders,
     unassigned,
     generatedAt: new Date().toISOString(),
-    sources: ['supabase:stock_items', 'supabase:suppliers'],
+    sources: ['supabase:stock_items', 'supabase:suppliers', 'supabase:fudo_sales(14d)'],
   }
 }
 

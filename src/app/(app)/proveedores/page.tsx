@@ -154,6 +154,8 @@ export default function ProveedoresPage() {
       phone: supplier.phone ?? '',
       email: supplier.email ?? '',
       notes: supplier.notes ?? '',
+      order_days: supplier.order_days ?? [],
+      lead_time_days: supplier.lead_time_days?.toString() ?? '',
     })
     setDialogOpen(true)
   }
@@ -171,6 +173,8 @@ export default function ProveedoresPage() {
         phone: formData.phone.trim() || null,
         email: formData.email.trim() || null,
         notes: formData.notes.trim() || null,
+        order_days: formData.order_days,
+        lead_time_days: formData.lead_time_days ? Number(formData.lead_time_days) : null,
       }
       if (editingSupplier) {
         const { error } = await supabase.from('suppliers').update(payload).eq('id', editingSupplier.id)

@@ -3005,6 +3005,8 @@ export type Database = {
           fudo_provider_id: string | null
           id: string
           is_active: boolean
+          lead_time_days: number | null
+          order_days: number[]
           name: string
           notes: string | null
           phone: string | null
@@ -3018,6 +3020,8 @@ export type Database = {
           fudo_provider_id?: string | null
           id?: string
           is_active?: boolean
+          lead_time_days?: number | null
+          order_days?: number[]
           name: string
           notes?: string | null
           phone?: string | null
@@ -3031,6 +3035,8 @@ export type Database = {
           fudo_provider_id?: string | null
           id?: string
           is_active?: boolean
+          lead_time_days?: number | null
+          order_days?: number[]
           name?: string
           notes?: string | null
           phone?: string | null

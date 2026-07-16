@@ -10,6 +10,7 @@ import {
   DialogDescription, DialogFooter, DialogClose,
 } from '@/components/ui/dialog'
 import type { Supplier, SupplierFormData } from './types'
+import { DOW_SHORT } from './types'
 
 type Props = {
   open: boolean
@@ -74,6 +75,44 @@ export function SupplierDialog({ open, onClose, editingSupplier, formData, onFor
               value={formData.email}
               onChange={(e) => onFormChange({ email: e.target.value })}
               placeholder="proveedor@email.com"
+              className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-[#3d2c24]">Días de pedido</Label>
+            <p className="text-[11px] text-[#a39e97]">¿Qué días se le hace pedido a este proveedor?</p>
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5, 6, 0].map((dow) => {
+                const active = formData.order_days.includes(dow)
+                return (
+                  <button
+                    key={dow}
+                    type="button"
+                    onClick={() => onFormChange({
+                      order_days: active
+                        ? formData.order_days.filter((d) => d !== dow)
+                        : [...formData.order_days, dow].sort(),
+                    })}
+                    className={`flex-1 rounded-lg py-2 text-[11px] font-bold transition-all ${
+                      active ? 'bg-[#006d5a] text-white' : 'bg-[#f3efe9] text-[#a39e97]'
+                    }`}
+                  >
+                    {DOW_SHORT[dow]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="supplier-lead" className="text-xs font-semibold text-[#3d2c24]">Demora de entrega (días)</Label>
+            <Input
+              id="supplier-lead"
+              type="number"
+              inputMode="numeric"
+              min="0"
+              value={formData.lead_time_days}
+              onChange={(e) => onFormChange({ lead_time_days: e.target.value })}
+              placeholder="Ej: 2 (pide lunes, llega miércoles)"
               className="rounded-xl border-[#ebe6df] bg-[#faf8f5] text-[#3d2c24] placeholder:text-[#a39e97] focus-visible:ring-[#006d5a]"
             />
           </div>
