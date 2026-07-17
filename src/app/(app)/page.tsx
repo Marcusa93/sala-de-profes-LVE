@@ -22,6 +22,7 @@ import {
   Package,
   Armchair,
   Hammer,
+  Coffee,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -176,6 +177,7 @@ export default function DashboardPage() {
     { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
     { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
   ] : profile?.role === 'barista' ? [
+    { href: '/tolva', icon: Coffee, label: 'Tolva de café', description: 'Inicio, agregado y final del turno — chau cuaderno' },
     { href: '/vajilla', icon: Package, label: 'Controlar vajilla', description: 'Roturas, faltantes y reposición' },
     { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
     { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },

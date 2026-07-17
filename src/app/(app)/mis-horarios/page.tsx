@@ -26,6 +26,8 @@ export default function MisHorariosPage() {
   const { profile, loading: profileLoading } = useProfileContext()
 
   const [shifts, setShifts] = useState<ShiftCardData[]>([])
+  // Compañeros por día: lo que el equipo buscaba en la foto del Excel
+  const [teamByDate, setTeamByDate] = useState<Map<string, { name: string; start: string; end: string }[]>>(new Map())
   const [loading, setLoading] = useState(true)
   const [weekFilter, setWeekFilter] = useState<WeekFilter>('this_week')
 
@@ -59,14 +61,28 @@ export default function MisHorariosPage() {
 
         const { data } = await supabase
           .from('shifts')
-          .select('id, shift_date, start_time, end_time, shift_role, notes, user_id')
-          .eq('user_id', profile!.id)
+          .select('id, shift_date, start_time, end_time, shift_role, notes, user_id, profiles!shifts_user_id_fkey(first_name)')
           .gte('shift_date', startStr)
           .lte('shift_date', endStr)
           .order('shift_date', { ascending: true })
           .order('start_time', { ascending: true })
 
-        setShifts((data as ShiftCardData[]) ?? [])
+        const all = (data ?? []) as (ShiftCardData & { profiles: { first_name: string } | null })[]
+        setShifts(all.filter((s) => s.user_id === profile!.id))
+
+        // El resto del equipo, agrupado por día
+        const byDate = new Map<string, { name: string; start: string; end: string }[]>()
+        for (const s of all) {
+          if (s.user_id === profile!.id) continue
+          const list = byDate.get(s.shift_date) ?? []
+          list.push({
+            name: s.profiles?.first_name ?? 'Alguien',
+            start: s.start_time.slice(0, 5),
+            end: s.end_time.slice(0, 5),
+          })
+          byDate.set(s.shift_date, list)
+        }
+        setTeamByDate(byDate)
       } catch (err) {
         console.error('Error al cargar horarios:', err)
       } finally {
@@ -187,9 +203,22 @@ export default function MisHorariosPage() {
         />
       ) : (
         <div className="space-y-3">
-          {shifts.map((shift) => (
-            <ShiftCard key={shift.id} shift={shift} />
-          ))}
+          {shifts.map((shift) => {
+            const team = teamByDate.get(shift.shift_date) ?? []
+            return (
+              <div key={shift.id}>
+                <ShiftCard shift={shift} />
+                {team.length > 0 && (
+                  <div className="mx-2 -mt-1 rounded-b-xl bg-[#f3efe9]/70 px-3 pb-2 pt-3">
+                    <p className="text-[10px] leading-relaxed text-[#7d6c64]">
+                      <span className="font-bold">Ese día también:</span>{' '}
+                      {team.map((t) => `${t.name} ${t.start}–${t.end}`).join(' · ')}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

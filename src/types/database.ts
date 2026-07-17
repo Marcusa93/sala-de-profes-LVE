@@ -3047,6 +3047,53 @@ export type Database = {
         }
         Relationships: []
       }
+      tolva_logs: {
+        Row: {
+          id: number
+          log_date: string
+          shift: string
+          start_gr: number | null
+          added_gr: number
+          end_gr: number | null
+          notes: string | null
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          log_date: string
+          shift: string
+          start_gr?: number | null
+          added_gr?: number
+          end_gr?: number | null
+          notes?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          log_date?: string
+          shift?: string
+          start_gr?: number | null
+          added_gr?: number
+          end_gr?: number | null
+          notes?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tolva_logs_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vajilla_snapshots: {
         Row: {
           created_at: string
