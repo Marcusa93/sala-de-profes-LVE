@@ -5,7 +5,7 @@ import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   ShoppingCart, Truck, Check, X, Phone, MessageCircle,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, Plus, Trash2,
   Loader2, Package, Clock, AlertTriangle, Search,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -101,6 +101,7 @@ export default function PedidosPage() {
   const [assignDialog, setAssignDialog] = useState<{ order: Order } | null>(null)
   const [receiveDialog, setReceiveDialog] = useState<{ order: Order } | null>(null)
   const [expandedSupplier, setExpandedSupplier] = useState<number | null>(null)
+  const [newOrderOpen, setNewOrderOpen] = useState(false)
 
   const canManage = isManagerOrAbove(profile?.role)
 
@@ -226,8 +227,21 @@ export default function PedidosPage() {
     <div className="mx-auto max-w-lg space-y-5 pb-28">
       {/* Header */}
       <FadeIn>
-        <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Gestión de Pedidos</h1>
-        <p className="section-label mt-0.5">Pedidos de barra y cocina</p>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Gestión de Pedidos</h1>
+            <p className="section-label mt-0.5">Pedidos de barra y cocina</p>
+          </div>
+          {canManage && (
+            <button
+              onClick={() => setNewOrderOpen(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-sm font-semibold text-white shadow-sm active:scale-[0.97]"
+            >
+              <Plus className="size-4" />
+              Nuevo
+            </button>
+          )}
+        </div>
       </FadeIn>
 
       {/* Los 3 pasos del ciclo — un paso por pantalla */}
@@ -439,6 +453,16 @@ export default function PedidosPage() {
           stockItems={stockItems}
           onClose={() => setReceiveDialog(null)}
           onDone={() => { setReceiveDialog(null); fetchData() }}
+        />
+      )}
+
+      {/* New order dialog */}
+      {newOrderOpen && (
+        <NewOrderDialog
+          suppliers={suppliers}
+          stockItems={stockItems}
+          onClose={() => setNewOrderOpen(false)}
+          onDone={() => { setNewOrderOpen(false); fetchData() }}
         />
       )}
 
@@ -756,6 +780,241 @@ function ReceiveDialog({
           >
             {submitting ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
             {submitting ? 'Cargando…' : 'Confirmar recepción'}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// NewOrderDialog — crear pedido de compra (encargado / socio)
+// ---------------------------------------------------------------------------
+
+type OrderItem = { id: string; productName: string; quantity: string; stockItemId: string | null }
+
+function NewOrderDialog({
+  suppliers,
+  stockItems,
+  onClose,
+  onDone,
+}: {
+  suppliers: Supplier[]
+  stockItems: StockItem[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const makeItem = (): OrderItem => ({ id: Math.random().toString(36).slice(2), productName: '', quantity: '', stockItemId: null })
+
+  const [items, setItems] = useState<OrderItem[]>([makeItem()])
+  const [urgency, setUrgency] = useState<'normal' | 'alta' | 'urgente'>('normal')
+  const [supplierId, setSupplierId] = useState<string>('')
+  const [note, setNote] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  // Per-item search state
+  const [searches, setSearches] = useState<Record<string, string>>({})
+
+  function setSearch(itemId: string, val: string) {
+    setSearches((prev) => ({ ...prev, [itemId]: val }))
+  }
+
+  function updateItem(itemId: string, patch: Partial<OrderItem>) {
+    setItems((prev) => prev.map((it) => it.id === itemId ? { ...it, ...patch } : it))
+  }
+
+  function removeItem(itemId: string) {
+    setItems((prev) => prev.filter((it) => it.id !== itemId))
+  }
+
+  function getFilteredStock(itemId: string): StockItem[] {
+    const q = (searches[itemId] ?? '').toLowerCase()
+    if (!q) return []
+    return stockItems.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 6)
+  }
+
+  function selectStock(itemId: string, stock: StockItem) {
+    updateItem(itemId, { productName: stock.name, stockItemId: stock.id })
+    setSearch(itemId, '')
+  }
+
+  const canSubmit = items.every((it) => it.productName.trim() && it.quantity.trim())
+
+  async function handleSubmit() {
+    if (!canSubmit) return
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/kitchen/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_order',
+          items: items.map((it) => ({ product_name: it.productName.trim(), quantity: it.quantity.trim() })),
+          urgency,
+          note: note.trim() || undefined,
+          supplier_id: supplierId ? Number(supplierId) : undefined,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Error al crear pedido')
+      toast.success(`Pedido creado — ${items.length} ítem${items.length > 1 ? 's' : ''}`)
+      onDone()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al crear pedido')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const URGENCY_OPTIONS = [
+    { key: 'normal' as const, label: 'Normal', color: '#006d5a', bg: '#e8f5f1' },
+    { key: 'alta' as const, label: 'Alta', color: '#d4943a', bg: '#fdf6ec' },
+    { key: 'urgente' as const, label: 'Urgente', color: '#ea504c', bg: '#fef2f2' },
+  ]
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-sm rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-base">Nuevo pedido de compra</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-0.5">
+
+          {/* Items */}
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-[#a39e97]">
+              Ítems <span className="text-[#ea504c]">*</span>
+            </p>
+            {items.map((item, idx) => (
+              <div key={item.id} className="rounded-xl border border-[#ebe6df] bg-[#faf8f5] p-2.5 space-y-2">
+                {/* Product name + remove */}
+                <div className="flex items-center gap-1.5">
+                  <span className="min-w-[18px] text-center text-[10px] font-bold text-[#a39e97]">{idx + 1}</span>
+                  <div className="flex-1 relative">
+                    <input
+                      type="text"
+                      value={searches[item.id] !== undefined && !item.stockItemId ? (searches[item.id] ?? '') : item.productName}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        updateItem(item.id, { productName: val, stockItemId: null })
+                        setSearch(item.id, val)
+                      }}
+                      placeholder="Nombre del producto…"
+                      className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-1.5 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none"
+                    />
+                    {/* Stock search dropdown */}
+                    {!item.stockItemId && (searches[item.id] ?? '').length > 1 && getFilteredStock(item.id).length > 0 && (
+                      <div className="absolute z-20 mt-1 w-full rounded-xl border border-[#ebe6df] bg-white shadow-lg">
+                        {getFilteredStock(item.id).map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => selectStock(item.id, s)}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-[#f8f5f0]"
+                          >
+                            <Package className="size-3 shrink-0 text-[#006d5a]" />
+                            <span className="flex-1 truncate text-xs font-medium text-[#3d2c24]">{s.name}</span>
+                            <span className="shrink-0 text-[9px] text-[#a39e97]">{s.current_qty}{s.unit}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {items.length > 1 && (
+                    <button type="button" onClick={() => removeItem(item.id)} className="shrink-0 rounded-lg p-1 text-[#a39e97] hover:bg-[#fef2f2] hover:text-[#ea504c]">
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Quantity */}
+                <div className="ml-6">
+                  <input
+                    type="text"
+                    value={item.quantity}
+                    onChange={(e) => updateItem(item.id, { quantity: e.target.value })}
+                    placeholder="Cantidad — ej: 5 kg, 3 unidades, 2 cajas"
+                    className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-1.5 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none"
+                  />
+                </div>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={() => setItems((prev) => [...prev, makeItem()])}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-[#ebe6df] py-2 text-xs font-semibold text-[#a39e97] hover:border-[#006d5a] hover:text-[#006d5a] transition-colors"
+            >
+              <Plus className="size-3.5" />
+              Agregar ítem
+            </button>
+          </div>
+
+          {/* Urgency */}
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#a39e97]">Urgencia</p>
+            <div className="grid grid-cols-3 gap-1.5">
+              {URGENCY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setUrgency(opt.key)}
+                  className="rounded-xl border py-2 text-xs font-semibold transition-all"
+                  style={urgency === opt.key
+                    ? { color: opt.color, backgroundColor: opt.bg, borderColor: opt.color }
+                    : { color: '#a39e97', borderColor: '#ebe6df', backgroundColor: 'white' }
+                  }
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Supplier */}
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[#a39e97]">
+              Proveedor <span className="font-normal normal-case">(opcional)</span>
+            </label>
+            <select
+              value={supplierId}
+              onChange={(e) => setSupplierId(e.target.value)}
+              className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] focus:border-[#006d5a] focus:outline-none"
+            >
+              <option value="">Sin asignar</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Note */}
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[#a39e97]">
+              Nota <span className="font-normal normal-case">(opcional)</span>
+            </label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              placeholder="Indicaciones especiales, marca preferida, etc."
+              className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none resize-none"
+            />
+          </div>
+        </div>
+
+        <DialogFooter className="mt-2 gap-2">
+          <DialogClose className="rounded-xl px-4 py-2 text-sm font-medium text-[#7d6c64] hover:text-[#3d2c24]">
+            Cancelar
+          </DialogClose>
+          <button
+            onClick={handleSubmit}
+            disabled={submitting || !canSubmit}
+            className="flex items-center gap-2 rounded-xl bg-[#006d5a] px-5 py-2 text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:opacity-60"
+          >
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : <ShoppingCart className="size-4" />}
+            {submitting ? 'Creando…' : 'Crear pedido'}
           </button>
         </DialogFooter>
       </DialogContent>

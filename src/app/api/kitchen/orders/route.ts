@@ -30,10 +30,11 @@ export async function POST(request: NextRequest) {
 
     // ----- CREATE ORDER (single or batch) -----
     if (body.action === 'create_order') {
-      const { items, urgency, note } = body as {
+      const { items, urgency, note, supplier_id } = body as {
         items: { product_name: string; quantity: string; category?: string }[]
         urgency?: string
         note?: string
+        supplier_id?: number | null
       }
 
       if (!items || !Array.isArray(items) || items.length === 0) {
@@ -58,10 +59,11 @@ export async function POST(request: NextRequest) {
       const inserts = items.map((item) => ({
         product_name: item.product_name,
         quantity: item.quantity,
-        category: (item.category || 'verduleria') as KitchenOrderCategoryValue,
+        category: (item.category || 'otros') as KitchenOrderCategoryValue,
         urgency: orderUrgency as KitchenOrderUrgencyValue,
         note: note || null,
         created_by: user.id,
+        ...(supplier_id ? { supplier_id } : {}),
       }))
 
       const { error: orderError } = await admin.from('kitchen_orders').insert(inserts)
