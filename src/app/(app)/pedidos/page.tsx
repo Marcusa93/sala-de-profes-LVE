@@ -793,6 +793,17 @@ function ReceiveDialog({
 
 type OrderItem = { id: string; productName: string; quantity: string; stockItemId: string | null }
 
+type DemandData = {
+  stock_item: { name: string; unit: string; current_qty: number; min_qty: number }
+  days: number
+  via_recipes: { menu_item: string; units_sold: number; qty_per_portion: number; unit: string; estimated_consumed: number }[]
+  total_consumed: number
+  daily_rate: number
+  days_of_stock: number | null
+  has_recipe_data: boolean
+  has_sync_data: boolean
+}
+
 function NewOrderDialog({
   suppliers,
   stockItems,
@@ -811,6 +822,24 @@ function NewOrderDialog({
   const [supplierId, setSupplierId] = useState<string>('')
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // Demand data per stock item (cache)
+  const [demandCache, setDemandCache] = useState<Record<string, DemandData | null>>({})
+  const [fetchingDemand, setFetchingDemand] = useState<string | null>(null)
+
+  async function fetchDemand(stockItemId: string) {
+    if (stockItemId in demandCache) return
+    setFetchingDemand(stockItemId)
+    try {
+      const res = await fetch(`/api/stock/demand?stock_item_id=${stockItemId}&days=14`)
+      const data = await res.json()
+      setDemandCache(prev => ({ ...prev, [stockItemId]: res.ok ? data : null }))
+    } catch {
+      setDemandCache(prev => ({ ...prev, [stockItemId]: null }))
+    } finally {
+      setFetchingDemand(null)
+    }
+  }
 
   // Per-item search state
   const [searches, setSearches] = useState<Record<string, string>>({})
@@ -836,6 +865,7 @@ function NewOrderDialog({
   function selectStock(itemId: string, stock: StockItem) {
     updateItem(itemId, { productName: stock.name, stockItemId: stock.id })
     setSearch(itemId, '')
+    fetchDemand(stock.id)
   }
 
   const canSubmit = items.every((it) => it.productName.trim() && it.quantity.trim())
@@ -938,6 +968,20 @@ function NewOrderDialog({
                     className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-1.5 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none"
                   />
                 </div>
+
+                {/* Demand panel — aparece cuando hay stock item seleccionado */}
+                {item.stockItemId && (
+                  <div className="ml-6 mt-1">
+                    {fetchingDemand === item.stockItemId ? (
+                      <div className="flex items-center gap-1.5 text-[10px] text-[#a39e97]">
+                        <Loader2 className="size-3 animate-spin" />
+                        Consultando ventas...
+                      </div>
+                    ) : demandCache[item.stockItemId] ? (
+                      <DemandPanel demand={demandCache[item.stockItemId]!} />
+                    ) : null}
+                  </div>
+                )}
               </div>
             ))}
 
@@ -1019,5 +1063,79 @@ function NewOrderDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// DemandPanel — justificación de ventas para un insumo
+// ---------------------------------------------------------------------------
+
+function DemandPanel({ demand }: { demand: DemandData }) {
+  const { stock_item, days, via_recipes, total_consumed, daily_rate, days_of_stock, has_recipe_data, has_sync_data } = demand
+
+  if (!has_recipe_data && !has_sync_data && total_consumed === 0) {
+    return (
+      <div className="rounded-lg bg-[#f3efe9] px-2.5 py-2 text-[10px] text-[#a39e97]">
+        Sin ventas registradas en los últimos {days} días para este insumo.
+      </div>
+    )
+  }
+
+  const daysColor = days_of_stock === null ? '#a39e97'
+    : days_of_stock <= 2 ? '#ea504c'
+    : days_of_stock <= 5 ? '#d4943a'
+    : '#006d5a'
+
+  return (
+    <div className="rounded-lg border border-[#c8e6c9] bg-[#f7fbf9] px-2.5 py-2 space-y-1.5">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-[#006d5a]">
+          📈 Últimos {days} días
+        </p>
+        {days_of_stock !== null && (
+          <span className="text-[10px] font-semibold" style={{ color: daysColor }}>
+            {days_of_stock <= 0 ? '⚠ Stock agotado' : `~${days_of_stock} días de stock`}
+          </span>
+        )}
+      </div>
+
+      {/* Por producto vendido */}
+      {via_recipes.length > 0 && (
+        <div className="space-y-0.5">
+          {via_recipes.map((r) => (
+            <div key={r.menu_item} className="flex items-center justify-between gap-2">
+              <p className="truncate text-[11px] text-[#3d2c24]">• {r.menu_item}</p>
+              <div className="shrink-0 flex items-center gap-1 text-[10px] text-[#7d6c64] tabular-nums">
+                <span className="font-semibold text-[#3d2c24]">{r.units_sold}</span>
+                <span>u →</span>
+                <span className="font-semibold text-[#006d5a]">~{r.estimated_consumed}{r.unit}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Totales */}
+      <div className="border-t border-[#c8e6c9] pt-1.5 space-y-0.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] text-[#7d6c64]">
+            {has_sync_data ? 'Consumo real (Fudo)' : 'Consumo estimado'}
+          </span>
+          <span className="text-[11px] font-bold text-[#3d2c24] tabular-nums">
+            {total_consumed} {stock_item.unit}
+            {daily_rate > 0 && (
+              <span className="ml-1 font-normal text-[#a39e97]">· {daily_rate}/día</span>
+            )}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] text-[#7d6c64]">Stock actual</span>
+          <span className="text-[11px] font-semibold tabular-nums" style={{ color: daysColor }}>
+            {stock_item.current_qty} {stock_item.unit}
+          </span>
+        </div>
+      </div>
+    </div>
   )
 }
