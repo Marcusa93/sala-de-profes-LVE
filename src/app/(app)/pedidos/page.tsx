@@ -796,12 +796,16 @@ type OrderItem = { id: string; productName: string; quantity: string; stockItemI
 type DemandData = {
   stock_item: { name: string; unit: string; current_qty: number; min_qty: number }
   days: number
-  via_recipes: { menu_item: string; units_sold: number; qty_per_portion: number; unit: string; estimated_consumed: number }[]
+  sales: { menu_item: string; units_sold: number; via: 'recipe' | 'name' }[]
+  total_units_sold: number
+  qty_per_portion: number | null
+  portion_unit: string
+  estimated_consumed: number | null
+  consumed_from_sync: number
   total_consumed: number
-  daily_rate: number
+  daily_rate: number | null
   days_of_stock: number | null
-  has_recipe_data: boolean
-  has_sync_data: boolean
+  data_source: 'recipe' | 'name' | 'sync' | 'none'
 }
 
 function NewOrderDialog({
@@ -1071,12 +1075,16 @@ function NewOrderDialog({
 // ---------------------------------------------------------------------------
 
 function DemandPanel({ demand }: { demand: DemandData }) {
-  const { stock_item, days, via_recipes, total_consumed, daily_rate, days_of_stock, has_recipe_data, has_sync_data } = demand
+  const {
+    stock_item, days, sales, total_units_sold,
+    estimated_consumed, consumed_from_sync,
+    daily_rate, days_of_stock, data_source,
+  } = demand
 
-  if (!has_recipe_data && !has_sync_data && total_consumed === 0) {
+  if (data_source === 'none') {
     return (
       <div className="rounded-lg bg-[#f3efe9] px-2.5 py-2 text-[10px] text-[#a39e97]">
-        Sin ventas registradas en los últimos {days} días para este insumo.
+        Sin datos de ventas en los últimos {days} días. Verificá que el insumo esté vinculado a recetas en Fudo.
       </div>
     )
   }
@@ -1086,6 +1094,12 @@ function DemandPanel({ demand }: { demand: DemandData }) {
     : days_of_stock <= 5 ? '#d4943a'
     : '#006d5a'
 
+  const sourceLabel = consumed_from_sync > 0
+    ? 'Consumo real (Fudo sync)'
+    : data_source === 'recipe'
+      ? 'Consumo estimado por receta'
+      : 'Platos con este insumo'
+
   return (
     <div className="rounded-lg border border-[#c8e6c9] bg-[#f7fbf9] px-2.5 py-2 space-y-1.5">
       {/* Header */}
@@ -1094,41 +1108,48 @@ function DemandPanel({ demand }: { demand: DemandData }) {
           📈 Últimos {days} días
         </p>
         {days_of_stock !== null && (
-          <span className="text-[10px] font-semibold" style={{ color: daysColor }}>
-            {days_of_stock <= 0 ? '⚠ Stock agotado' : `~${days_of_stock} días de stock`}
+          <span className="text-[10px] font-semibold tabular-nums" style={{ color: daysColor }}>
+            {days_of_stock <= 0 ? '⚠ sin stock' : `~${days_of_stock}d de stock`}
           </span>
         )}
       </div>
 
-      {/* Por producto vendido */}
-      {via_recipes.length > 0 && (
+      {/* Lista de platos */}
+      {sales.length > 0 && (
         <div className="space-y-0.5">
-          {via_recipes.map((r) => (
+          {sales.slice(0, 6).map((r) => (
             <div key={r.menu_item} className="flex items-center justify-between gap-2">
               <p className="truncate text-[11px] text-[#3d2c24]">• {r.menu_item}</p>
-              <div className="shrink-0 flex items-center gap-1 text-[10px] text-[#7d6c64] tabular-nums">
-                <span className="font-semibold text-[#3d2c24]">{r.units_sold}</span>
-                <span>u →</span>
-                <span className="font-semibold text-[#006d5a]">~{r.estimated_consumed}{r.unit}</span>
-              </div>
+              <span className="shrink-0 text-[11px] font-semibold text-[#3d2c24] tabular-nums">
+                {r.units_sold} <span className="font-normal text-[#a39e97]">u</span>
+              </span>
             </div>
           ))}
+          {sales.length > 6 && (
+            <p className="text-[10px] text-[#a39e97]">+{sales.length - 6} más...</p>
+          )}
         </div>
       )}
 
       {/* Totales */}
       <div className="border-t border-[#c8e6c9] pt-1.5 space-y-0.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[10px] text-[#7d6c64]">
-            {has_sync_data ? 'Consumo real (Fudo)' : 'Consumo estimado'}
-          </span>
+          <span className="text-[10px] text-[#7d6c64]">Total vendido</span>
           <span className="text-[11px] font-bold text-[#3d2c24] tabular-nums">
-            {total_consumed} {stock_item.unit}
-            {daily_rate > 0 && (
-              <span className="ml-1 font-normal text-[#a39e97]">· {daily_rate}/día</span>
-            )}
+            {total_units_sold} platos
           </span>
         </div>
+        {(estimated_consumed || consumed_from_sync > 0) && (
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] text-[#7d6c64]">{sourceLabel}</span>
+            <span className="text-[11px] font-bold text-[#006d5a] tabular-nums">
+              {consumed_from_sync > 0 ? consumed_from_sync : estimated_consumed} {stock_item.unit}
+              {daily_rate && daily_rate > 0 && (
+                <span className="ml-1 font-normal text-[#a39e97]">· {daily_rate}/día</span>
+              )}
+            </span>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2">
           <span className="text-[10px] text-[#7d6c64]">Stock actual</span>
           <span className="text-[11px] font-semibold tabular-nums" style={{ color: daysColor }}>
