@@ -43,20 +43,55 @@ type HoyData = {
   countCritical: number
 }
 
+// La vista se cachea para que volver desde un paso sea instantáneo,
+// y el plan armado se guarda POR FECHA: entrás a un paso, volvés, y está igual.
+const CACHE_KEY = 'hoy-cache-v1'
+const CACHE_TTL_MS = 10 * 60 * 1000
+const planKey = () => `hoy-plan-${new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)}`
+
 export default function HoyPage() {
   const { profile, loading: profileLoading } = useProfileContext()
   const [data, setData] = useState<HoyData | null>(null)
   const [loading, setLoading] = useState(true)
   // Armador manual de producción: cantidades editables sobre la sugerencia
   const [planQty, setPlanQty] = useState<Record<string, number>>({})
+  const [planLoaded, setPlanLoaded] = useState(false)
   const [sendingPlan, setSendingPlan] = useState(false)
   const [addSearch, setAddSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [showAiAdvice, setShowAiAdvice] = useState(false)
 
+  // Persistir cada ajuste del armador (sobrevive navegar a los pasos y volver)
+  useEffect(() => {
+    if (!planLoaded) return
+    try { localStorage.setItem(planKey(), JSON.stringify(planQty)) } catch { /* storage lleno */ }
+  }, [planQty, planLoaded])
+
   useEffect(() => {
     if (!profile) return
     const supabase = createClient()
+
+    // 1) Si hay caché fresco, mostrarlo YA (volver de un paso = instantáneo)
+    let hadCache = false
+    try {
+      const raw = sessionStorage.getItem(CACHE_KEY)
+      if (raw) {
+        const cached = JSON.parse(raw) as { data: HoyData; ts: number }
+        if (Date.now() - cached.ts < CACHE_TTL_MS && cached.data) {
+          setData(cached.data)
+          setLoading(false)
+          hadCache = true
+        }
+      }
+    } catch { /* caché inválido, se refetchea */ }
+
+    // Restaurar el plan armado de hoy (si existe) apenas se pueda
+    let savedPlan: Record<string, number> | null = null
+    try { savedPlan = JSON.parse(localStorage.getItem(planKey()) ?? 'null') } catch { /* ignorar */ }
+    if (savedPlan && hadCache) {
+      setPlanQty(savedPlan)
+      setPlanLoaded(true)
+    }
 
     async function load() {
       const [purchaseRes, planRes, kitchenRes, barRes, stockRes] = await Promise.all([
@@ -70,7 +105,7 @@ export default function HoyPage() {
       const orders = (purchaseRes?.orders ?? []) as PurchaseOrderLite[]
       const stock = (stockRes.data ?? []) as { id: string; name: string; current_qty: number; min_qty: number; unit: string; is_produced: boolean }[]
 
-      setData({
+      const fresh: HoyData = {
         orderToday: orders.filter(o => o.is_order_day),
         otherOrders: orders.filter(o => !o.is_order_day).length,
         incoming: [
@@ -81,11 +116,18 @@ export default function HoyPage() {
         producedItems: stock.filter(i => i.is_produced).map(({ id, name, unit, current_qty }) => ({ id, name, unit, current_qty })),
         countNegative: stock.filter(i => Number(i.current_qty) < 0).slice(0, 6),
         countCritical: stock.filter(i => isStockCritical(Number(i.current_qty ?? 0), Number(i.min_qty ?? 0))).length,
-      })
-      // Las sugerencias IA son el punto de partida editable del armador
+      }
+
+      setData(fresh)
+      try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data: fresh, ts: Date.now() })) } catch { /* storage lleno */ }
+
+      // Plan armado: lo guardado HOY manda; la IA solo completa lo que falte
       const initialQty: Record<string, number> = {}
       for (const item of (planRes?.items ?? []) as PlanItem[]) initialQty[item.stock_item_id] = item.suggested_qty
-      setPlanQty(initialQty)
+      let saved: Record<string, number> | null = null
+      try { saved = JSON.parse(localStorage.getItem(planKey()) ?? 'null') } catch { /* ignorar */ }
+      setPlanQty(saved ? { ...initialQty, ...saved } : initialQty)
+      setPlanLoaded(true)
       setLoading(false)
     }
     load()
@@ -161,7 +203,7 @@ export default function HoyPage() {
       key: 'pedir',
       title: 'Pedir',
       icon: ShoppingCart,
-      href: '/pedidos',
+      href: '/pedidos?from=hoy',
       cta: 'Armar pedidos',
       tone: data.orderToday.length > 0 ? 'action' : 'ok',
       body: data.orderToday.length > 0 ? (
@@ -186,7 +228,7 @@ export default function HoyPage() {
       key: 'recibir',
       title: 'Recibir',
       icon: Truck,
-      href: '/pedidos',
+      href: '/pedidos?from=hoy',
       cta: 'Recibir mercadería',
       tone: data.incoming.length > 0 ? 'action' : 'ok',
       body: data.incoming.length > 0 ? (
@@ -206,7 +248,7 @@ export default function HoyPage() {
       key: 'producir',
       title: 'Producir',
       icon: ChefHat,
-      href: '/cocina/produccion',
+      href: '/cocina/produccion?from=hoy',
       cta: 'Ver plan y producir',
       tone: (data.plan?.sellingWithoutStock.length ?? 0) > 0 ? 'urgent' : (data.plan?.items.length ?? 0) > 0 ? 'action' : 'ok',
       body: (() => {
@@ -335,7 +377,7 @@ export default function HoyPage() {
       key: 'contar',
       title: 'Contar',
       icon: ClipboardList,
-      href: '/stock',
+      href: '/stock?from=hoy',
       cta: 'Ir a Conteo',
       tone: data.countNegative.length > 0 ? 'urgent' : data.countCritical > 0 ? 'action' : 'ok',
       body: (

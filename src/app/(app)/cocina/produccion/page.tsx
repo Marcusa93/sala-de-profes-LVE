@@ -11,6 +11,7 @@ import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { cn } from '@/lib/utils'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { useProduccionOrders } from '@/lib/hooks/use-produccion'
+import { BackToHoy } from '@/components/layout/BackToHoy'
 
 // ---------------------------------------------------------------------------
 // Plan de producción IA — qué producir hoy según ventas × stock × vida útil
@@ -186,6 +187,7 @@ export default function ProduccionPage() {
 
   return (
     <div className="min-h-screen bg-[#faf8f5] pb-28">
+      <BackToHoy />
       {/* Header */}
       <div className="sticky top-0 z-10 border-b border-[#ebe6df] bg-[#faf8f5]/95 backdrop-blur-md">
         <div className="mx-auto max-w-2xl px-4 py-3">

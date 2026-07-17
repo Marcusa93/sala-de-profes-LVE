@@ -15,6 +15,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn, StaggerList, StaggerItem, AnimatedNumber } from '@/components/ui/motion'
 import { PurchaseOrderCopilot } from '@/components/ai/PurchaseOrderCopilot'
+import { BackToHoy } from '@/components/layout/BackToHoy'
 import {
   Dialog,
   DialogContent,
@@ -225,6 +226,7 @@ export default function PedidosPage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-5 pb-28">
+      <BackToHoy />
       {/* Header */}
       <FadeIn>
         <div className="flex items-center justify-between gap-3">

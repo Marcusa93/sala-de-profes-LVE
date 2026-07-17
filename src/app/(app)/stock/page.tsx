@@ -58,6 +58,7 @@ import {
   type StockReviewCard,
 } from '@/lib/stock/helpers'
 import { StockItemRow } from './_components/StockItemRow'
+import { BackToHoy } from '@/components/layout/BackToHoy'
 import { ReviewCard } from './_components/ReviewCard'
 import { MetadataEditor } from './_components/MetadataEditor'
 
@@ -603,6 +604,7 @@ export default function StockPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 pb-28">
+      <BackToHoy />
       {/* Header */}
       <FadeIn>
         <div className="overflow-hidden rounded-[2rem] border border-[#ebe6df] bg-[radial-gradient(circle_at_top_left,#e8f5f1_0,#fbfaf8_34%,#ffffff_72%)] p-4 shadow-sm">
