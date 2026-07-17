@@ -6,15 +6,20 @@ import { isManagerOrAbove } from '@/lib/roles'
 // GET /api/stock/demand?stock_item_id=UUID&days=14
 //
 // Encuentra qué platos del menú consumen este insumo y cuánto se vendió.
-// Tres rutas, de más precisa a más aproximada:
+// Cuatro rutas, de más precisa a más aproximada:
 //
-// Ruta A — recipe chain: stock_item → recipe_ingredients → recipes → menu_items → fudo_sales
-//           (requiere que menu_items.recipe_id esté configurado)
+// Ruta A  — recipe directo: stock_item → recipe_ingredients → menu_items (recipe_id) → fudo_sales
 //
-// Ruta B — name match: busca menu_items cuyo nombre contenga el nombre del insumo
-//           (fallback cuando las recetas no están vinculadas)
+// Ruta A2 — cadena de dos niveles via elaborado intermedio:
+//            stock_item (nalga) → recipe L1 ("Milanesa cruda")
+//            → stock_item "Milanesa cruda" (match por nombre de receta)
+//            → recipe L2 ("Milanesa napolitana") → menu_item → fudo_sales
+//            Calcula qty compuesta: qty_L1 × qty_L2 (ej: 150g nalga × 1 milanesa = 150g/plato)
 //
-// Ruta C — fudo ingredient sync: stock_movements[reason='sale'] (consumo real del sync de Fudo)
+// Ruta B  — name match: stock_item.name → menu_items ILIKE → fudo_sales
+//            (fallback cuando no hay recetas vinculadas)
+//
+// Ruta C  — fudo ingredient sync: stock_movements[reason='sale'] (consumo real registrado)
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient()
@@ -37,7 +42,6 @@ export async function GET(request: NextRequest) {
   cutoff.setDate(cutoff.getDate() - days)
   const cutoffISO = cutoff.toISOString()
 
-  // Datos del insumo
   const { data: stockItem } = await admin
     .from('stock_items')
     .select('id, name, unit, current_qty, min_qty, fudo_ingredient_id')
@@ -47,10 +51,12 @@ export async function GET(request: NextRequest) {
   if (!stockItem) return NextResponse.json({ error: 'Item no encontrado' }, { status: 404 })
 
   // -------------------------------------------------------------------------
-  // RUTA A — vía recipe_ingredients → menu_items con recipe_id asignado
+  // RUTA A — directo: stock_item → recipe_ingredients → menu_items
   // -------------------------------------------------------------------------
   type SaleRow = { menu_item: string; fudo_product_id: string; units_sold: number; via: 'recipe' | 'name' }
   let salesRows: SaleRow[] = []
+  let effectiveQtyPerPortion: number | null = null
+  let effectivePortionUnit: string = stockItem.unit
 
   const { data: riRows } = await admin
     .from('recipe_ingredients')
@@ -58,6 +64,12 @@ export async function GET(request: NextRequest) {
     .eq('stock_item_id', stockItemId)
 
   const recipeIds = (riRows ?? []).map(r => r.recipe_id)
+
+  // Mapa recipe_id → qty del insumo por porción (para cálculos de cadena L2)
+  const qtyByRecipeId: Record<string, number> = {}
+  for (const ri of riRows ?? []) {
+    qtyByRecipeId[ri.recipe_id] = ri.qty_per_portion
+  }
 
   if (recipeIds.length > 0) {
     const { data: menuItemsViaRecipe } = await admin
@@ -88,14 +100,127 @@ export async function GET(request: NextRequest) {
           units_sold: Math.round(totals[m.fudo_product_id as string] ?? 0),
           via: 'recipe' as const,
         }))
+
+      if (salesRows.length > 0) {
+        const riForItem = riRows?.find(r => r.qty_per_portion > 0)
+        effectiveQtyPerPortion = riForItem?.qty_per_portion ?? null
+        effectivePortionUnit = riForItem?.ingredient_unit ?? stockItem.unit
+      }
     }
   }
 
   // -------------------------------------------------------------------------
-  // RUTA B — name match cuando recipe chain no encontró nada
+  // RUTA A2 — cadena de dos niveles via elaborado intermedio
+  //
+  // Ejemplo: nalga → "Milanesa cruda" (recipe L1) → "Milanesa cruda" (stock_item)
+  //          → "Milanesa napolitana" (recipe L2) → menu_item → fudo_sales
+  //
+  // El vínculo entre recipe L1 y stock_item intermedio se resuelve por nombre exacto
+  // (case-insensitive). Cuando la encargada crea una receta "Milanesa cruda" Y un
+  // stock_item "Milanesa cruda", la cadena se completa automáticamente.
+  //
+  // Qty compuesta = qty_L1 (nalga por milanesa cruda) × qty_L2 (milanesas por plato)
   // -------------------------------------------------------------------------
-  // Extrae palabras del nombre del insumo (≥ 3 letras) y busca menu_items
-  // que las contengan. Ejemplo: "Lomo" → busca menu_items ILIKE '%lomo%'
+  if (salesRows.length === 0 && recipeIds.length > 0) {
+    const { data: recipesL1 } = await admin
+      .from('recipes')
+      .select('id, name')
+      .in('id', recipeIds)
+
+    if (recipesL1?.length) {
+      const nameFilter = recipesL1.map(r => `name.ilike.${r.name}`).join(',')
+      const { data: semiFinished } = await admin
+        .from('stock_items')
+        .select('id, name')
+        .or(nameFilter)
+
+      if (semiFinished?.length) {
+        // Mapa: sf stock_item.id → qty L1 (cuánto insumo raw por unidad de elaborado)
+        const recipeLowerToId: Record<string, string> = {}
+        for (const r of recipesL1) {
+          recipeLowerToId[r.name.toLowerCase()] = r.id
+        }
+        const sfIdToL1Qty: Record<string, number> = {}
+        for (const sf of semiFinished) {
+          const matchingRecipeId = recipeLowerToId[sf.name.toLowerCase()]
+          if (matchingRecipeId && qtyByRecipeId[matchingRecipeId] != null) {
+            sfIdToL1Qty[sf.id] = qtyByRecipeId[matchingRecipeId]
+          }
+        }
+
+        const sfIds = semiFinished.map(s => s.id)
+
+        const { data: l2Ris } = await admin
+          .from('recipe_ingredients')
+          .select('recipe_id, stock_item_id, qty_per_portion')
+          .in('stock_item_id', sfIds)
+
+        const l2RecipeIds = [...new Set((l2Ris ?? []).map(r => r.recipe_id))]
+
+        if (l2RecipeIds.length > 0) {
+          const { data: menuItemsChain } = await admin
+            .from('menu_items')
+            .select('id, name, recipe_id, fudo_product_id')
+            .in('recipe_id', l2RecipeIds)
+            .eq('is_active', true)
+            .not('fudo_product_id', 'is', null)
+
+          const fudoIds = (menuItemsChain ?? []).map(m => m.fudo_product_id as string).filter(Boolean)
+
+          if (fudoIds.length > 0) {
+            const { data: fudoSales } = await admin
+              .from('fudo_sales')
+              .select('fudo_product_id, quantity')
+              .in('fudo_product_id', fudoIds)
+              .gte('sold_at', cutoffISO)
+
+            const totals: Record<string, number> = {}
+            for (const s of fudoSales ?? []) {
+              totals[s.fudo_product_id] = (totals[s.fudo_product_id] ?? 0) + s.quantity
+            }
+
+            salesRows = (menuItemsChain ?? [])
+              .filter(m => m.fudo_product_id && (totals[m.fudo_product_id as string] ?? 0) > 0)
+              .map(m => ({
+                menu_item: m.name,
+                fudo_product_id: m.fudo_product_id as string,
+                units_sold: Math.round(totals[m.fudo_product_id as string] ?? 0),
+                via: 'recipe' as const,
+              }))
+
+            // Qty compuesta ponderada por ventas:
+            // compound = qty_L1 (insumo/elaborado) × qty_L2 (elaborado/plato)
+            if (salesRows.length > 0) {
+              let totalWeightedQty = 0
+              let totalUnits = 0
+
+              for (const row of salesRows) {
+                const mi = menuItemsChain?.find(m => m.fudo_product_id === row.fudo_product_id)
+                if (!mi) continue
+                const l2RisForRecipe = (l2Ris ?? []).filter(ri => ri.recipe_id === mi.recipe_id)
+                for (const l2ri of l2RisForRecipe) {
+                  const l1Qty = sfIdToL1Qty[l2ri.stock_item_id]
+                  if (l1Qty != null) {
+                    totalWeightedQty += l1Qty * l2ri.qty_per_portion * row.units_sold
+                    totalUnits += row.units_sold
+                  }
+                }
+              }
+
+              if (totalUnits > 0 && totalWeightedQty > 0) {
+                effectiveQtyPerPortion = totalWeightedQty / totalUnits
+                effectivePortionUnit = riRows?.find(r => r.ingredient_unit)?.ingredient_unit ?? stockItem.unit
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // RUTA B — name match cuando las rutas de receta no encontraron nada
+  // -------------------------------------------------------------------------
   if (salesRows.length === 0) {
     const words = stockItem.name
       .split(/\s+/)
@@ -103,7 +228,6 @@ export async function GET(request: NextRequest) {
       .map(w => w.toLowerCase())
 
     if (words.length > 0) {
-      // Consulta con OR sobre las palabras más representativas (top 2)
       const keyWords = words.slice(0, 2)
       const conditions = keyWords.map(w => `name.ilike.%${w}%`).join(',')
 
@@ -139,7 +263,6 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Ordenar por más vendido
   salesRows.sort((a, b) => b.units_sold - a.units_sold)
 
   // -------------------------------------------------------------------------
@@ -158,18 +281,12 @@ export async function GET(request: NextRequest) {
   ) / 100
 
   // -------------------------------------------------------------------------
-  // Construir respuesta
+  // Respuesta
   // -------------------------------------------------------------------------
   const totalUnitsSold = salesRows.reduce((s, r) => s + r.units_sold, 0)
 
-  // Para consumo estimado: si hay recipe_ingredients con qty_per_portion usa eso,
-  // sino muestra "X platos vendidos" sin estimación en kg
-  const riForItem = riRows?.find(r => r.qty_per_portion > 0)
-  const qtyPerPortion = riForItem?.qty_per_portion ?? null
-  const portionUnit = riForItem?.ingredient_unit ?? stockItem.unit
-
-  const estimatedConsumed = qtyPerPortion
-    ? Math.round(totalUnitsSold * qtyPerPortion * 100) / 100
+  const estimatedConsumed = effectiveQtyPerPortion
+    ? Math.round(totalUnitsSold * effectiveQtyPerPortion * 100) / 100
     : null
 
   const totalConsumed = consumedFromSync > 0
@@ -201,8 +318,8 @@ export async function GET(request: NextRequest) {
     days,
     sales: salesRows,
     total_units_sold: totalUnitsSold,
-    qty_per_portion: qtyPerPortion,
-    portion_unit: portionUnit,
+    qty_per_portion: effectiveQtyPerPortion,
+    portion_unit: effectivePortionUnit,
     estimated_consumed: estimatedConsumed,
     consumed_from_sync: consumedFromSync,
     total_consumed: totalConsumed,
