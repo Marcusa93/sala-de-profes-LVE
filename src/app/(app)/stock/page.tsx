@@ -140,6 +140,8 @@ export default function StockPage() {
   const [areaFilter, setAreaFilter] = useState<AreaFilter>('all')
   const [semaphoreFilter, setSemaphoreFilter] = useState<SemaphoreColor | null>(null)
   const [sourceFilter, setSourceFilter] = useState<StockSourceFilter>('all')
+  const [negativesOnly, setNegativesOnly] = useState(false)
+  const [showHowItWorks, setShowHowItWorks] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
   const [syncing, setSyncing] = useState(false)
@@ -357,8 +359,11 @@ export default function StockPage() {
     if (semaphoreFilter) {
       result = result.filter(i => getSemaphore(i) === semaphoreFilter)
     }
+    if (negativesOnly) {
+      result = result.filter(i => Number(i.current_qty) < 0)
+    }
     return result
-  }, [items, search, areaFilter, categoryFilter, sourceFilter, semaphoreFilter])
+  }, [items, search, areaFilter, categoryFilter, sourceFilter, semaphoreFilter, negativesOnly])
 
   // Counts
   const counts = useMemo(() => {
@@ -1152,7 +1157,57 @@ export default function StockPage() {
             ? 'El número que cargues es el conteo real. Si está vinculado a Fudo, primero se guarda en Fudo y después en LVE.'
             : 'Esta vista es solo para buscar, filtrar y entrar al detalle. Las anomalías importantes están en Radar.'}
         </p>
+        {view === 'conteo' && (
+          <button
+            onClick={() => setShowHowItWorks(v => !v)}
+            className="mt-2 text-[11px] font-semibold text-[#006d5a] underline"
+          >
+            {showHowItWorks ? 'Ocultar explicación' : '¿Cómo funciona el control? ¿Por qué hay negativos?'}
+          </button>
+        )}
+        {view === 'conteo' && showHowItWorks && (
+          <div className="mt-2 space-y-2 rounded-xl bg-[#faf8f5] p-3 text-xs leading-relaxed text-[#3d2c24]">
+            <p>
+              <span className="font-bold">El número digital es el espejo de Fudo.</span> Cada venta descuenta
+              stock sola. Pero el sistema solo SUMA cuando alguien le avisa: al{' '}
+              <span className="font-bold">recibir mercadería</span> (Pedidos → Recibido), al{' '}
+              <span className="font-bold">registrar producción</span>, o al <span className="font-bold">contar</span> acá.
+            </p>
+            <p>
+              <span className="font-bold text-[#ea504c]">Un negativo no es un error del sistema:</span> significa
+              que se vendió más de lo que el sistema supo que entró — nunca se registró la compra, la producción
+              o un conteo. Se arregla en 10 segundos: contás lo físico, cargás el número real, y de ahí en
+              adelante se mantiene solo (si se registran las entradas).
+            </p>
+            <p className="text-[#7d6c64]">
+              <span className="font-bold">Rutina sugerida:</span> al recibir mercadería → Recibido con cantidades ·
+              al producir → registrarlo · conteo físico por área una vez por semana (rotando: lunes pastelería,
+              martes heladera, etc.) · los negativos, contarlos apenas aparecen.
+            </p>
+          </div>
+        )}
       </div>
+
+      {/* Negativos: el atajo para sanearlos de una */}
+      {view === 'conteo' && (() => {
+        const negCount = items.filter(i => Number(i.current_qty) < 0).length
+        if (negCount === 0 && !negativesOnly) return null
+        return (
+          <button
+            onClick={() => setNegativesOnly(v => !v)}
+            className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left ring-1 transition-all ${
+              negativesOnly ? 'bg-[#ea504c] text-white ring-[#ea504c]' : 'bg-[#fff7f7] text-[#ea504c] ring-[#f3d0cf]'
+            }`}
+          >
+            <span className="text-sm font-bold">
+              {negativesOnly ? `Mostrando solo los ${negCount} negativos` : `${negCount} items en negativo — contarlos primero`}
+            </span>
+            <span className={`text-[11px] font-semibold ${negativesOnly ? 'text-white/80' : ''}`}>
+              {negativesOnly ? 'ver todos' : 'ver solo estos'}
+            </span>
+          </button>
+        )
+      })()}
 
       {/* Conteo programado — items prioritarios según días sin contar */}
       {view === 'conteo' && !search && (() => {
