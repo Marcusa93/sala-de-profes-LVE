@@ -4,8 +4,9 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronLeft, ChevronRight, Check, Plus, Trash2,
-  Package, AlertTriangle, Loader2, Leaf, TrendingUp,
+  Package, AlertTriangle, Loader2, Leaf, TrendingUp, BookmarkPlus,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
 import { PRODUCTION_BATCHES, matchIngredientToStock, type ProductionBatch } from '@/lib/recipes/production-batches'
@@ -32,11 +33,18 @@ type Template = {
   input_stock_item_id: string | null
   input_unit: string
   input_stock_item: { id: string; name: string; unit: string } | null
+  inputs: {
+    stock_item_id: string | null
+    qty: number | null
+    unit: string | null
+    stock_items?: { id: string; name: string; unit: string } | null
+  }[]
   outputs: {
     id: number
     stock_item_id: string | null
     output_name: string
     theoretical_yield_pct: number
+    default_qty?: number | null
     output_unit: string
     is_waste: boolean
     notes: string | null
@@ -367,37 +375,52 @@ export default function NuevaProduccionPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [primaryInputQty, selectedBatch])
 
-  // When template selected, set input item and unit
-  useEffect(() => {
-    if (selectedTemplate) {
-      if (selectedTemplate.input_stock_item) {
-        const found = stockItems.find((s) => s.id === selectedTemplate.input_stock_item!.id)
-        setInputs((prev) => [{
-          ...(prev[0] ?? makeInputRow()),
-          stock_item_id: found && isFudoLinked(found) ? found.id : null,
-          stock_item_name: found && isFudoLinked(found) ? found.name : '',
-          unit: found?.unit ?? selectedTemplate.input_unit,
-        }])
-      }
-    }
-  }, [selectedTemplate, stockItems])
-
-  // Pre-fill outputs from template when qty changes
+  // Al elegir una plantilla: precargar TODOS los insumos y salidas guardados,
+  // con sus cantidades de referencia. El cocinero solo ajusta lo real. Así no
+  // hay que elegir a mano cada renglón (menos error de carga).
   const applyTemplate = useCallback(() => {
-    if (!selectedTemplate || primaryInputQty <= 0) return
-    const qty = primaryInputQty
-    if (isNaN(qty) || qty <= 0) return
+    if (!selectedTemplate) return
 
+    // Insumos: los múltiples guardados; si no hay, el input único legacy
+    const tplInputs = selectedTemplate.inputs ?? []
+    if (tplInputs.length > 0) {
+      const rows: InputRow[] = tplInputs
+        .map((ti) => {
+          const found = stockItems.find((s) => s.id === ti.stock_item_id) ?? null
+          if (found && !isFudoLinked(found)) return null
+          return {
+            localId: nextId(),
+            stock_item_id: found?.id ?? ti.stock_item_id ?? null,
+            stock_item_name: found?.name ?? ti.stock_items?.name ?? '',
+            qty_used: ti.qty != null ? String(ti.qty) : '',
+            unit: found?.unit ?? ti.unit ?? 'kg',
+          }
+        })
+        .filter((r): r is InputRow => r !== null)
+      if (rows.length > 0) setInputs(rows)
+    } else if (selectedTemplate.input_stock_item) {
+      const found = stockItems.find((s) => s.id === selectedTemplate.input_stock_item!.id)
+      setInputs([{
+        ...makeInputRow(),
+        stock_item_id: found && isFudoLinked(found) ? found.id : null,
+        stock_item_name: found && isFudoLinked(found) ? found.name : '',
+        unit: found?.unit ?? selectedTemplate.input_unit,
+      }])
+    }
+
+    // Salidas: precargar con la cantidad de referencia (default_qty) o el % legacy
     const rows: OutputRow[] = selectedTemplate.outputs.map((o) => {
       const linkedItem = stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
-
+      const refQty = o.default_qty != null
+        ? o.default_qty
+        : (primaryInputQty > 0 ? primaryInputQty * o.theoretical_yield_pct / 100 : null)
       return {
         localId: nextId(),
         stock_item_id: o.stock_item_id,
         stock_item_name: linkedItem?.name ?? '',
         output_name: o.output_name,
-        qty_produced: (qty * o.theoretical_yield_pct / 100).toFixed(3),
-        theoretical_qty: qty * o.theoretical_yield_pct / 100,
+        qty_produced: refQty != null ? formatQty(refQty) : '',
+        theoretical_qty: refQty,
         unit: linkedItem?.unit ?? o.output_unit,
         is_waste: o.is_waste,
         notes: o.notes ?? '',
@@ -407,6 +430,12 @@ export default function NuevaProduccionPage() {
     })
     setOutputs(rows)
   }, [primaryInputQty, productionDate, selectedTemplate, stockItems])
+
+  // Al seleccionar una plantilla, aplicarla automáticamente
+  useEffect(() => {
+    if (selectedTemplate) applyTemplate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTemplate?.id])
 
   useEffect(() => {
     const previousDate = previousProductionDate.current
@@ -520,6 +549,47 @@ export default function NuevaProduccionPage() {
     { label: 'Queda para encargado', ok: true },
   ]
   const readyForReview = step0Valid && step1Valid
+
+  // ── Guardar la producción actual como plantilla reutilizable ──
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  async function saveAsTemplate() {
+    const validInputs = inputDetails.filter((i) => i.item && isFudoLinked(i.item))
+    if (validInputs.length === 0) { setError('Cargá al menos un insumo para guardar la plantilla.'); return }
+    const finished = outputs.filter((o) => !o.is_waste && o.stock_item_id)
+    if (finished.length === 0) { setError('Cargá el producto que sale para guardar la plantilla.'); return }
+
+    const suggested = finished[0]?.output_name || orderName || ''
+    const name = window.prompt('Nombre de la plantilla (ej: "Milanesa cruda"):', suggested)
+    if (!name?.trim()) return
+
+    setSavingTemplate(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/produccion/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          inputs: validInputs.map((i) => ({ stock_item_id: i.item!.id, qty: i.qty, unit: i.unit })),
+          outputs: outputs.map((o) => ({
+            stock_item_id: o.stock_item_id,
+            output_name: o.output_name,
+            default_qty: parseFloat(o.qty_produced) || null,
+            output_unit: o.unit,
+            is_waste: o.is_waste,
+            notes: o.notes || null,
+          })),
+        }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.success) throw new Error(json?.error ?? 'No se pudo guardar la plantilla')
+      toast.success(`Plantilla "${name.trim()}" guardada — la próxima vez elegila y se precarga todo`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al guardar la plantilla')
+    } finally {
+      setSavingTemplate(false)
+    }
+  }
 
   // ── Submit ──
   async function handleConfirm() {
@@ -1357,6 +1427,18 @@ export default function NuevaProduccionPage() {
             ))}
           </div>
         </div>
+
+        {/* Guardar como plantilla — para no volver a cargar todo a mano */}
+        {step === 2 && (
+          <button
+            onClick={saveAsTemplate}
+            disabled={savingTemplate}
+            className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-[#c8a97a] bg-[#fdf6ec] py-2.5 text-[13px] font-semibold text-[#8b5e34] disabled:opacity-50 active:scale-[0.99]"
+          >
+            {savingTemplate ? <Loader2 className="size-4 animate-spin" /> : <BookmarkPlus className="size-4" />}
+            Guardar como plantilla (entra esto → sale esto)
+          </button>
+        )}
 
         {/* ── Navigation buttons ── */}
         <div className="mt-6 flex gap-3">

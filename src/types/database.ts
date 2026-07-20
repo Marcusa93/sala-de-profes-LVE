@@ -1968,6 +1968,48 @@ export type Database = {
           },
         ]
       }
+      production_template_inputs: {
+        Row: {
+          id: number
+          template_id: number
+          stock_item_id: string | null
+          qty: number | null
+          unit: string | null
+          sort_order: number
+        }
+        Insert: {
+          id?: number
+          template_id: number
+          stock_item_id?: string | null
+          qty?: number | null
+          unit?: string | null
+          sort_order?: number
+        }
+        Update: {
+          id?: number
+          template_id?: number
+          stock_item_id?: string | null
+          qty?: number | null
+          unit?: string | null
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_template_inputs_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "production_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "production_template_inputs_stock_item_id_fkey"
+            columns: ["stock_item_id"]
+            isOneToOne: false
+            referencedRelation: "stock_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       production_template_outputs: {
         Row: {
           id: number
@@ -1975,6 +2017,7 @@ export type Database = {
           notes: string | null
           output_name: string
           output_unit: string
+          default_qty: number | null
           sort_order: number | null
           stock_item_id: string | null
           template_id: number
@@ -1986,6 +2029,7 @@ export type Database = {
           notes?: string | null
           output_name: string
           output_unit?: string
+          default_qty?: number | null
           sort_order?: number | null
           stock_item_id?: string | null
           template_id: number
@@ -1997,6 +2041,7 @@ export type Database = {
           notes?: string | null
           output_name?: string
           output_unit?: string
+          default_qty?: number | null
           sort_order?: number | null
           stock_item_id?: string | null
           template_id?: number
