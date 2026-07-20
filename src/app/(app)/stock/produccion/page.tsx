@@ -56,7 +56,13 @@ type OrderRow = {
     total_output_qty: number
     total_waste_qty: number
     efficiency_pct: number | null
+    total_input_cost?: number | null
+    cost_per_output_unit?: number | null
   }
+}
+
+function formatMoney(n: number): string {
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: n < 100 ? 2 : 0 }).format(n)
 }
 
 // ---------------------------------------------------------------------------
@@ -197,10 +203,14 @@ export default function ProduccionDashboardPage() {
         throw new Error(json?.error ?? 'No se pudo validar la producción')
       }
 
+      const cpu = order.summary.cost_per_output_unit
+      const costMsg = cpu != null && order.summary.total_output_qty > 0
+        ? ` · ${formatMoney(cpu)} c/u (${order.summary.total_output_qty} u.)`
+        : ''
       const synced = typeof json.fudo?.synced === 'number' ? json.fudo.synced : null
-      toast.success(synced !== null
+      toast.success((synced !== null
         ? `Producción validada · Fudo ${synced} item${synced !== 1 ? 's' : ''}`
-        : 'Producción validada')
+        : 'Producción validada') + costMsg)
       await load()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al validar producción')
@@ -357,6 +367,15 @@ export default function ProduccionDashboardPage() {
                         <span className="min-w-0 text-[#ea504c]">{summarizeItems(wasteItems)}</span>
                       </div>
                     )}
+                    {order.summary.cost_per_output_unit != null && order.summary.total_output_qty > 0 && (
+                      <div className="flex gap-2 border-t border-[#ebe6df] pt-2 text-[12px]">
+                        <span className="w-14 shrink-0 font-semibold text-[#7f7168]">Costo</span>
+                        <span className="min-w-0 font-semibold text-[#8b5e34]">
+                          {formatMoney(order.summary.cost_per_output_unit)} c/u
+                          <span className="font-normal text-muted-foreground"> · insumos {formatMoney(order.summary.total_input_cost ?? 0)}</span>
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="mt-3 flex items-center gap-2">
@@ -475,11 +494,19 @@ export default function ProduccionDashboardPage() {
                               {formatDate(o.completed_at ?? o.created_at)}
                               {o.chef_name && ` · ${o.chef_name}`}
                             </p>
+                            {o.summary.cost_per_output_unit != null && o.summary.total_output_qty > 0 && (
+                              <p className="mt-0.5 text-[11px] font-semibold text-[#8b5e34]">
+                                {formatMoney(o.summary.cost_per_output_unit)} c/u · {o.summary.total_output_qty} unidades
+                              </p>
+                            )}
                           </div>
                           <div className="shrink-0 text-right">
                             <p className="text-[12px] font-bold text-[#3d2c24]">
                               {o.summary.total_input_qty.toFixed(2)} kg
                             </p>
+                            {o.summary.total_input_cost != null && o.summary.total_input_cost > 0 && (
+                              <p className="text-[11px] text-muted-foreground">{formatMoney(o.summary.total_input_cost)}</p>
+                            )}
                             {o.summary.total_waste_qty > 0 && (
                               <p className="text-[11px] text-[#ea504c]">
                                 <Leaf className="mr-0.5 inline size-2.5" />

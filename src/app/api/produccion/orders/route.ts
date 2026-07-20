@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
       orderIds.length
         ? admin
           .from('production_inputs')
-          .select('production_order_id, qty_used, unit, stock_items(name, unit)')
+          .select('production_order_id, qty_used, unit, cost_per_unit, stock_items(name, unit, cost_per_unit)')
           .in('production_order_id', orderIds)
         : { data: [] },
       orderIds.length
@@ -88,6 +88,7 @@ export async function GET(request: NextRequest) {
     ])
 
     const inputTotals: Record<number, number> = {}
+    const inputCostTotals: Record<number, number> = {}
     const outputTotals: Record<number, number> = {}
     const wasteTotals: Record<number, number> = {}
     const inputItems: Record<number, { name: string; qty: number; unit: string }[]> = {}
@@ -95,7 +96,9 @@ export async function GET(request: NextRequest) {
 
     for (const inp of inputsRes.data ?? []) {
       inputTotals[inp.production_order_id] = (inputTotals[inp.production_order_id] ?? 0) + inp.qty_used
-      const stockItem = inp.stock_items as unknown as { name?: string | null; unit?: string | null } | null
+      const stockItem = inp.stock_items as unknown as { name?: string | null; unit?: string | null; cost_per_unit?: number | null } | null
+      const unitCost = (inp as { cost_per_unit?: number | null }).cost_per_unit ?? stockItem?.cost_per_unit ?? 0
+      inputCostTotals[inp.production_order_id] = (inputCostTotals[inp.production_order_id] ?? 0) + inp.qty_used * unitCost
       inputItems[inp.production_order_id] = [
         ...(inputItems[inp.production_order_id] ?? []),
         {
@@ -127,6 +130,9 @@ export async function GET(request: NextRequest) {
       const inp = inputTotals[o.id] ?? 0
       const waste = wasteTotals[o.id] ?? 0
       const efficiency = inp > 0 ? Math.round(((inp - waste) / inp) * 1000) / 10 : null
+      const outQty = outputTotals[o.id] ?? 0
+      const inputCost = Math.round((inputCostTotals[o.id] ?? 0) * 100) / 100
+      const costPerUnit = outQty > 0 && inputCost > 0 ? Math.round((inputCost / outQty) * 100) / 100 : null
       return {
         id: o.id,
         name: o.name,
@@ -149,9 +155,11 @@ export async function GET(request: NextRequest) {
         outputs: outputItems[o.id] ?? [],
         summary: {
           total_input_qty: inp,
-          total_output_qty: outputTotals[o.id] ?? 0,
+          total_output_qty: outQty,
           total_waste_qty: waste,
           efficiency_pct: efficiency,
+          total_input_cost: inputCost,
+          cost_per_output_unit: costPerUnit,
         },
       }
     })

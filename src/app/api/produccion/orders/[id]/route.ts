@@ -111,7 +111,7 @@ export async function GET(
         .single(),
       admin
         .from('production_inputs')
-        .select('*, stock_items(id, name, unit, current_qty)')
+        .select('*, stock_items(id, name, unit, current_qty, cost_per_unit)')
         .eq('production_order_id', id)
         .order('created_at'),
       admin
@@ -141,6 +141,17 @@ export async function GET(
     const totalWaste = outputs.filter((o) => o.is_waste).reduce((s, o) => s + o.qty_produced, 0)
     const efficiency = totalInput > 0 ? Math.round(((totalInput - totalWaste) / totalInput) * 1000) / 10 : null
 
+    // Costo de producción: costo del insumo (usa el registrado en la orden, o el
+    // costo actual del stock si no se cargó) × cantidad usada. El costo por unidad
+    // producida = costo total de insumos ÷ unidades no-merma.
+    const inputCost = (i: { qty_used: number; cost_per_unit: number | null; stock_items: unknown }) => {
+      const stockCost = (i.stock_items as { cost_per_unit?: number | null } | null)?.cost_per_unit ?? null
+      const unitCost = i.cost_per_unit ?? stockCost ?? 0
+      return { unitCost, lineCost: Math.round(i.qty_used * unitCost * 100) / 100 }
+    }
+    const totalInputCost = Math.round(inputs.reduce((s, i) => s + inputCost(i).lineCost, 0) * 100) / 100
+    const costPerOutputUnit = totalOutput > 0 ? Math.round((totalInputCost / totalOutput) * 100) / 100 : null
+
     return NextResponse.json({
       order: {
         ...order,
@@ -158,6 +169,8 @@ export async function GET(
           stock_item_unit: (i.stock_items as any)?.unit ?? '',
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           stock_item_current_qty: (i.stock_items as any)?.current_qty ?? 0,
+          line_cost: inputCost(i).lineCost,
+          unit_cost: inputCost(i).unitCost,
         })),
         outputs: outputs.map((o) => ({
           ...o,
@@ -165,9 +178,18 @@ export async function GET(
           stock_item_name: (o.stock_items as any)?.name ?? null,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           stock_item_unit: (o.stock_items as any)?.unit ?? null,
+          // costo por unidad de esta salida (todas comparten el costo del lote)
+          cost_per_unit: o.is_waste ? null : costPerOutputUnit,
         })),
         child_orders: children,
-        summary: { total_input_qty: totalInput, total_output_qty: totalOutput, total_waste_qty: totalWaste, efficiency_pct: efficiency },
+        summary: {
+          total_input_qty: totalInput,
+          total_output_qty: totalOutput,
+          total_waste_qty: totalWaste,
+          efficiency_pct: efficiency,
+          total_input_cost: totalInputCost,
+          cost_per_output_unit: costPerOutputUnit,
+        },
       },
     })
   } catch (err) {
