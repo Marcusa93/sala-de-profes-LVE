@@ -139,6 +139,12 @@ function isFudoLinked(item: StockItem | null) {
   return Boolean(item?.fudo_ingredient_id || item?.fudo_product_id)
 }
 
+// Una salida puede ser un producto Fudo O un semielaborado propio local
+// (fudo_skip): la milanesa cruda vive en LVE, Fudo no la vende.
+function isValidOutput(item: StockItem | null) {
+  return isFudoLinked(item) || Boolean((item as { fudo_skip?: boolean } | null)?.fudo_skip)
+}
+
 function efficiencyLabel(pct: number | null) {
   if (pct === null) return { text: '—', color: 'text-muted-foreground' }
   if (pct >= 90) return { text: 'Excelente', color: 'text-[#006d5a]' }
@@ -335,33 +341,59 @@ export default function NuevaProduccionPage() {
     }
   }, [primaryInputItem, productionDate])
 
-  // Cuando cambia la receta de producción: agregar/reemplazar filas secundarias del recetario
+  // Al elegir una receta: autocargar el insumo PRINCIPAL (nalga), los secundarios
+  // y la SALIDA (milanesa cruda). El cocinero solo ajusta cantidades.
   useEffect(() => {
     if (!selectedBatch) {
       setInputs(prev => prev.filter(i => !i.fromBatch))
       return
     }
     const fudoItems = stockItems.filter(item => isFudoLinked(item))
-    setInputs(prev => {
-      const nonBatch = prev.filter(i => !i.fromBatch)
-      const batchRows: InputRow[] = selectedBatch.secondary.map(si => {
-        const matched = matchIngredientToStock(si.name, fudoItems)
-        return {
-          localId: nextId(),
-          stock_item_id: matched?.id ?? null,
-          stock_item_name: matched?.name ?? '',
-          qty_used: '',  // se calcula cuando el usuario ponga la qty principal
-          unit: matched?.unit ?? BATCH_UNIT_MAP[si.unit] ?? si.unit,
-          fromBatch: true,
-          batchIngredientName: si.name,
-        }
-      })
-      return [...nonBatch, ...batchRows]
+
+    // Insumo principal (define la escala del lote)
+    const mainMatch = matchIngredientToStock(selectedBatch.mainIngredientName, fudoItems)
+    const mainRow: InputRow = {
+      localId: nextId(),
+      stock_item_id: mainMatch?.id ?? null,
+      stock_item_name: mainMatch?.name ?? '',
+      qty_used: '',
+      unit: mainMatch?.unit ?? selectedBatch.baseUnit,
+    }
+    const batchRows: InputRow[] = selectedBatch.secondary.map(si => {
+      const matched = matchIngredientToStock(si.name, fudoItems)
+      return {
+        localId: nextId(),
+        stock_item_id: matched?.id ?? null,
+        stock_item_name: matched?.name ?? '',
+        qty_used: '',  // se calcula cuando el usuario ponga la qty principal
+        unit: matched?.unit ?? BATCH_UNIT_MAP[si.unit] ?? si.unit,
+        fromBatch: true,
+        batchIngredientName: si.name,
+      }
     })
+    setInputs([mainRow, ...batchRows])
+
+    // Salida: el elaborado que se produce (busca en TODO el stock, incluye locales)
+    if (selectedBatch.output) {
+      const outMatch = matchIngredientToStock(selectedBatch.output.name, stockItems)
+      setOutputs([{
+        localId: nextId(),
+        stock_item_id: outMatch?.id ?? null,
+        stock_item_name: outMatch?.name ?? '',
+        output_name: selectedBatch.output.name,
+        qty_produced: '',
+        theoretical_qty: null,
+        unit: outMatch?.unit ?? selectedBatch.output.unit,
+        is_waste: false,
+        notes: '',
+        lot_code: '',
+        expires_on: suggestedExpiryDate(outMatch ?? null, productionDate),
+      }])
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBatch, stockItems])
 
-  // Cuando cambia la qty del insumo principal: re-escalar las qty secundarias del lote
+  // Cuando cambia la qty del insumo principal: re-escalar secundarias y la salida
   useEffect(() => {
     if (!selectedBatch || primaryInputQty <= 0) return
     const ratio = primaryInputQty / selectedBatch.baseQty
@@ -371,6 +403,10 @@ export default function NuevaProduccionPage() {
       if (!si) return input
       return { ...input, qty_used: formatQty(si.qty * ratio) }
     }))
+    if (selectedBatch.output) {
+      const outYield = selectedBatch.output.yieldPerBase * ratio
+      setOutputs(prev => prev.map(o => o.is_waste ? o : { ...o, qty_produced: formatQty(outYield), theoretical_qty: outYield }))
+    }
   // primaryInputQty es derivado — no queremos que esto reaccione a cambios en inputs (loop)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [primaryInputQty, selectedBatch])
@@ -536,14 +572,14 @@ export default function NuevaProduccionPage() {
     const linkedItem = o.stock_item_id ? stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null : null
     return o.output_name
       && parseFloat(o.qty_produced) >= 0
-      && (o.is_waste || (linkedItem && isFudoLinked(linkedItem)))
+      && (o.is_waste || (linkedItem && isValidOutput(linkedItem)))
   })
   const finishedOutputs = outputs.filter((output) => !output.is_waste)
   const checklist = [
     { label: 'Materias primas Fudo', ok: inputsValid },
     { label: 'Producto final Fudo', ok: finishedOutputs.length > 0 && finishedOutputs.every((output) => {
       const linkedItem = output.stock_item_id ? stockItems.find((stockItem) => stockItem.id === output.stock_item_id) ?? null : null
-      return linkedItem && isFudoLinked(linkedItem)
+      return linkedItem && isValidOutput(linkedItem)
     }) },
     { label: 'Cantidades cargadas', ok: inputDetails.every((input) => input.qty > 0) && outputs.every((output) => parseFloat(output.qty_produced) >= 0) },
     { label: 'Queda para encargado', ok: true },
@@ -600,7 +636,7 @@ export default function NuevaProduccionPage() {
     const blockedOutputs = outputs
       .filter((o) => !o.is_waste)
       .map((o) => stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null)
-      .filter((item) => !item || !isFudoLinked(item))
+      .filter((item) => !item || !isValidOutput(item))
     if (blockedOutputs.length > 0) {
       setError(`Producción bloqueada: todos los productos finales deben elegirse desde el autocompletado y estar vinculados a Fudo (${blockedOutputs.map((item) => item?.name ?? 'salida sin item').join(', ')}).`)
       return
@@ -1117,7 +1153,7 @@ export default function NuevaProduccionPage() {
                               <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${source?.tone}`}>
                                 {source?.label}
                               </span>
-                              {!isFudoLinked(linkedItem) && (
+                              {!isValidOutput(linkedItem) && (
                                 <span className="text-[11px] font-semibold text-[#ea504c]">
                                   Bloqueado hasta mapear con Fudo
                                 </span>

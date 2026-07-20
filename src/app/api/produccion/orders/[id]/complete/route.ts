@@ -31,11 +31,11 @@ async function validateOrderFudoLinks(admin: ReturnType<typeof createAdminClient
   const [inputsRes, outputsRes] = await Promise.all([
     admin
       .from('production_inputs')
-      .select('stock_item_id, stock_items(name, fudo_ingredient_id, fudo_product_id)')
+      .select('stock_item_id, stock_items(name, fudo_ingredient_id, fudo_product_id, fudo_skip)')
       .eq('production_order_id', orderId),
     admin
       .from('production_outputs')
-      .select('stock_item_id, output_name, is_waste, stock_items(name, fudo_ingredient_id, fudo_product_id)')
+      .select('stock_item_id, output_name, is_waste, stock_items(name, fudo_ingredient_id, fudo_product_id, fudo_skip)')
       .eq('production_order_id', orderId),
   ])
 
@@ -43,29 +43,21 @@ async function validateOrderFudoLinks(admin: ReturnType<typeof createAdminClient
   if (outputsRes.error) return [`No pude validar productos Fudo: ${outputsRes.error.message}`]
 
   const errors: string[] = []
+  // fudo_skip = semielaborado local intencional (milanesa cruda): válido, no bloquea.
+  type FudoItem = { name?: string | null; fudo_ingredient_id?: string | null; fudo_product_id?: string | null; fudo_skip?: boolean | null }
+  const unlinked = (item: FudoItem | null) => !item?.fudo_ingredient_id && !item?.fudo_product_id && !item?.fudo_skip
 
   for (const input of inputsRes.data ?? []) {
-    const item = input.stock_items as unknown as {
-      name?: string | null
-      fudo_ingredient_id?: string | null
-      fudo_product_id?: string | null
-    } | null
-
-    if (!input.stock_item_id || (!item?.fudo_ingredient_id && !item?.fudo_product_id)) {
+    const item = input.stock_items as unknown as FudoItem | null
+    if (!input.stock_item_id || unlinked(item)) {
       errors.push(`${item?.name ?? input.stock_item_id ?? 'Materia prima'}: sin vínculo Fudo`)
     }
   }
 
   for (const output of outputsRes.data ?? []) {
     if (output.is_waste) continue
-
-    const item = output.stock_items as unknown as {
-      name?: string | null
-      fudo_ingredient_id?: string | null
-      fudo_product_id?: string | null
-    } | null
-
-    if (!output.stock_item_id || (!item?.fudo_ingredient_id && !item?.fudo_product_id)) {
+    const item = output.stock_items as unknown as FudoItem | null
+    if (!output.stock_item_id || unlinked(item)) {
       errors.push(`${item?.name ?? output.output_name ?? 'Producto final'}: sin vínculo Fudo`)
     }
   }

@@ -31,6 +31,14 @@ export type ProductionBatch = {
   baseUnit: string
   /** Ingredientes secundarios — todos escalan proporcionalmente */
   secondary: BatchIngredient[]
+  /** Qué sale de esta producción (el elaborado). Se autocarga como salida. */
+  output?: {
+    /** Nombre del elaborado — se fuzzy-matchea con stock_items */
+    name: string
+    unit: string
+    /** Cuántas unidades salen del lote base (baseQty) */
+    yieldPerBase: number
+  }
   /** Info de rendimiento para mostrar al usuario */
   yieldNote?: string
 }
@@ -52,6 +60,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Pimienta blanca', qty: 20,  unit: 'g' },
       { name: 'Orégano',         qty: 15,  unit: 'g' },
     ],
+    output: { name: 'Milanesa cruda', unit: 'unidad', yieldPerBase: 13 },
     yieldNote: 'Filet 150g crudo. Cada 2kg de nalga ≈ 13 milanesas',
   },
 

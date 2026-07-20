@@ -115,7 +115,8 @@ async function validateStockMappings(
       errors.push(`${id}: item de stock no encontrado`)
       continue
     }
-    if (!row.fudo_ingredient_id && !row.fudo_product_id) {
+    // fudo_skip = semielaborado local intencional (ej. milanesa cruda): válido.
+    if (!row.fudo_ingredient_id && !row.fudo_product_id && !row.fudo_skip) {
       errors.push(`${row.name}: sin vínculo Fudo`)
     }
   }
