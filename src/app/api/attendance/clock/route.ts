@@ -75,7 +75,14 @@ export async function POST(request: Request) {
 
   const distM = distanceMeters(venue.lat, venue.lng, gps_lat, gps_lng)
 
-  if (distM > venue.radius_meters) {
+  // El GPS reporta su propio margen de error (gps_accuracy). Si dice "estás a
+  // 90m ±40m", la persona podría estar a 50m (adentro): le damos ese beneficio.
+  // Se capa a 100m para que una lectura por antena (accuracy enorme) no anule
+  // la geocerca por completo.
+  const accuracyBenefit = Math.min(typeof gps_accuracy === 'number' && gps_accuracy > 0 ? gps_accuracy : 0, 100)
+  const effectiveDist = Math.max(0, distM - accuracyBenefit)
+
+  if (effectiveDist > venue.radius_meters) {
     return NextResponse.json({
       error: `Estás a ${distM}m de ${venue.name ?? 'el local'}. Solo podés fichar estando en el lugar.`,
       code: 'OUT_OF_RANGE',
