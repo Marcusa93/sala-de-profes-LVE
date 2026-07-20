@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
 import { PRODUCTION_BATCHES, matchIngredientToStock, type ProductionBatch } from '@/lib/recipes/production-batches'
+import { convertQty } from '@/lib/produccion/units'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,6 +21,7 @@ type StockItem = {
   name: string
   unit: string
   current_qty: number
+  cost_per_unit: number
   shelf_life_days: number | null
   fudo_ingredient_id: string | null
   fudo_product_id: string | null
@@ -99,6 +101,10 @@ function makeInputRow(item: StockItem | null = null, unit = 'kg'): InputRow {
 
 function formatQty(n: number) {
   return n % 1 === 0 ? n.toFixed(0) : n.toFixed(3).replace(/\.?0+$/, '')
+}
+
+function formatMoney(n: number) {
+  return `$${Math.round(n).toLocaleString('es-AR')}`
 }
 
 function toLocalDateInput(date: Date) {
@@ -317,6 +323,7 @@ export default function NuevaProduccionPage() {
           name: String(i.name),
           unit: String(i.unit),
           current_qty: Number(i.current_qty ?? 0),
+          cost_per_unit: Number(i.cost_per_unit ?? 0),
           shelf_life_days: i.shelf_life_days == null ? null : Number(i.shelf_life_days),
           fudo_ingredient_id: i.fudo_ingredient_id == null ? null : String(i.fudo_ingredient_id),
           fudo_product_id: i.fudo_product_id == null ? null : String(i.fudo_product_id),
@@ -531,6 +538,36 @@ export default function NuevaProduccionPage() {
   const efficiency = singleInputUnit && totalInputQty > 0
     ? Math.round((1 - totalWasteSameUnit / totalInputQty) * 1000) / 10
     : null
+
+  // Costo estimado de la producción (mismo cálculo que el backend, en vivo).
+  // Convierte cada insumo a la unidad de su item de stock y lo multiplica por
+  // su costo unitario. El costo por unidad producida = costo total / salidas no-merma.
+  const costEstimate = (() => {
+    let totalCost = 0
+    let missingCost = false
+    let costed = false
+    for (const input of inputDetails) {
+      if (!input.item || input.qty <= 0) continue
+      const qtyInStockUnit = convertQty(input.qty, input.unit, input.item.unit)
+      if (qtyInStockUnit == null) continue
+      const unitCost = input.item.cost_per_unit || 0
+      if (unitCost <= 0) missingCost = true
+      else costed = true
+      totalCost += qtyInStockUnit * unitCost
+    }
+    const producedQty = outputs
+      .filter((o) => !o.is_waste)
+      .reduce((s, o) => s + (parseFloat(o.qty_produced) || 0), 0)
+    const producedUnit = outputs.find((o) => !o.is_waste)?.unit ?? 'u'
+    return {
+      totalCost,
+      producedQty,
+      producedUnit,
+      perUnit: producedQty > 0 ? totalCost / producedQty : 0,
+      missingCost,
+      costed,
+    }
+  })()
 
   function addInput() {
     setInputs((prev) => [...prev, makeInputRow(null, primaryInputUnit)])
@@ -1424,6 +1461,33 @@ export default function NuevaProduccionPage() {
                       </p>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Costo de producción */}
+              {costEstimate.costed && (
+                <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
+                  <p className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">Costo de producción</p>
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] text-muted-foreground">Costo total de materias primas</p>
+                      <p className="text-[18px] font-bold text-[#3d2c24]">{formatMoney(costEstimate.totalCost)}</p>
+                    </div>
+                    {costEstimate.producedQty > 0 && (
+                      <div className="text-right">
+                        <p className="text-[11px] text-muted-foreground">Por unidad producida</p>
+                        <p className="text-[22px] font-bold text-[#006d5a]">
+                          {formatMoney(costEstimate.perUnit)}
+                          <span className="ml-1 text-[12px] font-medium text-muted-foreground">/ {costEstimate.producedUnit}</span>
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  {costEstimate.missingCost && (
+                    <p className="mt-2 text-[11px] text-[#d4943a]">
+                      Algún insumo no tiene costo cargado — el total es parcial.
+                    </p>
+                  )}
                 </div>
               )}
 
