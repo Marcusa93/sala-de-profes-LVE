@@ -804,10 +804,14 @@ type DemandData = {
   portion_unit: string
   estimated_consumed: number | null
   consumed_from_sync: number
+  consumed_from_stock: number | null
+  stock_window_days: number | null
   total_consumed: number
   daily_rate: number | null
   days_of_stock: number | null
-  data_source: 'recipe' | 'name' | 'sync' | 'none'
+  data_source: 'recipe' | 'name' | 'sync' | 'stock' | 'none'
+  last_received: { date: string; qty: number; unit: string | null } | null
+  last_order: { date: string; quantity: string; status: string } | null
 }
 
 function NewOrderDialog({
@@ -1076,14 +1080,22 @@ function NewOrderDialog({
 // DemandPanel — justificación de ventas para un insumo
 // ---------------------------------------------------------------------------
 
+function relDays(dateStr: string): string {
+  const d = Math.round((Date.now() - new Date(dateStr).getTime()) / 86400000)
+  if (d <= 0) return 'hoy'
+  if (d === 1) return 'ayer'
+  return `hace ${d} días`
+}
+
 function DemandPanel({ demand }: { demand: DemandData }) {
   const {
     stock_item, days, sales, total_units_sold,
-    estimated_consumed, consumed_from_sync,
-    daily_rate, days_of_stock, data_source,
+    total_consumed, consumed_from_sync, consumed_from_stock, stock_window_days,
+    daily_rate, days_of_stock, data_source, last_received, last_order,
   } = demand
 
-  if (data_source === 'none') {
+  // Aunque no haya ventas mapeadas, mostramos igual última compra/pedido si existen
+  if (data_source === 'none' && !last_received && !last_order) {
     return (
       <div className="rounded-lg bg-[#f3efe9] px-2.5 py-2 text-[10px] text-[#a39e97]">
         Sin datos de ventas en los últimos {days} días. Verificá que el insumo esté vinculado a recetas en Fudo.
@@ -1097,10 +1109,12 @@ function DemandPanel({ demand }: { demand: DemandData }) {
     : '#006d5a'
 
   const sourceLabel = consumed_from_sync > 0
-    ? 'Consumo real (Fudo sync)'
+    ? 'Consumo real (Fudo)'
     : data_source === 'recipe'
-      ? 'Consumo estimado por receta'
-      : 'Platos con este insumo'
+      ? 'Consumo por receta'
+      : data_source === 'stock'
+        ? `Consumo (por stock, ${stock_window_days ?? days}d)`
+        : 'Consumo estimado'
 
   return (
     <div className="rounded-lg border border-[#c8e6c9] bg-[#f7fbf9] px-2.5 py-2 space-y-1.5">
@@ -1141,11 +1155,11 @@ function DemandPanel({ demand }: { demand: DemandData }) {
             {total_units_sold} platos
           </span>
         </div>
-        {(estimated_consumed || consumed_from_sync > 0) && (
+        {total_consumed > 0 && (
           <div className="flex items-center justify-between gap-2">
             <span className="text-[10px] text-[#7d6c64]">{sourceLabel}</span>
             <span className="text-[11px] font-bold text-[#006d5a] tabular-nums">
-              {consumed_from_sync > 0 ? consumed_from_sync : estimated_consumed} {stock_item.unit}
+              {total_consumed} {stock_item.unit}
               {daily_rate && daily_rate > 0 && (
                 <span className="ml-1 font-normal text-[#a39e97]">· {daily_rate}/día</span>
               )}
@@ -1159,6 +1173,29 @@ function DemandPanel({ demand }: { demand: DemandData }) {
           </span>
         </div>
       </div>
+
+      {/* Última compra / último pedido — para controlar cada cuánto se pide */}
+      {(last_received || last_order) && (
+        <div className="border-t border-[#c8e6c9] pt-1.5 space-y-0.5">
+          {last_received && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-[#7d6c64]">Última compra</span>
+              <span className="text-[11px] font-semibold text-[#3d2c24] tabular-nums">
+                {relDays(last_received.date)}
+                <span className="font-normal text-[#a39e97]"> · {last_received.qty} {last_received.unit ?? stock_item.unit}</span>
+              </span>
+            </div>
+          )}
+          {last_order && (last_order.status === 'pending' || last_order.status === 'ordered') && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-[#7d6c64]">Pedido {last_order.status === 'ordered' ? 'en camino' : 'sin enviar'}</span>
+              <span className="text-[11px] font-semibold text-[#d4943a] tabular-nums">
+                {relDays(last_order.date)} · {last_order.quantity}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

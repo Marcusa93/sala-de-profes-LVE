@@ -289,21 +289,82 @@ export async function GET(request: NextRequest) {
     ? Math.round(totalUnitsSold * effectiveQtyPerPortion * 100) / 100
     : null
 
+  // -------------------------------------------------------------------------
+  // Última compra (recepción) y último pedido — para controlar cada cuánto se pide
+  // -------------------------------------------------------------------------
+  const cutoffDateStr = cutoffISO.slice(0, 10)
+
+  const { data: receipts } = await admin
+    .from('stock_receipts')
+    .select('qty, unit, received_date')
+    .eq('stock_item_id', stockItemId)
+    .order('received_date', { ascending: false })
+    .limit(30)
+
+  const receivedInWindow = (receipts ?? [])
+    .filter(r => r.received_date >= cutoffDateStr)
+    .reduce((s, r) => s + Number(r.qty), 0)
+  const lastReceipt = (receipts ?? [])[0]
+    ? { date: (receipts ?? [])[0].received_date, qty: Number((receipts ?? [])[0].qty), unit: (receipts ?? [])[0].unit }
+    : null
+
+  // Último pedido creado (cocina/barra) que mencione este insumo por nombre
+  const keyWord = stockItem.name.split(/\s+/).find((w: string) => w.length >= 3) ?? stockItem.name
+  const [lastKitchen, lastBar] = await Promise.all([
+    admin.from('kitchen_orders').select('quantity, created_at, status').ilike('product_name', `%${keyWord}%`).order('created_at', { ascending: false }).limit(1),
+    admin.from('bar_orders').select('quantity, created_at, status').ilike('product_name', `%${keyWord}%`).order('created_at', { ascending: false }).limit(1),
+  ])
+  const lastOrder = [...(lastKitchen.data ?? []), ...(lastBar.data ?? [])]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] ?? null
+
+  // -------------------------------------------------------------------------
+  // Consumo por caída de stock (fallback para insumos Fudo sin receta, como
+  // el lomo): cuánto bajó el stock en la ventana + lo que entró = lo consumido.
+  // -------------------------------------------------------------------------
+  let consumedFromStock: number | null = null
+  let stockWindowDays: number | null = null
+  if (estimatedConsumed == null && consumedFromSync === 0) {
+    const { data: snaps } = await admin
+      .from('stock_snapshots')
+      .select('snapshot_date, items')
+      .eq('snapshot_type', 'daily')
+      .gte('snapshot_date', cutoffDateStr)
+      .order('snapshot_date', { ascending: true })
+      .limit(1)
+    const firstSnap = (snaps ?? [])[0]
+    if (firstSnap) {
+      const arr = (firstSnap.items as { id: string; current_qty: number }[] | null) ?? []
+      const past = arr.find(i => i.id === stockItemId)
+      if (past && typeof past.current_qty === 'number') {
+        const drop = Number(past.current_qty) + receivedInWindow - Number(stockItem.current_qty)
+        consumedFromStock = drop > 0.01 ? Math.round(drop * 100) / 100 : null
+        const spanDays = Math.round((Date.now() - new Date(firstSnap.snapshot_date + 'T12:00:00').getTime()) / 86400000)
+        stockWindowDays = Math.max(1, spanDays)
+      }
+    }
+  }
+
   const totalConsumed = consumedFromSync > 0
     ? consumedFromSync
-    : estimatedConsumed ?? 0
+    : estimatedConsumed ?? consumedFromStock ?? 0
 
+  // El consumo por stock se midió sobre su propia ventana (snapshots disponibles),
+  // no sobre los 14 días — dividir por la ventana correcta para la tasa diaria.
+  const consumedWindowDays = (consumedFromSync === 0 && estimatedConsumed == null && consumedFromStock != null)
+    ? (stockWindowDays ?? days)
+    : days
   const dailyRate = totalConsumed > 0
-    ? Math.round((totalConsumed / days) * 100) / 100
+    ? Math.round((totalConsumed / consumedWindowDays) * 100) / 100
     : null
 
   const daysOfStock = dailyRate && dailyRate > 0
     ? Math.round((Number(stockItem.current_qty) / dailyRate) * 10) / 10
     : null
 
-  const dataSource: 'recipe' | 'name' | 'sync' | 'none' =
+  const dataSource: 'recipe' | 'name' | 'sync' | 'stock' | 'none' =
     consumedFromSync > 0 ? 'sync'
-    : salesRows[0]?.via === 'recipe' ? 'recipe'
+    : estimatedConsumed != null && salesRows[0]?.via === 'recipe' ? 'recipe'
+    : consumedFromStock != null ? 'stock'
     : salesRows[0]?.via === 'name' ? 'name'
     : 'none'
 
@@ -322,9 +383,13 @@ export async function GET(request: NextRequest) {
     portion_unit: effectivePortionUnit,
     estimated_consumed: estimatedConsumed,
     consumed_from_sync: consumedFromSync,
+    consumed_from_stock: consumedFromStock,
+    stock_window_days: stockWindowDays,
     total_consumed: totalConsumed,
     daily_rate: dailyRate,
     days_of_stock: daysOfStock,
     data_source: dataSource,
+    last_received: lastReceipt,
+    last_order: lastOrder ? { date: lastOrder.created_at, quantity: lastOrder.quantity, status: lastOrder.status } : null,
   })
 }
