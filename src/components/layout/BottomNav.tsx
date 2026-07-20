@@ -7,6 +7,8 @@ import {
   Home,
   Clock,
   Calendar,
+  CalendarDays,
+  Coffee,
   Bell,
   Package,
   MoreHorizontal,
@@ -70,11 +72,28 @@ const BASE_NAV: NavItem[] = [
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
+// Encargado/Socio: Hoy es el ancla del día (pedir→recibir→producir→contar)
 const OPERATIONS_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Hoy', href: '/hoy', icon: CalendarDays },
   { label: 'Stock', href: '/stock', icon: Package },
-  { label: 'Producir', href: '/stock/produccion', icon: Hammer },
   { label: 'Compras', href: '/pedidos', icon: ShoppingCart },
+]
+
+// Cocina/Chef: Hoy les muestra qué producir
+const COCINA_NAV: NavItem[] = [
+  { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Hoy', href: '/hoy', icon: CalendarDays },
+  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
+  { label: 'Avisos', href: '/notificaciones', icon: Bell },
+]
+
+// Barista: la tolva es su herramienta de cada turno
+const BARISTA_NAV: NavItem[] = [
+  { label: 'Inicio', href: '/', icon: Home },
+  { label: 'Tolva', href: '/tolva', icon: Coffee },
+  { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
+  { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
 // Runners get Salón in main bar instead of Horarios
@@ -188,8 +207,8 @@ const CHEF_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
-        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],
@@ -211,8 +230,8 @@ const COCINA_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
-        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],
@@ -226,9 +245,9 @@ const BARISTA_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
-        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],
@@ -242,9 +261,9 @@ const RUNNER_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
-        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
       ],
     },
   ],
@@ -259,7 +278,6 @@ const BACHA_MORE: ExpandableNavItem = {
       label: 'Herramientas',
       items: [
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
-        { label: 'Mi Turno', href: '/mi-turno', icon: ScanFace, description: 'Marcar ingreso o egreso' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
       ],
     },
@@ -274,9 +292,9 @@ function getAllMoreItems(more?: ExpandableNavItem): NavItem[] {
 function getNavItems(role?: AppRole): { items: NavItem[]; more?: ExpandableNavItem } {
   if (role === 'socio') return { items: OPERATIONS_NAV, more: SOCIO_MORE }
   if (role === 'encargado') return { items: OPERATIONS_NAV, more: ENCARGADO_MORE }
-  if (role === 'chef') return { items: BASE_NAV, more: CHEF_MORE }
-  if (role === 'cocina') return { items: BASE_NAV, more: COCINA_MORE }
-  if (role === 'barista') return { items: BASE_NAV, more: BARISTA_MORE }
+  if (role === 'chef') return { items: COCINA_NAV, more: CHEF_MORE }
+  if (role === 'cocina') return { items: COCINA_NAV, more: COCINA_MORE }
+  if (role === 'barista') return { items: BARISTA_NAV, more: BARISTA_MORE }
   if (role === 'runner') return { items: RUNNER_NAV, more: RUNNER_MORE }
   if (role === 'bacha') return { items: BASE_NAV, more: BACHA_MORE }
   return { items: BASE_NAV, more: BACHA_MORE }
@@ -391,7 +409,7 @@ export function BottomNav() {
                 <div>
                   <span className="section-label">Más opciones</span>
                   <p className="mt-1 text-xs leading-snug text-muted-foreground">
-                    Stock, producción y compras quedan fijos abajo. Acá va lo secundario.
+                    Lo que más usás está fijo abajo. Acá va el resto.
                   </p>
                 </div>
                 <motion.button
