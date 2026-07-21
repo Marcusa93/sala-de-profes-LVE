@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { isManagerOrAbove } from '@/lib/roles'
 import {
@@ -696,6 +697,20 @@ export default function StockPage() {
               </p>
             </button>
           </div>
+
+          <Link
+            href="/stock/puesta-a-cero"
+            className="mt-2 flex items-center justify-between gap-3 rounded-2xl bg-[#006d5a] px-4 py-3 text-white shadow-sm transition hover:bg-[#005a4a]"
+          >
+            <div className="flex items-center gap-2.5">
+              <ListChecks className="size-5 shrink-0" />
+              <div>
+                <p className="text-[14px] font-bold leading-tight">Puesta a cero</p>
+                <p className="text-[11px] text-white/80">Contá intermedios y negativos → corrige Fudo</p>
+              </div>
+            </div>
+            <ArrowRight className="size-5 shrink-0" />
+          </Link>
         </div>
       </FadeIn>
 
