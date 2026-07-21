@@ -41,10 +41,10 @@ function supplierHints(supplierName: string): string[] {
     .flatMap((part) => tokens(part))
 }
 
-export type SupplierOption = { id: number; name: string }
+export type SupplierOption = { id: string; name: string }
 
 export type SupplierSuggestion = {
-  supplierId: number
+  supplierId: string
   supplierName: string
   reason: string
 } | null

@@ -14,7 +14,7 @@ import { FadeIn } from '@/components/ui/motion'
 // siempre apuntando a un proveedor real de Fudo (mismo fudo_provider_id).
 // ---------------------------------------------------------------------------
 
-type Suggestion = { supplierId: number; supplierName: string; reason: string } | null
+type Suggestion = { supplierId: string; supplierName: string; reason: string } | null
 
 type Item = {
   id: string
@@ -24,7 +24,7 @@ type Item = {
   suggestion: Suggestion
 }
 
-type SupplierOption = { id: number; name: string }
+type SupplierOption = { id: string; name: string }
 
 export default function VincularProveedoresPage() {
   const [items, setItems] = useState<Item[]>([])
@@ -67,7 +67,7 @@ export default function VincularProveedoresPage() {
     return suppliers.filter((s) => s.name.toLowerCase().includes(q))
   }, [suppliers, pickerSearch])
 
-  async function assign(itemId: string, supplierId: number, supplierName: string) {
+  async function assign(itemId: string, supplierId: string, supplierName: string) {
     setSavingId(itemId)
     try {
       const res = await fetch(`/api/stock/items/${itemId}`, {

@@ -110,10 +110,7 @@ export async function PATCH(
       if (value == null || value === '') {
         update.supplier_id = null
       } else {
-        const supplierId = Number(value)
-        if (!Number.isInteger(supplierId) || supplierId < 1) {
-          return NextResponse.json({ error: 'supplier_id inválido' }, { status: 400 })
-        }
+        const supplierId = String(value)
 
         const { data: supplier, error: supplierError } = await admin
           .from('suppliers')
