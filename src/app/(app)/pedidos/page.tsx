@@ -11,6 +11,7 @@ import {
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
+import { logAuditClient } from '@/lib/audit'
 import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn, StaggerList, StaggerItem, AnimatedNumber } from '@/components/ui/motion'
@@ -190,6 +191,17 @@ export default function PedidosPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error } = await (supabase.from(table) as any).update({ supplier_id: supplierId }).eq('id', order.id)
       if (error) throw error
+      const supplierName = suppliers.find((s) => s.id === supplierId)?.name ?? null
+      logAuditClient({
+        userId: profile?.id ?? null,
+        userName: profile ? `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null : null,
+        action: 'assign_order_supplier',
+        module: 'pedidos',
+        entityType: order.source === 'barra' ? 'bar_order' : 'kitchen_order',
+        entityId: String(order.id),
+        description: `${order.product_name}: proveedor asignado a ${supplierName ?? supplierId}`,
+        metadata: { supplier_id: supplierId, supplier_name: supplierName, product_name: order.product_name, quantity: order.quantity },
+      })
       setAssignDialog(null)
       toast.success('Proveedor asignado')
       fetchData()

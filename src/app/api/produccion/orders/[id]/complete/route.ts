@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // POST /api/produccion/orders/[id]/complete
@@ -119,7 +120,7 @@ export async function POST(
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
 
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    const { data: profile } = await supabase.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
     if (!profile || !isManagerOrAbove(profile.role)) {
       return NextResponse.json({
         error: 'Solo socio o encargado puede validar producción e impactar Fudo',
@@ -134,7 +135,7 @@ export async function POST(
 
     const { data: order, error: orderErr } = await admin
       .from('production_orders')
-      .select('id, status')
+      .select('id, name, status')
       .eq('id', id)
       .single()
 
@@ -247,6 +248,25 @@ export async function POST(
     if (reviewErr) {
       console.warn('[production review metadata warning]', reviewErr.message)
     }
+
+    const validatorName = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null
+    logAudit(admin, {
+      userId: user.id,
+      userName: validatorName,
+      action: 'complete_production_order',
+      module: 'produccion',
+      entityType: 'production_order',
+      entityId: String(id),
+      description: `${validatorName ?? 'Alguien'}: validó "${order.name}" — eficiencia ${result.efficiency_pct}%`,
+      metadata: {
+        total_input_qty: result.total_input_qty,
+        total_output_qty: result.total_output_qty,
+        waste_qty: result.waste_qty,
+        efficiency_pct: result.efficiency_pct,
+        movements: result.movements,
+        fudo_synced: fudoSummary ? fudoSummary.errors.length === 0 : true,
+      },
+    })
 
     return NextResponse.json({
       success: true,

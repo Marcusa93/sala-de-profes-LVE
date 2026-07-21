@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
+import { logAudit } from '@/lib/audit'
 import type { Database } from '@/types/database'
 
 type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
@@ -270,16 +271,31 @@ export async function POST(request: NextRequest) {
       throw new Error(`Error al agregar salidas: ${outputErr.message}`)
     }
 
-    if (!autoComplete) {
-      const authorName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || 'Cocina'
-      const inputSummary = inputs
-        .map((input) => `${input.qty_used}${input.unit ?? 'kg'}`)
-        .join(' + ')
-      const outputSummary = outputs
-        .filter((output) => !output.is_waste)
-        .map((output) => `${output.output_name} ${output.qty_produced}${output.unit ?? 'kg'}`)
-        .join(', ')
+    const authorName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || 'Cocina'
+    const inputSummary = inputs
+      .map((input) => `${input.qty_used}${input.unit ?? 'kg'}`)
+      .join(' + ')
+    const outputSummary = outputs
+      .filter((output) => !output.is_waste)
+      .map((output) => `${output.output_name} ${output.qty_produced}${output.unit ?? 'kg'}`)
+      .join(', ')
 
+    logAudit(admin, {
+      userId: user.id,
+      userName: authorName || null,
+      action: 'create_production_order',
+      module: 'produccion',
+      entityType: 'production_order',
+      entityId: String(orderId),
+      description: `${authorName}: produjo "${body.name}" — entradas ${inputSummary || 'sin detalle'}, salidas ${outputSummary || 'sin detalle'}`,
+      metadata: {
+        status: autoComplete ? 'completed' : 'pending_review',
+        inputs: inputs.map((i) => ({ stock_item_id: i.stock_item_id, qty: i.qty_used, unit: i.unit })),
+        outputs: outputs.map((o) => ({ output_name: o.output_name, qty: o.qty_produced, unit: o.unit, is_waste: Boolean(o.is_waste) })),
+      },
+    })
+
+    if (!autoComplete) {
       await admin.from('announcements').insert({
         author_id: user.id,
         type: 'operativo',
@@ -380,6 +396,24 @@ export async function POST(request: NextRequest) {
     if (!lotSupport) {
       warnings.push('Aplicá la migración `20260507_stock_lots.sql` para registrar lote, elaboración y vencimiento en LVE.')
     }
+
+    logAudit(admin, {
+      userId: user.id,
+      userName: authorName || null,
+      action: 'complete_production_order',
+      module: 'produccion',
+      entityType: 'production_order',
+      entityId: String(orderId),
+      description: `${authorName}: completó "${body.name}" — eficiencia ${rpcResult.efficiency_pct}%`,
+      metadata: {
+        total_input_qty: rpcResult.total_input_qty,
+        total_output_qty: rpcResult.total_output_qty,
+        waste_qty: rpcResult.waste_qty,
+        efficiency_pct: rpcResult.efficiency_pct,
+        movements: rpcResult.movements,
+        fudo_synced: fudoSummary ? fudoSummary.errors.length === 0 : true,
+      },
+    })
 
     return NextResponse.json({
       success: true,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { logAudit } from '@/lib/audit'
 import type { Database } from '@/types/database'
 
 type ProductionOrderStatus = Database['public']['Tables']['production_orders']['Row']['status']
@@ -23,7 +24,7 @@ const PRODUCTION_STATUSES: ProductionOrderStatus[] = ['draft', 'in_progress', 'p
 async function authorize(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { user: null, profile: null, error: NextResponse.json({ error: 'No autenticado' }, { status: 401 }) }
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+  const { data: profile } = await supabase.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
   if (!profile || !['socio', 'encargado', 'chef', 'cocina'].includes(profile.role)) {
     return { user: null, profile: null, error: NextResponse.json({ error: 'Sin acceso' }, { status: 403 }) }
   }
@@ -174,7 +175,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
-    const { user, error: authErr } = await authorize(supabase)
+    const { user, profile, error: authErr } = await authorize(supabase)
     if (authErr || !user) return authErr!
 
     const body = await request.json().catch(() => null)
@@ -198,6 +199,18 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error) throw error
+
+    const authorName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
+    logAudit(admin, {
+      userId: user.id,
+      userName: authorName,
+      action: 'create_production_order',
+      module: 'produccion',
+      entityType: 'production_order',
+      entityId: String(order.id),
+      description: `${authorName ?? 'Alguien'}: creó la orden de producción "${order.name}"`,
+      metadata: { status: order.status, template_id: order.template_id, input_qty: body.input_qty ?? null, input_stock_item_id: body.input_stock_item_id ?? null },
+    })
 
     // If template_id provided, pre-populate inputs/outputs from template
     if (body.template_id && body.input_qty && body.input_stock_item_id) {

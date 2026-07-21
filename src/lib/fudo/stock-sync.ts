@@ -716,6 +716,7 @@ export async function syncToFudo(
     action: writeReason,
     old_qty: item.current_qty,
     new_qty: newQty,
+    note,
   })
 
   if (fudoLink && !skipFudo) {
@@ -732,7 +733,20 @@ export async function syncToFudo(
     return { success: true, fudoSynced: true }
   }
 
-  // No Fudo ID — local only
+  // No Fudo ID — local only. El conteo físico igual debe quedar auditado
+  // (item.fudo_skip o sin vínculo Fudo aún no impide la trazabilidad).
+  if (writeReason === 'physical_count') {
+    await admin.from('audit_trail').insert({
+      user_id: userId ?? null,
+      action: 'physical_count',
+      module: 'stock',
+      entity_type: 'stock_item',
+      entity_id: stockItemId,
+      description: `${item.name}: ${item.current_qty} → ${newQty} (conteo físico, local)`,
+      metadata: { old_qty: item.current_qty, new_qty: newQty, reason: writeReason, note, fudo_synced: false },
+    })
+  }
+
   return { success: true, fudoSynced: false }
 }
 

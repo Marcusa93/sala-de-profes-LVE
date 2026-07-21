@@ -8,7 +8,7 @@ import {
   Shield, Clock, User, Package, Coffee, ShoppingCart,
   Bell, FileText, ChevronDown, Loader2, Search,
   LogIn, LogOut, Pencil, Plus, ArrowRightLeft, ArrowLeft,
-  Wine,
+  Wine, ChefHat, Check, ClipboardCheck, Truck,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
@@ -42,6 +42,8 @@ const MODULE_CONFIG: Record<string, { label: string; icon: typeof Shield; color:
   expedientes: { label: 'Expedientes', icon: FileText, color: '#8b5e34', bg: '#faf0e4' },
   vajilla: { label: 'Vajilla', icon: Wine, color: '#a39e97', bg: '#f3efe9' },
   auth: { label: 'Acceso', icon: LogIn, color: '#006d5a', bg: '#e8f5f1' },
+  produccion: { label: 'Producción', icon: ChefHat, color: '#006d5a', bg: '#e8f5f1' },
+  proveedores: { label: 'Proveedores', icon: Truck, color: '#d4943a', bg: '#fdf6ec' },
 }
 
 const ACTION_ICONS: Record<string, typeof Shield> = {
@@ -58,6 +60,10 @@ const ACTION_ICONS: Record<string, typeof Shield> = {
   expediente_status: ArrowRightLeft,
   task_created: Plus,
   task_status: ArrowRightLeft,
+  create_production_order: Plus,
+  complete_production_order: ClipboardCheck,
+  physical_count: Check,
+  assign_order_supplier: Truck,
 }
 
 // ---------------------------------------------------------------------------
