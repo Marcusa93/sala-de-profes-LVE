@@ -197,19 +197,26 @@ export async function writeFudoStock(
 
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      const error = `Fudo ${res.status}: ${text.slice(0, 100)}`
+      // Un 404 significa que el ingrediente fue borrado/renombrado en Fudo —
+      // es un vínculo roto puntual de ESTE item, no una caída de Fudo. No debe
+      // tratarse como incidente crítico (eso bloquea la carga de stock para
+      // TODOS los items durante 24hs por un solo vínculo roto).
+      const isMissingIngredient = res.status === 404
+      const error = isMissingIngredient
+        ? `Vínculo Fudo roto: el ingrediente #${fudoIngredientId} ya no existe en Fudo (fue borrado o renombrado). Avisá al administrador para re-vincularlo o desactivar este insumo.`
+        : `Fudo ${res.status}: ${text.slice(0, 100)}`
       if (context) {
         await finishFudoSyncEvent(context.admin, eventId, 'failed', { errorMessage: error })
         await recordFudoIncident(context.admin, {
           source: 'write_stock',
-          code: 'fudo_write_failed',
-          severity: 'critical',
+          code: isMissingIngredient ? 'fudo_ingredient_not_found' : 'fudo_write_failed',
+          severity: isMissingIngredient ? 'high' : 'critical',
           entityType: context.entityType ?? 'stock_item',
           entityId: context.entityId ?? context.stockItemId,
           stockItemId: context.stockItemId,
           fudoType: 'ingredient',
           fudoId: fudoIngredientId,
-          title: 'Fudo rechazó una escritura de stock',
+          title: isMissingIngredient ? 'Vínculo Fudo roto (ingrediente inexistente)' : 'Fudo rechazó una escritura de stock',
           detail: error,
           payload: { operation: context.operation, new_qty: newQty },
         })

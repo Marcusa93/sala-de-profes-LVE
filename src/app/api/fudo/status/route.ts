@@ -62,9 +62,14 @@ export async function GET() {
       ? Math.round((Date.now() - new Date(lastCompletedAt).getTime()) / 60000)
       : null
 
-    const state = critical > 0 || (failedEvents.count ?? 0) > 0
+    // 'error' (bloquea el conteo de TODO el stock) es solo para incidentes
+    // realmente críticos (Fudo caído, auth rota, verificación de escritura
+    // fallida). Un vínculo roto puntual (ingrediente borrado en Fudo, 404) se
+    // registra como 'high' — visible en el banner de alertas, pero no debe
+    // frenar el trabajo del resto del stock por un solo item.
+    const state = critical > 0
       ? 'error'
-      : high > 0 || incidents.length > 0 || (pendingEvents.count ?? 0) > 0
+      : high > 0 || incidents.length > 0 || (pendingEvents.count ?? 0) > 0 || (failedEvents.count ?? 0) > 0
         ? 'warning'
         : 'ok'
 
