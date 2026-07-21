@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
+import Link from 'next/link'
 import { isManagerOrAbove } from '@/lib/roles'
-import { Truck, Plus, Search, Loader2, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Truck, Plus, Search, Loader2, RefreshCw, AlertTriangle, ArrowRight, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { logAuditClient } from '@/lib/audit'
@@ -363,6 +364,20 @@ export default function ProveedoresPage() {
           </button>
         )}
       </div>
+
+      <Link
+        href="/proveedores/vincular"
+        className="flex items-center justify-between gap-3 rounded-2xl bg-[#006d5a] px-4 py-3 text-white shadow-sm transition hover:bg-[#005a4a]"
+      >
+        <div className="flex items-center gap-2.5">
+          <Sparkles className="size-5 shrink-0" />
+          <div>
+            <p className="text-[14px] font-bold leading-tight">Vincular proveedores</p>
+            <p className="text-[11px] text-white/80">Insumos sin proveedor asignado, con sugerencia</p>
+          </div>
+        </div>
+        <ArrowRight className="size-5 shrink-0" />
+      </Link>
 
       {/* Alert banner */}
       {suppliersWithAlerts.size > 0 && (
