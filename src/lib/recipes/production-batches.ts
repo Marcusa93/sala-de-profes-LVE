@@ -83,6 +83,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Pan rallado',      qty: 100, unit: 'g' },
       { name: 'Huevo',            qty: 100, unit: 'g',  note: '2 huevos' },
     ],
+    output: { name: 'Albóndiga cruda', unit: 'unidad', yieldPerBase: 6 },
     yieldNote: '70g en crudo → 60-65g cocido. Por 1kg salen 19 albóndigas / 6 porciones x3u',
   },
 
@@ -114,6 +115,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
     baseQty: 15,
     baseUnit: 'kg',
     secondary: [],
+    output: { name: 'Pollo porcionado', unit: 'unidad', yieldPerBase: 68 },
     yieldNote: 'Filetear y porcionar en bolsitas de 200g. 15kg → 68 porciones',
   },
 
@@ -153,6 +155,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Sal',             qty: 22, unit: 'g' },
       { name: 'Agua',            qty: 688, unit: 'ml' },
     ],
+    output: { name: 'Pre Pizza porteña', unit: 'unidad', yieldPerBase: 3 },
     yieldNote: '3 pre pizzas de 650g. Armado: 400g mozzarella + 150g salsa para las 3',
   },
 
@@ -181,6 +184,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Agua',           qty: 550, unit: 'ml' },
       { name: 'Sal',            qty: 20,  unit: 'g' },
     ],
+    output: { name: 'Masa de wrap', unit: 'unidad', yieldPerBase: 8 },
     yieldNote: 'Masa base para wraps. Wrap individual: 125g',
   },
 
@@ -199,7 +203,8 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Caldo de vegetales', qty: 1500, unit: 'ml' },
       { name: 'Sal',               qty: 20,   unit: 'g' },
     ],
-    yieldNote: 'Se deshebra. Wrap: 180g de bondiola',
+    output: { name: 'Bondiola deshebrada', unit: 'unidad', yieldPerBase: 16 },
+    yieldNote: 'Se deshebra. Wrap: 180g de bondiola. Rinde ≈16 porciones por 5kg crudo (ajustable)',
   },
 
   {
@@ -213,6 +218,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Pimienta', qty: 12, unit: 'g' },
       { name: 'Orégano',  qty: 5,  unit: 'g' },
     ],
+    output: { name: 'Medallón de hamburguesa', unit: 'unidad', yieldPerBase: 10 },
     yieldNote: 'Bollos de 100g. Por 1kg salen 10 medallones',
   },
 ]
