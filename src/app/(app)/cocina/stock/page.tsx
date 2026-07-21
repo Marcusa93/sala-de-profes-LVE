@@ -14,7 +14,7 @@ import { createClient } from '@/lib/supabase/client'
 import { FadeIn } from '@/components/ui/motion'
 
 // Categories relevant to kitchen (NOT bar, NOT limpieza, NOT desechables)
-const KITCHEN_CATEGORIES = ['carnes', 'verduras', 'frutas', 'lacteos', 'panaderia', 'condimentos', 'otros']
+const KITCHEN_CATEGORIES = ['carnes', 'verduras', 'frutas', 'lacteos', 'panaderia', 'condimentos', 'otros', 'elaborados']
 const CATEGORY_LABELS: Record<string, { label: string; icon: string }> = {
   carnes: { label: 'Proteínas', icon: '🥩' },
   verduras: { label: 'Verdulería', icon: '🥬' },
@@ -23,6 +23,7 @@ const CATEGORY_LABELS: Record<string, { label: string; icon: string }> = {
   panaderia: { label: 'Panadería', icon: '🍞' },
   condimentos: { label: 'Condimentos', icon: '🧂' },
   otros: { label: 'Otros', icon: '📦' },
+  elaborados: { label: 'Producidos', icon: '👨‍🍳' },
 }
 
 type StockItem = {
