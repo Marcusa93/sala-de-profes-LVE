@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { logAudit } from '@/lib/audit'
+import { notifyEvent } from '@/lib/push/notify-event'
 import type { Database } from '@/types/database'
 
 type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
@@ -414,6 +415,12 @@ export async function POST(request: NextRequest) {
         fudo_synced: fudoSummary ? fudoSummary.errors.length === 0 : true,
       },
     })
+
+    notifyEvent(admin, 'production_completed', {
+      title: '👨‍🍳 Producción completada',
+      body: `${authorName}: "${body.name}" — ${outputSummary || 'ver detalle'} (eficiencia ${rpcResult.efficiency_pct}%)`,
+      url: '/stock/produccion',
+    }).catch(() => {})
 
     return NextResponse.json({
       success: true,

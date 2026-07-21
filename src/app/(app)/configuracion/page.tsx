@@ -12,10 +12,12 @@ import { ROLES } from '@/lib/constants'
 import { logAuditClient } from '@/lib/audit'
 import { signOutBrowserSession } from '@/lib/push/client'
 
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RoleBadge } from '@/components/ui/RoleBadge'
+import { isSocio } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // Settings type
@@ -342,6 +344,28 @@ export default function ConfiguracionPage() {
           Guardar cambios
         </Button>
       </form>
+
+      {/* Admin section — solo socio */}
+      {isSocio(profile?.role) && (
+        <div className="card-elevated-lg overflow-hidden">
+          <div className="px-4 pt-4 pb-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-[#a39e97]">Administración</h2>
+          </div>
+          <Link
+            href="/configuracion/notificaciones"
+            className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#faf8f5]"
+          >
+            <div className="flex size-10 items-center justify-center rounded-xl bg-[#e8f5f1]">
+              <Bell className="size-4 text-[#006d5a]" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-[#3d2c24]">Notificaciones push</p>
+              <p className="text-[11px] text-[#a39e97]">Qué eventos avisan al celular/PC y a quién</p>
+            </div>
+            <ChevronRight className="size-4 text-[#a39e97]" />
+          </Link>
+        </div>
+      )}
 
       {/* Security section */}
       <div className="card-elevated-lg overflow-hidden">

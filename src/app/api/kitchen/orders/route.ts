@@ -5,6 +5,7 @@ import { notifyOrderToEncargados } from '@/lib/email/send'
 import { logAudit } from '@/lib/audit'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
+import { notifyEvent } from '@/lib/push/notify-event'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -121,6 +122,12 @@ export async function POST(request: NextRequest) {
         items: items.map((i) => ({ name: i.product_name, quantity: i.quantity })),
         urgency: orderUrgency,
         note,
+      }).catch(() => {})
+
+      notifyEvent(admin, 'purchase_created', {
+        title: '🛒 Nuevo pedido de cocina',
+        body: `${authorName}: ${itemsSummary}`,
+        url: '/pedidos',
       }).catch(() => {})
 
       return NextResponse.json({ success: true, count: items.length })

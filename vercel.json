@@ -7,6 +7,14 @@
     {
       "path": "/api/cron/auto-clockout",
       "schedule": "0 19 * * *"
+    },
+    {
+      "path": "/api/cron/sales-summary",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/sales-summary",
+      "schedule": "0 2 * * *"
     }
   ]
 }

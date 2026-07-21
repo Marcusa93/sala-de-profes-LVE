@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyOrderToEncargados, notifyOrderStatusChange } from '@/lib/email/send'
 import { logAudit } from '@/lib/audit'
+import { notifyEvent } from '@/lib/push/notify-event'
 
 // ---------------------------------------------------------------------------
 // POST /api/kitchen/bar
@@ -148,6 +149,12 @@ export async function POST(request: NextRequest) {
         items: [{ name: productName, quantity }],
         urgency: urgency || 'normal',
         note,
+      }).catch(() => {})
+
+      notifyEvent(admin, 'purchase_created', {
+        title: '🛒 Nuevo pedido de barra',
+        body: `${authorName}: ${productName} — ${quantity}`,
+        url: '/pedidos',
       }).catch(() => {})
 
       return NextResponse.json({ success: true })

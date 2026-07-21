@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { logAudit } from '@/lib/audit'
+import { notifyEvent } from '@/lib/push/notify-event'
 
 // ---------------------------------------------------------------------------
 // POST /api/produccion/orders/[id]/complete
@@ -267,6 +268,12 @@ export async function POST(
         fudo_synced: fudoSummary ? fudoSummary.errors.length === 0 : true,
       },
     })
+
+    notifyEvent(admin, 'production_completed', {
+      title: '👨‍🍳 Producción validada',
+      body: `${validatorName ?? 'Alguien'}: "${order.name}" — eficiencia ${result.efficiency_pct}%`,
+      url: '/stock/produccion',
+    }).catch(() => {})
 
     return NextResponse.json({
       success: true,

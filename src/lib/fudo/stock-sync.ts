@@ -18,6 +18,7 @@ import {
   recordFudoIncident,
   type FudoEntityType,
 } from '@/lib/fudo/sync-events'
+import { notifyEvent } from '@/lib/push/notify-event'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -730,6 +731,14 @@ export async function syncToFudo(
       metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: newQty, synced: true, reason: writeReason, note },
     })
 
+    if (writeReason === 'physical_count' || writeReason === 'manual_adjustment') {
+      notifyEvent(admin, 'stock_adjusted', {
+        title: '📦 Stock modificado',
+        body: `${item.name}: ${item.current_qty} → ${newQty} ${item.unit}${note ? ` — ${note}` : ''}`,
+        url: '/stock',
+      }).catch(() => {})
+    }
+
     return { success: true, fudoSynced: true }
   }
 
@@ -745,6 +754,14 @@ export async function syncToFudo(
       description: `${item.name}: ${item.current_qty} → ${newQty} (conteo físico, local)`,
       metadata: { old_qty: item.current_qty, new_qty: newQty, reason: writeReason, note, fudo_synced: false },
     })
+  }
+
+  if (writeReason === 'physical_count' || writeReason === 'manual_adjustment') {
+    notifyEvent(admin, 'stock_adjusted', {
+      title: '📦 Stock modificado',
+      body: `${item.name}: ${item.current_qty} → ${newQty} ${item.unit}${note ? ` — ${note}` : ''}`,
+      url: '/stock',
+    }).catch(() => {})
   }
 
   return { success: true, fudoSynced: false }
