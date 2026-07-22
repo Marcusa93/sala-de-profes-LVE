@@ -1018,7 +1018,7 @@ export default function NuevaProduccionPage() {
                               onChange={(e) => updateInput(input.localId, { unit: e.target.value })}
                               className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
                             >
-                              {['kg', 'g', 'lt', 'ml', 'unidad', 'atado', 'bandeja'].map((u) => (
+                              {['kg', 'g', 'l', 'ml', 'unidad', 'atado', 'bandeja'].map((u) => (
                                 <option key={u} value={u}>{u}</option>
                               ))}
                             </select>
@@ -1270,7 +1270,7 @@ export default function NuevaProduccionPage() {
                           onChange={(e) => updateOutput(o.localId, { unit: e.target.value })}
                           className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-[13px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
                         >
-                          {['kg', 'g', 'lt', 'ml', 'unidad', 'porción', 'atado'].map((u) => (
+                          {['kg', 'g', 'l', 'ml', 'unidad', 'porción', 'atado'].map((u) => (
                             <option key={u} value={u}>{u}</option>
                           ))}
                         </select>
