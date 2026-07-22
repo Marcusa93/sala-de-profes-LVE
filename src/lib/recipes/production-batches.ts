@@ -70,7 +70,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
     baseUnit: 'kg',
     secondary: [
       { name: 'Ajo',             qty: 30,  unit: 'g',  note: 'picado' },
-      { name: 'Perejil',         qty: 90,  unit: 'g',  note: 'picado — Perejil hoy se cuenta por unidad (atado) en stock, no por peso. Revisar con cocina.' },
+      { name: 'Perejil',         qty: 90,  unit: 'g',  note: 'picado' },
       { name: 'Huevo',           qty: 12,  unit: 'unidad' },
       { name: 'Leche entera',   qty: 180, unit: 'ml' },
       { name: 'Mostaza',         qty: 20,  unit: 'g' },
@@ -91,7 +91,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
     secondary: [
       { name: 'Cebolla',          qty: 90,  unit: 'g',  note: 'sofrita en brunoise' },
       { name: 'Ajo',              qty: 10,  unit: 'g',  note: '2 dientes' },
-      { name: 'Perejil',          qty: 20,  unit: 'g',  note: 'picado — ver nota de Perejil arriba' },
+      { name: 'Perejil',          qty: 20,  unit: 'g',  note: 'picado' },
       { name: 'Sal fina celusal', qty: 18,  unit: 'g' },
       { name: 'Pimienta negra',   qty: 10,  unit: 'g' },
       { name: 'Oregano',          qty: 5,   unit: 'g' },
