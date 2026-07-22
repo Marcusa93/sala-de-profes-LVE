@@ -400,7 +400,13 @@ export default function NuevaProduccionPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBatch, stockItems])
 
-  // Cuando cambia la qty del insumo principal: re-escalar secundarias y la salida
+  // Cuando cambia la qty del insumo principal: re-escalar secundarias y la salida.
+  // OJO: la receta declara cada ingrediente en SU propia unidad (ej. gramos),
+  // que puede no ser la unidad real del stock_item matcheado (ej. kg a granel,
+  // o "unidad" para huevos/insumos contados). Hay que CONVERTIR antes de
+  // asignar qty_used — antes esto asignaba el número crudo de la receta con
+  // la etiqueta de la unidad del stock, sin convertir (40g de sal aparecían
+  // como "40 kg"; 600g de huevo escalado aparecía como "120 unidad").
   useEffect(() => {
     if (!selectedBatch || primaryInputQty <= 0) return
     const ratio = primaryInputQty / selectedBatch.baseQty
@@ -408,7 +414,17 @@ export default function NuevaProduccionPage() {
       if (!input.fromBatch || !input.batchIngredientName) return input
       const si = selectedBatch.secondary.find(s => s.name === input.batchIngredientName)
       if (!si) return input
-      return { ...input, qty_used: formatQty(si.qty * ratio) }
+      const rawQty = si.qty * ratio
+      const stockItem = input.stock_item_id ? stockItems.find(item => item.id === input.stock_item_id) : null
+      if (!stockItem) return { ...input, qty_used: formatQty(rawQty) }
+      const converted = convertQty(rawQty, si.unit, stockItem.unit)
+      if (converted == null) {
+        // No convertible (ej. gramos -> unidad sin factor de conversión).
+        // Dejar vacío para que el cocinero cargue la cantidad real a mano,
+        // en vez de mostrar un número mal escalado que pase sin error.
+        return { ...input, qty_used: '', unit: stockItem.unit }
+      }
+      return { ...input, qty_used: formatQty(converted), unit: stockItem.unit }
     }))
     if (selectedBatch.output) {
       const outYield = selectedBatch.output.yieldPerBase * ratio
@@ -416,7 +432,7 @@ export default function NuevaProduccionPage() {
     }
   // primaryInputQty es derivado — no queremos que esto reaccione a cambios en inputs (loop)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [primaryInputQty, selectedBatch])
+  }, [primaryInputQty, selectedBatch, stockItems])
 
   // Al elegir una plantilla: precargar TODOS los insumos y salidas guardados,
   // con sus cantidades de referencia. El cocinero solo ajusta lo real. Así no
