@@ -236,14 +236,18 @@ export async function POST(request: NextRequest) {
 
     // ----- RECEIVE ORDER (encargado only) -----
     if (body.action === 'receive_order') {
-      const { orderId, source, receivedQty, unitCost, expiresAt, stockItemId } = body as {
+      const { orderId, source, receivedQty, unitCost, expiresAt, stockItemId, payment_status } = body as {
         orderId: number
         source: 'cocina' | 'barra'
         receivedQty: string
         unitCost?: number
         expiresAt?: string
         stockItemId?: string
+        payment_status?: 'pagado' | 'a_pagar'
       }
+
+      // Estado de pago del gasto: default 'a_pagar' (queda en cuentas por pagar)
+      const paymentStatus: 'pagado' | 'a_pagar' = payment_status === 'pagado' ? 'pagado' : 'a_pagar'
 
       if (typeof orderId !== 'number' || !source || !receivedQty) {
         return NextResponse.json({ success: false, error: 'Faltan datos requeridos' }, { status: 400 })
@@ -269,6 +273,7 @@ export async function POST(request: NextRequest) {
       // Actualizar stock ANTES de marcar recibido: si Fudo rechaza la escritura,
       // el pedido queda pendiente y el encargado ve el error (nada se pierde).
       let stockWritten = false
+      let receiptCreated = false
       if (stockItemId) {
         const numericQty = parseFloat(String(receivedQty).replace(',', '.'))
         if (!isNaN(numericQty) && numericQty > 0) {
@@ -314,7 +319,7 @@ export async function POST(request: NextRequest) {
             // Registro de la entrada: base de mermas y de frecuencia/costo de compra
             const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
             const costPerUnit = typeof unitCost === 'number' && unitCost > 0 ? unitCost : null
-            const { error: receiptErr } = await admin.from('stock_receipts').insert({
+            const receiptBase = {
               stock_item_id: stockItemId,
               supplier_id: si.supplier_id ?? null,
               order_source: source,
@@ -327,8 +332,20 @@ export async function POST(request: NextRequest) {
               note: `Pedido: ${order.product_name} (${order.quantity})`,
               received_by: user.id,
               received_date: receivedDate,
+            }
+            // Intento con estado de pago; si la columna no existe todavía
+            // (migración pendiente), reintento sin ella para no perder el receipt.
+            let { error: receiptErr } = await admin.from('stock_receipts').insert({
+              ...receiptBase,
+              payment_status: paymentStatus,
+              paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
+              paid_by: paymentStatus === 'pagado' ? user.id : null,
             })
+            if (receiptErr && /payment_status|paid_at|paid_by/.test(receiptErr.message)) {
+              ({ error: receiptErr } = await admin.from('stock_receipts').insert(receiptBase))
+            }
             if (receiptErr) console.error('[receive_order] receipt no registrado:', receiptErr.message)
+            else receiptCreated = true
 
             // Costo unitario del item se actualiza con el último precio de compra
             if (costPerUnit != null && costPerUnit !== si.cost_per_unit) {
@@ -395,6 +412,20 @@ export async function POST(request: NextRequest) {
         description: `Recibido pedido #${orderId}: ${order.product_name} — ${receivedQty}${stockItemId ? ' → stock actualizado' : ''}`,
         metadata: { orderId, source, receivedQty, unitCost, expiresAt, stockItemId },
       }).catch(() => {})
+
+      // Gasto de la compra: dejar rastro del estado de pago
+      if (receiptCreated) {
+        logAudit(admin, {
+          userId: user.id,
+          userName: `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null,
+          action: 'receipt_payment',
+          module: 'pedidos',
+          entityType: 'stock_receipt',
+          entityId: String(orderId),
+          description: `Gasto de recepción #${orderId} (${order.product_name}) registrado como "${paymentStatus === 'pagado' ? 'pagado' : 'a pagar'}"`,
+          metadata: { orderId, source, payment_status: paymentStatus, unitCost },
+        }).catch(() => {})
+      }
 
       return NextResponse.json({ success: true, stockUpdated: stockWritten })
     }

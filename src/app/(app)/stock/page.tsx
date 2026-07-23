@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, Suspense } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { isManagerOrAbove } from '@/lib/roles'
 import {
   Package,
@@ -31,6 +31,7 @@ import { useStockItems, type StockItem } from '@/lib/hooks/use-stock'
 import { STOCK_CATEGORIES, STOCK_CATEGORY_OPTIONS } from '@/lib/constants'
 import type { StockCategoryValue } from '@/types/database'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn } from '@/components/ui/motion'
 import {
   type StockIntelligenceResponse,
@@ -132,7 +133,17 @@ type FudoStatusResponse = {
 // ---------------------------------------------------------------------------
 
 export default function StockPage() {
+  // useSearchParams exige un límite de Suspense para el prerender de la página
+  return (
+    <Suspense fallback={<LoadingState message="Cargando stock..." />}>
+      <StockPageContent />
+    </Suspense>
+  )
+}
+
+function StockPageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { profile, loading: profileLoading } = useProfileContext()
   const { items, isLoading: loading, mutate } = useStockItems(true)
   const [search, setSearch] = useState('')
@@ -290,6 +301,30 @@ export default function StockPage() {
     setEditingMetaSource(source)
     setMetaInitial({ shelfLife: options?.shelfLife, category: options?.category })
   }, [editingMetaId, editingMetaSource, items])
+
+  // Deep-link ?meta=<stock_item_id>: abre el editor de metadata de ese item
+  // directamente (ej. desde /control para completar la vida útil) y scrollea.
+  const metaParam = searchParams.get('meta')
+  const [metaParamHandled, setMetaParamHandled] = useState(false)
+
+  useEffect(() => {
+    if (!metaParam || metaParamHandled || loading || items.length === 0) return
+    setMetaParamHandled(true)
+
+    const item = items.find((entry) => entry.id === metaParam)
+    if (!item) return
+
+    setView('inventario')
+    setEditingMetaId(item.id)
+    setEditingMetaSource('item')
+    setMetaInitial({})
+
+    // Esperar a que la vista inventario monte el item antes de scrollear
+    setTimeout(() => {
+      document.getElementById(`stock-item-${item.id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 400)
+  }, [metaParam, metaParamHandled, loading, items])
 
   // Única función de sync — usada tanto en el mount inicial como en el botón manual
   const runSync = useCallback(async (opts?: { silent?: boolean }) => {
@@ -1419,8 +1454,8 @@ export default function StockPage() {
               {!isCollapsed && (
                 <div className="space-y-2 p-2">
                   {catItems.map(item => (
+                    <div key={item.id} id={`stock-item-${item.id}`}>
                     <StockItemRow
-                      key={item.id}
                       item={item}
                       isEncargado={isEncargado}
                       fudoState={fudoConnection.state}
@@ -1435,6 +1470,7 @@ export default function StockPage() {
                       onToggleMeta={() => openMetadataEditor(item.id, 'item')}
                       onUpdated={() => void handleItemUpdated()}
                     />
+                    </div>
                   ))}
                 </div>
               )}

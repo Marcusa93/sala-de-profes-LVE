@@ -9,10 +9,12 @@ import {
   ClipboardList,
   History,
   Loader2,
+  PackagePlus,
   Radar,
   ScanFace,
   Shield,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import type { LucideIcon } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -53,6 +55,12 @@ type IntelData = {
   missingSupplierCount: number | null
 }
 
+type FudoUnmapped = {
+  unmapped_ingredients: { id: string; name: string; unit: string }[]
+  unmapped_products: { id: string; name: string }[]
+  total: number
+}
+
 type AttendanceAlert = {
   log_id: string
   first_name: string
@@ -82,6 +90,14 @@ function setupIssueHref(issue: StockSetupIssue): string {
   if (issue.type === 'missing_fudo_mapping' || issue.type === 'mapping_conflict') {
     return '/admin/stock/mapeo'
   }
+  // Problemas de metadata de UN item puntual (sin vida útil, categoría, unidad):
+  // deep-link directo al editor de ese item en /stock
+  if (
+    issue.stock_item_id
+    && (issue.type === 'missing_shelf_life' || issue.type === 'category_review' || issue.type === 'unit_review')
+  ) {
+    return `/stock?meta=${issue.stock_item_id}`
+  }
   return '/stock'
 }
 
@@ -97,6 +113,9 @@ export default function ControlPage() {
   const [anomalies, setAnomalies] = useState<SectionState<StockAnomaliesResponse>>(initialState)
   const [intel, setIntel] = useState<SectionState<IntelData>>(initialState)
   const [attendance, setAttendance] = useState<SectionState<AttendanceAlert[]>>(initialState)
+  const [fudoUnmapped, setFudoUnmapped] = useState<FudoUnmapped | null>(null)
+  const [creatingFromFudo, setCreatingFromFudo] = useState(false)
+  const [createResult, setCreateResult] = useState<string | null>(null)
 
   // -------------------------------------------------------------------------
   // Loaders — cada sección carga y falla de forma independiente
@@ -191,10 +210,54 @@ export default function ControlPage() {
     }
   }, [])
 
+  // Items de Fudo (con control de stock) que todavía no existen en LVE.
+  // Silencioso: si Fudo no responde, la fila simplemente no aparece.
+  const loadFudoUnmapped = useCallback(async () => {
+    try {
+      const res = await fetch('/api/stock/create-from-fudo')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al consultar Fudo')
+      setFudoUnmapped(data as FudoUnmapped)
+    } catch (err) {
+      console.error('[control] create-from-fudo', err)
+      setFudoUnmapped(null)
+    }
+  }, [])
+
+  const handleCreateAllFromFudo = useCallback(async () => {
+    setCreatingFromFudo(true)
+    setCreateResult(null)
+    try {
+      const res = await fetch('/api/stock/create-from-fudo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'No se pudieron crear los items')
+
+      const summary = `${data.created} creado${data.created === 1 ? '' : 's'} · ${data.skipped} salteado${data.skipped === 1 ? '' : 's'}${data.errors?.length ? ` · ${data.errors.length} con error` : ''}`
+      setCreateResult(summary)
+      if (data.errors?.length) {
+        toast.error(`Creados con errores: ${summary}. ${data.errors[0]}`)
+      } else {
+        toast.success(`Items creados en LVE: ${summary}`)
+      }
+      void loadFudoUnmapped()
+      void loadIntel()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'No se pudieron crear los items'
+      setCreateResult(null)
+      toast.error(msg)
+    } finally {
+      setCreatingFromFudo(false)
+    }
+  }, [loadFudoUnmapped, loadIntel])
+
   useEffect(() => {
     if (!profile || !isManager) return
-    void Promise.all([loadCritical(), loadAnomalies(), loadIntel(), loadAttendance()])
-  }, [profile, isManager, loadCritical, loadAnomalies, loadIntel, loadAttendance])
+    void Promise.all([loadCritical(), loadAnomalies(), loadIntel(), loadAttendance(), loadFudoUnmapped()])
+  }, [profile, isManager, loadCritical, loadAnomalies, loadIntel, loadAttendance, loadFudoUnmapped])
 
   // -------------------------------------------------------------------------
   // Access control
@@ -240,10 +303,13 @@ export default function ControlPage() {
   const anomalyItems = anomalies.data?.items ?? []
   const anomalyCount = anomalies.data?.summary.total ?? anomalyItems.length
 
-  // c. Datos por completar (setup issues + items sin proveedor)
+  // c. Datos por completar (setup issues + items sin proveedor + items Fudo sin crear)
   const setupIssues = intel.data?.response.setup_issues ?? []
   const missingSupplierCount = intel.data?.missingSupplierCount ?? 0
-  const setupCount = setupIssues.length + (missingSupplierCount > 0 ? 1 : 0)
+  const fudoUnmappedCount = fudoUnmapped?.total ?? 0
+  const setupCount = setupIssues.length
+    + (missingSupplierCount > 0 ? 1 : 0)
+    + (fudoUnmappedCount > 0 ? 1 : 0)
 
   // d. Fichajes sospechosos
   const attendanceAlerts = attendance.data ?? []
@@ -336,6 +402,31 @@ export default function ControlPage() {
           error={intel.error}
           emptyText="No hay datos pendientes de completar"
         >
+          {fudoUnmappedCount > 0 && (
+            <div className="flex items-center gap-3 bg-[#fbf6e0]/50 px-4 py-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#e8f5f1]">
+                <PackagePlus className="size-4.5 text-[#006d5a]" strokeWidth={1.75} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-[#3d2c24]">
+                  {fudoUnmappedCount} item{fudoUnmappedCount === 1 ? '' : 's'} de Fudo sin crear en LVE
+                </p>
+                <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-[#a39e97]">
+                  {createResult
+                    ? `Último resultado: ${createResult}`
+                    : 'Tienen control de stock en Fudo pero no existen acá. Crealos para no perder trazabilidad.'}
+                </p>
+              </div>
+              <button
+                onClick={handleCreateAllFromFudo}
+                disabled={creatingFromFudo}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[#006d5a] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#005c4c] disabled:opacity-60"
+              >
+                {creatingFromFudo && <Loader2 className="size-3.5 animate-spin" />}
+                Crear todos en LVE
+              </button>
+            </div>
+          )}
           {missingSupplierCount > 0 && (
             <SectionRow
               href="/proveedores/vincular"

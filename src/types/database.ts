@@ -2967,6 +2967,9 @@ export type Database = {
           received_by: string | null
           received_date: string
           received_at: string
+          payment_status: string
+          paid_at: string | null
+          paid_by: string | null
         }
         Insert: {
           id?: number
@@ -2984,6 +2987,9 @@ export type Database = {
           received_by?: string | null
           received_date: string
           received_at?: string
+          payment_status?: string
+          paid_at?: string | null
+          paid_by?: string | null
         }
         Update: {
           id?: number
@@ -3001,6 +3007,9 @@ export type Database = {
           received_by?: string | null
           received_date?: string
           received_at?: string
+          payment_status?: string
+          paid_at?: string | null
+          paid_by?: string | null
         }
         Relationships: [
           {

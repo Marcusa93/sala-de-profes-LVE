@@ -9,6 +9,7 @@ import {
   Bell, FileText, ChevronDown, Loader2, Search,
   LogIn, LogOut, Pencil, Plus, ArrowRightLeft, ArrowLeft,
   Wine, ChefHat, Check, ClipboardCheck, Truck,
+  TrendingUp, TrendingDown,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
@@ -64,6 +65,38 @@ const ACTION_ICONS: Record<string, typeof Shield> = {
   complete_production_order: ClipboardCheck,
   physical_count: Check,
   assign_order_supplier: Truck,
+}
+
+// ---------------------------------------------------------------------------
+// Cambios de cantidad de stock — badge visual "X → Y"
+// ---------------------------------------------------------------------------
+
+const QTY_CHANGE_ACTIONS = new Set(['fudo_stock_sync', 'physical_count', 'stock_update'])
+
+type QtyChange = {
+  oldQty: number
+  newQty: number
+  itemName: string | null
+  context: string | null
+}
+
+/** Detecta entradas de stock con metadata.old_qty/new_qty para render visual */
+function getQtyChange(entry: AuditEntry): QtyChange | null {
+  if (!QTY_CHANGE_ACTIONS.has(entry.action) || !entry.metadata) return null
+  const oldQty = Number(entry.metadata.old_qty)
+  const newQty = Number(entry.metadata.new_qty)
+  if (!Number.isFinite(oldQty) || !Number.isFinite(newQty)) return null
+
+  // La descripción tiene el formato "Nombre del item: X → Y (contexto)"
+  const colonIdx = entry.description.indexOf(':')
+  const itemName = colonIdx > 0 ? entry.description.slice(0, colonIdx).trim() : null
+  const parens = entry.description.match(/\(([^()]*)\)\s*$/)
+
+  return { oldQty, newQty, itemName, context: parens?.[1] ?? null }
+}
+
+function formatAuditQty(value: number): string {
+  return Number(value.toFixed(2)).toLocaleString('es-AR')
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +292,7 @@ export default function AuditoriaPage() {
                 {dayEntries.map((entry) => {
                   const modCfg = MODULE_CONFIG[entry.module] ?? { label: entry.module, icon: Shield, color: '#a39e97', bg: '#f3efe9' }
                   const ActionIcon = ACTION_ICONS[entry.action] ?? modCfg.icon
+                  const qtyChange = getQtyChange(entry)
 
                   return (
                     <div
@@ -275,7 +309,49 @@ export default function AuditoriaPage() {
 
                       {/* Content */}
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm text-[#3d2c24]">{entry.description}</p>
+                        {qtyChange ? (
+                          <div>
+                            <p className="truncate text-sm font-semibold text-[#3d2c24]">
+                              {qtyChange.itemName ?? entry.description}
+                            </p>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              {(() => {
+                                const delta = qtyChange.newQty - qtyChange.oldQty
+                                const down = delta < 0
+                                const up = delta > 0
+                                return (
+                                  <>
+                                    <span
+                                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ${
+                                        down
+                                          ? 'bg-[#fdecea] text-[#ea504c]'
+                                          : up
+                                            ? 'bg-[#e8f5f1] text-[#006d5a]'
+                                            : 'bg-[#f3efe9] text-[#a39e97]'
+                                      }`}
+                                    >
+                                      {formatAuditQty(qtyChange.oldQty)} → {formatAuditQty(qtyChange.newQty)}
+                                      {up && <TrendingUp className="size-3" />}
+                                      {down && <TrendingDown className="size-3" />}
+                                    </span>
+                                    {delta !== 0 && (
+                                      <span
+                                        className={`text-[10px] font-semibold tabular-nums ${down ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}
+                                      >
+                                        {up ? '+' : ''}{formatAuditQty(delta)}
+                                      </span>
+                                    )}
+                                    {qtyChange.context && (
+                                      <span className="text-[10px] text-[#a39e97]">{qtyChange.context}</span>
+                                    )}
+                                  </>
+                                )
+                              })()}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-[#3d2c24]">{entry.description}</p>
+                        )}
                         <div className="mt-0.5 flex flex-wrap items-center gap-2">
                           {entry.user_name && (
                             <span className="flex items-center gap-1 text-[10px] text-[#a39e97]">

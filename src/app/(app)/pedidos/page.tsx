@@ -3,10 +3,11 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale/es'
+import Link from 'next/link'
 import {
   ShoppingCart, Truck, Check, X, Phone, MessageCircle,
   ChevronDown, ChevronUp, Plus, Trash2,
-  Loader2, Package, Clock, AlertTriangle, Search,
+  Loader2, Package, Clock, AlertTriangle, Search, Wallet, ChevronRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -104,6 +105,8 @@ export default function PedidosPage() {
   const [receiveDialog, setReceiveDialog] = useState<{ order: Order } | null>(null)
   const [expandedSupplier, setExpandedSupplier] = useState<number | null>(null)
   const [newOrderOpen, setNewOrderOpen] = useState(false)
+  // Total pendiente de pago (cuentas por pagar) — null si la columna aún no existe
+  const [pendingTotal, setPendingTotal] = useState<number | null>(null)
 
   const canManage = isManagerOrAbove(profile?.role)
 
@@ -125,6 +128,18 @@ export default function PedidosPage() {
     setProfiles((profRes.data ?? []) as unknown as Profile[])
     setStockItems((stockRes.data ?? []) as unknown as StockItem[])
     setLoading(false)
+
+    // Saldo pendiente de pago — tolerante a que la migración no esté aplicada
+    supabase
+      .from('stock_receipts')
+      .select('cost_total')
+      .eq('payment_status', 'a_pagar')
+      .not('cost_total', 'is', null)
+      .then(({ data, error }) => {
+        if (error) { setPendingTotal(null); return }
+        const total = (data ?? []).reduce((acc, r) => acc + (Number((r as { cost_total: number | null }).cost_total) || 0), 0)
+        setPendingTotal(Math.round(total * 100) / 100)
+      })
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
@@ -284,6 +299,25 @@ export default function PedidosPage() {
           ))}
         </div>
       </FadeIn>
+
+      {/* Cuentas por pagar — acceso discreto para encargados */}
+      {canManage && (
+        <FadeIn delay={0.07}>
+          <Link
+            href="/pedidos/cuentas"
+            className="flex items-center gap-2.5 rounded-2xl bg-white px-4 py-2.5 ring-1 ring-[#ebe6df] transition-all active:scale-[0.99]"
+          >
+            <Wallet className="size-4 shrink-0 text-[#8b5e34]" />
+            <span className="flex-1 text-xs font-semibold text-[#3d2c24]">Cuentas por pagar</span>
+            {pendingTotal !== null && pendingTotal > 0 && (
+              <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[#d4943a]">
+                ${pendingTotal.toLocaleString('es-AR')}
+              </span>
+            )}
+            <ChevronRight className="size-4 shrink-0 text-[#a39e97]" />
+          </Link>
+        </FadeIn>
+      )}
 
       {/* PASO 1 — PEDIR: sugerencias IA + pendientes agrupados por proveedor */}
       {step === 'pedir' && canManage && (
@@ -638,6 +672,7 @@ function ReceiveDialog({
   const [expiresAt, setExpiresAt] = useState('')
   const [stockItemId, setStockItemId] = useState<string | null>(null)
   const [stockSearch, setStockSearch] = useState('')
+  const [paymentStatus, setPaymentStatus] = useState<'pagado' | 'a_pagar'>('a_pagar')
   const [submitting, setSubmitting] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -661,6 +696,7 @@ function ReceiveDialog({
           unitCost: unitCost ? parseFloat(unitCost) : undefined,
           expiresAt: expiresAt || undefined,
           stockItemId: stockItemId ?? undefined,
+          payment_status: paymentStatus,
         }),
       })
       const json = await res.json()
@@ -722,6 +758,41 @@ function ReceiveDialog({
                 className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold text-[#3d2c24]">
+              ¿Se pagó al recibir?
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => setPaymentStatus('pagado')}
+                className={cn(
+                  'rounded-xl border py-2 text-xs font-semibold transition-all',
+                  paymentStatus === 'pagado'
+                    ? 'border-[#006d5a] bg-[#e8f5f1] text-[#006d5a]'
+                    : 'border-[#ebe6df] bg-white text-[#a39e97]',
+                )}
+              >
+                ✅ Pagado
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentStatus('a_pagar')}
+                className={cn(
+                  'rounded-xl border py-2 text-xs font-semibold transition-all',
+                  paymentStatus === 'a_pagar'
+                    ? 'border-[#d4943a] bg-[#fdf6ec] text-[#d4943a]'
+                    : 'border-[#ebe6df] bg-white text-[#a39e97]',
+                )}
+              >
+                🕓 A pagar
+              </button>
+            </div>
+            {paymentStatus === 'a_pagar' && (
+              <p className="mt-1 text-[10px] text-[#a39e97]">Queda en &quot;Cuentas por pagar&quot; hasta que se salde.</p>
+            )}
           </div>
 
           <div>
