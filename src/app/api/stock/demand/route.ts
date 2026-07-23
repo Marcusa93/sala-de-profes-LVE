@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
+import { sumSaleMovements, stockDropConsumption } from '@/lib/stock/consumption'
 
 // GET /api/stock/demand?stock_item_id=UUID&days=14
 //
@@ -268,17 +269,7 @@ export async function GET(request: NextRequest) {
   // -------------------------------------------------------------------------
   // RUTA C — consumo real de Fudo sync en stock_movements
   // -------------------------------------------------------------------------
-  const { data: movements } = await admin
-    .from('stock_movements')
-    .select('qty')
-    .eq('stock_item_id', stockItemId)
-    .eq('movement_type', 'out')
-    .eq('reason', 'sale')
-    .gte('created_at', cutoffISO)
-
-  const consumedFromSync = Math.round(
-    (movements ?? []).reduce((sum, m) => sum + m.qty, 0) * 100
-  ) / 100
+  const consumedFromSync = await sumSaleMovements(admin, stockItemId, cutoffISO)
 
   // -------------------------------------------------------------------------
   // Respuesta
@@ -324,23 +315,15 @@ export async function GET(request: NextRequest) {
   let consumedFromStock: number | null = null
   let stockWindowDays: number | null = null
   if (estimatedConsumed == null && consumedFromSync === 0) {
-    const { data: snaps } = await admin
-      .from('stock_snapshots')
-      .select('snapshot_date, items')
-      .eq('snapshot_type', 'daily')
-      .gte('snapshot_date', cutoffDateStr)
-      .order('snapshot_date', { ascending: true })
-      .limit(1)
-    const firstSnap = (snaps ?? [])[0]
-    if (firstSnap) {
-      const arr = (firstSnap.items as { id: string; current_qty: number }[] | null) ?? []
-      const past = arr.find(i => i.id === stockItemId)
-      if (past && typeof past.current_qty === 'number') {
-        const drop = Number(past.current_qty) + receivedInWindow - Number(stockItem.current_qty)
-        consumedFromStock = drop > 0.01 ? Math.round(drop * 100) / 100 : null
-        const spanDays = Math.round((Date.now() - new Date(firstSnap.snapshot_date + 'T12:00:00').getTime()) / 86400000)
-        stockWindowDays = Math.max(1, spanDays)
-      }
+    const drop = await stockDropConsumption(
+      admin,
+      { id: stockItemId, current_qty: Number(stockItem.current_qty) },
+      cutoffDateStr,
+      receivedInWindow,
+    )
+    if (drop) {
+      consumedFromStock = drop.consumed
+      stockWindowDays = drop.windowDays
     }
   }
 

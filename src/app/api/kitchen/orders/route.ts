@@ -6,6 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { notifyEvent } from '@/lib/push/notify-event'
+import { getConsumptionContextWithTimeout } from '@/lib/stock/consumption'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,16 @@ export async function POST(request: NextRequest) {
         metadata: { items, urgency: orderUrgency, note },
       }).catch(() => {})
 
+      // Contexto de consumo semanal por insumo (best-effort: si falla o
+      // tarda, las notificaciones salen igual sin esa línea — jamás bloquea)
+      let consumptionByName = new Map<string, string>()
+      try {
+        consumptionByName = await getConsumptionContextWithTimeout(
+          admin,
+          items.map((i) => i.product_name),
+        )
+      } catch { /* notificación normal sin contexto */ }
+
       // Create announcement for encargados
       const authorName = profile
         ? `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'Cocina'
@@ -101,7 +112,10 @@ export async function POST(request: NextRequest) {
       }
 
       const itemsList = items
-        .map((i) => `• ${i.product_name} — ${i.quantity}`)
+        .map((i) => {
+          const ctx = consumptionByName.get(i.product_name)
+          return `• ${i.product_name} — ${i.quantity}${ctx ? ` · ${ctx}` : ''}`
+        })
         .join('\n')
 
       await admin.from('announcements').insert({
@@ -124,9 +138,16 @@ export async function POST(request: NextRequest) {
         note,
       }).catch(() => {})
 
+      const pushSummary = items
+        .map((i) => {
+          const ctx = consumptionByName.get(i.product_name)
+          return `${i.product_name} x ${i.quantity}${ctx ? ` · ${ctx}` : ''}`
+        })
+        .join(', ')
+
       notifyEvent(admin, 'purchase_created', {
         title: '🛒 Nuevo pedido de cocina',
-        body: `${authorName}: ${itemsSummary}`,
+        body: `${authorName}: ${pushSummary}`,
         url: '/pedidos',
       }).catch(() => {})
 

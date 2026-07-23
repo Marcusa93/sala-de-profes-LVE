@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyOrderToEncargados, notifyOrderStatusChange } from '@/lib/email/send'
 import { logAudit } from '@/lib/audit'
 import { notifyEvent } from '@/lib/push/notify-event'
+import { getConsumptionContextWithTimeout } from '@/lib/stock/consumption'
 
 // ---------------------------------------------------------------------------
 // POST /api/kitchen/bar
@@ -131,12 +132,23 @@ export async function POST(request: NextRequest) {
         ? `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'Barista'
         : 'Barista'
 
+      // Contexto de consumo semanal del insumo (best-effort: si falla o
+      // tarda, las notificaciones salen igual sin esa línea — jamás bloquea)
+      let consumptionCtx: string | undefined
+      try {
+        consumptionCtx = (
+          await getConsumptionContextWithTimeout(admin, [String(productName)])
+        ).get(String(productName))
+      } catch { /* notificación normal sin contexto */ }
+
+      const itemLine = `${productName} — ${quantity}${consumptionCtx ? ` · ${consumptionCtx}` : ''}`
+
       await admin.from('announcements').insert({
         author_id: user.id,
         type: 'operativo',
         priority: priorityMap[urgency] || 'media',
         title: `☕ Pedido de Barra — ${urgencyLabels[urgency] || 'Normal'}`,
-        body: `${authorName} solicita: ${productName} — ${quantity}${note ? `\nNota: ${note}` : ''}`,
+        body: `${authorName} solicita: ${itemLine}${note ? `\nNota: ${note}` : ''}`,
         scope: 'role',
         target_role: 'encargado',
         is_active: true,
@@ -153,7 +165,7 @@ export async function POST(request: NextRequest) {
 
       notifyEvent(admin, 'purchase_created', {
         title: '🛒 Nuevo pedido de barra',
-        body: `${authorName}: ${productName} — ${quantity}`,
+        body: `${authorName}: ${itemLine}`,
         url: '/pedidos',
       }).catch(() => {})
 
