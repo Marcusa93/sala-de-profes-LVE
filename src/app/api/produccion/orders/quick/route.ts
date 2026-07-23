@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { logAudit } from '@/lib/audit'
 import { notifyEvent } from '@/lib/push/notify-event'
+import { snapshotProductionInputCosts } from '@/lib/produccion/cost-snapshot'
 import type { Database } from '@/types/database'
 
 type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
@@ -361,6 +362,9 @@ export async function POST(request: NextRequest) {
         status: 'draft',
       }, { status: 400 })
     }
+
+    // Congelar el costo de los insumos para que la producción quede histórica.
+    await snapshotProductionInputCosts(admin, orderId)
 
     const movements = rpcResult.movements ?? []
     let fudoSummary: { synced: number; errors: string[] } | null = null

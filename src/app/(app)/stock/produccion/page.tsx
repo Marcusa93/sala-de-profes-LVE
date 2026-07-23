@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   TrendingUp, AlertTriangle, CheckCircle2, Clock, ChefHat,
   Package, Leaf, BarChart3, ChevronRight, RefreshCw, GitBranch,
-  ArrowRight, ShieldCheck, Lock, Loader2,
+  ArrowRight, ShieldCheck, Lock, Loader2, DollarSign,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
@@ -244,6 +244,13 @@ export default function ProduccionDashboardPage() {
                 <option value={30}>30 días</option>
                 <option value={90}>90 días</option>
               </select>
+              <Link
+                href="/stock/produccion/costos"
+                className="flex size-8 items-center justify-center rounded-lg border border-[#ebe6df] bg-white text-[#006d5a]"
+                title="Costo por producción"
+              >
+                <DollarSign className="size-4" />
+              </Link>
               <button
                 onClick={load}
                 disabled={loading}

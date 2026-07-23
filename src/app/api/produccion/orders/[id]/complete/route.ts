@@ -5,6 +5,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { logAudit } from '@/lib/audit'
 import { notifyEvent } from '@/lib/push/notify-event'
+import { snapshotProductionInputCosts } from '@/lib/produccion/cost-snapshot'
 
 // ---------------------------------------------------------------------------
 // POST /api/produccion/orders/[id]/complete
@@ -205,6 +206,9 @@ export async function POST(
     if (!result.success) {
       return NextResponse.json({ error: result.error ?? 'Error al completar la orden' }, { status: 400 })
     }
+
+    // Congelar el costo de los insumos para que la producción quede histórica.
+    await snapshotProductionInputCosts(admin, id)
 
     // Sync affected stock items to Fudo
     const movements = (result.movements ?? []) as { stock_item_id: number; change: number }[]
