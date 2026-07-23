@@ -25,7 +25,6 @@ import {
   BarChart3,
   X,
   Armchair,
-  TrendingUp,
   ClipboardCheck,
   Hammer,
   ScanFace,
@@ -131,9 +130,7 @@ const SOCIO_MORE: ExpandableNavItem = {
       label: 'Administración',
       items: [
         { label: 'Control', href: '/admin', icon: LayoutDashboard, description: 'Panel administrativo general' },
-        { label: 'Asistencia avanzada', href: '/admin/asistencia', icon: Shield, description: 'Dispositivos, WiFi y configuración' },
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Datos de proveedores y condiciones' },
-        { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp, description: 'Análisis de consumo y desvíos' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Recetas, insumos y preparación' },
         { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Recetas y cambios por aprobar' },
         { label: 'Expedientes', href: '/expedientes', icon: FolderOpen, description: 'Seguimiento de temas administrativos' },
@@ -174,7 +171,6 @@ const ENCARGADO_MORE: ExpandableNavItem = {
     {
       label: 'Inventario',
       items: [
-        { label: 'Rendimiento', href: '/stock/rendimiento', icon: TrendingUp, description: 'Consumos, rindes y desvíos' },
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Contactos y condiciones de compra' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Insumos y preparación estándar' },
         { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Cambios por aprobar' },

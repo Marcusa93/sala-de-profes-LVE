@@ -711,6 +711,29 @@ export default function StockPage() {
             </div>
             <ArrowRight className="size-5 shrink-0" />
           </Link>
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <Link
+              href="/stock/rendimiento"
+              className="flex items-center justify-between gap-2 rounded-2xl bg-white/80 px-3 py-2.5 ring-1 ring-[#ebe6df] transition hover:bg-white"
+            >
+              <div>
+                <p className="text-[12px] font-bold text-[#3d2c24]">Rendimiento</p>
+                <p className="text-[10px] text-[#7d6c64]">consumos y desvíos</p>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-[#a39e97]" />
+            </Link>
+            <Link
+              href="/stock/historial"
+              className="flex items-center justify-between gap-2 rounded-2xl bg-white/80 px-3 py-2.5 ring-1 ring-[#ebe6df] transition hover:bg-white"
+            >
+              <div>
+                <p className="text-[12px] font-bold text-[#3d2c24]">Historial</p>
+                <p className="text-[10px] text-[#7d6c64]">movimientos de stock</p>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-[#a39e97]" />
+            </Link>
+          </div>
         </div>
       </FadeIn>
 
