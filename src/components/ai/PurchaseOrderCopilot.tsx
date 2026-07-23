@@ -133,8 +133,22 @@ export function PurchaseOrderCopilot() {
     )
   }
 
+  // Proveedores cuyo día de pedido (suppliers.order_days) es HOY — lo primero que hay que ver
+  const orderDayNames = data.orders.filter(o => o.is_order_day).map(o => o.supplier_name)
+
   return (
     <div className="space-y-3">
+      {/* Franja "hoy toca pedir" — respuesta en 5 segundos: ¿a quién le pido hoy? */}
+      {orderDayNames.length > 0 && (
+        <div className="flex items-center gap-2 rounded-xl bg-[#3d2c24] px-3 py-2.5">
+          <span className="shrink-0 text-sm">📅</span>
+          <p className="text-xs text-white/80">
+            Hoy toca pedir:{' '}
+            <span className="font-bold text-white">{orderDayNames.join(', ')}</span>
+          </p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
