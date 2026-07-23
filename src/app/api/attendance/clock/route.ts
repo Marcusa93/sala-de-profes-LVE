@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { VENUE } from '@/lib/attendance/venue'
+import { isManagerOrAbove } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // Haversine — server-safe, no browser APIs
@@ -112,6 +113,35 @@ export async function POST(request: Request) {
 
     if (existing) {
       return NextResponse.json({ error: 'Ya tenés un ingreso abierto hoy' }, { status: 400 })
+    }
+
+    // -----------------------------------------------------------------------
+    // TURNO OBLIGATORIO — asistencia coordinada con turnos.
+    // Un empleado solo puede fichar si el encargado le cargó turno para hoy.
+    // Socios/encargados quedan exentos (son quienes cargan los turnos; si no,
+    // un olvido de carga los dejaría a ellos mismos afuera del sistema).
+    // -----------------------------------------------------------------------
+    const { data: profile } = await admin
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    if (!isManagerOrAbove(profile?.role)) {
+      const { data: todayShift } = await admin
+        .from('shifts')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('shift_date', todayStr)
+        .limit(1)
+        .maybeSingle()
+
+      if (!todayShift) {
+        return NextResponse.json({
+          error: 'No tenés turno cargado para hoy. Pedile al encargado que cargue tu turno antes de fichar.',
+          code: 'NO_SHIFT_TODAY',
+        }, { status: 403 })
+      }
     }
 
     const { data: record, error: insertError } = await admin
