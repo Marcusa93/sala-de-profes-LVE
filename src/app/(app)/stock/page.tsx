@@ -768,6 +768,16 @@ function StockPageContent() {
               </div>
               <ArrowRight className="size-4 shrink-0 text-[#a39e97]" />
             </Link>
+            <Link
+              href="/stock/precios"
+              className="flex items-center justify-between gap-2 rounded-2xl bg-white/80 px-3 py-2.5 ring-1 ring-[#ebe6df] transition hover:bg-white"
+            >
+              <div>
+                <p className="text-[12px] font-bold text-[#3d2c24]">Precios de compra</p>
+                <p className="text-[10px] text-[#7d6c64]">histórico por insumo</p>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-[#a39e97]" />
+            </Link>
           </div>
         </div>
       </FadeIn>

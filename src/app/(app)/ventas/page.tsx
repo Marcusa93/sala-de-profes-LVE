@@ -5,6 +5,7 @@ import { format, subDays, addDays, isToday } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import { BarChart3, ChevronLeft, ChevronRight, Loader2, RefreshCw } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
+import { isManagerOrAbove } from '@/lib/roles'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { FadeIn } from '@/components/ui/motion'
@@ -12,23 +13,27 @@ import type { DashboardData } from './_components/types'
 import { CompareView } from './_components/CompareView'
 import { MonthView } from './_components/MonthView'
 import { DayView } from './_components/DayView'
+import { BalanceView } from './_components/BalanceView'
 
 const REFRESH_INTERVAL = 5 * 60 * 1000
 
 export default function VentasPage() {
-  const { loading: profileLoading } = useProfileContext()
+  const { profile, loading: profileLoading } = useProfileContext()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
-  const [viewMode, setViewMode] = useState<'dia' | 'mes' | 'comparar'>('dia')
+  const [viewMode, setViewMode] = useState<'dia' | 'mes' | 'comparar' | 'balance'>('dia')
   const [compareDate, setCompareDate] = useState<Date>(subDays(new Date(), 1))
   const [compareData, setCompareData] = useState<DashboardData | null>(null)
   const [loadingCompare, setLoadingCompare] = useState(false)
 
   const isLive = isToday(selectedDate)
   const dateStr = format(selectedDate, 'yyyy-MM-dd')
+  const isManager = isManagerOrAbove(profile?.role)
+  const modes = isManager ? (['dia', 'comparar', 'mes', 'balance'] as const) : (['dia', 'comparar', 'mes'] as const)
+  const MODE_LABELS: Record<string, string> = { dia: 'Día', comparar: 'Comparar', mes: 'Mes', balance: 'Balance' }
 
   const fetchData = useCallback(async (showSpinner = false) => {
     if (showSpinner) setSyncing(true)
@@ -84,20 +89,20 @@ export default function VentasPage() {
         <div className="mb-3 flex items-center justify-between">
           <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Ventas</h1>
           <div className="flex rounded-full bg-secondary p-0.5">
-            {(['dia', 'comparar', 'mes'] as const).map((mode) => (
+            {modes.map((mode) => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
                 className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${viewMode === mode ? 'bg-[#006d5a] text-white' : 'text-muted-foreground'}`}
               >
-                {mode === 'dia' ? 'Día' : mode === 'comparar' ? 'Comparar' : 'Mes'}
+                {MODE_LABELS[mode]}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Date navigator — hidden in compare mode */}
-        {viewMode !== 'comparar' && (
+        {/* Date navigator — hidden in compare & balance modes */}
+        {viewMode !== 'comparar' && viewMode !== 'balance' && (
           <div className="flex items-center justify-between">
             <button
               onClick={() => {
@@ -177,6 +182,8 @@ export default function VentasPage() {
       {viewMode === 'dia' && (
         <DayView data={data} selectedDate={selectedDate} isLive={isLive} />
       )}
+
+      {viewMode === 'balance' && isManager && <BalanceView />}
     </div>
   )
 }
