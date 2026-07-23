@@ -7,6 +7,7 @@ import {
   Home,
   Clock,
   Calendar,
+  RefreshCw,
   CalendarDays,
   Coffee,
   Bell,
@@ -111,8 +112,7 @@ const SOCIO_MORE: ExpandableNavItem = {
     {
       label: 'Equipo',
       items: [
-        { label: 'Equipo', href: '/equipo', icon: Users, description: 'Personas presentes, roles y estado del turno' },
-        { label: 'Turnos', href: '/equipo/turnos', icon: Calendar, description: 'Planificación semanal del equipo' },
+        { label: 'Equipo y turnos', href: '/equipo', icon: Users, description: 'Presentes, roles y planificación semanal' },
         { label: 'Asistencia', href: '/equipo/asistencia', icon: ScanFace, description: 'Fichajes y correcciones de hoy' },
         { label: 'Centro de control', href: '/control', icon: ShieldAlert, description: 'Stock crítico, anomalías y fichajes en un solo lugar' },
       ],
@@ -130,6 +130,7 @@ const SOCIO_MORE: ExpandableNavItem = {
       label: 'Administración',
       items: [
         { label: 'Control', href: '/admin', icon: LayoutDashboard, description: 'Panel administrativo general' },
+        { label: 'Fudo', href: '/admin/fudo', icon: RefreshCw, description: 'Sincronización y configuración de Fudo' },
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Datos de proveedores y condiciones' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Recetas, insumos y preparación' },
         { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Recetas y cambios por aprobar' },
@@ -154,8 +155,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
     {
       label: 'Equipo',
       items: [
-        { label: 'Equipo', href: '/equipo', icon: Users, description: 'Presentes, ausentes y roles' },
-        { label: 'Turnos', href: '/equipo/turnos', icon: Calendar, description: 'Planificación semanal del equipo' },
+        { label: 'Equipo y turnos', href: '/equipo', icon: Users, description: 'Presentes, roles y planificación semanal' },
         { label: 'Asistencia', href: '/equipo/asistencia', icon: ScanFace, description: 'Fichajes y correcciones de hoy' },
         { label: 'Centro de control', href: '/control', icon: ShieldAlert, description: 'Stock crítico, anomalías y fichajes en un solo lugar' },
       ],
