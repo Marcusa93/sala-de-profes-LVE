@@ -9,6 +9,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import { formatPrice } from './types'
+import { InsumosVendidos } from './InsumosVendidos'
 
 // ---------------------------------------------------------------------------
 // BalanceView — "lo que se compra se compensa con lo que se vende"
@@ -96,8 +97,14 @@ export function BalanceView() {
           <div className="space-y-4">
             {/* Balance del período */}
             <div
-              className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-[#ebe6df]"
-              style={{ borderLeftWidth: 4, borderLeftColor: positive ? '#006d5a' : '#ea504c' }}
+              className="relative overflow-hidden rounded-2xl bg-white p-5 shadow-sm ring-1 ring-[#ebe6df]"
+              style={{
+                borderLeftWidth: 4,
+                borderLeftColor: positive ? '#006d5a' : '#ea504c',
+                backgroundImage: positive
+                  ? 'linear-gradient(135deg, rgba(0,109,90,0.06) 0%, rgba(255,255,255,0) 55%)'
+                  : 'linear-gradient(135deg, rgba(234,80,76,0.06) 0%, rgba(255,255,255,0) 55%)',
+              }}
             >
               <div className="flex items-center gap-2">
                 <Scale className={`size-4 ${positive ? 'text-[#006d5a]' : 'text-[#ea504c]'}`} />
@@ -105,7 +112,7 @@ export function BalanceView() {
                   Balance del período ({data.days} días)
                 </span>
               </div>
-              <p className={`mt-1.5 font-display text-3xl font-bold tabular-nums ${positive ? 'text-[#006d5a]' : 'text-[#ea504c]'}`}>
+              <p className={`mt-1.5 font-display text-4xl font-bold tabular-nums tracking-tight ${positive ? 'text-[#006d5a]' : 'text-[#ea504c]'}`}>
                 {positive ? '+' : '−'}{formatPrice(Math.abs(data.totals.balance))}
               </p>
               <p className="mt-0.5 text-[11px] text-[#a39e97]">
@@ -179,6 +186,9 @@ export function BalanceView() {
                 </BarChart>
               </ResponsiveContainer>
             </ChartCard>
+
+            {/* Insumos más vendidos — la conexión venta → insumo */}
+            <InsumosVendidos />
 
             {/* Top insumos por gasto */}
             {data.top_supplies.length > 0 && (

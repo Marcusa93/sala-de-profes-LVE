@@ -8,11 +8,11 @@ import {
   UtensilsCrossed, CheckCircle, Receipt,
 } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
+import { FadeIn, PulseRing, motion } from '@/components/ui/motion'
 import { ChartCard } from '@/components/admin/ChartCard'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell, Legend, AreaChart, Area,
 } from 'recharts'
 import type { DashboardData } from './types'
 import { formatPrice, PIE_COLORS, STATE_LABELS } from './types'
@@ -28,40 +28,80 @@ export function DayView({ data, selectedDate, isLive }: Props) {
 
   return (
     <>
-      {/* KPIs */}
-      <div className="space-y-2.5">
-        <StaggerList className="grid grid-cols-2 gap-2.5" staggerDelay={0.04}>
-          <StaggerItem>
-            <div className="card-elevated rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#006d5a' }}>
-              <span className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Facturado</span>
-              <p className="mt-1 font-display text-2xl font-bold tabular-nums text-[#006d5a]">{formatPrice(data.totalFacturado)}</p>
-              <p className="text-[10px] text-[#a39e97]">{data.mesasCerradas} cerradas</p>
+      {/* Hero KPI — facturado del día */}
+      <FadeIn>
+        <div
+          className="relative overflow-hidden rounded-2xl p-5 text-white shadow-lg shadow-[#006d5a]/15"
+          style={{ background: 'linear-gradient(135deg, #017c66 0%, #006d5a 45%, #00523f 100%)' }}
+        >
+          {/* Texturas decorativas */}
+          <div className="pointer-events-none absolute -right-12 -top-16 size-48 rounded-full bg-white/[0.06]" />
+          <div className="pointer-events-none absolute -bottom-20 -left-10 size-44 rounded-full bg-black/[0.10]" />
+
+          <div className="relative">
+            <span className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/70">
+              Facturado del día
+              {isLive && <PulseRing color="#ffd489" />}
+            </span>
+            <p className="mt-1.5 font-display text-[2.5rem] font-bold leading-none tabular-nums tracking-tight">
+              {formatPrice(data.totalFacturado)}
+            </p>
+            <p className="mt-2 text-[11px] text-white/60">
+              {data.mesasCerradas} mesa{data.mesasCerradas !== 1 ? 's' : ''} cerrada{data.mesasCerradas !== 1 ? 's' : ''} · ticket promedio {formatPrice(data.avgTicket)}
+            </p>
+          </div>
+
+          {/* Sparkline del día */}
+          {data.byHour.length > 1 && (
+            <div className="relative -mx-2 mt-3 h-14">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={data.byHour} margin={{ top: 4, left: 0, right: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="heroSparkline" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#ffffff" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <Area
+                    type="monotone"
+                    dataKey="revenue"
+                    stroke="#ffffff"
+                    strokeWidth={1.5}
+                    strokeOpacity={0.85}
+                    fill="url(#heroSparkline)"
+                    isAnimationActive
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
             </div>
-          </StaggerItem>
-          <StaggerItem>
-            <div className="card-elevated rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#d4943a' }}>
-              <span className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">En curso</span>
-              <p className="mt-1 font-display text-2xl font-bold tabular-nums text-[#d4943a]">{formatPrice(data.totalEnCurso)}</p>
-              <p className="text-[10px] text-[#a39e97]">
+          )}
+
+          {/* Sub-KPIs */}
+          <div className="relative mt-3 grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-white/10 px-3 py-2 backdrop-blur-sm">
+              <span className="text-[9px] font-semibold uppercase tracking-wider text-[#ffd489]">En curso</span>
+              <p className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#ffd489]">{formatPrice(data.totalEnCurso)}</p>
+              <p className="truncate text-[9px] text-white/50">
                 {data.mesasAbiertas} mesa{data.mesasAbiertas !== 1 ? 's' : ''}
-                {(data.takeawayAbiertos ?? 0) > 0 && ` · ${data.takeawayAbiertos} takeaway`}
+                {(data.takeawayAbiertos ?? 0) > 0 && ` +${data.takeawayAbiertos} TA`}
               </p>
             </div>
-          </StaggerItem>
-        </StaggerList>
-        <div className="flex items-center justify-between rounded-xl bg-[#f8f5f0] px-4 py-2.5">
-          <div className="flex items-center gap-4 text-xs text-[#3d2c24]">
-            <span>Total <strong className="tabular-nums">{formatPrice(data.totalGeneral)}</strong></span>
-            <span className="text-[#ebe6df]">|</span>
-            <span>{data.totalTickets} tickets</span>
-            <span className="text-[#ebe6df]">|</span>
-            <span>Prom. <strong className="tabular-nums">{formatPrice(data.avgTicket)}</strong></span>
+            <div className="rounded-xl bg-white/10 px-3 py-2 backdrop-blur-sm">
+              <span className="text-[9px] font-semibold uppercase tracking-wider text-white/60">Total día</span>
+              <p className="mt-0.5 truncate text-[14px] font-bold tabular-nums">{formatPrice(data.totalGeneral)}</p>
+              <p className="truncate text-[9px] text-white/50">cerrado + en curso</p>
+            </div>
+            <div className="rounded-xl bg-white/10 px-3 py-2 backdrop-blur-sm">
+              <span className="text-[9px] font-semibold uppercase tracking-wider text-white/60">Tickets</span>
+              <p className="mt-0.5 truncate text-[14px] font-bold tabular-nums">{data.totalTickets}</p>
+              <p className="truncate text-[9px] text-white/50">{data.totalItems} items</p>
+            </div>
           </div>
         </div>
-      </div>
+      </FadeIn>
 
       {/* Tab nav */}
-      <div className="flex rounded-full bg-secondary p-0.5">
+      <div className="flex rounded-full bg-secondary p-0.5 shadow-inner">
         {([
           { key: 'resumen',  label: 'Resumen',                           icon: FileText      },
           { key: 'mesas',    label: `En curso (${data.totalAbiertas})`,  icon: UtensilsCrossed },
@@ -70,12 +110,19 @@ export function DayView({ data, selectedDate, isLive }: Props) {
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`flex flex-1 items-center justify-center gap-1 rounded-full py-2 text-[11px] font-semibold transition-colors ${
-              tab === t.key ? 'bg-[#006d5a] text-white' : 'text-muted-foreground hover:text-foreground'
-            }`}
+            className="relative flex flex-1 items-center justify-center gap-1 rounded-full py-2 text-[11px] font-semibold transition-colors"
           >
-            <t.icon className="size-4" />
-            {t.label}
+            {tab === t.key && (
+              <motion.span
+                layoutId="dayview-tab-pill"
+                className="absolute inset-0 rounded-full bg-[#006d5a] shadow-sm"
+                transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+              />
+            )}
+            <span className={`relative z-10 flex items-center gap-1 ${tab === t.key ? 'text-white' : 'text-muted-foreground'}`}>
+              <t.icon className="size-4" />
+              {t.label}
+            </span>
           </button>
         ))}
       </div>
