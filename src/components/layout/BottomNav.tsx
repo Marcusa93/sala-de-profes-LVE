@@ -115,7 +115,7 @@ const SOCIO_MORE: ExpandableNavItem = {
         { label: 'Equipo', href: '/equipo', icon: Users, description: 'Personas presentes, roles y estado del turno' },
         { label: 'Turnos', href: '/equipo/turnos', icon: Calendar, description: 'Planificación semanal del equipo' },
         { label: 'Asistencia', href: '/equipo/asistencia', icon: ScanFace, description: 'Fichajes y correcciones de hoy' },
-        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert, description: 'Incidencias que requieren decisión' },
+        { label: 'Centro de control', href: '/control', icon: ShieldAlert, description: 'Stock crítico, anomalías y fichajes en un solo lugar' },
       ],
     },
     {
@@ -160,7 +160,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
         { label: 'Equipo', href: '/equipo', icon: Users, description: 'Presentes, ausentes y roles' },
         { label: 'Turnos', href: '/equipo/turnos', icon: Calendar, description: 'Planificación semanal del equipo' },
         { label: 'Asistencia', href: '/equipo/asistencia', icon: ScanFace, description: 'Fichajes y correcciones de hoy' },
-        { label: 'Alertas', href: '/equipo/alertas', icon: ShieldAlert, description: 'Problemas que requieren acción' },
+        { label: 'Centro de control', href: '/control', icon: ShieldAlert, description: 'Stock crítico, anomalías y fichajes en un solo lugar' },
       ],
     },
     {
