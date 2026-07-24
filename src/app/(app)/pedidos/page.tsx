@@ -15,7 +15,7 @@ import { createClient } from '@/lib/supabase/client'
 import { logAuditClient } from '@/lib/audit'
 import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
-import { FadeIn, StaggerList, StaggerItem, AnimatedNumber } from '@/components/ui/motion'
+import { FadeIn, StaggerList, StaggerItem, AnimatedNumber, motion } from '@/components/ui/motion'
 import { PurchaseOrderCopilot } from '@/components/ai/PurchaseOrderCopilot'
 import { BackToHoy } from '@/components/layout/BackToHoy'
 import {
@@ -258,7 +258,7 @@ export default function PedidosPage() {
       <FadeIn>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h1 className="font-display text-xl tracking-tight text-[#3d2c24]">Gestión de Pedidos</h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">Gestión de Pedidos</h1>
             <p className="section-label mt-0.5">Pedidos de barra y cocina</p>
           </div>
           {canManage && (
@@ -275,28 +275,40 @@ export default function PedidosPage() {
 
       {/* Los 3 pasos del ciclo — un paso por pantalla */}
       <FadeIn delay={0.05}>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-2 rounded-[1.4rem] bg-[#faf8f5] p-1 ring-1 ring-[#ebe6df]">
           {([
             { key: 'pedir' as const, label: 'Pedir', count: pending.length, Icon: ShoppingCart, tone: '#d4943a' },
             { key: 'camino' as const, label: 'En camino', count: ordered.length, Icon: Truck, tone: '#4a90d9' },
             { key: 'recibido' as const, label: 'Recibidos', count: received.length, Icon: Check, tone: '#006d5a' },
-          ]).map(({ key, label, count, Icon, tone }) => (
-            <button
-              key={key}
-              onClick={() => setStep(key)}
-              className={cn(
-                'rounded-2xl p-3 text-center transition-all ring-1',
-                step === key ? 'bg-white shadow-sm' : 'bg-[#faf8f5] ring-transparent opacity-60',
-              )}
-              style={step === key ? { boxShadow: `inset 0 -3px 0 ${tone}`, borderColor: tone } : undefined}
-            >
-              <Icon className="mx-auto size-4" style={{ color: tone }} />
-              <p className="mt-1 font-display text-lg font-bold tabular-nums" style={{ color: tone }}>
-                <AnimatedNumber value={count} />
-              </p>
-              <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">{label}</p>
-            </button>
-          ))}
+          ]).map(({ key, label, count, Icon, tone }) => {
+            const active = step === key
+            return (
+              <button
+                key={key}
+                onClick={() => setStep(key)}
+                className={cn(
+                  'relative rounded-2xl p-3 text-center transition-opacity',
+                  active ? 'opacity-100' : 'opacity-55 hover:opacity-80',
+                )}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="pedidos-step-pill"
+                    className="absolute inset-0 rounded-2xl bg-white shadow-sm"
+                    style={{ boxShadow: `inset 0 -3px 0 ${tone}, 0 2px 8px rgba(0,0,0,0.05)` }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                  />
+                )}
+                <span className="relative z-10 block">
+                  <Icon className="mx-auto size-4" style={{ color: tone }} />
+                  <p className="mt-1 font-display text-xl font-bold tabular-nums" style={{ color: tone }}>
+                    <AnimatedNumber value={count} />
+                  </p>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">{label}</p>
+                </span>
+              </button>
+            )
+          })}
         </div>
       </FadeIn>
 

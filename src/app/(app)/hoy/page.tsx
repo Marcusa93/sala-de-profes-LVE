@@ -396,10 +396,10 @@ export default function HoyPage() {
     },
   ] as const
 
-  const TONE_STYLES: Record<string, { ring: string; iconBg: string; iconColor: string }> = {
-    urgent: { ring: 'ring-[#f3d0cf]', iconBg: 'bg-[#fef2f2]', iconColor: 'text-[#ea504c]' },
-    action: { ring: 'ring-[#f1dfba]', iconBg: 'bg-[#fdf6ec]', iconColor: 'text-[#d4943a]' },
-    ok: { ring: 'ring-[#ebe6df]', iconBg: 'bg-[#e8f5f1]', iconColor: 'text-[#006d5a]' },
+  const TONE_STYLES: Record<string, { ring: string; iconBg: string; iconColor: string; accent: string }> = {
+    urgent: { ring: 'ring-[#f3d0cf]', iconBg: 'bg-[#fef2f2]', iconColor: 'text-[#ea504c]', accent: '#ea504c' },
+    action: { ring: 'ring-[#f1dfba]', iconBg: 'bg-[#fdf6ec]', iconColor: 'text-[#d4943a]', accent: '#d4943a' },
+    ok: { ring: 'ring-[#ebe6df]', iconBg: 'bg-[#e8f5f1]', iconColor: 'text-[#006d5a]', accent: '#006d5a' },
   }
 
   return (
@@ -407,10 +407,10 @@ export default function HoyPage() {
       <FadeIn>
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="font-display text-2xl font-semibold capitalize tracking-tight text-[#3d2c24]">
+            <h1 className="font-display text-3xl font-bold capitalize leading-[1.05] tracking-tight text-[#3d2c24]">
               Hoy, {format(new Date(), "EEEE d 'de' MMMM", { locale: es })}
             </h1>
-            <p className="section-label mt-1">Pedir → Recibir → Producir → Contar</p>
+            <p className="section-label mt-1.5">Pedir → Recibir → Producir → Contar</p>
           </div>
           {loading && <Loader2 className="size-4 animate-spin text-[#a39e97]" />}
         </div>
@@ -422,9 +422,10 @@ export default function HoyPage() {
           const Icon = step.icon
           return (
             <StaggerItem key={step.key}>
-              <div className={`rounded-2xl bg-white p-4 ring-1 ${style.ring}`}>
+              <div className={`relative overflow-hidden rounded-2xl bg-white p-4 pl-5 shadow-sm ring-1 ${style.ring}`}>
+                <span className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: style.accent }} />
                 <div className="flex items-start gap-3">
-                  <div className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${style.iconBg}`}>
+                  <div className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${style.iconBg}`}>
                     {step.tone === 'ok' && step.key !== 'contar' ? (
                       <Check className={`size-4 ${style.iconColor}`} />
                     ) : (
@@ -432,10 +433,16 @@ export default function HoyPage() {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">
-                      Paso {idx + 1}
-                    </p>
-                    <p className="text-sm font-bold text-[#3d2c24]">{step.title}</p>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="flex size-4 items-center justify-center rounded-full text-[9px] font-bold text-white"
+                        style={{ backgroundColor: style.accent }}
+                      >
+                        {idx + 1}
+                      </span>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">Paso {idx + 1}</p>
+                    </div>
+                    <p className="mt-0.5 font-display text-base font-bold text-[#3d2c24]">{step.title}</p>
                     <div className="mt-1.5">{step.body}</div>
                   </div>
                 </div>

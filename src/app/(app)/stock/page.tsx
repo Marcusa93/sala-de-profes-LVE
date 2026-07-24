@@ -32,7 +32,7 @@ import { STOCK_CATEGORIES, STOCK_CATEGORY_OPTIONS } from '@/lib/constants'
 import type { StockCategoryValue } from '@/types/database'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
-import { FadeIn } from '@/components/ui/motion'
+import { FadeIn, StaggerList, StaggerItem, motion } from '@/components/ui/motion'
 import {
   type StockIntelligenceResponse,
 } from '@/lib/stock/intelligence'
@@ -663,7 +663,7 @@ function StockPageContent() {
                   {fudoStatusUi.label}
                 </button>
               </div>
-              <h1 className="mt-3 font-display text-2xl tracking-tight text-[#3d2c24] sm:text-3xl">
+              <h1 className="mt-3 font-display text-3xl font-bold leading-[1.05] tracking-tight text-[#3d2c24] sm:text-4xl">
                 Control de mercadería
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-relaxed text-[#6f665f]">
@@ -692,46 +692,58 @@ function StockPageContent() {
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-            <button
-              onClick={() => { setView('inventario'); setSourceFilter('all'); setSemaphoreFilter(null) }}
-              className="rounded-2xl bg-white/80 px-3 py-3 text-left ring-1 ring-[#ebe6df] transition hover:bg-white"
-            >
-              <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Items activos</p>
-              <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.total}</p>
-              <p className="text-[11px] text-[#7d6c64]">{stockOverview.fudoLinked} vinculados a Fudo</p>
-            </button>
-            <button
-              onClick={() => { setView('conteo'); setSemaphoreFilter('red') }}
-              className="rounded-2xl bg-[#fff7f7] px-3 py-3 text-left ring-1 ring-[#f3d0cf] transition hover:bg-white"
-            >
-              <p className="text-[10px] font-bold uppercase tracking-wide text-[#ea504c]">Críticos</p>
-              <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.red}</p>
-              <p className="text-[11px] text-[#7d6c64]">requieren conteo o reposición</p>
-            </button>
-            <button
-              onClick={() => { setView('inventario'); setSourceFilter('unmapped') }}
-              className="rounded-2xl bg-[#fffaf2] px-3 py-3 text-left ring-1 ring-[#f1dfba] transition hover:bg-white"
-            >
-              <p className="text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Sin mapeo</p>
-              <p className="mt-1 text-2xl font-bold text-[#3d2c24]">{stockOverview.unmapped}</p>
-              <p className="text-[11px] text-[#7d6c64]">bloqueados para escritura</p>
-            </button>
-            <button
-              onClick={() => setView('radar')}
-              className="rounded-2xl bg-[#f6fcfa] px-3 py-3 text-left ring-1 ring-[#dcefe8] transition hover:bg-white"
-            >
-              <p className="text-[10px] font-bold uppercase tracking-wide text-[#006d5a]">Anomalías</p>
-              <p className="mt-1 text-2xl font-bold text-[#3d2c24]">
-                {loadingAnomalies ? '…' : anomalies?.summary.total ?? reviewCards.length}
-              </p>
-              <p className="text-[11px] text-[#7d6c64]">
-                {anomalies?.summary.pending_recipe_links
-                  ? `${anomalies.summary.pending_recipe_links} vínculos de receta pendientes`
-                  : `${fudoSyncCount} leídos de Fudo`}
-              </p>
-            </button>
-          </div>
+          <StaggerList className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4" staggerDelay={0.06}>
+            <StaggerItem>
+              <button
+                onClick={() => { setView('inventario'); setSourceFilter('all'); setSemaphoreFilter(null) }}
+                className="group relative h-full w-full overflow-hidden rounded-2xl bg-white/80 px-3 py-3 text-left ring-1 ring-[#ebe6df] transition hover:bg-white hover:shadow-sm active:scale-[0.98]"
+              >
+                <span className="absolute inset-y-0 left-0 w-1 bg-[#a39e97]/40" />
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#a39e97]">Items activos</p>
+                <p className="mt-1 font-display text-3xl font-bold leading-none tabular-nums text-[#3d2c24]">{stockOverview.total}</p>
+                <p className="mt-1 text-[11px] text-[#7d6c64]">{stockOverview.fudoLinked} vinculados a Fudo</p>
+              </button>
+            </StaggerItem>
+            <StaggerItem>
+              <button
+                onClick={() => { setView('conteo'); setSemaphoreFilter('red') }}
+                className="group relative h-full w-full overflow-hidden rounded-2xl bg-[#fff7f7] px-3 py-3 text-left ring-1 ring-[#f3d0cf] transition hover:bg-white hover:shadow-sm active:scale-[0.98]"
+              >
+                <span className="absolute inset-y-0 left-0 w-1 bg-[#ea504c]" />
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#ea504c]">Críticos</p>
+                <p className="mt-1 font-display text-3xl font-bold leading-none tabular-nums text-[#3d2c24]">{stockOverview.red}</p>
+                <p className="mt-1 text-[11px] text-[#7d6c64]">requieren conteo o reposición</p>
+              </button>
+            </StaggerItem>
+            <StaggerItem>
+              <button
+                onClick={() => { setView('inventario'); setSourceFilter('unmapped') }}
+                className="group relative h-full w-full overflow-hidden rounded-2xl bg-[#fffaf2] px-3 py-3 text-left ring-1 ring-[#f1dfba] transition hover:bg-white hover:shadow-sm active:scale-[0.98]"
+              >
+                <span className="absolute inset-y-0 left-0 w-1 bg-[#d4943a]" />
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#d4943a]">Sin mapeo</p>
+                <p className="mt-1 font-display text-3xl font-bold leading-none tabular-nums text-[#3d2c24]">{stockOverview.unmapped}</p>
+                <p className="mt-1 text-[11px] text-[#7d6c64]">bloqueados para escritura</p>
+              </button>
+            </StaggerItem>
+            <StaggerItem>
+              <button
+                onClick={() => setView('radar')}
+                className="group relative h-full w-full overflow-hidden rounded-2xl bg-[#f6fcfa] px-3 py-3 text-left ring-1 ring-[#dcefe8] transition hover:bg-white hover:shadow-sm active:scale-[0.98]"
+              >
+                <span className="absolute inset-y-0 left-0 w-1 bg-[#006d5a]" />
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[#006d5a]">Anomalías</p>
+                <p className="mt-1 font-display text-3xl font-bold leading-none tabular-nums text-[#3d2c24]">
+                  {loadingAnomalies ? '…' : anomalies?.summary.total ?? reviewCards.length}
+                </p>
+                <p className="mt-1 text-[11px] text-[#7d6c64]">
+                  {anomalies?.summary.pending_recipe_links
+                    ? `${anomalies.summary.pending_recipe_links} vínculos de receta pendientes`
+                    : `${fudoSyncCount} leídos de Fudo`}
+                </p>
+              </button>
+            </StaggerItem>
+          </StaggerList>
 
           <Link
             href="/stock/puesta-a-cero"
@@ -790,23 +802,27 @@ function StockPageContent() {
             { key: 'inventario' as const, label: 'Inventario', detail: `${stockOverview.total} items`, Icon: ListChecks },
           ].map((tab) => {
             const Icon = tab.Icon
+            const active = view === tab.key
 
             return (
               <button
                 key={tab.key}
                 onClick={() => setView(tab.key)}
-                className={`rounded-2xl px-2 py-2.5 text-left transition-all ${
-                  view === tab.key
-                    ? 'bg-[#3d2c24] text-white shadow-sm'
-                    : 'text-[#8d847b] hover:bg-[#faf8f5]'
-                }`}
+                className="relative rounded-2xl px-2 py-2.5 text-left transition-colors"
               >
-                <span className="flex items-center gap-2">
+                {active && (
+                  <motion.span
+                    layoutId="stock-view-pill"
+                    className="absolute inset-0 rounded-2xl bg-[#3d2c24] shadow-sm"
+                    transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                  />
+                )}
+                <span className={`relative z-10 flex items-center gap-2 ${active ? 'text-white' : 'text-[#8d847b]'}`}>
                   <Icon className="size-4" />
                   <span className="text-sm font-bold">{tab.label}</span>
                 </span>
-                <span className={`mt-0.5 block pl-6 text-[10px] font-semibold uppercase tracking-wide ${
-                  view === tab.key ? 'text-white/70' : 'text-[#a39e97]'
+                <span className={`relative z-10 mt-0.5 block pl-6 text-[10px] font-semibold uppercase tracking-wide ${
+                  active ? 'text-white/70' : 'text-[#a39e97]'
                 }`}>
                   {tab.detail}
                 </span>

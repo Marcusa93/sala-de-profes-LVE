@@ -197,6 +197,7 @@ export default function AdminDashboard() {
         <StaggerList className="flex flex-col gap-2" staggerDelay={0.04}>
           {[
             { href: '/asistente', icon: MessageCircle, label: 'La Vieja de Historia', color: '#006d5a' },
+            { href: '/admin/personal', icon: Users, label: 'Consumo del personal', color: '#ea504c' },
             { href: '/equipo', icon: Users, label: 'Gestionar Equipo', color: '#8b5e34' },
             { href: '/stock', icon: Package, label: 'Gestionar Stock', color: '#ea504c' },
           ].map((link) => (
