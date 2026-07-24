@@ -47,6 +47,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio'],
     target_user_ids: [],
   },
+  business_alerts: {
+    label: 'Alertas del negocio (parte semanal)',
+    description: 'Food cost, insumos que se encarecieron y platos con mal margen, cada lunes.',
+    enabled: true,
+    target_roles: ['socio'],
+    target_user_ids: [],
+  },
 }
 
 export type NotificationEventKey = keyof typeof DEFAULT_NOTIFICATION_EVENTS
