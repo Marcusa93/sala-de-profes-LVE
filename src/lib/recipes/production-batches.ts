@@ -66,7 +66,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
     slug: 'milanesa-nalga',
     displayName: 'Milanesa de Nalga',
     mainIngredientName: 'Nalga',
-    baseQty: 2,
+    baseQty: 2.314,
     baseUnit: 'kg',
     secondary: [
       { name: 'Ajo',             qty: 30,  unit: 'g',  note: 'picado' },
@@ -79,7 +79,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Oregano',         qty: 15,  unit: 'g' },
     ],
     output: { name: 'Milanesa cruda', unit: 'unidad', yieldPerBase: 13 },
-    yieldNote: 'Filet 150g crudo. Cada 2kg de nalga ≈ 13 milanesas',
+    yieldNote: 'Bife 178g bruto (compra) → 150-160g neto tras limpieza. Cargar el PESO BRUTO comprado: 2,314kg ≈ 13 milanesas. La merma de limpieza (~15%) ya está incluida en el costo.',
   },
 
   {
