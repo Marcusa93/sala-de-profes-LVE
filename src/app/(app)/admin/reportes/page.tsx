@@ -1,14 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { Users, CalendarDays, Package, Bell, ArrowRight } from 'lucide-react'
+import { Users, CalendarDays, Package, ArrowRight } from 'lucide-react'
 import { FadeIn, StaggerList, StaggerItem, ScalePress } from '@/components/ui/motion'
 
 const REPORTS = [
   { href: '/admin/reportes/asistencia', icon: Users, label: 'Asistencia', description: 'Ingresos, egresos, horas por empleado', color: '#006d5a' },
   { href: '/admin/reportes/turnos', icon: CalendarDays, label: 'Turnos', description: 'Distribución por rol y cobertura', color: '#8b5e34' },
   { href: '/admin/reportes/stock', icon: Package, label: 'Stock', description: 'Semáforo, categorías, items críticos', color: '#ea504c' },
-  { href: '/admin/reportes/notificaciones', icon: Bell, label: 'Notificaciones', description: 'Por tipo, prioridad, estado', color: '#d4943a' },
 ]
 
 export default function ReportesHubPage() {

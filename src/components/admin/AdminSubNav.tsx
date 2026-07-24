@@ -7,20 +7,20 @@ import {
   LayoutDashboard,
   Users,
   Calendar,
-  Calculator,
-  Clock,
+  Package,
   ShieldAlert,
   Link2,
   ChefHat,
 } from 'lucide-react'
 
+// Solo lo que se usa: Horas/Liquidación y Salón salieron del panel
+// (las páginas siguen existiendo, accesibles por URL directa).
 const NAV_ITEMS = [
   { label: 'Control', href: '/admin', icon: LayoutDashboard },
-  { label: 'Horas', href: '/admin/reportes/liquidacion', icon: Calculator },
   { label: 'Asistencia', href: '/admin/reportes/asistencia', icon: Users },
   { label: 'Sospechosos', href: '/admin/reportes/fichajes-sospechosos', icon: ShieldAlert },
   { label: 'Turnos', href: '/admin/reportes/turnos', icon: Calendar },
-  { label: 'Salón', href: '/admin/reportes/salon', icon: Clock },
+  { label: 'Stock', href: '/admin/reportes/stock', icon: Package },
   { label: 'Stock↔Fudo', href: '/admin/stock/mapeo', icon: Link2 },
   { label: 'Recetas', href: '/admin/recetas/pending', icon: ChefHat },
 ]

@@ -32,6 +32,7 @@ import { useAnnouncements } from '@/lib/hooks/use-announcements'
 import { useDashboardData } from '@/lib/hooks/use-dashboard'
 import { DashboardSkeleton } from '@/components/ui/skeleton'
 import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
+import { PulseCarousel } from '@/components/home/PulseCarousel'
 import { ShiftReminder } from '@/components/notifications/ShiftReminder'
 import {
   FadeIn,
@@ -195,6 +196,17 @@ export default function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-8">
+      {/* ---------------------------------------------------------------- */}
+      {/* Pulso del negocio — carrusel en loop (solo socio/encargado)      */}
+      {/* ---------------------------------------------------------------- */}
+      {isEncargado && (
+        <FadeIn className="pt-1">
+          <PulseCarousel
+            ventasHoy={ventasHoy ? { total: ventasHoy.total, tickets: ventasHoy.tickets, peakHour: ventasHoy.peakHour } : null}
+          />
+        </FadeIn>
+      )}
+
       {/* ---------------------------------------------------------------- */}
       {/* Header / Welcome — compact                                       */}
       {/* ---------------------------------------------------------------- */}

@@ -10,8 +10,6 @@ import {
   CalendarDays,
   Package,
   AlertTriangle,
-  Bell,
-  RefreshCw,
   ArrowRight,
   MessageCircle,
   LogOut,
@@ -55,7 +53,7 @@ export default function AdminDashboard() {
     )
   }
 
-  const hasIssues = kpis.stock_red > 0 || kpis.missing_checkouts > 0 || kpis.announcements_urgent > 0
+  const hasIssues = kpis.stock_red > 0 || kpis.missing_checkouts > 0
 
   return (
     <div className="space-y-6">
@@ -126,28 +124,6 @@ export default function AdminDashboard() {
             subtitle={`${kpis.stock_yellow} en atención`}
           />
         </StaggerItem>
-        <StaggerItem>
-          <KpiCard
-            label="Notificaciones"
-            value={kpis.announcements_active}
-            icon={Bell}
-            color={kpis.announcements_urgent > 0 ? '#ea504c' : '#d4943a'}
-            bg={kpis.announcements_urgent > 0 ? '#fef2f2' : '#fdf6ec'}
-            href="/admin/reportes/notificaciones"
-            subtitle={kpis.announcements_urgent > 0 ? `${kpis.announcements_urgent} urgentes` : 'sin urgentes'}
-          />
-        </StaggerItem>
-        <StaggerItem>
-          <KpiCard
-            label="Fudo"
-            value={kpis.fudo_synced ?? 0}
-            icon={RefreshCw}
-            color="#006d5a"
-            bg="#e8f5f1"
-            href="/stock"
-            subtitle={kpis.fudo_last_sync ? `Sync ${new Date(kpis.fudo_last_sync).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}` : 'sin sync'}
-          />
-        </StaggerItem>
       </StaggerList>
 
       {/* ================================================================ */}
@@ -171,12 +147,6 @@ export default function AdminDashboard() {
                 <div className="flex items-center gap-2">
                   <Package className="size-3.5 text-[#ea504c]" />
                   <span>{kpis.stock_red} ítem{kpis.stock_red > 1 ? 's' : ''} de stock en nivel crítico</span>
-                </div>
-              )}
-              {kpis.announcements_urgent > 0 && (
-                <div className="flex items-center gap-2">
-                  <Bell className="size-3.5 text-[#ea504c]" />
-                  <span>{kpis.announcements_urgent} notificación{kpis.announcements_urgent > 1 ? 'es' : ''} urgente{kpis.announcements_urgent > 1 ? 's' : ''}</span>
                 </div>
               )}
             </div>
