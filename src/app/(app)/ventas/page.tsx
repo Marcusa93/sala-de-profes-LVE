@@ -14,6 +14,7 @@ import { CompareView } from './_components/CompareView'
 import { MonthView } from './_components/MonthView'
 import { DayView } from './_components/DayView'
 import { BalanceView } from './_components/BalanceView'
+import { CartaView } from './_components/CartaView'
 
 const REFRESH_INTERVAL = 5 * 60 * 1000
 
@@ -24,7 +25,7 @@ export default function VentasPage() {
   const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
-  const [viewMode, setViewMode] = useState<'dia' | 'mes' | 'comparar' | 'balance'>('dia')
+  const [viewMode, setViewMode] = useState<'dia' | 'mes' | 'comparar' | 'balance' | 'carta'>('dia')
   const [compareDate, setCompareDate] = useState<Date>(subDays(new Date(), 1))
   const [compareData, setCompareData] = useState<DashboardData | null>(null)
   const [loadingCompare, setLoadingCompare] = useState(false)
@@ -32,8 +33,8 @@ export default function VentasPage() {
   const isLive = isToday(selectedDate)
   const dateStr = format(selectedDate, 'yyyy-MM-dd')
   const isManager = isManagerOrAbove(profile?.role)
-  const modes = isManager ? (['dia', 'comparar', 'mes', 'balance'] as const) : (['dia', 'comparar', 'mes'] as const)
-  const MODE_LABELS: Record<string, string> = { dia: 'Día', comparar: 'Comparar', mes: 'Mes', balance: 'Balance' }
+  const modes = isManager ? (['dia', 'comparar', 'mes', 'balance', 'carta'] as const) : (['dia', 'comparar', 'mes'] as const)
+  const MODE_LABELS: Record<string, string> = { dia: 'Día', comparar: 'Comparar', mes: 'Mes', balance: 'Balance', carta: 'Carta' }
 
   const fetchData = useCallback(async (showSpinner = false) => {
     if (showSpinner) setSyncing(true)
@@ -110,8 +111,8 @@ export default function VentasPage() {
           </div>
         </div>
 
-        {/* Date navigator — hidden in compare & balance modes */}
-        {viewMode !== 'comparar' && viewMode !== 'balance' && (
+        {/* Date navigator — hidden in compare, balance & carta modes */}
+        {viewMode !== 'comparar' && viewMode !== 'balance' && viewMode !== 'carta' && (
           <div className="flex items-center justify-between">
             <button
               onClick={() => {
@@ -195,6 +196,8 @@ export default function VentasPage() {
           )}
 
           {viewMode === 'balance' && isManager && <BalanceView />}
+
+          {viewMode === 'carta' && isManager && <CartaView />}
         </div>
       </AnimatedSwitch>
     </div>
