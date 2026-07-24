@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { isManagerOrAbove, mustClockIn } from '@/lib/roles'
 import Link from 'next/link'
 import { format } from 'date-fns'
@@ -8,42 +8,65 @@ import { es } from 'date-fns/locale/es'
 import {
   CalendarDays,
   Bell,
-  Users,
-  AlertTriangle,
+  Clock,
   LogIn,
   ArrowRight,
-  ShoppingCart,
-  Bot,
-  Send,
-  Loader2,
-  X,
   BarChart3,
-  FolderOpen,
-  Package,
-  Armchair,
-  Hammer,
-  Coffee,
+  ShieldAlert,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import type { LucideIcon } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { useMyAttendance, useTeamAttendance } from '@/lib/hooks/use-attendance'
+import { useMyAttendance } from '@/lib/hooks/use-attendance'
 import { useNextShift } from '@/lib/hooks/use-shifts'
-import { useAnnouncements } from '@/lib/hooks/use-announcements'
 import { useDashboardData } from '@/lib/hooks/use-dashboard'
 import { DashboardSkeleton } from '@/components/ui/skeleton'
 import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
 import { PulseCarousel } from '@/components/home/PulseCarousel'
 import { ShiftReminder } from '@/components/notifications/ShiftReminder'
-import {
-  FadeIn,
-  StaggerList,
-  StaggerItem,
-  ScalePress,
-  AnimatedNumber,
-} from '@/components/ui/motion'
+import { FadeIn, StaggerList, StaggerItem, ScalePress } from '@/components/ui/motion'
 
 // ---------------------------------------------------------------------------
-// Dashboard Page
+// Action card — patrón "accesos rápidos" de /control: barra de acento +
+// card-interactive + ícono + descripción de una línea + flecha.
+// ---------------------------------------------------------------------------
+
+type HomeAction = {
+  href: string
+  icon: LucideIcon
+  label: string
+  description: string
+}
+
+function ActionCard({ href, icon: Icon, label, description }: HomeAction) {
+  return (
+    <ScalePress>
+      <Link href={href}>
+        <div className="card-interactive flex items-center overflow-hidden rounded-2xl">
+          <div className="w-1.5 self-stretch bg-[#006d5a]" />
+          <div className="flex flex-1 items-center justify-between px-4 py-5">
+            <span className="flex items-center gap-3.5">
+              <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-[#f0f7f5]">
+                <Icon className="size-5.5 text-[#006d5a]" strokeWidth={1.75} />
+              </span>
+              <span className="min-w-0">
+                <span className="block font-display text-lg leading-tight text-[#3d2c24]">
+                  {label}
+                </span>
+                <span className="mt-0.5 block text-xs leading-snug text-[#8d8378]">
+                  {description}
+                </span>
+              </span>
+            </span>
+            <ArrowRight className="size-4 shrink-0 text-[#d1cdc7]" />
+          </div>
+        </div>
+      </Link>
+    </ScalePress>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard Page — "1 número + 3 acciones" por rol
 // ---------------------------------------------------------------------------
 
 export default function DashboardPage() {
@@ -52,13 +75,10 @@ export default function DashboardPage() {
   const [today] = useState(() => new Date())
   const todayStr = format(today, 'yyyy-MM-dd')
   const isEncargado = isManagerOrAbove(profile?.role)
-  const isSocio = profile?.role === 'socio'
 
-  // SWR hooks — each has its own cache, dedup, and background revalidation
+  // SWR hooks — cada uno con su cache, dedup y revalidación en background
   const { record: todayAttendance } = useMyAttendance(profile?.id, todayStr)
   const { nextShift } = useNextShift(profile?.id, todayStr)
-  const { count: announcementCount } = useAnnouncements()
-  const { team: teamToday } = useTeamAttendance(todayStr, isEncargado)
   const { data: dashData, isLoading: dashLoading, error: dashError, mutate: refreshDash } = useDashboardData(
     profile?.id,
     todayStr,
@@ -66,43 +86,7 @@ export default function DashboardPage() {
     isEncargado,
   )
 
-  // Derived from dashData
-  const criticalStockCount = dashData?.criticalStockCount ?? 0
-  const pendingOrders = dashData?.pendingOrders ?? 0
-  const expedientesActivos = dashData?.expedientesActivos ?? 0
   const ventasHoy = dashData?.ventasHoy ?? null
-  const fudoLastSync = dashData?.fudoLastSync ?? null
-
-  // Report dialog state
-  const [reportOpen, setReportOpen] = useState(false)
-  const [reportMsg, setReportMsg] = useState('')
-  const [reportUrgency, setReportUrgency] = useState<'normal' | 'urgente'>('normal')
-  const [reportSending, setReportSending] = useState(false)
-
-  const sendReport = useCallback(async () => {
-    if (!reportMsg.trim()) {
-      toast.error('Escribí qué problema hay')
-      return
-    }
-    setReportSending(true)
-    try {
-      const res = await fetch('/api/report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: reportMsg.trim(), urgency: reportUrgency }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error)
-      toast.success('Reporte enviado al encargado')
-      setReportOpen(false)
-      setReportMsg('')
-      setReportUrgency('normal')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al enviar')
-    } finally {
-      setReportSending(false)
-    }
-  }, [reportMsg, reportUrgency])
 
   const firstName = profile?.first_name ?? ''
 
@@ -137,73 +121,92 @@ export default function DashboardPage() {
   const isCompleted = !!todayAttendance?.clock_out_at
   const isInProgress = !!todayAttendance && !todayAttendance.clock_out_at
   const statusColor = isCompleted ? '#006d5a' : isInProgress ? '#d4943a' : '#ebe6df'
-  const primaryActions = isEncargado ? [
+
+  // Turno de HOY (useNextShift arranca desde hoy: si coincide la fecha, es el de hoy)
+  const todayShift = nextShift && nextShift.shift_date === todayStr ? nextShift : null
+
+  const managerActions: HomeAction[] = [
     {
       href: '/hoy',
       icon: CalendarDays,
-      label: 'Hoy: tu día de un vistazo',
-      description: 'Pedir → recibir → producir → contar, en una pantalla',
+      label: 'Hoy',
+      description: 'El día de un vistazo: pedir, recibir, producir y contar',
     },
     {
-      href: '/stock',
-      icon: Package,
-      label: 'Controlar stock',
-      description: criticalStockCount > 0
-        ? `${criticalStockCount} item${criticalStockCount === 1 ? '' : 's'} crítico${criticalStockCount === 1 ? '' : 's'} para resolver`
-        : 'Buscar mercadería, Fudo, vida útil y alertas',
+      href: '/ventas',
+      icon: BarChart3,
+      label: 'Números',
+      description: 'Facturación, tickets y tendencia desde Fudo',
     },
     {
-      href: '/stock/produccion',
-      icon: Hammer,
-      label: 'Registrar producción',
-      description: 'Lotes, cantidades producidas y vencimientos',
+      href: '/control',
+      icon: ShieldAlert,
+      label: 'Centro de control',
+      description: 'Stock crítico, anomalías y fichajes en un solo lugar',
     },
-    {
-      href: '/pedidos',
-      icon: ShoppingCart,
-      label: 'Revisar compras',
-      description: pendingOrders > 0
-        ? `${pendingOrders} pedido${pendingOrders === 1 ? '' : 's'} pendiente${pendingOrders === 1 ? '' : 's'}`
-        : 'Pedidos, reposición y proveedores',
-    },
-    {
-      href: '/asistente',
-      icon: Bot,
-      label: 'Preguntar a La Vieja',
-      description: 'Consultar stock, Fudo o pedir una acción por chat',
-    },
-  ] : profile?.role === 'chef' || profile?.role === 'cocina' ? [
-    { href: '/hoy', icon: CalendarDays, label: 'Hoy: qué producir', description: 'El plan del día: producir y contar' },
-    { href: '/recetas', icon: ShoppingCart, label: 'Ver recetario', description: 'Recetas, insumos y preparación' },
-    { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
-    { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
-  ] : profile?.role === 'barista' ? [
-    { href: '/tolva', icon: Coffee, label: 'Tolva de café', description: 'Inicio, agregado y final del turno — chau cuaderno' },
-    { href: '/vajilla', icon: Package, label: 'Controlar vajilla', description: 'Roturas, faltantes y reposición' },
-    { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
-    { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
-  ] : profile?.role === 'runner' ? [
-    { href: '/salon', icon: Armchair, label: 'Ver salón', description: 'Tareas del servicio' },
-    { href: '/vajilla', icon: Package, label: 'Controlar vajilla', description: 'Roturas, faltantes y reposición' },
-    { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
-    { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
-  ] : [
-    { href: '/mi-turno', icon: LogIn, label: 'Mi turno', description: 'Marcar ingreso o egreso' },
-    { href: '/mis-horarios', icon: CalendarDays, label: 'Ver horarios', description: 'Próximos turnos asignados' },
-    { href: '/notificaciones', icon: Bell, label: 'Avisos', description: 'Comunicados pendientes' },
-    { href: '/asistente', icon: Bot, label: 'Preguntar a La Vieja', description: 'Resolver dudas sin navegar pantallas' },
   ]
+
+  const employeeActions: HomeAction[] = [
+    {
+      href: '/fichaje',
+      icon: LogIn,
+      label: 'Fichar',
+      description: 'Marcar ingreso o egreso del turno',
+    },
+    {
+      href: '/mi-turno',
+      icon: Clock,
+      label: 'Mi turno',
+      description: 'Estado de hoy y horas trabajadas',
+    },
+    {
+      href: '/notificaciones',
+      icon: Bell,
+      label: 'Avisos',
+      description: 'Comunicados y novedades del equipo',
+    },
+  ]
+
+  const actions = isEncargado ? managerActions : employeeActions
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-8">
       {/* ---------------------------------------------------------------- */}
-      {/* Pulso del negocio — carrusel en loop (solo socio/encargado)      */}
+      {/* El "1 número": Pulso (managers) / Turno de hoy (empleados)       */}
       {/* ---------------------------------------------------------------- */}
-      {isEncargado && (
+      {isEncargado ? (
         <FadeIn className="pt-1">
           <PulseCarousel
             ventasHoy={ventasHoy ? { total: ventasHoy.total, tickets: ventasHoy.tickets, peakHour: ventasHoy.peakHour } : null}
           />
+        </FadeIn>
+      ) : (
+        <FadeIn className="pt-1">
+          <div className="overflow-hidden rounded-2xl bg-[#006d5a] px-5 py-6 text-white shadow-sm">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">
+              Tu situación de hoy
+            </p>
+            <p className="mt-2 font-display text-3xl leading-tight tabular-nums">
+              {isInProgress && todayAttendance
+                ? `En turno desde ${format(new Date(todayAttendance.clock_in_at), 'HH:mm')}`
+                : isCompleted
+                  ? 'Turno cumplido ✓'
+                  : todayShift
+                    ? `Tu turno hoy: ${todayShift.start_time.slice(0, 5)}–${todayShift.end_time.slice(0, 5)}`
+                    : 'Hoy no tenés turno'}
+            </p>
+            <p className="mt-1.5 text-xs text-white/75">
+              {isInProgress
+                ? 'Acordate de marcar el egreso al terminar'
+                : isCompleted && todayAttendance?.clock_out_at
+                  ? `Saliste a las ${format(new Date(todayAttendance.clock_out_at), 'HH:mm')}`
+                  : todayShift
+                    ? 'Fichá al llegar para dejarlo registrado'
+                    : nextShift
+                      ? `Próximo: ${format(new Date(nextShift.shift_date + 'T12:00:00'), 'EEEE d MMM', { locale: es })} · ${nextShift.start_time.slice(0, 5)}–${nextShift.end_time.slice(0, 5)}`
+                      : 'Sin turnos asignados esta semana'}
+            </p>
+          </div>
         </FadeIn>
       )}
 
@@ -249,251 +252,15 @@ export default function DashboardPage() {
       </FadeIn>
 
       {/* ---------------------------------------------------------------- */}
-      {/* KPI Grid — role-aware, most important first                      */}
+      {/* Las 3 acciones                                                   */}
       {/* ---------------------------------------------------------------- */}
-      <StaggerList className="grid grid-cols-2 gap-3" staggerDelay={0.04}>
-        {/* Socio: Ventas Hoy — FIRST for socios */}
-        {isSocio && ventasHoy && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/ventas">
-                <div className="kpi-card rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#006d5a' }}>
-                  <div className="flex items-center gap-2">
-                    <BarChart3 className="size-3.5 text-[#006d5a]" />
-                    <span className="section-label">Facturado hoy</span>
-                  </div>
-                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#006d5a]">
-                    ${(ventasHoy.total / 1000).toFixed(0)}k
-                  </p>
-                  <p className="text-[10px] text-[#a39e97]">
-                    {ventasHoy.tickets} tickets
-                    {ventasHoy.peakHour && ` · pico ${ventasHoy.peakHour}hs`}
-                    {fudoLastSync && ` · Fudo ${format(new Date(fudoLastSync), 'HH:mm')}`}
-                  </p>
-                </div>
-              </Link>
-            </ScalePress>
+      <StaggerList className="flex flex-col gap-3" staggerDelay={0.06}>
+        {actions.map((action) => (
+          <StaggerItem key={action.href}>
+            <ActionCard {...action} />
           </StaggerItem>
-        )}
-
-        {/* Encargado/Socio: Pedidos Pendientes */}
-        {isEncargado && pendingOrders > 0 && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/pedidos">
-                <div className="kpi-card rounded-xl p-4" style={{ borderLeftWidth: 3, borderLeftColor: '#d4943a' }}>
-                  <div className="flex items-center gap-2">
-                    <ShoppingCart className="size-3.5 text-[#d4943a]" />
-                    <span className="section-label">Pedidos</span>
-                  </div>
-                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#d4943a]">
-                    <AnimatedNumber value={pendingOrders} />
-                  </p>
-                  <p className="text-[10px] text-[#a39e97]">pendientes</p>
-                </div>
-              </Link>
-            </ScalePress>
-          </StaggerItem>
-        )}
-
-        {/* Avisos — always visible */}
-        <StaggerItem>
-          <ScalePress>
-            <Link href="/notificaciones">
-              <div className="kpi-card rounded-xl p-4">
-                <div className="flex items-center gap-2">
-                  <Bell className={`size-3.5 ${announcementCount > 5 ? 'text-[#d4943a]' : 'text-[#a39e97]'}`} />
-                  <span className="section-label">Avisos</span>
-                </div>
-                <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
-                  <AnimatedNumber value={announcementCount} />
-                </p>
-                <p className="text-[10px] text-[#a39e97]">pendientes</p>
-              </div>
-            </Link>
-          </ScalePress>
-        </StaggerItem>
-
-        {/* Proximo Turno — compact */}
-        <StaggerItem>
-          <ScalePress>
-            <Link href="/mis-horarios">
-              <div className="kpi-card rounded-xl p-4">
-                <div className="flex items-center gap-2">
-                  <CalendarDays className="size-3.5 text-[#8b5e34]" />
-                  <span className="section-label">Próximo turno</span>
-                </div>
-                {nextShift ? (
-                  <>
-                    <p className="mt-2 font-display text-lg font-bold tabular-nums text-[#3d2c24]">
-                      {nextShift.start_time.slice(0, 5)} – {nextShift.end_time.slice(0, 5)}
-                    </p>
-                    <p className="text-[10px] capitalize text-[#a39e97]">
-                      {format(new Date(nextShift.shift_date + 'T12:00:00'), 'EEE d MMM', { locale: es })}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p className="mt-2 text-sm text-[#a39e97]">Sin turnos</p>
-                    <p className="text-[10px] font-semibold text-[#006d5a]">Ver semana →</p>
-                  </>
-                )}
-              </div>
-            </Link>
-          </ScalePress>
-        </StaggerItem>
-
-        {/* Socio: Expedientes */}
-        {isSocio && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/expedientes">
-                <div className="kpi-card rounded-xl p-4">
-                  <div className="flex items-center gap-2">
-                    <FolderOpen className="size-3.5 text-[#8b5e34]" />
-                    <span className="section-label">Expedientes</span>
-                  </div>
-                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
-                    <AnimatedNumber value={expedientesActivos} />
-                  </p>
-                  <p className="text-[10px] text-[#a39e97]">activos</p>
-                </div>
-              </Link>
-            </ScalePress>
-          </StaggerItem>
-        )}
-
-        {/* Encargado/Socio: Stock Crítico */}
-        {isEncargado && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/stock">
-                <div className="kpi-card rounded-xl p-4" style={criticalStockCount > 0 ? { borderLeftWidth: 3, borderLeftColor: '#ea504c' } : {}}>
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className={`size-3.5 ${criticalStockCount > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`} />
-                    <span className="section-label">Stock</span>
-                  </div>
-                  <p className={`mt-2 font-display text-2xl font-bold tabular-nums ${criticalStockCount > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}>
-                    {criticalStockCount > 0 ? <AnimatedNumber value={criticalStockCount} /> : '✓'}
-                  </p>
-                  <p className="text-[10px] text-[#a39e97]">
-                    {criticalStockCount === 0 ? 'Todo en orden' : 'críticos'}
-                  </p>
-                </div>
-              </Link>
-            </ScalePress>
-          </StaggerItem>
-        )}
-
-
-        {/* Barista/Runner: Vajilla */}
-        {(profile?.role === 'barista' || profile?.role === 'runner') && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/vajilla">
-                <div className="kpi-card rounded-xl p-4">
-                  <div className="flex items-center gap-2">
-                    <Package className="size-3.5 text-[#8b5e34]" />
-                    <span className="section-label">Vajilla</span>
-                  </div>
-                  <p className="mt-2 text-sm font-semibold text-[#3d2c24]">Control</p>
-                  <p className="text-[10px] text-[#a39e97]">Ver inventario</p>
-                </div>
-              </Link>
-            </ScalePress>
-          </StaggerItem>
-        )}
-
-        {/* Encargado: Equipo Hoy */}
-        {isEncargado && (
-          <StaggerItem>
-            <ScalePress>
-              <Link href="/equipo">
-                <div className="kpi-card rounded-xl p-4">
-                  <div className="flex items-center gap-2">
-                    <Users className="size-3.5 text-[#006d5a]" />
-                    <span className="section-label">Equipo</span>
-                  </div>
-                  <p className="mt-2 font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
-                    <AnimatedNumber value={teamToday.length} />
-                  </p>
-                  <p className="text-[10px] text-[#a39e97]">
-                    {teamToday.length === 0 ? 'Nadie fichó' : 'presentes'}
-                  </p>
-                  {teamToday.length === 0 && (
-                    <p className="text-[10px] font-semibold text-[#006d5a]">Ver asistencia →</p>
-                  )}
-                </div>
-              </Link>
-            </ScalePress>
-          </StaggerItem>
-        )}
+        ))}
       </StaggerList>
-
-      {/* Action Center deshabilitado temporalmente */}
-
-      {/* ---------------------------------------------------------------- */}
-      {/* Quick Actions                                                    */}
-      {/* ---------------------------------------------------------------- */}
-      <FadeIn delay={0.25}>
-        <div className="mb-3">
-          <h2 className="section-label">Tareas principales</h2>
-          <p className="mt-1 text-xs text-[#8d8378]">
-            Operación diaria primero; lo administrativo queda agrupado en Más.
-          </p>
-        </div>
-        <StaggerList className="flex flex-col gap-2.5" staggerDelay={0.06}>
-          {primaryActions.map((action) => (
-            <StaggerItem key={action.href}>
-              <ScalePress>
-                <Link href={action.href}>
-                  <div className="card-interactive flex items-center overflow-hidden rounded-xl">
-                    <div className="w-1 self-stretch bg-[#006d5a]" />
-                    <div className="flex flex-1 items-center justify-between px-4 py-3.5">
-                      <span className="flex items-center gap-3">
-                        <div className="icon-btn flex items-center justify-center rounded-xl bg-[#f0f7f5]">
-                          <action.icon className="size-4 text-[#006d5a]" />
-                        </div>
-                        <span>
-                          <span className="block text-sm font-semibold text-[#3d2c24]">
-                            {action.label}
-                          </span>
-                          <span className="mt-0.5 block text-xs leading-snug text-[#8d8378]">
-                            {action.description}
-                          </span>
-                        </span>
-                      </span>
-                      <ArrowRight className="size-4 text-[#d1cdc7]" />
-                    </div>
-                  </div>
-                </Link>
-              </ScalePress>
-            </StaggerItem>
-          ))}
-          {/* Reportar problema — inline button */}
-          <StaggerItem>
-            <ScalePress>
-              <button
-                onClick={() => setReportOpen(true)}
-                className="card-interactive flex w-full items-center overflow-hidden rounded-xl text-left"
-              >
-                <div className="w-1 self-stretch bg-[#ea504c]" />
-                <div className="flex flex-1 items-center justify-between px-4 py-3.5">
-                  <span className="flex items-center gap-3">
-                    <div className="icon-btn flex items-center justify-center rounded-xl bg-[#fef2f2]">
-                      <AlertTriangle className="size-4 text-[#ea504c]" />
-                    </div>
-                    <span className="text-sm font-medium text-[#3d2c24]">
-                      Reportar problema
-                    </span>
-                  </span>
-                  <ArrowRight className="size-4 text-[#d1cdc7]" />
-                </div>
-              </button>
-            </ScalePress>
-          </StaggerItem>
-        </StaggerList>
-      </FadeIn>
 
       {/* ---------------------------------------------------------------- */}
       {/* Announcement Popup — unread urgent/general on load               */}
@@ -502,74 +269,6 @@ export default function DashboardPage() {
 
       {/* Shift Reminder — for non-socios who haven't clocked in */}
       <ShiftReminder />
-
-      {/* ---------------------------------------------------------------- */}
-      {/* Report Problem Dialog                                            */}
-      {/* ---------------------------------------------------------------- */}
-      {reportOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true" aria-labelledby="report-dialog-title" onKeyDown={(e) => { if (e.key === 'Escape') setReportOpen(false) }}>
-          <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
-            onClick={() => setReportOpen(false)}
-          />
-          <div className="relative z-10 mx-3 mb-[calc(0.5rem+env(safe-area-inset-bottom))] w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-4 sm:p-5 shadow-xl sm:mx-auto sm:mb-0">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 id="report-dialog-title" className="text-lg font-semibold text-[#3d2c24]">Reportar problema</h3>
-              <button
-                onClick={() => setReportOpen(false)}
-                className="icon-btn flex items-center justify-center rounded-full text-[#a39e97] hover:bg-[#f3efe9]"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
-
-            <textarea
-              value={reportMsg}
-              onChange={(e) => setReportMsg(e.target.value)}
-              placeholder="¿Qué problema hay? Ej: Se rompió la máquina de café, falta leche urgente..."
-              rows={4}
-              autoFocus
-              className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] p-3 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-            />
-
-            <div className="mt-3 flex gap-2">
-              <button
-                onClick={() => setReportUrgency('normal')}
-                className={`flex-1 rounded-xl border py-2 text-sm font-medium transition-all ${
-                  reportUrgency === 'normal'
-                    ? 'border-[#006d5a] bg-[#e8f5f1] text-[#006d5a]'
-                    : 'border-[#ebe6df] text-[#a39e97]'
-                }`}
-              >
-                Normal
-              </button>
-              <button
-                onClick={() => setReportUrgency('urgente')}
-                className={`flex-1 rounded-xl border py-2 text-sm font-medium transition-all ${
-                  reportUrgency === 'urgente'
-                    ? 'border-[#ea504c] bg-[#fef2f2] text-[#ea504c]'
-                    : 'border-[#ebe6df] text-[#a39e97]'
-                }`}
-              >
-                Urgente
-              </button>
-            </div>
-
-            <button
-              onClick={sendReport}
-              disabled={reportSending || !reportMsg.trim()}
-              className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] text-sm font-semibold text-white shadow-md transition-all hover:bg-[#005a4a] disabled:opacity-50 active:scale-[0.98]"
-            >
-              {reportSending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Send className="size-4" />
-              )}
-              Enviar reporte
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

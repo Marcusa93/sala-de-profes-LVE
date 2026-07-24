@@ -130,16 +130,9 @@ const SOCIO_MORE: ExpandableNavItem = {
       items: [
         { label: 'Fudo', href: '/admin/fudo', icon: RefreshCw, description: 'Sincronización y configuración de Fudo' },
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Datos de proveedores y condiciones' },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Recetas, insumos y preparación' },
         { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Recetas y cambios por aprobar' },
         { label: 'Expedientes', href: '/expedientes', icon: FolderOpen, description: 'Seguimiento de temas administrativos' },
         { label: 'Auditoría', href: '/auditoria', icon: Shield, description: 'Historial de cambios sensibles' },
-      ],
-    },
-    {
-      label: 'Asistente',
-      items: [
-        { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar, buscar y operar sin navegar pantallas' },
       ],
     },
   ],
@@ -170,14 +163,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
       label: 'Inventario',
       items: [
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Contactos y condiciones de compra' },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Insumos y preparación estándar' },
         { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Cambios por aprobar' },
-      ],
-    },
-    {
-      label: 'Administración',
-      items: [
-        { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar y operar por chat' },
       ],
     },
   ],
