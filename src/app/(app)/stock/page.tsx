@@ -781,7 +781,7 @@ function StockPageContent() {
               <ArrowRight className="size-4 shrink-0 text-[#a39e97]" />
             </Link>
             <Link
-              href="/stock/precios"
+              href="/ventas?m=precios"
               className="flex items-center justify-between gap-2 rounded-2xl bg-white/80 px-3 py-2.5 ring-1 ring-[#ebe6df] transition hover:bg-white"
             >
               <div>

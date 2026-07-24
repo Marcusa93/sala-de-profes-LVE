@@ -4,15 +4,24 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle,
+  ArrowRight,
+  CalendarDays,
   ChevronDown,
   ChevronRight,
   ClipboardList,
+  Clock,
   History,
   Loader2,
+  MessageCircle,
+  Package,
   PackagePlus,
   Radar,
   ScanFace,
   Shield,
+  TrendingDown,
+  TrendingUp,
+  User,
+  Users,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { LucideIcon } from 'lucide-react'
@@ -20,10 +29,13 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
+import { useAdminKpis } from '@/lib/hooks/use-admin-kpis'
 import { isManagerOrAbove } from '@/lib/roles'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
-import { FadeIn } from '@/components/ui/motion'
+import { FadeIn, StaggerList, StaggerItem, ScalePress } from '@/components/ui/motion'
+import { KpiCard } from '@/components/admin/KpiCard'
+import { ExecutiveSummary } from '@/components/admin/ExecutiveSummary'
 import type { StockAnomaliesResponse, StockAnomalyItem } from '@/lib/contracts/stock-anomalies'
 import type { StockIntelligenceResponse, StockSetupIssue } from '@/lib/stock/intelligence'
 
@@ -74,7 +86,35 @@ type AttendanceAlert = {
   status: string
 }
 
+type AuditEntry = {
+  id: number
+  user_name: string | null
+  action: string
+  module: string
+  description: string
+  metadata: Record<string, unknown> | null
+  created_at: string
+}
+
 const initialState = { loading: true, error: null, data: null }
+
+// Links compactos a reportes existentes
+const REPORT_LINKS: { label: string; href: string }[] = [
+  { label: 'Asistencia', href: '/admin/reportes/asistencia' },
+  { label: 'Sospechosos', href: '/admin/reportes/fichajes-sospechosos' },
+  { label: 'Turnos', href: '/admin/reportes/turnos' },
+  { label: 'Stock', href: '/admin/reportes/stock' },
+  { label: 'Fudo', href: '/admin/fudo' },
+  { label: 'Recetas pendientes', href: '/admin/recetas/pending' },
+]
+
+// Accesos rápidos (ex /admin)
+const QUICK_LINKS = [
+  { href: '/asistente', icon: MessageCircle, label: 'La Vieja de Historia', color: '#006d5a' },
+  { href: '/ventas?m=personal', icon: Users, label: 'Consumo del personal', color: '#ea504c' },
+  { href: '/equipo', icon: Users, label: 'Gestionar Equipo', color: '#8b5e34' },
+  { href: '/stock', icon: Package, label: 'Gestionar Stock', color: '#ea504c' },
+]
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -101,6 +141,34 @@ function setupIssueHref(issue: StockSetupIssue): string {
   return '/stock'
 }
 
+// Cambios de cantidad de stock — badge visual "X → Y" (mismo criterio que /auditoria)
+const QTY_CHANGE_ACTIONS = new Set(['fudo_stock_sync', 'physical_count', 'stock_update'])
+
+type QtyChange = {
+  oldQty: number
+  newQty: number
+  itemName: string | null
+  context: string | null
+}
+
+function getQtyChange(entry: AuditEntry): QtyChange | null {
+  if (!QTY_CHANGE_ACTIONS.has(entry.action) || !entry.metadata) return null
+  const oldQty = Number(entry.metadata.old_qty)
+  const newQty = Number(entry.metadata.new_qty)
+  if (!Number.isFinite(oldQty) || !Number.isFinite(newQty)) return null
+
+  // La descripción tiene el formato "Nombre del item: X → Y (contexto)"
+  const colonIdx = entry.description.indexOf(':')
+  const itemName = colonIdx > 0 ? entry.description.slice(0, colonIdx).trim() : null
+  const parens = entry.description.match(/\(([^()]*)\)\s*$/)
+
+  return { oldQty, newQty, itemName, context: parens?.[1] ?? null }
+}
+
+function formatAuditQty(value: number): string {
+  return Number(value.toFixed(2)).toLocaleString('es-AR')
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -113,6 +181,10 @@ export default function ControlPage() {
   const [anomalies, setAnomalies] = useState<SectionState<StockAnomaliesResponse>>(initialState)
   const [intel, setIntel] = useState<SectionState<IntelData>>(initialState)
   const [attendance, setAttendance] = useState<SectionState<AttendanceAlert[]>>(initialState)
+  const [history, setHistory] = useState<SectionState<AuditEntry[]>>(initialState)
+
+  // KPIs del día (SWR, corre en paralelo y tolera fallas: si falla solo se oculta la fila)
+  const { kpis, error: kpisError } = useAdminKpis(!!profile && isManager)
   const [fudoUnmapped, setFudoUnmapped] = useState<FudoUnmapped | null>(null)
   const [creatingFromFudo, setCreatingFromFudo] = useState(false)
   const [createResult, setCreateResult] = useState<string | null>(null)
@@ -210,6 +282,24 @@ export default function ControlPage() {
     }
   }, [])
 
+  // Historial reciente: últimas ~15 entradas de audit_trail (mismo query que /auditoria, sin filtros)
+  const loadHistory = useCallback(async () => {
+    setHistory({ loading: true, error: null, data: null })
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('audit_trail')
+        .select('id, user_name, action, module, description, metadata, created_at')
+        .order('created_at', { ascending: false })
+        .limit(15)
+      if (error) throw error
+      setHistory({ loading: false, error: null, data: (data as unknown as AuditEntry[]) ?? [] })
+    } catch (err) {
+      console.error('[control] audit_trail', err)
+      setHistory({ loading: false, error: 'No se pudo cargar el historial reciente', data: null })
+    }
+  }, [])
+
   // Items de Fudo (con control de stock) que todavía no existen en LVE.
   // Silencioso: si Fudo no responde, la fila simplemente no aparece.
   const loadFudoUnmapped = useCallback(async () => {
@@ -256,8 +346,8 @@ export default function ControlPage() {
 
   useEffect(() => {
     if (!profile || !isManager) return
-    void Promise.all([loadCritical(), loadAnomalies(), loadIntel(), loadAttendance(), loadFudoUnmapped()])
-  }, [profile, isManager, loadCritical, loadAnomalies, loadIntel, loadAttendance, loadFudoUnmapped])
+    void Promise.all([loadCritical(), loadAnomalies(), loadIntel(), loadAttendance(), loadFudoUnmapped(), loadHistory()])
+  }, [profile, isManager, loadCritical, loadAnomalies, loadIntel, loadAttendance, loadFudoUnmapped, loadHistory])
 
   // -------------------------------------------------------------------------
   // Access control
@@ -335,6 +425,101 @@ export default function ControlPage() {
             </p>
           </div>
         </div>
+      </FadeIn>
+
+      {/* KPIs del día (ex /admin) — si falla, la fila se reemplaza por una nota y no rompe el resto */}
+      {!kpisError && (
+        kpis ? (
+          <StaggerList className="grid grid-cols-2 gap-3" staggerDelay={0.04}>
+            <StaggerItem>
+              <KpiCard
+                label="Presentes hoy"
+                value={kpis.team_present_today}
+                icon={Users}
+                color="#006d5a"
+                bg="#e8f5f1"
+                href="/admin/reportes/asistencia"
+                subtitle={`de ${kpis.team_total_active} activos`}
+              />
+            </StaggerItem>
+            <StaggerItem>
+              <KpiCard
+                label="En turno ahora"
+                value={kpis.team_clocked_in}
+                icon={Clock}
+                color={kpis.missing_checkouts > 0 ? '#d4943a' : '#006d5a'}
+                bg={kpis.missing_checkouts > 0 ? '#fdf6ec' : '#e8f5f1'}
+                subtitle={kpis.missing_checkouts > 0 ? `${kpis.missing_checkouts} sin egreso` : 'todos marcados'}
+              />
+            </StaggerItem>
+            <StaggerItem>
+              <KpiCard
+                label="Turnos hoy"
+                value={kpis.shifts_today}
+                icon={CalendarDays}
+                color="#8b5e34"
+                bg="#faf0e4"
+                href="/admin/reportes/turnos"
+                subtitle={`${kpis.shifts_tomorrow} mañana`}
+              />
+            </StaggerItem>
+            <StaggerItem>
+              <KpiCard
+                label="Stock crítico"
+                value={kpis.stock_red}
+                icon={Package}
+                color={kpis.stock_red > 0 ? '#ea504c' : '#006d5a'}
+                bg={kpis.stock_red > 0 ? '#fef2f2' : '#e8f5f1'}
+                href="/admin/reportes/stock"
+                subtitle={`${kpis.stock_yellow} en atención`}
+              />
+            </StaggerItem>
+          </StaggerList>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-[104px] animate-pulse rounded-xl bg-[#f3efe9]" />
+            ))}
+          </div>
+        )
+      )}
+      {kpisError && (
+        <p className="rounded-xl bg-white px-4 py-3 text-xs text-[#a39e97] ring-1 ring-[#ebe6df]">
+          No se pudieron cargar los KPIs del día
+        </p>
+      )}
+
+      {/* Resumen ejecutivo (maneja su propio loading/error) */}
+      <ExecutiveSummary />
+
+      {/* Accesos rápidos (ex /admin) */}
+      <FadeIn delay={0.03}>
+        <h2 className="section-label mb-3">Accesos rápidos</h2>
+        <StaggerList className="flex flex-col gap-2" staggerDelay={0.04}>
+          {QUICK_LINKS.map((link) => (
+            <StaggerItem key={link.href}>
+              <ScalePress>
+                <Link href={link.href}>
+                  <div className="card-interactive flex items-center overflow-hidden rounded-xl">
+                    <div className="w-1 self-stretch" style={{ backgroundColor: link.color }} />
+                    <div className="flex flex-1 items-center justify-between px-4 py-3">
+                      <span className="flex items-center gap-3">
+                        <div
+                          className="flex size-8 items-center justify-center rounded-lg"
+                          style={{ backgroundColor: `${link.color}10` }}
+                        >
+                          <link.icon className="size-4" style={{ color: link.color }} />
+                        </div>
+                        <span className="text-sm font-medium text-[#3d2c24]">{link.label}</span>
+                      </span>
+                      <ArrowRight className="size-4 text-[#d1cdc7]" />
+                    </div>
+                  </div>
+                </Link>
+              </ScalePress>
+            </StaggerItem>
+          ))}
+        </StaggerList>
       </FadeIn>
 
       <FadeIn delay={0.05} className="space-y-4">
@@ -476,16 +661,125 @@ export default function ControlPage() {
         </ControlSection>
       </FadeIn>
 
-      {/* Footer: auditoría */}
-      <FadeIn delay={0.1} className="pt-2 text-center">
-        <Link
-          href="/auditoria"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-[#a39e97] transition-colors hover:text-[#006d5a]"
-        >
-          <History className="size-3.5" />
-          Ver historial completo de cambios
-        </Link>
+      {/* Historial reciente (audit trail) */}
+      <FadeIn delay={0.08}>
+        <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-[#ebe6df]">
+          <div className="flex items-center gap-3 px-4 py-3.5">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#faf0e4]">
+              <History className="size-4.5 text-[#8b5e34]" strokeWidth={1.75} />
+            </span>
+            <span className="flex-1 text-sm font-semibold text-[#3d2c24]">Historial reciente</span>
+          </div>
+          <div className="border-t border-[#ebe6df]">
+            {history.loading ? (
+              <div className="flex items-center gap-2 px-4 py-4 text-sm text-[#a39e97]">
+                <Loader2 className="size-4 animate-spin" />
+                Cargando...
+              </div>
+            ) : history.error ? (
+              <p className="px-4 py-4 text-sm text-[#ea504c]">{history.error}</p>
+            ) : (history.data ?? []).length === 0 ? (
+              <p className="px-4 py-4 text-sm text-[#a39e97]">Sin movimientos registrados</p>
+            ) : (
+              <div className="divide-y divide-[#f3efe9]">
+                {(history.data ?? []).map((entry) => (
+                  <HistoryRow key={entry.id} entry={entry} />
+                ))}
+              </div>
+            )}
+            <Link
+              href="/auditoria"
+              className="flex items-center justify-center gap-1 border-t border-[#f3efe9] px-4 py-3 text-xs font-semibold text-[#006d5a] transition-colors hover:bg-[#f7fbf9]"
+            >
+              Ver auditoría completa
+              <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
+        </section>
       </FadeIn>
+
+      {/* Reportes */}
+      <FadeIn delay={0.1}>
+        <h2 className="section-label mb-2">Reportes</h2>
+        <div className="flex flex-wrap gap-2">
+          {REPORT_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className="rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df] transition-colors hover:bg-[#f7fbf9] hover:ring-[#cfe4dd]"
+            >
+              {link.label}
+            </Link>
+          ))}
+        </div>
+      </FadeIn>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// HistoryRow — entrada compacta de audit_trail con badge X → Y para stock
+// ---------------------------------------------------------------------------
+
+function HistoryRow({ entry }: { entry: AuditEntry }) {
+  const qtyChange = getQtyChange(entry)
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-2.5">
+      <div className="min-w-0 flex-1">
+        {qtyChange ? (
+          <div>
+            <p className="truncate text-sm font-medium text-[#3d2c24]">
+              {qtyChange.itemName ?? entry.description}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {(() => {
+                const delta = qtyChange.newQty - qtyChange.oldQty
+                const down = delta < 0
+                const up = delta > 0
+                return (
+                  <>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ${
+                        down
+                          ? 'bg-[#fdecea] text-[#ea504c]'
+                          : up
+                            ? 'bg-[#e8f5f1] text-[#006d5a]'
+                            : 'bg-[#f3efe9] text-[#a39e97]'
+                      }`}
+                    >
+                      {formatAuditQty(qtyChange.oldQty)} → {formatAuditQty(qtyChange.newQty)}
+                      {up && <TrendingUp className="size-3" />}
+                      {down && <TrendingDown className="size-3" />}
+                    </span>
+                    {delta !== 0 && (
+                      <span
+                        className={`text-[10px] font-semibold tabular-nums ${down ? 'text-[#ea504c]' : 'text-[#006d5a]'}`}
+                      >
+                        {up ? '+' : ''}{formatAuditQty(delta)}
+                      </span>
+                    )}
+                    {qtyChange.context && (
+                      <span className="text-[10px] text-[#a39e97]">{qtyChange.context}</span>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+        ) : (
+          <p className="line-clamp-2 text-sm text-[#3d2c24]">{entry.description}</p>
+        )}
+        {entry.user_name && (
+          <span className="mt-0.5 flex items-center gap-1 text-[10px] text-[#a39e97]">
+            <User className="size-2.5" />
+            {entry.user_name}
+          </span>
+        )}
+      </div>
+      <span className="shrink-0 text-[10px] tabular-nums text-[#a39e97]">
+        {format(new Date(entry.created_at), 'd/MM HH:mm', { locale: es })}
+      </span>
     </div>
   )
 }

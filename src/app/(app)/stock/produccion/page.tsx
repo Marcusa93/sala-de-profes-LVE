@@ -245,7 +245,7 @@ export default function ProduccionDashboardPage() {
                 <option value={90}>90 días</option>
               </select>
               <Link
-                href="/stock/produccion/costos"
+                href="/ventas?m=produccion"
                 className="flex size-8 items-center justify-center rounded-lg border border-[#ebe6df] bg-white text-[#006d5a]"
                 title="Costo por producción"
               >

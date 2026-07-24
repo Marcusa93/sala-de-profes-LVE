@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { Suspense, useEffect, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { format, subDays, addDays, isToday } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import { BarChart3, ChevronLeft, ChevronRight, Loader2, RefreshCw } from 'lucide-react'
@@ -15,17 +16,43 @@ import { MonthView } from './_components/MonthView'
 import { DayView } from './_components/DayView'
 import { BalanceView } from './_components/BalanceView'
 import { CartaView } from './_components/CartaView'
+import { PreciosView } from './_components/PreciosView'
+import { ProduccionCostosView } from './_components/ProduccionCostosView'
+import { PersonalView } from './_components/PersonalView'
 
 const REFRESH_INTERVAL = 5 * 60 * 1000
 
+type ViewMode = 'dia' | 'mes' | 'comparar' | 'balance' | 'carta' | 'precios' | 'produccion' | 'personal'
+
+const ALL_MODES: ViewMode[] = ['dia', 'mes', 'comparar', 'balance', 'carta', 'precios', 'produccion', 'personal']
+const MANAGER_MODES: ViewMode[] = ['balance', 'carta', 'precios', 'produccion', 'personal']
+
+function isViewMode(v: string | null): v is ViewMode {
+  return v != null && (ALL_MODES as string[]).includes(v)
+}
+
+// useSearchParams exige un límite de Suspense para el prerender de la página
 export default function VentasPage() {
+  return (
+    <Suspense fallback={<LoadingState />}>
+      <VentasContent />
+    </Suspense>
+  )
+}
+
+function VentasContent() {
   const { profile, loading: profileLoading } = useProfileContext()
+  const searchParams = useSearchParams()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [lastSync, setLastSync] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
-  const [viewMode, setViewMode] = useState<'dia' | 'mes' | 'comparar' | 'balance' | 'carta'>('dia')
+  // Deep-link ?m=balance|carta|precios|produccion|personal
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const m = searchParams.get('m')
+    return isViewMode(m) ? m : 'dia'
+  })
   const [compareDate, setCompareDate] = useState<Date>(subDays(new Date(), 1))
   const [compareData, setCompareData] = useState<DashboardData | null>(null)
   const [loadingCompare, setLoadingCompare] = useState(false)
@@ -33,8 +60,17 @@ export default function VentasPage() {
   const isLive = isToday(selectedDate)
   const dateStr = format(selectedDate, 'yyyy-MM-dd')
   const isManager = isManagerOrAbove(profile?.role)
-  const modes = isManager ? (['dia', 'comparar', 'mes', 'balance', 'carta'] as const) : (['dia', 'comparar', 'mes'] as const)
-  const MODE_LABELS: Record<string, string> = { dia: 'Día', comparar: 'Comparar', mes: 'Mes', balance: 'Balance', carta: 'Carta' }
+  const modes = isManager ? ALL_MODES : (['dia', 'mes', 'comparar'] as ViewMode[])
+  const MODE_LABELS: Record<string, string> = {
+    dia: 'Día', mes: 'Mes', comparar: 'Comparar', balance: 'Balance', carta: 'Carta',
+    precios: 'Precios', produccion: 'Producción', personal: 'Personal',
+  }
+
+  // Si el deep-link apunta a un modo manager-only y el perfil no lo permite, volver a Día
+  useEffect(() => {
+    if (profileLoading) return
+    if (!isManager && MANAGER_MODES.includes(viewMode)) setViewMode('dia')
+  }, [profileLoading, isManager, viewMode])
 
   const fetchData = useCallback(async (showSpinner = false) => {
     if (showSpinner) setSyncing(true)
@@ -88,31 +124,33 @@ export default function VentasPage() {
       <FadeIn>
         {/* View mode toggle */}
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">Ventas</h1>
-          <div className="flex rounded-full bg-secondary p-0.5 shadow-inner">
-            {modes.map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                className="relative rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors"
-              >
-                {viewMode === mode && (
-                  <motion.span
-                    layoutId="ventas-mode-pill"
-                    className="absolute inset-0 rounded-full bg-[#006d5a] shadow-sm"
-                    transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                  />
-                )}
-                <span className={`relative z-10 transition-colors ${viewMode === mode ? 'text-white' : 'text-muted-foreground'}`}>
-                  {MODE_LABELS[mode]}
-                </span>
-              </button>
-            ))}
+          <h1 className="shrink-0 font-display text-2xl font-bold tracking-tight text-[#3d2c24]">Números</h1>
+          <div className="min-w-0 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex w-max rounded-full bg-secondary p-0.5 shadow-inner">
+              {modes.map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setViewMode(mode)}
+                  className="relative shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors"
+                >
+                  {viewMode === mode && (
+                    <motion.span
+                      layoutId="ventas-mode-pill"
+                      className="absolute inset-0 rounded-full bg-[#006d5a] shadow-sm"
+                      transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                    />
+                  )}
+                  <span className={`relative z-10 transition-colors ${viewMode === mode ? 'text-white' : 'text-muted-foreground'}`}>
+                    {MODE_LABELS[mode]}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Date navigator — hidden in compare, balance & carta modes */}
-        {viewMode !== 'comparar' && viewMode !== 'balance' && viewMode !== 'carta' && (
+        {/* Date navigator — solo en modos Día y Mes */}
+        {(viewMode === 'dia' || viewMode === 'mes') && (
           <div className="flex items-center justify-between">
             <button
               onClick={() => {
@@ -198,6 +236,12 @@ export default function VentasPage() {
           {viewMode === 'balance' && isManager && <BalanceView />}
 
           {viewMode === 'carta' && isManager && <CartaView />}
+
+          {viewMode === 'precios' && isManager && <PreciosView />}
+
+          {viewMode === 'produccion' && isManager && <ProduccionCostosView />}
+
+          {viewMode === 'personal' && isManager && <PersonalView />}
         </div>
       </AnimatedSwitch>
     </div>

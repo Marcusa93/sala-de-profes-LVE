@@ -19,7 +19,6 @@ import {
   Truck,
   Bot,
   BookOpen,
-  LayoutDashboard,
   ShoppingCart,
   FolderOpen,
   Wine,
@@ -129,7 +128,6 @@ const SOCIO_MORE: ExpandableNavItem = {
     {
       label: 'Administración',
       items: [
-        { label: 'Control', href: '/admin', icon: LayoutDashboard, description: 'Panel administrativo general' },
         { label: 'Fudo', href: '/admin/fudo', icon: RefreshCw, description: 'Sincronización y configuración de Fudo' },
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Datos de proveedores y condiciones' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Recetas, insumos y preparación' },
@@ -179,7 +177,6 @@ const ENCARGADO_MORE: ExpandableNavItem = {
     {
       label: 'Administración',
       items: [
-        { label: 'Control', href: '/admin', icon: LayoutDashboard, description: 'Panel administrativo general' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar y operar por chat' },
       ],
     },
