@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
 import { costRecipes } from '@/lib/recipes/recipe-cost'
+import { fetchFudoExpenses } from '@/lib/fudo/expenses'
 
 // ---------------------------------------------------------------------------
 // GET /api/ventas/carta?days=30
@@ -130,11 +131,13 @@ export async function GET(request: NextRequest) {
     if (miError) throw new Error(miError.message)
 
     type SaleRow = { fudo_product_id: string | null; quantity: number; price: number | null }
-    type ReceiptRow = { cost_total: number | null }
 
     // 2. En paralelo: costos de recetas + TODAS las ventas del período + compras
+    //    reales del módulo de gastos de Fudo (stock_receipts está vacía; los
+    //    gastos de Fudo tienen el histórico real de compras). Best-effort: si
+    //    Fudo falla, compras=0 y el food cost real queda null — no rompe la carta.
     const recipeIds = [...new Set((menuItems ?? []).map(mi => mi.recipe_id as string))]
-    const [recipeCosts, sales, receipts] = await Promise.all([
+    const [recipeCosts, sales, expenses] = await Promise.all([
       costRecipes(admin, recipeIds),
       fetchAll<SaleRow>((from, to) =>
         admin
@@ -144,15 +147,7 @@ export async function GET(request: NextRequest) {
           .order('id', { ascending: true })
           .range(from, to) as never,
       ),
-      fetchAll<ReceiptRow>((from, to) =>
-        admin
-          .from('stock_receipts')
-          .select('cost_total')
-          .gte('received_date', sinceDate)
-          .lte('received_date', todayAR)
-          .order('id', { ascending: true })
-          .range(from, to) as never,
-      ),
+      fetchFudoExpenses(sinceUTC).catch(() => [] as { date: string; amount: number }[]),
     ])
 
     // 3. Ventas por producto Fudo + revenue total del período (todo lo vendido)
@@ -228,7 +223,7 @@ export async function GET(request: NextRequest) {
     // 6. Resumen global
     const revenueCosteado = dishes.reduce((sum, d) => sum + d.revenue, 0)
     const cmvTeorico = dishes.reduce((sum, d) => sum + d.cost_per_portion * d.units, 0)
-    const comprasTotal = receipts.reduce((sum, r) => sum + Number(r.cost_total ?? 0), 0)
+    const comprasTotal = expenses.reduce((sum, e) => sum + Number(e.amount ?? 0), 0)
 
     const payload: CartaPayload = {
       days,

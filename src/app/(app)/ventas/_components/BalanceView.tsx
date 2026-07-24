@@ -13,7 +13,10 @@ import { InsumosVendidos } from './InsumosVendidos'
 
 // ---------------------------------------------------------------------------
 // BalanceView — "lo que se compra se compensa con lo que se vende"
-// $ vendido (fudo_sales) vs $ comprado (stock_receipts) por día.
+// $ vendido (fudo_sales) vs $ comprado (módulo de GASTOS de Fudo) por día.
+// El "comprado" sale de /api/compras/diario (compras reales de Fudo), NO de
+// stock_receipts (que está vacía). El "a pagar pendiente" sí sigue saliendo de
+// stock_receipts (eso es data LVE) vía /api/ventas/balance.
 // Solo managers (el botón se oculta en la página para el resto).
 // ---------------------------------------------------------------------------
 
@@ -23,8 +26,16 @@ type BalanceData = {
   to: string
   series: { date: string; sold: number; purchased: number }[]
   totals: { sold: number; purchased: number; balance: number }
-  top_supplies: { stock_item_id: string | null; name: string; total: number; receipts: number }[]
   payments: { pagado: number; a_pagar: number }
+}
+
+type ComprasDiario = {
+  days: number
+  from: string
+  to: string
+  series: { date: string; total: number }[]
+  total: number
+  top_providers: { name: string; total: number }[]
 }
 
 const DAY_OPTIONS = [7, 30, 90] as const
@@ -36,6 +47,7 @@ function shortDate(iso: string): string {
 
 export function BalanceView() {
   const [data, setData] = useState<BalanceData | null>(null)
+  const [compras, setCompras] = useState<ComprasDiario | null>(null)
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState<number>(30)
 
@@ -44,10 +56,36 @@ export function BalanceView() {
     ;(async () => {
       setLoading(true)
       try {
-        const res = await fetch(`/api/ventas/balance?days=${days}`, { credentials: 'include' })
-        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? 'No se pudo cargar el balance')
-        const json = await res.json()
-        if (!cancelled) setData(json)
+        const [balRes, comprasRes] = await Promise.all([
+          fetch(`/api/ventas/balance?days=${days}`, { credentials: 'include' }),
+          fetch(`/api/compras/diario?days=${days}`, { credentials: 'include' }),
+        ])
+        if (!balRes.ok) throw new Error((await balRes.json().catch(() => ({})))?.error ?? 'No se pudo cargar el balance')
+        const balJson: BalanceData = await balRes.json()
+        // Las compras de Fudo son la fuente real del "comprado"; si fallan, se
+        // reporta pero el balance de ventas igual se muestra.
+        const comprasJson: ComprasDiario | null = comprasRes.ok ? await comprasRes.json() : null
+
+        if (cancelled) return
+
+        if (comprasJson) {
+          // Sobrescribir el "comprado" con las compras reales de Fudo.
+          const purchasedByDay = new Map(comprasJson.series.map((s) => [s.date, s.total]))
+          const series = balJson.series.map((d) => ({
+            ...d,
+            purchased: purchasedByDay.get(d.date) ?? 0,
+          }))
+          const totalPurchased = comprasJson.total
+          balJson.series = series
+          balJson.totals = {
+            ...balJson.totals,
+            purchased: totalPurchased,
+            balance: balJson.totals.sold - totalPurchased,
+          }
+        }
+
+        setData(balJson)
+        setCompras(comprasJson)
       } catch (err) {
         if (!cancelled) toast.error(err instanceof Error ? err.message : 'Error al cargar el balance')
       } finally {
@@ -58,7 +96,7 @@ export function BalanceView() {
   }, [days])
 
   const positive = (data?.totals.balance ?? 0) >= 0
-  const maxSupply = data?.top_supplies[0]?.total ?? 0
+  const maxProvider = compras?.top_providers[0]?.total ?? 0
   // Con 90 días el eje X se satura: mostrar 1 de cada n etiquetas
   const tickInterval = days > 30 ? 13 : days > 7 ? 4 : 0
 
@@ -133,6 +171,7 @@ export function BalanceView() {
                     <ShoppingCart className="size-3" /> Comprado
                   </span>
                   <p className="mt-0.5 text-[16px] font-bold tabular-nums text-[#d4943a]">{formatPrice(data.totals.purchased)}</p>
+                  <p className="text-[9px] text-[#a39e97]">compras de Fudo</p>
                 </div>
               </div>
 
@@ -149,7 +188,7 @@ export function BalanceView() {
             {/* Barras diarias vendido vs comprado */}
             <ChartCard
               title="Vendido vs comprado por día"
-              subtitle={`${shortDate(data.from)} → ${shortDate(data.to)}`}
+              subtitle={`${shortDate(data.from)} → ${shortDate(data.to)} · comprado: Fudo`}
               isEmpty={data.series.every((d) => d.sold === 0 && d.purchased === 0)}
               emptyMessage="Sin ventas ni compras en el período"
             >
@@ -190,28 +229,28 @@ export function BalanceView() {
             {/* Insumos más vendidos — la conexión venta → insumo */}
             <InsumosVendidos />
 
-            {/* Top insumos por gasto */}
-            {data.top_supplies.length > 0 && (
+            {/* Top proveedores por gasto (compras reales de Fudo) */}
+            {compras && compras.top_providers.length > 0 && (
               <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-[#ebe6df]">
                 <div className="mb-3 flex items-center gap-2">
                   <ShoppingCart className="size-4 text-[#d4943a]" />
-                  <h2 className="text-[14px] font-bold text-[#3d2c24]">Top insumos por gasto</h2>
+                  <h2 className="text-[14px] font-bold text-[#3d2c24]">Top proveedores por gasto</h2>
+                  <span className="ml-auto text-[10px] text-[#a39e97]">compras de Fudo</span>
                 </div>
                 <div className="space-y-2.5">
-                  {data.top_supplies.map((s, i) => (
-                    <div key={s.stock_item_id ?? `otros-${i}`}>
+                  {compras.top_providers.map((s, i) => (
+                    <div key={s.name}>
                       <div className="flex items-center justify-between gap-2 text-[13px]">
                         <span className="min-w-0 truncate text-[#3d2c24]">
                           <span className="mr-1.5 text-[11px] font-bold text-[#a39e97]">{i + 1}.</span>
                           {s.name}
-                          <span className="ml-1.5 text-[10px] text-[#a39e97]">×{s.receipts}</span>
                         </span>
                         <span className="shrink-0 font-bold tabular-nums text-[#3d2c24]">{formatPrice(s.total)}</span>
                       </div>
                       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#f3efe9]">
                         <div
                           className="h-full rounded-full bg-[#d4943a]"
-                          style={{ width: `${maxSupply > 0 ? Math.max((s.total / maxSupply) * 100, 3) : 0}%` }}
+                          style={{ width: `${maxProvider > 0 ? Math.max((s.total / maxProvider) * 100, 3) : 0}%` }}
                         />
                       </div>
                     </div>

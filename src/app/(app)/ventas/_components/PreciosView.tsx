@@ -6,32 +6,28 @@ import { toast } from 'sonner'
 import { FadeIn } from '@/components/ui/motion'
 
 // ---------------------------------------------------------------------------
-// PreciosView — precio histórico de COMPRA por insumo (stock_receipts).
-// Absorbido de /stock/precios como modo de /ventas ("Números").
-// Mismo diseño que ProduccionCostosView: grupos expandibles con
-// último precio, mín/prom/máx, tendencia y detalle por recibo.
+// PreciosView — precio de COMPRA REAL por insumo, del módulo de GASTOS de Fudo.
+// Consume /api/compras/precios (gastos con exactamente 1 ingrediente → el
+// monto es el precio real de ese insumo). Grupos expandibles con último precio,
+// mín/prom/máx, tendencia ±5% vs promedio y detalle de cada compra.
 // ---------------------------------------------------------------------------
 
-type PriceReceipt = {
-  id: number
+type PricePoint = {
   date: string
-  qty: number
-  unit: string
-  cost_per_unit: number
-  cost_total: number | null
-  supplier: string | null
+  amount: number
+  provider: string | null
 }
 
-type ItemPriceHistory = {
-  stock_item_id: string | null
+type IngredientPrices = {
   name: string
-  unit: string
-  receipts: PriceReceipt[]
-  latest_price: number | null
-  avg_price: number | null
-  min_price: number | null
-  max_price: number | null
-  receipt_count: number
+  last_price: number | null
+  last_provider: string | null
+  last_date: string | null
+  min: number | null
+  max: number | null
+  avg: number | null
+  count: number
+  points: PricePoint[]
 }
 
 function money(n: number | null): string {
@@ -40,40 +36,42 @@ function money(n: number | null): string {
 }
 
 function fmtDate(iso: string): string {
-  const d = new Date(`${iso}T12:00:00`)
+  const d = new Date(iso)
   return d.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: '2-digit' })
 }
 
 export function PreciosView() {
-  const [data, setData] = useState<ItemPriceHistory[]>([])
+  const [data, setData] = useState<IngredientPrices[]>([])
   const [loading, setLoading] = useState(true)
-  const [days, setDays] = useState(180)
+  const [days, setDays] = useState(90)
   const [expanded, setExpanded] = useState<string | null>(null)
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false
+    ;(async () => {
       setLoading(true)
       try {
-        const res = await fetch(`/api/stock/precios?days=${days}`)
+        const res = await fetch(`/api/compras/precios?days=${days}`, { credentials: 'include' })
         if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? 'No se pudo cargar')
         const json = await res.json()
-        setData(json.items ?? [])
+        if (!cancelled) setData(json.items ?? [])
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Error al cargar')
+        if (!cancelled) toast.error(err instanceof Error ? err.message : 'Error al cargar')
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     })()
+    return () => { cancelled = true }
   }, [days])
 
-  const totalReceipts = useMemo(() => data.reduce((s, g) => s + g.receipt_count, 0), [data])
+  const totalPoints = useMemo(() => data.reduce((s, g) => s + g.count, 0), [data])
 
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <p className="text-[13px] leading-relaxed text-muted-foreground">
-          Cuánto pagaste cada insumo en cada recepción. Así ves qué proveedor te remarcó
-          y qué insumo se está <b>encareciendo</b>.
+          Precios reales de compra, del <b>módulo de gastos de Fudo</b>. Así ves qué proveedor
+          te remarcó y qué insumo se está <b>encareciendo</b>.
         </p>
         <select
           value={days}
@@ -83,7 +81,6 @@ export function PreciosView() {
           <option value={30}>30 días</option>
           <option value={90}>90 días</option>
           <option value={180}>180 días</option>
-          <option value={365}>1 año</option>
         </select>
       </div>
 
@@ -93,22 +90,22 @@ export function PreciosView() {
         </div>
       ) : data.length === 0 ? (
         <div className="rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-[#ebe6df]">
-          <p className="text-[14px] text-[#3d2c24]">Todavía no hay recepciones con precio cargado.</p>
+          <p className="text-[14px] text-[#3d2c24]">Todavía no hay gastos con precio de un solo insumo.</p>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            Cada vez que registres una compra con costo, su precio queda registrado acá.
+            Cada gasto de Fudo con un único ingrediente registra el precio real de ese insumo.
           </p>
         </div>
       ) : (
         <FadeIn>
           <div className="space-y-3">
             {data.map((g) => {
-              const key = g.stock_item_id ?? g.name
+              const key = g.name
               const isOpen = expanded === key
-              // Tendencia: comparar el más reciente vs el promedio.
-              const latest = g.latest_price ?? 0
-              const avg = g.avg_price ?? 0
-              const trendUp = g.receipt_count > 1 && latest > avg * 1.05
-              const trendDown = g.receipt_count > 1 && latest < avg * 0.95
+              // Tendencia: comparar el más reciente vs el promedio (±5%).
+              const latest = g.last_price ?? 0
+              const avg = g.avg ?? 0
+              const trendUp = g.count > 1 && latest > avg * 1.05
+              const trendDown = g.count > 1 && latest < avg * 0.95
               return (
                 <div key={key} className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-[#ebe6df]">
                   <button
@@ -118,7 +115,8 @@ export function PreciosView() {
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-bold text-[#3d2c24]">{g.name}</p>
                       <p className="mt-0.5 text-[11px] text-muted-foreground">
-                        {g.receipt_count} compra{g.receipt_count === 1 ? '' : 's'} en el período
+                        {g.count} compra{g.count === 1 ? '' : 's'}
+                        {g.last_provider && <span> · {g.last_provider}</span>}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -127,37 +125,34 @@ export function PreciosView() {
                         <p className="flex items-center gap-1 text-[18px] font-bold text-[#006d5a]">
                           {trendUp && <TrendingUp className="size-4 text-[#ea504c]" />}
                           {trendDown && <TrendingDown className="size-4 text-[#006d5a]" />}
-                          {!trendUp && !trendDown && g.receipt_count > 1 && <Minus className="size-3.5 text-muted-foreground" />}
-                          {money(g.latest_price)}
-                          <span className="text-[11px] font-medium text-muted-foreground">/{g.unit}</span>
+                          {!trendUp && !trendDown && g.count > 1 && <Minus className="size-3.5 text-muted-foreground" />}
+                          {money(g.last_price)}
                         </p>
                       </div>
                       {isOpen ? <ChevronUp className="size-4 text-muted-foreground" /> : <ChevronDown className="size-4 text-muted-foreground" />}
                     </div>
                   </button>
 
-                  {g.receipt_count > 1 && (
+                  {g.count > 1 && (
                     <div className="flex gap-3 border-t border-[#f3efe9] px-4 py-2 text-[11px] text-muted-foreground">
-                      <span>mín <b className="text-[#006d5a]">{money(g.min_price)}</b></span>
-                      <span>prom <b className="text-[#3d2c24]">{money(g.avg_price)}</b></span>
-                      <span>máx <b className="text-[#ea504c]">{money(g.max_price)}</b></span>
+                      <span>mín <b className="text-[#006d5a]">{money(g.min)}</b></span>
+                      <span>prom <b className="text-[#3d2c24]">{money(g.avg)}</b></span>
+                      <span>máx <b className="text-[#ea504c]">{money(g.max)}</b></span>
                     </div>
                   )}
 
                   {isOpen && (
                     <div className="border-t border-[#f3efe9] bg-[#faf8f5] px-4 py-3">
                       <div className="space-y-2">
-                        {g.receipts.map((r) => (
-                          <div key={r.id} className="flex items-center justify-between gap-2 text-[13px]">
+                        {g.points.map((p, i) => (
+                          <div key={`${p.date}-${i}`} className="flex items-center justify-between gap-2 text-[13px]">
                             <div className="min-w-0">
-                              <span className="text-[#3d2c24]">{fmtDate(r.date)}</span>
-                              <span className="ml-2 text-[11px] text-muted-foreground">
-                                {r.qty} {r.unit}
-                                {r.supplier && <span> · {r.supplier}</span>}
-                                {r.cost_total != null && <span> · total {money(r.cost_total)}</span>}
-                              </span>
+                              <span className="text-[#3d2c24]">{fmtDate(p.date)}</span>
+                              {p.provider && (
+                                <span className="ml-2 text-[11px] text-muted-foreground">{p.provider}</span>
+                              )}
                             </div>
-                            <span className="shrink-0 font-bold text-[#006d5a]">{money(r.cost_per_unit)}/{r.unit}</span>
+                            <span className="shrink-0 font-bold text-[#006d5a]">{money(p.amount)}</span>
                           </div>
                         ))}
                       </div>
@@ -169,7 +164,7 @@ export function PreciosView() {
           </div>
 
           <p className="mt-4 text-center text-[11px] text-muted-foreground">
-            {totalReceipts} recepciones con precio · la tendencia compara el último precio contra el promedio del período
+            {totalPoints} compras de un solo insumo · la tendencia compara el último precio contra el promedio del período
           </p>
         </FadeIn>
       )}
