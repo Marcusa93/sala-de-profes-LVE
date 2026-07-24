@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RoleBadge } from '@/components/ui/RoleBadge'
 import { isSocio } from '@/lib/roles'
+import { PushDeviceToggle } from '@/components/push/PushDeviceToggle'
 
 // ---------------------------------------------------------------------------
 // Settings type
@@ -291,6 +292,7 @@ export default function ConfiguracionPage() {
             <h2 className="text-xs font-semibold uppercase tracking-wider text-[#a39e97]">Notificaciones</h2>
           </div>
           <div className="divide-y divide-[#f3efe9]">
+            <PushDeviceToggle />
             <Toggle
               enabled={settings.notify_app ?? true}
               onChange={(v) => updateSetting('notify_app', v)}

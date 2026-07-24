@@ -44,24 +44,18 @@ export function usePushSubscription() {
         let subscription = await registration.pushManager.getSubscription()
 
         if (!subscription && Notification.permission === 'granted') {
-          // Already granted but no subscription — re-subscribe
+          // Ya concedido pero sin suscripción — re-suscribir (silencioso, no
+          // requiere gesto porque el permiso ya está dado).
           subscription = await registration.pushManager.subscribe({
             userVisibleOnly: true,
             applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
           })
         }
 
-        if (!subscription && Notification.permission === 'default') {
-          // First time — request permission
-          const perm = await Notification.requestPermission()
-          if (perm !== 'granted') return
-
-          subscription = await registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-          })
-        }
-
+        // NO pedir permiso automáticamente acá: Notification.requestPermission()
+        // debe dispararse desde un gesto del usuario (obligatorio en iOS). De eso
+        // se encarga PushPrompt (el pop-up con botón "Activar"). Si el permiso
+        // sigue en 'default', no hacemos nada — el usuario lo activa desde ahí.
         if (!subscription) return
 
         // Send to server

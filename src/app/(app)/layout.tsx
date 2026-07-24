@@ -11,6 +11,7 @@ import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
 import { KitchenAlarms } from '@/components/kitchen/KitchenAlarms'
 import { InstallPrompt } from '@/components/pwa/InstallPrompt'
 import { PushSubscriber } from '@/components/pwa/PushSubscriber'
+import { PushPrompt } from '@/components/push/PushPrompt'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 
 export default async function AppLayout({
@@ -44,6 +45,7 @@ export default async function AppLayout({
           <KitchenAlarms />
           <InstallPrompt />
           <PushSubscriber />
+          <PushPrompt />
         </div>
       </ProfileProvider>
     </SWRProvider>
