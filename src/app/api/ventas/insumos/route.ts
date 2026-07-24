@@ -143,7 +143,22 @@ export async function GET(request: NextRequest) {
     const soldRecipeIds = [...unitsByRecipe.keys()]
     const consumed = new Map<string, { qty: number; sales: number; unit: string | null }>()
 
-    const addConsumption = (stockItemId: string, qty: number, salesCount: number, unit: string | null) => {
+    // Canonicaliza ANTES de acumular: distintas recetas expresan el mismo
+    // insumo en unidades distintas (ej. Papas: 30 recetas en kg y una en
+    // gramos). Sumar crudo mezclaba 714 g con 0.357 kg como si fueran la
+    // misma unidad e inflaba el consumo ~1000x en ese insumo. g→kg y ml→l
+    // acá; así el acumulador siempre suma en una única unidad por familia.
+    const canon = (qty: number, unit: string | null): { qty: number; unit: string | null } => {
+      const u = unit?.trim().toLowerCase() ?? null
+      if (u === 'g' || u === 'gr' || u === 'gramos') return { qty: qty / 1000, unit: 'kg' }
+      if (u === 'ml' || u === 'cc') return { qty: qty / 1000, unit: 'l' }
+      if (u === 'lt' || u === 'litro' || u === 'litros') return { qty, unit: 'l' }
+      if (u === 'kilo' || u === 'kilos') return { qty, unit: 'kg' }
+      return { qty, unit: u }
+    }
+
+    const addConsumption = (stockItemId: string, rawQty: number, salesCount: number, rawUnit: string | null) => {
+      const { qty, unit } = canon(rawQty, rawUnit)
       const entry = consumed.get(stockItemId) ?? { qty: 0, sales: 0, unit }
       entry.qty += qty
       entry.sales += salesCount
