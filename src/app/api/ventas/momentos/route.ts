@@ -9,23 +9,18 @@ import { costRecipes } from '@/lib/recipes/recipe-cost'
 // ---------------------------------------------------------------------------
 // Rentabilidad por momento del día — ¿qué conviene promocionar en cada franja?
 //
-// Cada venta se clasifica por su hora ARGENTINA (sold_at es UTC; AR = UTC-3):
-//   desayuno 06:00–11:59 · almuerzo 12:00–15:59 · merienda 16:00–19:59
-//   · noche 20:00–05:59 (cruza medianoche).
+// Cada venta se clasifica por la CATEGORÍA del producto (Fudo → menu_categories):
+//   desayuno_merienda → Desayunos & Meriendas, Cafetería, Infusiones, etc.
+//   almuerzo_cena     → Platos Principales, Menu diario, Pizzas, etc.
+// Fallback para productos sin categoría o "neutrales" (bebidas sin alcohol,
+// adicionales): hora ARGENTINA (06–12 y 16–20 → desayuno_merienda, resto → almuerzo_cena).
 //
 // Por momento: units_total y revenue_total de TODAS las ventas (con o sin
 // receta), y por producto costeado (menu_item con receta + producto Fudo):
 // units, revenue, avg_price, cost, margin_unit, margin_pct.
 //
 // `para_promocionar`: top 5 productos del momento con margen_pct ≥ mediana
-// del momento y ventas en la franja, ordenados por MAYOR margen unitario $
-// (la lógica del gastronómico: promocionás lo que más plata te deja por
-// unidad, para empujar volumen donde no te duele). reason:
-//   'alto_margen_popular'  → además está en el top 50% por unidades
-//   'alto_margen_dormido'  → margen alto pero pocas ventas; la promo lo despierta
-//
-// Productos sin receta quedan fuera del ranking pero su revenue cuenta en el
-// total del momento → coverage_pct por momento.
+// del momento y ventas en la franja, ordenados por MAYOR margen unitario $.
 //
 // Solo managers. Cache en memoria de módulo: 5 min por ventana de días.
 // ---------------------------------------------------------------------------
@@ -33,7 +28,7 @@ import { costRecipes } from '@/lib/recipes/recipe-cost'
 const CACHE_TTL_MS = 5 * 60 * 1000
 const PAGE_SIZE = 1000
 
-export type MomentoKey = 'desayuno' | 'almuerzo' | 'merienda' | 'noche'
+export type MomentoKey = 'desayuno_merienda' | 'almuerzo_cena'
 
 export type MomentoProduct = {
   menu_item_id: string
@@ -71,23 +66,62 @@ export type MomentosPayload = {
   momentos: Momento[]
 }
 
-const cache = new Map<number, { at: number; payload: MomentosPayload }>()
+// Categorías Fudo → servicio del local.
+// Las categorías no listadas (Bebidas sin alcohol, Adicionales, etc.)
+// usan el fallback por hora.
+const DESAYUNO_MERIENDA_CATS = new Set([
+  'Desayunos & Meriendas',
+  'Entre Panes Desayunos y Meriendas',
+  'Cafetería',
+  'Infusiones',
+  'Pasteleria',
+  'SIN TACC',
+  'Tostones',
+  'LECHES',
+  'Cafe Frio',
+])
 
-const MOMENTO_KEYS: MomentoKey[] = ['desayuno', 'almuerzo', 'merienda', 'noche']
+const ALMUERZO_CENA_CATS = new Set([
+  'Platos Principales',
+  'Pizzas',
+  'Entre Panes',
+  'No Vives de Ensalada',
+  'Entradas',
+  'LVE Kids',
+  'Picadas',
+  'WRAPS',
+  'Papas Fritas',
+  'Guarniciones',
+  'Menu diario',
+  'Menu personal',
+  'PEDIDOS YA',
+  'TAKE WAY',
+  'Postres',
+  'Bebidas con alcohol',
+  'Copa de vino',
+  'Tragos',
+  'Pomo del Dia',
+])
 
-/** Clasifica una hora ARGENTINA (0–23) en su momento del día. */
-function momentoOf(hourAR: number): MomentoKey {
-  if (hourAR >= 6 && hourAR < 12) return 'desayuno'
-  if (hourAR >= 12 && hourAR < 16) return 'almuerzo'
-  if (hourAR >= 16 && hourAR < 20) return 'merienda'
-  return 'noche' // 20:00–23:59 y 00:00–05:59
+/**
+ * Determina el momento por categoría del producto.
+ * Fallback: hora AR → desayuno_merienda si es 06–12 o 16–20, almuerzo_cena si no.
+ */
+function momentoOf(hourAR: number, catName: string | null): MomentoKey {
+  if (catName) {
+    if (DESAYUNO_MERIENDA_CATS.has(catName)) return 'desayuno_merienda'
+    if (ALMUERZO_CENA_CATS.has(catName)) return 'almuerzo_cena'
+  }
+  if ((hourAR >= 6 && hourAR < 12) || (hourAR >= 16 && hourAR < 20)) return 'desayuno_merienda'
+  return 'almuerzo_cena'
 }
+
+const MOMENTO_KEYS: MomentoKey[] = ['desayuno_merienda', 'almuerzo_cena']
 
 function arToday(): string {
   return new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
 }
 
-/** Pagina de a 1000 (PostgREST corta en 1000 por default). */
 async function fetchAll<T>(
   query: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
 ): Promise<T[]> {
@@ -109,6 +143,8 @@ function median(values: number[]): number {
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
 }
+
+const cache = new Map<number, { at: number; payload: MomentosPayload }>()
 
 export async function GET(request: NextRequest) {
   try {
@@ -133,22 +169,36 @@ export async function GET(request: NextRequest) {
     const sinceDate = new Date(new Date(`${todayAR}T12:00:00Z`).getTime() - (days - 1) * 86_400_000)
       .toISOString()
       .slice(0, 10)
-    // Comienzo del primer día AR, expresado en UTC (AR es siempre UTC-3)
     const sinceUTC = new Date(`${sinceDate}T00:00:00-03:00`).toISOString()
 
-    // 1. Platos del menú con receta y producto Fudo
-    const { data: menuItems, error: miError } = await admin
+    // 1. Todos los menu_items activos con fudo_product_id: para mapear categoría y receta
+    const { data: allMenuItems } = await admin
       .from('menu_items')
-      .select('id, name, recipe_id, fudo_product_id')
+      .select('id, name, recipe_id, fudo_product_id, menu_categories(name)')
       .eq('is_active', true)
-      .not('recipe_id', 'is', null)
       .not('fudo_product_id', 'is', null)
-    if (miError) throw new Error(miError.message)
+
+    type MenuItemRow = {
+      id: string
+      name: string
+      recipe_id: string | null
+      fudo_product_id: string | null
+      menu_categories: { name: string } | null
+    }
+    const allItems = (allMenuItems ?? []) as unknown as MenuItemRow[]
+
+    // fudo_product_id → category name (para clasificar ventas)
+    const fudoToCat = new Map<string, string | null>()
+    for (const mi of allItems) {
+      if (mi.fudo_product_id) fudoToCat.set(mi.fudo_product_id, mi.menu_categories?.name ?? null)
+    }
+
+    // menu_items con receta (para costing)
+    const menuItems = allItems.filter(mi => mi.recipe_id != null)
 
     type SaleRow = { fudo_product_id: string | null; quantity: number; price: number | null; sold_at: string }
 
-    // 2. En paralelo: costos de recetas + TODAS las ventas del período
-    const recipeIds = [...new Set((menuItems ?? []).map(mi => mi.recipe_id as string))]
+    const recipeIds = [...new Set(menuItems.map(mi => mi.recipe_id as string))]
     const [recipeCosts, sales] = await Promise.all([
       costRecipes(admin, recipeIds),
       fetchAll<SaleRow>((from, to) =>
@@ -173,9 +223,10 @@ export async function GET(request: NextRequest) {
     for (const s of sales) {
       const soldAt = new Date(s.sold_at)
       if (Number.isNaN(soldAt.getTime())) continue
-      // sold_at es UTC; AR es siempre UTC-3 (sin horario de verano)
       const hourAR = (soldAt.getUTCHours() - 3 + 24) % 24
-      const momento = aggs.get(momentoOf(hourAR))!
+      const catName = s.fudo_product_id ? (fudoToCat.get(s.fudo_product_id) ?? null) : null
+      const momentoKey = momentoOf(hourAR, catName)
+      const momento = aggs.get(momentoKey)!
 
       const qty = Number(s.quantity ?? 0)
       const price = s.price != null ? Number(s.price) : null
@@ -187,8 +238,6 @@ export async function GET(request: NextRequest) {
 
       if (!s.fudo_product_id) continue
       const agg = momento.byProduct.get(s.fudo_product_id) ?? { units: 0, revenue: 0, pricedUnits: 0, pricedRevenue: 0 }
-      // price puede venir 0/null en modificadores: sus unidades cuentan,
-      // pero no entran en el precio promedio.
       agg.units += qty
       agg.revenue += rowRevenue
       if (price != null && price > 0) {
@@ -203,7 +252,7 @@ export async function GET(request: NextRequest) {
       const m = aggs.get(key)!
 
       const costeados: MomentoProduct[] = []
-      for (const mi of menuItems ?? []) {
+      for (const mi of menuItems) {
         const agg = mi.fudo_product_id ? m.byProduct.get(mi.fudo_product_id) : undefined
         if (!agg || agg.units <= 0) continue
         const avgPrice = agg.pricedUnits > 0 ? agg.pricedRevenue / agg.pricedUnits : 0
@@ -226,7 +275,6 @@ export async function GET(request: NextRequest) {
       const medianMarginPct = median(costeados.map(p => p.margin_pct))
       const medianUnits = median(costeados.map(p => p.units))
 
-      // Para promocionar: margen % ≥ mediana del momento, ordenado por margen $ unitario
       const paraPromocionar: MomentoPromo[] = costeados
         .filter(p => p.margin_pct >= medianMarginPct && p.units > 0)
         .sort((a, b) => b.margin_unit - a.margin_unit)

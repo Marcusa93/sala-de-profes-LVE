@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Info, Loader2, Sparkles, TrendingUp } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn, AnimatedSwitch, motion } from '@/components/ui/motion'
@@ -14,7 +14,7 @@ import { formatPrice } from './types'
 // Horas ARGENTINA (el endpoint convierte sold_at UTC → AR). Solo managers.
 // ---------------------------------------------------------------------------
 
-type MomentoKey = 'desayuno' | 'almuerzo' | 'merienda' | 'noche'
+type MomentoKey = 'desayuno_merienda' | 'almuerzo_cena'
 
 type MomentoProduct = {
   menu_item_id: string
@@ -54,11 +54,9 @@ type MomentosData = {
 
 const DAY_OPTIONS = [7, 30, 90] as const
 
-const MOMENTO_META: Record<MomentoKey, { emoji: string; label: string; hours: string }> = {
-  desayuno: { emoji: '🌅', label: 'Desayuno', hours: '06–12' },
-  almuerzo: { emoji: '☀️', label: 'Almuerzo', hours: '12–16' },
-  merienda: { emoji: '🌇', label: 'Merienda', hours: '16–20' },
-  noche:    { emoji: '🌙', label: 'Noche',    hours: '20–06' },
+const MOMENTO_META: Record<MomentoKey, { emoji: string; label: string; desc: string }> = {
+  desayuno_merienda: { emoji: '☕', label: 'Desayunos y Meriendas', desc: 'café, tostadas, medialunas, meriendas' },
+  almuerzo_cena:     { emoji: '🍽️', label: 'Almuerzos y Cenas',    desc: 'platos, pizzas, milanesas, menú del día' },
 }
 
 const REASON_META: Record<MomentoPromo['reason'], { label: string; color: string; bg: string }> = {
@@ -70,7 +68,7 @@ export function MomentosView() {
   const [data, setData] = useState<MomentosData | null>(null)
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState<number>(30)
-  const [selected, setSelected] = useState<MomentoKey>('almuerzo')
+  const [selected, setSelected] = useState<MomentoKey>('almuerzo_cena')
 
   useEffect(() => {
     let cancelled = false
@@ -106,7 +104,7 @@ export function MomentosView() {
       {/* Selector de período */}
       <div className="flex items-center justify-between">
         <p className="text-[12px] text-muted-foreground">
-          Qué conviene promocionar en cada franja del día.
+          Qué conviene promocionar según el servicio del día.
         </p>
         <div className="flex shrink-0 rounded-full bg-secondary p-0.5">
           {DAY_OPTIONS.map((d) => (
@@ -134,12 +132,14 @@ export function MomentosView() {
       ) : (
         <FadeIn>
           <div className="space-y-4">
-            {/* 4 tarjetas de momento */}
+            {/* 2 tarjetas de servicio */}
             <div className="grid grid-cols-2 gap-2.5">
               {data.momentos.map((m) => {
                 const meta = MOMENTO_META[m.key]
                 const isSelected = m.key === selected
                 const share = data.revenue_total > 0 ? Math.round((m.revenue_total / data.revenue_total) * 100) : 0
+                const accentColor = m.key === 'desayuno_merienda' ? '#d4943a' : '#006d5a'
+                const accentBg = m.key === 'desayuno_merienda' ? '#fdf6ec' : '#e8f5f1'
                 return (
                   <motion.button
                     key={m.key}
@@ -148,30 +148,28 @@ export function MomentosView() {
                     animate={{ scale: isSelected ? 1.02 : 1 }}
                     transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                     className={`relative overflow-hidden rounded-2xl p-3.5 text-left shadow-sm ring-1 transition-colors ${
-                      isSelected ? 'ring-2 ring-[#006d5a]' : 'bg-white ring-[#ebe6df]'
+                      isSelected ? 'ring-2' : 'bg-white ring-[#ebe6df]'
                     }`}
                     style={isSelected
-                      ? { backgroundImage: 'linear-gradient(135deg, #e8f5f1 0%, #ffffff 70%)' }
+                      ? { backgroundImage: `linear-gradient(135deg, ${accentBg} 0%, #ffffff 70%)`, '--tw-ring-color': accentColor } as React.CSSProperties
                       : undefined}
                   >
                     <div className="flex items-center justify-between">
                       <span className="text-[20px] leading-none">{meta.emoji}</span>
                       <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-muted-foreground">
-                        {meta.hours}h
+                        {share}%
                       </span>
                     </div>
-                    <p className="mt-1.5 text-[12px] font-bold text-[#3d2c24]">{meta.label}</p>
-                    <p className={`font-display text-[19px] font-bold tabular-nums tracking-tight ${
-                      isSelected ? 'text-[#006d5a]' : 'text-[#3d2c24]'
-                    }`}>
+                    <p className="mt-1.5 text-[11px] font-bold text-[#3d2c24]">{meta.label}</p>
+                    <p className={`font-display text-[19px] font-bold tabular-nums tracking-tight`}
+                      style={{ color: isSelected ? accentColor : '#3d2c24' }}>
                       {formatPrice(m.revenue_total)}
                     </p>
-                    <p className="text-[10px] tabular-nums text-[#a39e97]">{m.units_total.toLocaleString('es-AR')} u · {share}% del total</p>
-                    {/* Mini-barra de peso relativo del momento */}
+                    <p className="text-[10px] tabular-nums text-[#a39e97]">{m.units_total.toLocaleString('es-AR')} u</p>
                     <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-secondary">
                       <div
-                        className="h-full rounded-full bg-[#006d5a]"
-                        style={{ width: `${Math.max(Math.min((m.revenue_total / maxRevenue) * 100, 100), 2)}%`, opacity: isSelected ? 1 : 0.45 }}
+                        className="h-full rounded-full"
+                        style={{ width: `${Math.max(Math.min((m.revenue_total / maxRevenue) * 100, 100), 2)}%`, backgroundColor: accentColor, opacity: isSelected ? 1 : 0.45 }}
                       />
                     </div>
                   </motion.button>
@@ -200,7 +198,7 @@ export function MomentosView() {
                           <div className="flex items-center gap-2">
                             <Sparkles className="size-4 text-[#006d5a]" />
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
-                              Para promocionar en {MOMENTO_META[momento.key].label.toLowerCase()}
+                              Para promocionar — {MOMENTO_META[momento.key].label}
                             </span>
                           </div>
                           <p className="mt-1 text-[11px] leading-snug text-[#a39e97]">
