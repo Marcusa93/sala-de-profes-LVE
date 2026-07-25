@@ -12,6 +12,49 @@ import { fetchMonthSales, type MonthSale } from '@/lib/fudo/month-sales'
 
 const DOW_LABELS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
 
+// Mapeo de categorías Fudo → momento del día
+// Las categorías no listadas aquí (bebidas sin alcohol, adicionales, etc.) quedan sin asignar.
+const DESAYUNO_MERIENDA_CATS = new Set([
+  'Desayunos & Meriendas',
+  'Entre Panes Desayunos y Meriendas',
+  'Cafetería',
+  'Infusiones',
+  'Pasteleria',
+  'SIN TACC',
+  'Tostones',
+  'LECHES',
+  'Cafe Frio',
+])
+
+const ALMUERZO_CENA_CATS = new Set([
+  'Platos Principales',
+  'Pizzas',
+  'Entre Panes',
+  'No Vives de Ensalada',
+  'Entradas',
+  'LVE Kids',
+  'Picadas',
+  'WRAPS',
+  'Papas Fritas',
+  'Guarniciones',
+  'Menu diario',
+  'Menu personal',
+  'PEDIDOS YA',
+  'TAKE WAY',
+  'Postres',
+  'Bebidas con alcohol',
+  'Copa de vino',
+  'Tragos',
+  'Pomo del Dia',
+])
+
+function catToMomento(catName: string | null): 'desayuno_merienda' | 'almuerzo_cena' | null {
+  if (!catName) return null
+  if (DESAYUNO_MERIENDA_CATS.has(catName)) return 'desayuno_merienda'
+  if (ALMUERZO_CENA_CATS.has(catName)) return 'almuerzo_cena'
+  return null
+}
+
 export type SalesAnalysisRequest = {
   month?: string | null
   /** Días de semana a analizar (0=dom … 6=sáb). Vacío = todos. */
@@ -27,6 +70,7 @@ export type SalesAnalysisStats = {
   avgTicket: number
   topProducts: { name: string; category: string | null; qty: number; revenue: number }[]
   categoryMix: { category: string; revenue: number; qty: number }[]
+  byMomento: { momento: string; label: string; revenue: number; qty: number; topProducts: { name: string; qty: number; revenue: number }[] }[]
   byDow: { dow: string; total: number; tickets: number; dayCount: number; avgPerDay: number }[]
   byWeek: { week: string; total: number; tickets: number }[]
   byHour: { hour: number; total: number; tickets: number }[]
@@ -61,6 +105,7 @@ export async function buildSalesAnalysis(
   // --- Agregados de la ventana ---
   const productAgg = new Map<string, { name: string; category: string | null; qty: number; revenue: number }>()
   const categoryAgg = new Map<string, { revenue: number; qty: number }>()
+  const momentoAgg = new Map<string, { revenue: number; qty: number; products: Map<string, { qty: number; revenue: number }> }>()
   const hourAgg = new Map<number, { total: number; tickets: number }>()
   const dowAgg = new Map<number, { total: number; tickets: number; days: Set<string> }>()
   const weekAgg = new Map<string, { total: number; tickets: number }>()
@@ -96,6 +141,18 @@ export async function buildSalesAnalysis(
       c.revenue += item.price
       c.qty += item.qty
       categoryAgg.set(catKey, c)
+
+      const momento = catToMomento(category)
+      if (momento) {
+        const m = momentoAgg.get(momento) ?? { revenue: 0, qty: 0, products: new Map() }
+        m.revenue += item.price
+        m.qty += item.qty
+        const mp = m.products.get(item.name) ?? { qty: 0, revenue: 0 }
+        mp.qty += item.qty
+        mp.revenue += item.price
+        m.products.set(item.name, mp)
+        momentoAgg.set(momento, m)
+      }
     }
   }
 
@@ -103,6 +160,11 @@ export async function buildSalesAnalysis(
   const totalTickets = windowSales.length
 
   const dowLabelList = req.dows.length > 0 ? req.dows.map(d => DOW_LABELS[d]).join(', ') : 'todos los días'
+  const MOMENTO_LABELS: Record<string, string> = {
+    desayuno_merienda: 'Desayunos y Meriendas',
+    almuerzo_cena: 'Almuerzos y Cenas',
+  }
+
   const stats: SalesAnalysisStats = {
     windowLabel: `${dowLabelList}, de ${req.hourFrom}:00 a ${req.hourTo}:59`,
     totalFacturado,
@@ -112,6 +174,16 @@ export async function buildSalesAnalysis(
     categoryMix: Array.from(categoryAgg.entries())
       .map(([category, v]) => ({ category, ...v }))
       .sort((a, b) => b.revenue - a.revenue),
+    byMomento: ['desayuno_merienda', 'almuerzo_cena']
+      .filter(k => momentoAgg.has(k))
+      .map(k => {
+        const m = momentoAgg.get(k)!
+        const topProducts = Array.from(m.products.entries())
+          .map(([name, v]) => ({ name, ...v }))
+          .sort((a, b) => b.revenue - a.revenue)
+          .slice(0, 5)
+        return { momento: k, label: MOMENTO_LABELS[k] ?? k, revenue: m.revenue, qty: m.qty, topProducts }
+      }),
     byDow: Array.from(dowAgg.entries())
       .map(([dow, v]) => ({
         dow: DOW_LABELS[dow],
@@ -154,6 +226,11 @@ async function generateAnalysisText(stats: SalesAnalysisStats): Promise<{ analys
     '',
     'TOP PRODUCTOS (por facturación):',
     ...stats.topProducts.slice(0, 10).map(p => `- ${p.name}${p.category ? ` [${p.category}]` : ''}: ${p.qty} u., ${fmt(p.revenue)}`),
+    '',
+    'POR MOMENTO DEL DÍA:',
+    ...stats.byMomento.map(m =>
+      `- ${m.label}: ${fmt(m.revenue)} (${m.qty} u.) | Top: ${m.topProducts.slice(0, 3).map(p => p.name).join(', ')}`,
+    ),
     '',
     'MIX POR CATEGORÍA DE CARTA:',
     ...stats.categoryMix.slice(0, 8).map(c => `- ${c.category}: ${fmt(c.revenue)} (${c.qty} u.)`),

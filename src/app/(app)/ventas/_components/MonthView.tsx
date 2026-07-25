@@ -28,6 +28,7 @@ type AiResult = {
     totalTickets: number
     avgTicket: number
     categoryMix: { category: string; revenue: number; qty: number }[]
+    byMomento: { momento: string; label: string; revenue: number; qty: number; topProducts: { name: string; qty: number; revenue: number }[] }[]
     byWeek: { week: string; total: number; tickets: number }[]
   }
 }
@@ -322,15 +323,28 @@ export function MonthView({ selectedDate, setSelectedDate }: Props) {
                     Análisis — {aiResult.stats.windowLabel}
                   </p>
                   <p className="whitespace-pre-line text-xs leading-relaxed text-[#3d2c24]">{aiResult.analysis}</p>
-                  {aiResult.stats.categoryMix.length > 0 && (
+                  {(aiResult.stats.byMomento?.length ?? 0) > 0 && (
                     <div>
-                      <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#a39e97]">Por tipo de producto</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {aiResult.stats.categoryMix.slice(0, 6).map((c) => (
-                          <span key={c.category} className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df]">
-                            {c.category} · {formatPrice(c.revenue)}
-                          </span>
-                        ))}
+                      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#a39e97]">Por momento del día</p>
+                      <div className="space-y-2">
+                        {aiResult.stats.byMomento.map((m) => {
+                          const isDesayuno = m.momento === 'desayuno_merienda'
+                          const color = isDesayuno ? '#d4943a' : '#006d5a'
+                          const bg = isDesayuno ? '#fdf6ec' : '#e8f5f1'
+                          return (
+                            <div key={m.momento} className="rounded-xl p-3" style={{ backgroundColor: bg }}>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold" style={{ color }}>{m.label}</span>
+                                <span className="text-[11px] font-bold tabular-nums" style={{ color }}>{formatPrice(m.revenue)}</span>
+                              </div>
+                              {m.topProducts.length > 0 && (
+                                <p className="mt-1 text-[10px] text-[#7d6c64]">
+                                  {m.topProducts.slice(0, 3).map(p => p.name).join(' · ')}
+                                </p>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     </div>
                   )}
