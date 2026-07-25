@@ -38,6 +38,7 @@ import { KpiCard } from '@/components/admin/KpiCard'
 import { ExecutiveSummary } from '@/components/admin/ExecutiveSummary'
 import type { StockAnomaliesResponse, StockAnomalyItem } from '@/lib/contracts/stock-anomalies'
 import type { StockIntelligenceResponse, StockSetupIssue } from '@/lib/stock/intelligence'
+import { lotTone, formatLotCountdown, formatQty } from '@/lib/stock/helpers'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -84,6 +85,18 @@ type AttendanceAlert = {
   hours_worked: number | null
   suspicious_reasons: string[]
   status: string
+}
+
+// Shape de /api/stock/lots (window_days=7)
+type ExpiryLot = {
+  id: number
+  stock_item_id: string
+  stock_item_name: string
+  lot_code: string
+  qty_remaining: number
+  unit: string
+  expires_at: string
+  expires_in_days: number
 }
 
 type AuditEntry = {
@@ -169,6 +182,14 @@ function formatAuditQty(value: number): string {
   return Number(value.toFixed(2)).toLocaleString('es-AR')
 }
 
+// Acción sugerida para un lote según los días que le quedan
+function lotSuggestedAction(expiresInDays: number): string {
+  if (expiresInDays < 0) return 'Descartá y registrá la merma'
+  if (expiresInDays <= 1) return 'Sacá promo HOY o usalo en producción'
+  if (expiresInDays <= 3) return 'Planificá promo'
+  return 'Monitoreá y planificá con tiempo'
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -180,6 +201,7 @@ export default function ControlPage() {
   const [critical, setCritical] = useState<SectionState<CriticalAlert[]>>(initialState)
   const [anomalies, setAnomalies] = useState<SectionState<StockAnomaliesResponse>>(initialState)
   const [intel, setIntel] = useState<SectionState<IntelData>>(initialState)
+  const [expiryLots, setExpiryLots] = useState<SectionState<ExpiryLot[]>>(initialState)
   const [attendance, setAttendance] = useState<SectionState<AttendanceAlert[]>>(initialState)
   const [history, setHistory] = useState<SectionState<AuditEntry[]>>(initialState)
 
@@ -259,6 +281,25 @@ export default function ControlPage() {
       setIntel({
         loading: false,
         error: err instanceof Error ? err.message : 'No se pudo cargar el análisis de stock',
+        data: null,
+      })
+    }
+  }, [])
+
+  // Lotes por vencer (vida útil): vencidos o que vencen en ≤7 días
+  const loadExpiryLots = useCallback(async () => {
+    setExpiryLots({ loading: true, error: null, data: null })
+    try {
+      const res = await fetch('/api/stock/lots?window_days=7&limit=30')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error al cargar lotes')
+      const lots = ((data.lots as ExpiryLot[]) ?? []).filter((l) => l.qty_remaining > 0)
+      setExpiryLots({ loading: false, error: null, data: lots })
+    } catch (err) {
+      console.error('[control] stock lots', err)
+      setExpiryLots({
+        loading: false,
+        error: err instanceof Error ? err.message : 'No se pudieron cargar los lotes por vencer',
         data: null,
       })
     }
@@ -346,8 +387,8 @@ export default function ControlPage() {
 
   useEffect(() => {
     if (!profile || !isManager) return
-    void Promise.all([loadCritical(), loadAnomalies(), loadIntel(), loadAttendance(), loadFudoUnmapped(), loadHistory()])
-  }, [profile, isManager, loadCritical, loadAnomalies, loadIntel, loadAttendance, loadFudoUnmapped, loadHistory])
+    void Promise.all([loadCritical(), loadAnomalies(), loadIntel(), loadExpiryLots(), loadAttendance(), loadFudoUnmapped(), loadHistory()])
+  }, [profile, isManager, loadCritical, loadAnomalies, loadIntel, loadExpiryLots, loadAttendance, loadFudoUnmapped, loadHistory])
 
   // -------------------------------------------------------------------------
   // Access control
@@ -392,6 +433,9 @@ export default function ControlPage() {
   // b. Anomalías de stock (radar)
   const anomalyItems = anomalies.data?.items ?? []
   const anomalyCount = anomalies.data?.summary.total ?? anomalyItems.length
+
+  // b2. Lotes por vencer (vida útil ≤7 días)
+  const expiryItems = expiryLots.data ?? []
 
   // c. Datos por completar (setup issues + items sin proveedor + items Fudo sin crear)
   const setupIssues = intel.data?.response.setup_issues ?? []
@@ -575,6 +619,45 @@ export default function ControlPage() {
               meta={item.action_label}
             />
           ))}
+        </ControlSection>
+
+        {/* b2. Por vencer (vida útil de lotes) */}
+        <ControlSection
+          title="⏰ Por vencer"
+          icon={Clock}
+          tone="orange"
+          count={expiryItems.length}
+          loading={expiryLots.loading}
+          error={expiryLots.error}
+          emptyText="Ningún lote vence en los próximos 7 días"
+        >
+          {expiryItems.map((lot) => {
+            const tone = lotTone(lot.expires_in_days)
+            return (
+              <Link
+                key={lot.id}
+                href="/stock"
+                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-[#f9f7f3] active:bg-[#f3efe9]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-medium text-[#3d2c24]">{lot.stock_item_name}</p>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${tone.pill}`}>
+                      {formatLotCountdown(lot.expires_in_days)}
+                    </span>
+                    <span className="shrink-0 rounded-full bg-[#f5f0ea] px-2 py-0.5 text-[10px] font-medium tabular-nums text-[#a39e97]">
+                      quedan {formatQty(lot.qty_remaining)} {lot.unit}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-[#a39e97]">
+                    {lotSuggestedAction(lot.expires_in_days)}
+                    {lot.lot_code ? ` · ${lot.lot_code}` : ''}
+                  </p>
+                </div>
+                <ChevronRight className="size-4 shrink-0 text-[#d8d2c9]" />
+              </Link>
+            )
+          })}
         </ControlSection>
 
         {/* c. Datos por completar */}

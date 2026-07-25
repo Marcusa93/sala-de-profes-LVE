@@ -54,6 +54,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio'],
     target_user_ids: [],
   },
+  expiry_alerts: {
+    label: 'Productos por vencer',
+    description: 'Aviso diario cuando un lote está por vencer: promocionar, usar o descartar.',
+    enabled: true,
+    target_roles: ['socio', 'encargado'],
+    target_user_ids: [],
+  },
 }
 
 export type NotificationEventKey = keyof typeof DEFAULT_NOTIFICATION_EVENTS

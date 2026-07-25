@@ -19,13 +19,14 @@ import { CartaView } from './_components/CartaView'
 import { PreciosView } from './_components/PreciosView'
 import { ProduccionCostosView } from './_components/ProduccionCostosView'
 import { PersonalView } from './_components/PersonalView'
+import { MomentosView } from './_components/MomentosView'
 
 const REFRESH_INTERVAL = 5 * 60 * 1000
 
-type ViewMode = 'dia' | 'mes' | 'comparar' | 'balance' | 'carta' | 'precios' | 'produccion' | 'personal'
+type ViewMode = 'dia' | 'mes' | 'comparar' | 'balance' | 'carta' | 'momentos' | 'precios' | 'produccion' | 'personal'
 
-const ALL_MODES: ViewMode[] = ['dia', 'mes', 'comparar', 'balance', 'carta', 'precios', 'produccion', 'personal']
-const MANAGER_MODES: ViewMode[] = ['balance', 'carta', 'precios', 'produccion', 'personal']
+const ALL_MODES: ViewMode[] = ['dia', 'mes', 'comparar', 'balance', 'carta', 'momentos', 'precios', 'produccion', 'personal']
+const MANAGER_MODES: ViewMode[] = ['balance', 'carta', 'momentos', 'precios', 'produccion', 'personal']
 
 function isViewMode(v: string | null): v is ViewMode {
   return v != null && (ALL_MODES as string[]).includes(v)
@@ -63,7 +64,7 @@ function VentasContent() {
   const modes = isManager ? ALL_MODES : (['dia', 'mes', 'comparar'] as ViewMode[])
   const MODE_LABELS: Record<string, string> = {
     dia: 'Día', mes: 'Mes', comparar: 'Comparar', balance: 'Balance', carta: 'Carta',
-    precios: 'Precios', produccion: 'Producción', personal: 'Personal',
+    momentos: 'Momentos', precios: 'Precios', produccion: 'Producción', personal: 'Personal',
   }
 
   // Si el deep-link apunta a un modo manager-only y el perfil no lo permite, volver a Día
@@ -236,6 +237,8 @@ function VentasContent() {
           {viewMode === 'balance' && isManager && <BalanceView />}
 
           {viewMode === 'carta' && isManager && <CartaView />}
+
+          {viewMode === 'momentos' && isManager && <MomentosView />}
 
           {viewMode === 'precios' && isManager && <PreciosView />}
 
