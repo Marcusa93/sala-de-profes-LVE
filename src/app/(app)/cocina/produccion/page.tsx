@@ -133,6 +133,157 @@ function PlanIACard() {
 }
 
 // ---------------------------------------------------------------------------
+// Sugerencias con datos duros — demanda real por día de semana × stock × tanda
+// ---------------------------------------------------------------------------
+
+type Sugerencia = {
+  recipe_id: string
+  nombre: string
+  stock_item_id: string
+  stock_item_name: string
+  unidad: string
+  stock_actual: number
+  stock_utilizable: number
+  vencido_qty: number
+  vence_proximo: string | null
+  demanda_hoy: number
+  demanda_maniana: number
+  demanda_diaria_prom: number
+  sugerido: number
+  tanda_tipica: number | null
+  cobertura_dias: number
+  fuente_demanda: 'ventas_fudo' | 'movimientos_stock'
+  reason: string
+}
+
+type SugerenciasResponse = {
+  generated_at: string
+  hoy: string
+  maniana: string
+  ventana_dias: number
+  items: Sugerencia[]
+  sin_datos: string[]
+}
+
+function coberturaColor(dias: number) {
+  if (dias < 1) return { bar: 'bg-[#ea504c]', text: 'text-[#ea504c]' }
+  if (dias < 2) return { bar: 'bg-[#d4943a]', text: 'text-[#d4943a]' }
+  return { bar: 'bg-[#006d5a]', text: 'text-[#006d5a]' }
+}
+
+function fmtQty(n: number) {
+  return n % 1 === 0 ? String(n) : n.toLocaleString('es-AR', { maximumFractionDigits: 1 })
+}
+
+function SugerenciasCard() {
+  const [data, setData] = useState<SugerenciasResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/produccion/sugerencias', { credentials: 'include' })
+      if (!res.ok) throw new Error()
+      setData(await res.json())
+      setFailed(false)
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  // Fallback: sin datos duros (o error) → plan IA existente
+  if (!loading && (failed || !data || data.items.length === 0)) {
+    return <PlanIACard />
+  }
+
+  return (
+    <div className="rounded-2xl bg-white ring-1 ring-[#ebe6df]">
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-2">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-[#3d2c24]">
+            <Sparkles className="size-3.5 text-white" />
+          </div>
+          <div>
+            <p className="text-[13px] font-bold text-[#3d2c24]">¿Qué producir hoy?</p>
+            <p className="text-[10px] text-[#a39e97]">
+              {loading
+                ? 'Cruzando ventas por día de semana, stock y tandas…'
+                : `Hoy ${data!.hoy} · ventas reales últimos ${data!.ventana_dias} días`}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="rounded-lg bg-[#f3efe9] p-2 text-[#3d2c24] active:scale-95 disabled:opacity-50"
+        >
+          <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+        </button>
+      </div>
+
+      {!loading && data && (
+        <div className="border-t border-[#ebe6df]/60 px-4 py-3">
+          <div className="space-y-2">
+            {data.items.map((item) => {
+              const color = coberturaColor(item.cobertura_dias)
+              // Barra: cobertura sobre un horizonte de 3 días
+              const pct = Math.max(4, Math.min(100, (item.cobertura_dias / 3) * 100))
+              return (
+                <div key={item.recipe_id} className="rounded-xl bg-[#faf8f5] px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-semibold text-[#3d2c24]">{item.nombre}</p>
+                      <p className="text-[11px] text-[#7d6c64]">
+                        Tenés {fmtQty(item.stock_utilizable)} {item.unidad} · se venden ~{fmtQty(item.demanda_hoy)} hoy
+                        {item.demanda_maniana > 0 && ` y ~${fmtQty(item.demanda_maniana)} mañana`}
+                      </p>
+                    </div>
+                    <Link
+                      href={`/cocina/produccion/nueva?receta=${encodeURIComponent(item.recipe_id)}`}
+                      className="flex shrink-0 items-center gap-1 rounded-full bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-bold text-white active:scale-95"
+                    >
+                      <Plus className="size-3" />
+                      {item.sugerido > 0 ? `${fmtQty(item.sugerido)} ${item.unidad}` : 'Producir'}
+                    </Link>
+                  </div>
+
+                  {/* Barra de cobertura (horizonte 3 días) */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#ebe6df]">
+                      <div className={cn('h-full rounded-full transition-all', color.bar)} style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className={cn('shrink-0 text-[10px] font-bold', color.text)}>
+                      {item.cobertura_dias < 1 ? 'menos de 1 día' : `~${fmtQty(item.cobertura_dias)} d`}
+                    </span>
+                  </div>
+
+                  <p className="mt-1 text-[10px] text-[#a39e97]">
+                    {item.reason}
+                    {item.tanda_tipica != null && item.sugerido > 0 && ` · tanda típica: ${fmtQty(item.tanda_tipica)} ${item.unidad}`}
+                    {item.vence_proximo && ` · vence lote: ${item.vence_proximo.slice(8, 10)}/${item.vence_proximo.slice(5, 7)}`}
+                  </p>
+                </div>
+              )
+            })}
+          </div>
+
+          {data.sin_datos.length > 0 && (
+            <p className="mt-2 text-[10px] text-[#a39e97]">
+              Sin datos de venta todavía: {data.sin_datos.join(' · ')}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -239,9 +390,9 @@ export default function ProduccionPage() {
       </div>
 
       <div className="mx-auto max-w-2xl space-y-3 px-4 pt-4">
-        {/* Plan de producción IA: qué producir hoy */}
+        {/* Qué producir hoy: datos duros de demanda × stock; fallback plan IA */}
         <FadeIn>
-          <PlanIACard />
+          <SugerenciasCard />
         </FadeIn>
 
         {loading ? (

@@ -113,6 +113,52 @@ async function normalizeOrderUnits(admin: ReturnType<typeof createAdminClient>, 
   return errors
 }
 
+// Si la orden viene de una plantilla con receta y la receta no tiene
+// output_stock_item_id, lo aprende de la salida principal (output no-waste
+// con stock_item_id de mayor cantidad). Así el vínculo receta ↔ stock se
+// auto-repara con el uso, sin depender del match por nombre.
+async function linkRecipeOutput(admin: ReturnType<typeof createAdminClient>, orderId: number) {
+  const { data: orderRow } = await admin
+    .from('production_orders')
+    .select('template_id')
+    .eq('id', orderId)
+    .single()
+  if (!orderRow?.template_id) return
+
+  const { data: template } = await admin
+    .from('production_templates')
+    .select('recipe_id')
+    .eq('id', orderRow.template_id)
+    .single()
+  if (!template?.recipe_id) return
+
+  const { data: recipe, error: recipeErr } = await admin
+    .from('recipes')
+    .select('id, output_stock_item_id')
+    .eq('id', template.recipe_id)
+    .single()
+  // Columna todavía no migrada (o receta borrada): no hay nada que reparar.
+  if (recipeErr || !recipe || recipe.output_stock_item_id) return
+
+  const { data: outputs } = await admin
+    .from('production_outputs')
+    .select('stock_item_id, qty_produced, is_waste')
+    .eq('production_order_id', orderId)
+    .eq('is_waste', false)
+    .not('stock_item_id', 'is', null)
+    .order('qty_produced', { ascending: false })
+    .limit(1)
+
+  const mainOutput = outputs?.[0]
+  if (!mainOutput?.stock_item_id) return
+
+  await admin
+    .from('recipes')
+    .update({ output_stock_item_id: mainOutput.stock_item_id })
+    .eq('id', recipe.id)
+    .is('output_stock_item_id', null)
+}
+
 export async function POST(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -209,6 +255,14 @@ export async function POST(
 
     // Congelar el costo de los insumos para que la producción quede histórica.
     await snapshotProductionInputCosts(admin, id)
+
+    // Auto-reparación del vínculo receta → stock producido: si la orden viene
+    // de una plantilla con receta y esa receta todavía no tiene
+    // output_stock_item_id, guardar el stock_item de la salida principal.
+    // Best-effort: nunca bloquea la validación (ni si la columna no existe aún).
+    await linkRecipeOutput(admin, id).catch((err) => {
+      console.warn('[production recipe output link warning]', err instanceof Error ? err.message : err)
+    })
 
     // Sync affected stock items to Fudo
     const movements = (result.movements ?? []) as { stock_item_id: number; change: number }[]

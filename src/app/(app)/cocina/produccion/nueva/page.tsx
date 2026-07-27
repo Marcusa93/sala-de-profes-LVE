@@ -340,6 +340,17 @@ export default function NuevaProduccionPage() {
     load()
   }, [])
 
+  // ?receta=<slug> — llega desde "¿Qué producir hoy?" con la receta a precargar.
+  // window.location en vez de useSearchParams para no requerir <Suspense>.
+  useEffect(() => {
+    const slug = new URLSearchParams(window.location.search).get('receta')
+    if (!slug) return
+    const batch = PRODUCTION_BATCHES.find(b => b.slug === slug) ?? null
+    if (!batch) return
+    setSelectedBatch(batch)
+    setProductionMode('template')
+  }, [])
+
   // Auto-generate order name
   useEffect(() => {
     if (primaryInputItem) {

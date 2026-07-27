@@ -9,9 +9,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // SIEMPRE canonicalizar cada fila (g/gr/gramos → ÷1000 kg, ml/cc → ÷1000 l)
 // ANTES de sumar o multiplicar por stock_items.cost_per_unit.
 //
-// Nivel 2: si un ingrediente es un stock_item cuyo nombre coincide con una
-// receta (ej: "Milanesa cruda"), su costo se toma del costo por porción de
-// esa receta (mismo patrón que /api/ventas/insumos, en versión costo).
+// Nivel 2: si un ingrediente es un stock_item producido por otra receta
+// (ej: "Milanesa cruda"), su costo se toma del costo por porción de esa
+// receta. El vínculo se resuelve PRIMERO por recipes.output_stock_item_id
+// (explícito, robusto a renombres) y recién si es null cae al match por
+// nombre exacto (comportamiento histórico).
 // ---------------------------------------------------------------------------
 
 /** Canonicaliza una cantidad: g→kg, ml→l. Devuelve qty + unidad canónica. */
@@ -84,21 +86,38 @@ export async function costRecipes(
   const directItemIds = [...new Set(ingredients.map(r => r.stock_item_id))]
   if (directItemIds.length === 0) return result
 
-  // 2. Detectar intermedios: stock_items usados cuyo nombre coincide con una receta
-  const [{ data: directItems, error: siError }, { data: allRecipes, error: rError }] = await Promise.all([
+  // 2. Detectar intermedios: stock_items usados que son producidos por otra
+  //    receta. Vínculo explícito (output_stock_item_id) primero; match por
+  //    nombre solo como fallback para recetas sin vincular.
+  const [{ data: directItems, error: siError }, recipesRes] = await Promise.all([
     admin.from('stock_items').select('id, name, unit, cost_per_unit').in('id', directItemIds),
-    admin.from('recipes').select('id, name'),
+    admin.from('recipes').select('id, name, output_stock_item_id'),
   ])
   if (siError) throw new Error(siError.message)
-  if (rError) throw new Error(rError.message)
+
+  type RecipeRow = { id: string; name: string; output_stock_item_id?: string | null }
+  let allRecipes: RecipeRow[]
+  if (recipesRes.error) {
+    // Fallback: columna output_stock_item_id todavía no migrada
+    const legacy = await admin.from('recipes').select('id, name')
+    if (legacy.error) throw new Error(legacy.error.message)
+    allRecipes = (legacy.data ?? []) as RecipeRow[]
+  } else {
+    allRecipes = (recipesRes.data ?? []) as RecipeRow[]
+  }
 
   const recipeIdByName = new Map<string, string>()
-  for (const r of allRecipes ?? []) recipeIdByName.set((r.name as string).trim().toLowerCase(), r.id as string)
+  const recipeIdByOutputItemId = new Map<string, string>()
+  for (const r of allRecipes) {
+    recipeIdByName.set(r.name.trim().toLowerCase(), r.id)
+    if (r.output_stock_item_id) recipeIdByOutputItemId.set(r.output_stock_item_id, r.id)
+  }
 
-  // stock_item intermedio → receta L1 que lo produce
+  // stock_item intermedio → receta L1 que lo produce (explícito > nombre)
   const l1RecipeByItemId = new Map<string, string>()
   for (const item of (directItems ?? []) as StockItemRow[]) {
-    const rid = recipeIdByName.get(item.name.trim().toLowerCase())
+    const rid = recipeIdByOutputItemId.get(item.id)
+      ?? recipeIdByName.get(item.name.trim().toLowerCase())
     if (rid) l1RecipeByItemId.set(item.id, rid)
   }
 

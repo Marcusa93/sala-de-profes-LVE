@@ -441,9 +441,12 @@ export default function ControlPage() {
   const setupIssues = intel.data?.response.setup_issues ?? []
   const missingSupplierCount = intel.data?.missingSupplierCount ?? 0
   const fudoUnmappedCount = fudoUnmapped?.total ?? 0
+  const unlinkedIntermediates = intel.data?.response.unlinked_intermediates ?? null
+  const unlinkedIntermediatesCount = unlinkedIntermediates?.count ?? 0
   const setupCount = setupIssues.length
     + (missingSupplierCount > 0 ? 1 : 0)
     + (fudoUnmappedCount > 0 ? 1 : 0)
+    + (unlinkedIntermediatesCount > 0 ? 1 : 0)
 
   // d. Fichajes sospechosos
   const attendanceAlerts = attendance.data ?? []
@@ -694,6 +697,18 @@ export default function ControlPage() {
                 Crear todos en LVE
               </button>
             </div>
+          )}
+          {unlinkedIntermediatesCount > 0 && (
+            <SectionRow
+              href="/recetas"
+              title={`${unlinkedIntermediatesCount} intermedio${unlinkedIntermediatesCount === 1 ? '' : 's'} sin vincular al stock — el costeo de los platos que los usan está incompleto`}
+              detail={
+                unlinkedIntermediates?.names.length
+                  ? `Sin receta que los produzca: ${unlinkedIntermediates.names.join(', ')}.`
+                  : 'Vinculá cada receta intermedia con el item de stock que produce.'
+              }
+              meta="Revisar"
+            />
           )}
           {missingSupplierCount > 0 && (
             <SectionRow

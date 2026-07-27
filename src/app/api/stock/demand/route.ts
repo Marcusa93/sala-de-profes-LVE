@@ -116,34 +116,66 @@ export async function GET(request: NextRequest) {
   // Ejemplo: nalga → "Milanesa cruda" (recipe L1) → "Milanesa cruda" (stock_item)
   //          → "Milanesa napolitana" (recipe L2) → menu_item → fudo_sales
   //
-  // El vínculo entre recipe L1 y stock_item intermedio se resuelve por nombre exacto
-  // (case-insensitive). Cuando la encargada crea una receta "Milanesa cruda" Y un
-  // stock_item "Milanesa cruda", la cadena se completa automáticamente.
+  // El vínculo entre recipe L1 y stock_item intermedio se resuelve PRIMERO por
+  // recipes.output_stock_item_id (explícito, robusto a renombres) y, para las
+  // recetas sin vincular, cae al match por nombre exacto (case-insensitive).
   //
   // Qty compuesta = qty_L1 (nalga por milanesa cruda) × qty_L2 (milanesas por plato)
   // -------------------------------------------------------------------------
   if (salesRows.length === 0 && recipeIds.length > 0) {
-    const { data: recipesL1 } = await admin
-      .from('recipes')
-      .select('id, name')
-      .in('id', recipeIds)
+    type RecipeL1Row = { id: string; name: string; output_stock_item_id?: string | null }
+    let recipesL1: RecipeL1Row[] = []
+    {
+      const res = await admin
+        .from('recipes')
+        .select('id, name, output_stock_item_id')
+        .in('id', recipeIds)
+      if (res.error) {
+        // Fallback: columna output_stock_item_id todavía no migrada
+        const legacy = await admin.from('recipes').select('id, name').in('id', recipeIds)
+        recipesL1 = (legacy.data ?? []) as RecipeL1Row[]
+      } else {
+        recipesL1 = (res.data ?? []) as RecipeL1Row[]
+      }
+    }
 
-    if (recipesL1?.length) {
-      const nameFilter = recipesL1.map(r => `name.ilike.${r.name}`).join(',')
-      const { data: semiFinished } = await admin
-        .from('stock_items')
-        .select('id, name')
-        .or(nameFilter)
+    if (recipesL1.length) {
+      // 1. Vínculo explícito: stock_item.id ← recipes.output_stock_item_id
+      const explicitRecipeByItemId: Record<string, string> = {}
+      for (const r of recipesL1) {
+        if (r.output_stock_item_id) explicitRecipeByItemId[r.output_stock_item_id] = r.id
+      }
+      const explicitItemIds = Object.keys(explicitRecipeByItemId)
+      const unlinkedRecipes = recipesL1.filter(r => !r.output_stock_item_id)
 
-      if (semiFinished?.length) {
+      const [explicitRes, byNameRes] = await Promise.all([
+        explicitItemIds.length > 0
+          ? admin.from('stock_items').select('id, name').in('id', explicitItemIds)
+          : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+        unlinkedRecipes.length > 0
+          ? admin
+              .from('stock_items')
+              .select('id, name')
+              .or(unlinkedRecipes.map(r => `name.ilike.${r.name}`).join(','))
+          : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+      ])
+
+      // Unificar (el explícito manda si un item aparece por las dos vías)
+      const semiFinishedById = new Map<string, { id: string; name: string }>()
+      for (const sf of [...(explicitRes.data ?? []), ...(byNameRes.data ?? [])]) {
+        if (!semiFinishedById.has(sf.id)) semiFinishedById.set(sf.id, sf)
+      }
+      const semiFinished = [...semiFinishedById.values()]
+
+      if (semiFinished.length) {
         // Mapa: sf stock_item.id → qty L1 (cuánto insumo raw por unidad de elaborado)
         const recipeLowerToId: Record<string, string> = {}
-        for (const r of recipesL1) {
+        for (const r of unlinkedRecipes) {
           recipeLowerToId[r.name.toLowerCase()] = r.id
         }
         const sfIdToL1Qty: Record<string, number> = {}
         for (const sf of semiFinished) {
-          const matchingRecipeId = recipeLowerToId[sf.name.toLowerCase()]
+          const matchingRecipeId = explicitRecipeByItemId[sf.id] ?? recipeLowerToId[sf.name.toLowerCase()]
           if (matchingRecipeId && qtyByRecipeId[matchingRecipeId] != null) {
             sfIdToL1Qty[sf.id] = qtyByRecipeId[matchingRecipeId]
           }

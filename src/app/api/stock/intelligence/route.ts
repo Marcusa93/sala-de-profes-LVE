@@ -858,6 +858,66 @@ export async function GET() {
 
     const anomalyCount = visibleSetupIssues.filter(isAnomalyIssue).length
 
+    // -----------------------------------------------------------------------
+    // Intermedios sin vincular: stock_items elaborados (marcados fudo_skip o
+    // que salieron de una orden de producción) que se usan como ingrediente en
+    // recetas pero que ninguna receta produce — ni por output_stock_item_id ni
+    // por match de nombre. El costeo nivel-2 de los platos que los usan queda
+    // incompleto (ej: "Milanesa cruda" renombrada o sin receta homónima).
+    // Tolerante: si recipes.output_stock_item_id todavía no existe (migración
+    // pendiente) o falla la consulta, la sección simplemente no aparece.
+    // -----------------------------------------------------------------------
+    let unlinkedIntermediates: { count: number; names: string[] } | undefined
+    try {
+      type RecipeLinkRow = { id: string; name: string; output_stock_item_id?: string | null }
+      let recipeLinks: RecipeLinkRow[] = []
+      const recipesRes = await admin.from('recipes').select('id, name, output_stock_item_id')
+      if (recipesRes.error) {
+        const legacy = await admin.from('recipes').select('id, name')
+        if (legacy.error) throw legacy.error
+        recipeLinks = (legacy.data ?? []) as RecipeLinkRow[]
+      } else {
+        recipeLinks = (recipesRes.data ?? []) as RecipeLinkRow[]
+      }
+
+      const [riRes, poRes] = await Promise.all([
+        admin.from('recipe_ingredients').select('stock_item_id'),
+        admin
+          .from('production_outputs')
+          .select('stock_item_id')
+          .eq('is_waste', false)
+          .not('stock_item_id', 'is', null),
+      ])
+      if (riRes.error) throw riRes.error
+      const usedItemIds = new Set((riRes.data ?? []).map((r) => String(r.stock_item_id)))
+      // Items que alguna vez salieron de producción → elaborados (aunque no tengan fudo_skip)
+      const producedInOrders = new Set(
+        (!poRes.error ? (poRes.data ?? []) : []).map((r) => String(r.stock_item_id)),
+      )
+
+      const producedItemIds = new Set<string>()
+      const recipeNameKeys = new Set<string>()
+      for (const r of recipeLinks) {
+        if (r.output_stock_item_id) producedItemIds.add(String(r.output_stock_item_id))
+        // Mismo criterio que el fallback runtime (recipe-cost/demand): lower+trim
+        recipeNameKeys.add(r.name.trim().toLowerCase())
+      }
+
+      const brokenNames = stockItems
+        .filter((item) =>
+          (item.fudo_skip === true || producedInOrders.has(String(item.id)))
+          && usedItemIds.has(String(item.id))
+          && !producedItemIds.has(String(item.id))
+          && !recipeNameKeys.has(item.name.trim().toLowerCase()),
+        )
+        .map((item) => item.name)
+
+      unlinkedIntermediates = { count: brokenNames.length, names: brokenNames.slice(0, 10) }
+    } catch (err) {
+      console.error('[stock intelligence] unlinked intermediates', err)
+      unlinkedIntermediates = undefined
+    }
+
     const response: StockIntelligenceResponse = {
       summary: {
         active_items: stockItems.length,
@@ -878,6 +938,7 @@ export async function GET() {
           return b.current_qty - a.current_qty
         })
         .slice(0, 100),
+      unlinked_intermediates: unlinkedIntermediates,
       generated_at: new Date().toISOString(),
     }
 

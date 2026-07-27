@@ -2352,6 +2352,7 @@ export type Database = {
           is_active: boolean | null
           name: string
           notes: string | null
+          output_stock_item_id: string | null
           preparation: string | null
           slug: string | null
           updated_at: string | null
@@ -2367,6 +2368,7 @@ export type Database = {
           is_active?: boolean | null
           name: string
           notes?: string | null
+          output_stock_item_id?: string | null
           preparation?: string | null
           slug?: string | null
           updated_at?: string | null
@@ -2382,6 +2384,7 @@ export type Database = {
           is_active?: boolean | null
           name?: string
           notes?: string | null
+          output_stock_item_id?: string | null
           preparation?: string | null
           slug?: string | null
           updated_at?: string | null
@@ -2393,6 +2396,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipes_output_stock_item_id_fkey"
+            columns: ["output_stock_item_id"]
+            isOneToOne: false
+            referencedRelation: "stock_items"
             referencedColumns: ["id"]
           },
         ]

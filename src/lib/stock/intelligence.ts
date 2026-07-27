@@ -67,6 +67,16 @@ export type StockIntelligenceResponse = {
     actions: StockSectorAction[]
   }>
   setup_issues: StockSetupIssue[]
+  /**
+   * Intermedios (elaborados usados como ingrediente en otras recetas) cuyo
+   * vínculo receta ↔ stock_item está roto: sin output_stock_item_id y sin
+   * match por nombre. El costeo de los platos que los usan queda incompleto.
+   * Opcional para compatibilidad con respuestas cacheadas viejas.
+   */
+  unlinked_intermediates?: {
+    count: number
+    names: string[]
+  }
   generated_at: string
 }
 
