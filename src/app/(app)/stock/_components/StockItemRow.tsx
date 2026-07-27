@@ -1,8 +1,10 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import {
   X,
+  ChevronRight,
   History,
   User,
   Clock,
@@ -228,7 +230,14 @@ export function StockItemRow({
     >
       <div className="flex items-center px-3 py-2.5">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-[#3d2c24]">{item.name}</p>
+          {/* El nombre es la puerta a la ficha del insumo (todo sobre este item) */}
+          <Link
+            href={`/stock/item/${item.id}`}
+            className="group flex items-center gap-1 truncate text-sm font-bold text-[#3d2c24] transition-colors hover:text-[#006d5a]"
+          >
+            <span className="truncate">{item.name}</span>
+            <ChevronRight className="size-3 shrink-0 text-[#c8bfb6] transition-colors group-hover:text-[#006d5a]" />
+          </Link>
           {item.suppliers?.name && (
             <p className="truncate text-[10px] text-[#a39e97]">{item.suppliers.name}</p>
           )}
