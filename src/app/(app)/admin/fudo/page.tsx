@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import {
@@ -14,6 +15,7 @@ import {
   MapPin,
   CreditCard,
   Loader2,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -250,6 +252,24 @@ export default function FudoAdminPage() {
           Última sync: {lastSync}
         </p>
       )}
+
+      {/* Importar recetas desde el export XLS de Fudo */}
+      <Link href="/admin/fudo/importar">
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white p-3.5 ring-1 ring-[#ebe6df] transition-all active:scale-[0.99]">
+          <span className="flex min-w-0 items-center gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#006d5a]/10">
+              <FileSpreadsheet className="size-5 text-[#006d5a]" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-[#3d2c24]">Importar recetas</span>
+              <span className="block truncate text-xs text-[#a39e97]">
+                Subí el export productos.xls del panel de Fudo
+              </span>
+            </span>
+          </span>
+          <ChevronRight className="size-4 shrink-0 text-[#d1cdc7]" />
+        </div>
+      </Link>
 
       {/* Search */}
       <div className="relative">
