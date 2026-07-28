@@ -130,7 +130,7 @@ const SOCIO_MORE: ExpandableNavItem = {
       items: [
         { label: 'Fudo', href: '/admin/fudo', icon: RefreshCw, description: 'Sincronización y configuración de Fudo' },
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Datos de proveedores y condiciones' },
-        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Recetas y cambios por aprobar' },
+        { label: 'Importar recetas', href: '/admin/fudo/importar', icon: ClipboardCheck, description: 'Subir el export de Fudo para sincronizar recetas' },
         { label: 'Expedientes', href: '/expedientes', icon: FolderOpen, description: 'Seguimiento de temas administrativos' },
         { label: 'Auditoría', href: '/auditoria', icon: Shield, description: 'Historial de cambios sensibles' },
       ],
@@ -163,7 +163,6 @@ const ENCARGADO_MORE: ExpandableNavItem = {
       label: 'Inventario',
       items: [
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Contactos y condiciones de compra' },
-        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Cambios por aprobar' },
       ],
     },
   ],
@@ -180,7 +179,6 @@ const CHEF_MORE: ExpandableNavItem = {
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Stock cocina', href: '/cocina/stock', icon: Package, description: 'Faltantes e insumos del sector' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
-        { label: 'Pendientes', href: '/admin/recetas/pending', icon: ClipboardCheck, description: 'Cambios por revisar' },
       ],
     },
     {

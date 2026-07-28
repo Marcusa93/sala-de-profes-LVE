@@ -443,10 +443,13 @@ export default function ControlPage() {
   const fudoUnmappedCount = fudoUnmapped?.total ?? 0
   const unlinkedIntermediates = intel.data?.response.unlinked_intermediates ?? null
   const unlinkedIntermediatesCount = unlinkedIntermediates?.count ?? 0
+  const costDivergence = intel.data?.response.cost_divergence ?? null
+  const costDivergenceCount = costDivergence?.count ?? 0
   const setupCount = setupIssues.length
     + (missingSupplierCount > 0 ? 1 : 0)
     + (fudoUnmappedCount > 0 ? 1 : 0)
     + (unlinkedIntermediatesCount > 0 ? 1 : 0)
+    + (costDivergenceCount > 0 ? 1 : 0)
 
   // d. Fichajes sospechosos
   const attendanceAlerts = attendance.data ?? []
@@ -708,6 +711,21 @@ export default function ControlPage() {
                   : 'Vinculá cada receta intermedia con el item de stock que produce.'
               }
               meta="Revisar"
+            />
+          )}
+          {costDivergenceCount > 0 && (
+            <SectionRow
+              href="/stock"
+              title={`${costDivergenceCount} insumo${costDivergenceCount === 1 ? '' : 's'} con costo muy distinto entre Fudo y la app`}
+              detail={
+                costDivergence?.items.length
+                  ? costDivergence.items
+                    .slice(0, 3)
+                    .map((i) => `${i.name}: $${i.costo_lve.toLocaleString('es-AR')} en la app vs $${i.costo_fudo.toLocaleString('es-AR')} en Fudo (${i.diff_pct}%)`)
+                    .join(' · ')
+                  : 'La diferencia supera el 30%. Uno de los dos costos está desactualizado.'
+              }
+              meta="revisar precio en Fudo o recepción"
             />
           )}
           {missingSupplierCount > 0 && (

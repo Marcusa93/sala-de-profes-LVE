@@ -1,13 +1,25 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import Link from 'next/link'
 import {
   ChefHat,
+  ExternalLink,
   Plus,
+  RefreshCw,
   Search,
   ShieldAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -29,6 +41,11 @@ import { RecipeDeleteDialog } from '@/components/recipes/RecipeDeleteDialog'
 
 type FilterTab = 'todas' | RecipeCategory
 
+// La columna fudo_synced_at puede no existir todavía en la base (migración
+// pendiente): se tipa opcional y el fetch usa select('*'), que trae la columna
+// sólo si existe — sin romper la página en bases sin migrar.
+type RecipeRow = Recipe & { fudo_synced_at?: string | null }
+
 const EMPTY_INGREDIENT: RecipeIngredient = { name: '', qty: '', unit: 'g' }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +57,7 @@ export default function RecetasPage() {
   const [supabase] = useState(() => createClient())
 
   // Data
-  const [recipes, setRecipes] = useState<Recipe[]>([])
+  const [recipes, setRecipes] = useState<RecipeRow[]>([])
   const [loading, setLoading] = useState(true)
 
   // Filters
@@ -54,6 +71,9 @@ export default function RecetasPage() {
 
   // Detail dialog
   const [detailRecipe, setDetailRecipe] = useState<Recipe | null>(null)
+
+  // Aviso "esta receta se edita en Fudo"
+  const [fudoNoticeRecipe, setFudoNoticeRecipe] = useState<RecipeRow | null>(null)
 
   // Delete
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -89,7 +109,7 @@ export default function RecetasPage() {
         .order('name', { ascending: true })
 
       if (error) throw error
-      setRecipes((data as Recipe[]) ?? [])
+      setRecipes((data as RecipeRow[]) ?? [])
     } catch (err) {
       console.error('Error al cargar recetas:', err)
       toast.error('Error al cargar las recetas')
@@ -135,6 +155,13 @@ export default function RecetasPage() {
   }
 
   function openEditDialog(recipe: Recipe) {
+    // Las recetas espejo de Fudo NO se editan acá: se editan en Fudo y se
+    // reimporta el export (evita divergencia silenciosa con la próxima import).
+    const synced = (recipe as RecipeRow).fudo_synced_at
+    if (synced) {
+      setFudoNoticeRecipe(recipe as RecipeRow)
+      return
+    }
     setEditingRecipe(recipe)
     setFormName(recipe.name)
     setFormCategory(recipe.category as RecipeCategory)
@@ -364,6 +391,7 @@ export default function RecetasPage() {
             <RecipeCard
               key={recipe.id}
               recipe={recipe}
+              fudoSynced={Boolean(recipe.fudo_synced_at)}
               isChef={isChef}
               onClick={() => setDetailRecipe(recipe)}
               onEdit={() => openEditDialog(recipe)}
@@ -387,11 +415,58 @@ export default function RecetasPage() {
       {/* Dialogs */}
       <RecipeDetailDialog
         recipe={detailRecipe}
+        fudoSynced={Boolean((detailRecipe as RecipeRow | null)?.fudo_synced_at)}
         isChef={isChef}
         onClose={() => setDetailRecipe(null)}
         onEdit={openEditDialog}
         onDelete={openDeleteDialog}
       />
+
+      {/* Aviso: receta espejo de Fudo, no editable en la app */}
+      <Dialog
+        open={!!fudoNoticeRecipe}
+        onOpenChange={(open) => !open && setFudoNoticeRecipe(null)}
+      >
+        <DialogContent className="rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#e6f4f0]">
+                <RefreshCw className="size-5 text-[#006d5a]" />
+              </div>
+              <div>
+                <DialogTitle className="font-display text-lg font-bold text-[#3d2c24]">
+                  Sincronizada de Fudo
+                </DialogTitle>
+                <DialogDescription className="text-sm text-[#a39e97]">
+                  {fudoNoticeRecipe?.name}
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <p className="text-sm leading-relaxed text-[#3d2c24]">
+            Esta receta se edita en Fudo. Cambiala allá y reimportá el export
+            (Más → Fudo → Importar recetas).
+          </p>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              className="rounded-xl border-[#ebe6df] text-[#3d2c24]"
+              onClick={() => setFudoNoticeRecipe(null)}
+            >
+              Entendido
+            </Button>
+            {profile?.role === 'socio' && (
+              <Link
+                href="/admin/fudo/importar"
+                className="inline-flex h-9 items-center justify-center rounded-xl bg-[#006d5a] px-4 text-sm font-medium text-white transition-colors hover:bg-[#00594a]"
+              >
+                <ExternalLink className="mr-1.5 size-3.5" />
+                Importar recetas
+              </Link>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <RecipeFormDialog
         open={dialogOpen}

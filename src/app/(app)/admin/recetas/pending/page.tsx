@@ -267,7 +267,7 @@ function PendingLinkRow({
           {/* Ingredient name */}
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-sm font-semibold text-[#3d2c24]">{link.ingredient_name}</span>
-            {confidenceBadge(link.match_confidence, link.match_score)}
+            {confidenceBadge(link.match_confidence, link.match_score ?? 0)}
           </div>
 
           {/* Recipe */}
@@ -513,6 +513,26 @@ export default function PendingLinksPage() {
             Vincular recetas al stock Fudo
           </h1>
           <p className="section-label mt-0.5">Qué descuenta cada receta del stock real</p>
+        </div>
+      </div>
+
+      {/* Aviso: pantalla obsoleta para el flujo normal */}
+      <div className="flex items-start gap-3 rounded-2xl bg-[#fdf6ec] p-4 ring-1 ring-[#f0dfc0]">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-[#d4943a]" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-[#8a5a19]">
+            Esta pantalla quedó para casos raros
+          </p>
+          <p className="mt-0.5 text-xs leading-relaxed text-[#8a5a19]/80">
+            Las recetas ahora se vinculan solas con el importador de Fudo.
+          </p>
+          <Link
+            href="/admin/fudo/importar"
+            className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-[#8b5e34] underline underline-offset-2 hover:text-[#3d2c24]"
+          >
+            Ir al importador de Fudo
+            <ArrowRight className="size-3.5" />
+          </Link>
         </div>
       </div>
 

@@ -29,6 +29,7 @@ type StockRow = {
   unit: string
   current_qty: number
   min_qty: number
+  cost_per_unit: number | null
   shelf_life_days: number | null
   notes: string | null
   updated_at: string
@@ -364,7 +365,7 @@ export async function GET() {
     const [stockRes, menuRes, menuCategoriesRes, salesRes] = await Promise.all([
       admin
         .from('stock_items')
-        .select('id, name, category, unit, current_qty, min_qty, shelf_life_days, notes, updated_at, fudo_product_id, fudo_ingredient_id, fudo_skip')
+        .select('id, name, category, unit, current_qty, min_qty, cost_per_unit, shelf_life_days, notes, updated_at, fudo_product_id, fudo_ingredient_id, fudo_skip')
         .eq('is_active', true)
         .order('name'),
       admin
@@ -918,6 +919,57 @@ export async function GET() {
       unlinkedIntermediates = undefined
     }
 
+    // -----------------------------------------------------------------------
+    // Divergencia de costos Fudo vs LVE: items activos vinculados a un
+    // ingrediente Fudo cuyo cost_per_unit local difiere >30% del costo que
+    // reporta Fudo. Usa el fetch cacheado de ingredientes (30 min, una sola
+    // llamada paginada) — nunca N llamadas por item. Tolerante: si Fudo no
+    // responde, la sección simplemente no aparece (mismo patrón que
+    // unlinked_intermediates).
+    // -----------------------------------------------------------------------
+    let costDivergence: StockIntelligenceResponse['cost_divergence']
+    try {
+      const linkedWithCost = stockItems.filter(
+        (item) =>
+          item.fudo_ingredient_id
+          && typeof item.cost_per_unit === 'number'
+          && item.cost_per_unit > 0,
+      )
+      if (linkedWithCost.length === 0) {
+        costDivergence = { count: 0, items: [] }
+      } else {
+        const { getFudoIngredientsCached } = await import('@/lib/fudo/create-from-fudo')
+        const fudoIngredients = await getFudoIngredientsCached()
+        const fudoCostById = new Map<string, number>()
+        for (const ing of fudoIngredients) {
+          if (typeof ing.cost === 'number' && ing.cost > 0) {
+            fudoCostById.set(String(ing.id), ing.cost)
+          }
+        }
+
+        const divergent = linkedWithCost
+          .flatMap((item) => {
+            const fudoCost = fudoCostById.get(String(item.fudo_ingredient_id))
+            if (fudoCost == null) return []
+            const lveCost = item.cost_per_unit as number
+            const diffPct = Math.abs(lveCost - fudoCost) / fudoCost * 100
+            if (diffPct <= 30) return []
+            return [{
+              name: item.name,
+              costo_lve: Math.round(lveCost * 100) / 100,
+              costo_fudo: Math.round(fudoCost * 100) / 100,
+              diff_pct: Math.round(diffPct),
+            }]
+          })
+          .sort((a, b) => b.diff_pct - a.diff_pct)
+
+        costDivergence = { count: divergent.length, items: divergent.slice(0, 30) }
+      }
+    } catch (err) {
+      console.error('[stock intelligence] cost divergence', err)
+      costDivergence = undefined
+    }
+
     const response: StockIntelligenceResponse = {
       summary: {
         active_items: stockItems.length,
@@ -939,6 +991,7 @@ export async function GET() {
         })
         .slice(0, 100),
       unlinked_intermediates: unlinkedIntermediates,
+      cost_divergence: costDivergence,
       generated_at: new Date().toISOString(),
     }
 

@@ -77,6 +77,21 @@ export type StockIntelligenceResponse = {
     count: number
     names: string[]
   }
+  /**
+   * Items activos vinculados a un ingrediente Fudo cuyo cost_per_unit local
+   * difiere más de 30% del costo que reporta Fudo. Señal de precio desactualizado
+   * en Fudo o de una recepción mal cargada. Opcional para compatibilidad con
+   * respuestas cacheadas viejas; si Fudo no responde, la sección no aparece.
+   */
+  cost_divergence?: {
+    count: number
+    items: Array<{
+      name: string
+      costo_lve: number
+      costo_fudo: number
+      diff_pct: number
+    }>
+  }
   generated_at: string
 }
 

@@ -1,10 +1,12 @@
-import { Pencil, Trash2 } from 'lucide-react'
+import { Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { RECIPE_CATEGORIES } from '@/lib/constants'
 import type { RecipeCategory } from '@/lib/constants'
 import type { Recipe } from '@/types/database'
 
 type RecipeCardProps = {
   recipe: Recipe
+  /** Receta espejo del export de Fudo (se edita en Fudo, no en la app). */
+  fudoSynced?: boolean
   isChef: boolean
   onClick: () => void
   onEdit: () => void
@@ -13,6 +15,7 @@ type RecipeCardProps = {
 
 export function RecipeCard({
   recipe,
+  fudoSynced = false,
   isChef,
   onClick,
   onEdit,
@@ -49,6 +52,14 @@ export function RecipeCard({
               {catConfig.icon} {catConfig.label}
             </span>
           </div>
+
+          {/* Badge: espejo de Fudo */}
+          {fudoSynced && (
+            <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-[#e6f4f0] px-2 py-0.5 text-[10px] font-semibold text-[#006d5a]">
+              <RefreshCw className="size-2.5" />
+              Sincronizada de Fudo
+            </span>
+          )}
 
           {/* Ingredients preview */}
           {recipe.ingredients.length > 0 && (

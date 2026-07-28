@@ -263,6 +263,83 @@ export async function GET(request: NextRequest) {
     }
 
     // =====================================================================
+    // BLOQUE 4: desincronización de recetas (import del export de Fudo)
+    // =====================================================================
+    // (a) app_settings.fudo_recetas_import → cuándo fue el último import.
+    // (b) menu_items activos con fudo_product_id, ventas 28d y SIN receta:
+    //     si son ≥3, avisar que hay que subir el XLS.
+    // (c) si el último import fue hace >45 días, avisar que está viejo.
+    // No bloqueante: si algo falla acá, el parte sale igual.
+    try {
+      const { data: importSetting } = await admin
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'fudo_recetas_import')
+        .maybeSingle()
+      const lastImportAt = (importSetting?.value as Record<string, unknown> | null)
+        ?.last_import_at
+
+      const { data: noRecipeItems, error: nrErr } = await admin
+        .from('menu_items')
+        .select('id, fudo_product_id')
+        .eq('is_active', true)
+        .is('recipe_id', null)
+        .not('fudo_product_id', 'is', null)
+      if (nrErr) throw new Error(nrErr.message)
+
+      let sinRecetaConVentas = 0
+      const noRecipeFudoIds = (noRecipeItems ?? [])
+        .map((mi) => mi.fudo_product_id as string | null)
+        .filter((id): id is string => Boolean(id))
+
+      if (noRecipeFudoIds.length > 0) {
+        const since28 = arStartOfDayUTC(arDateMinus(28)).toISOString()
+        const soldFudoIds = new Set<string>()
+        const PAGE = 1000
+        for (let page = 0; page < 50; page++) {
+          const from = page * PAGE
+          const { data, error } = await admin
+            .from('fudo_sales')
+            .select('fudo_product_id')
+            .in('fudo_product_id', noRecipeFudoIds)
+            .gte('sold_at', since28)
+            .order('id', { ascending: true })
+            .range(from, from + PAGE - 1)
+          if (error) throw new Error(error.message)
+          if (!data || data.length === 0) break
+          for (const row of data) {
+            if (row.fudo_product_id) soldFudoIds.add(row.fudo_product_id as string)
+          }
+          if (data.length < PAGE) break
+        }
+        sinRecetaConVentas = soldFudoIds.size
+      }
+
+      const syncLines: string[] = []
+      if (sinRecetaConVentas >= 3) {
+        syncLines.push(
+          `📥 ${sinRecetaConVentas} productos venden sin receta en la app — exportá el XLS de Fudo y subilo (2 min)`,
+        )
+      }
+      if (typeof lastImportAt === 'string') {
+        const daysSince = Math.floor(
+          (Date.now() - new Date(lastImportAt).getTime()) / (24 * 60 * 60 * 1000),
+        )
+        if (daysSince > 45) {
+          syncLines.push(`📥 Hace ${daysSince} días que no se importan las recetas de Fudo`)
+        }
+      }
+      if (syncLines.length > 0) blocks.push(syncLines.join('\n'))
+
+      debug.recipe_sync = {
+        sin_receta_con_ventas_28d: sinRecetaConVentas,
+        last_import_at: typeof lastImportAt === 'string' ? lastImportAt : null,
+      }
+    } catch (err) {
+      debug.recipe_sync_error = err instanceof Error ? err.message : String(err)
+    }
+
+    // =====================================================================
     // Envío
     // =====================================================================
     let sent = false

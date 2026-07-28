@@ -524,6 +524,26 @@ export async function POST(request: NextRequest) {
   const written = plan.filter(p => p.recipeId)
   const writtenIds = written.map(p => p.recipeId as string)
 
+  // 2b. Marcar las recetas escritas como espejo de Fudo (fudo_synced_at).
+  //     Tolerante: si la columna todavía no existe en la base, el import
+  //     no debe fallar por eso.
+  const syncedAtIso = new Date().toISOString()
+  try {
+    for (const batch of chunk(writtenIds, 200)) {
+      const { error } = await admin
+        .from('recipes')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .update({ fudo_synced_at: syncedAtIso } as any)
+        .in('id', batch)
+      if (error) throw new Error(error.message)
+    }
+  } catch (err) {
+    console.warn(
+      '[import-recetas] No se pudo marcar fudo_synced_at (¿columna sin migrar?):',
+      err instanceof Error ? err.message : err,
+    )
+  }
+
   // 3. Reemplazar ingredientes: borrar los viejos e insertar los del export
   for (const batch of chunk(writtenIds, 200)) {
     const { error } = await admin.from('recipe_ingredients').delete().in('recipe_id', batch)
@@ -573,6 +593,25 @@ export async function POST(request: NextRequest) {
       .eq('id', p.recipeId as string)
     if (error) errors.push(`Vinculando insumo producido ${p.productName}: ${error.message}`)
     else outputsLinked++
+  }
+
+  // 6. Registrar el último import en app_settings (para el parte semanal)
+  try {
+    await admin.from('app_settings').upsert({
+      key: 'fudo_recetas_import',
+      value: {
+        last_import_at: syncedAtIso,
+        recetas: written.length,
+        filas: recetas.length + subproductos.length,
+      },
+      updated_by: user.id,
+      updated_at: new Date().toISOString(),
+    })
+  } catch (err) {
+    console.warn(
+      '[import-recetas] No se pudo guardar app_settings.fudo_recetas_import:',
+      err instanceof Error ? err.message : err,
+    )
   }
 
   // --- Auditoría ---

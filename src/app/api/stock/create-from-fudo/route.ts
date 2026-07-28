@@ -12,23 +12,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
-import { getFudoToken, fudo } from '@/lib/fudoClient'
+import { fudo } from '@/lib/fudoClient'
 import { logAudit } from '@/lib/audit'
+import {
+  createStockItemsFromIngredients,
+  readFudoIngredientsWithUnit,
+  readLinkedFudoIds,
+} from '@/lib/fudo/create-from-fudo'
 
 export const maxDuration = 60
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-type FudoIngredientWithUnit = {
-  id: string
-  name: string
-  cost: number | null
-  stock: number | null
-  stockControl: boolean
-  unit: 'kg' | 'l' | 'unidad'
-}
 
 type UnmappedProduct = {
   id: string
@@ -41,71 +37,8 @@ type UnmappedProduct = {
 // Fudo helpers
 // ---------------------------------------------------------------------------
 
-/** Mapea la unidad de Fudo ('kg' | 'litre' | 'unit') a la unidad LVE */
-function mapFudoUnit(raw: string | null | undefined): 'kg' | 'l' | 'unidad' {
-  const value = (raw ?? '').toLowerCase()
-  if (value.includes('kg') || value.includes('kilo')) return 'kg'
-  if (value.includes('lit') || value === 'l') return 'l'
-  return 'unidad'
-}
-
 function asNullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-/** Lee todos los ingredientes de Fudo con su unidad (include=unit, paginado) */
-async function readFudoIngredientsWithUnit(): Promise<FudoIngredientWithUnit[]> {
-  const token = await getFudoToken()
-  const all: FudoIngredientWithUnit[] = []
-  let page = 1
-
-  while (page <= 10) {
-    const res = await fetch(
-      `https://api.fu.do/v1alpha1/ingredients?include=unit&page[size]=200&page[number]=${page}`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
-    )
-
-    if (!res.ok) {
-      if (res.status === 429) {
-        await new Promise(r => setTimeout(r, 2000))
-        continue
-      }
-      throw new Error(`Fudo API error: ${res.status}`)
-    }
-
-    const data = await res.json()
-    const items = data.data ?? []
-    const included = data.included ?? []
-
-    // Mapa de unidades incluidas: id → nombre/código ('kg' | 'litre' | 'unit')
-    const unitMap = new Map<string, string>()
-    for (const inc of included) {
-      if ((inc.type ?? '').toLowerCase() === 'unit') {
-        const label = inc.attributes?.name ?? inc.attributes?.code ?? inc.id
-        unitMap.set(String(inc.id), String(label))
-      }
-    }
-
-    for (const item of items) {
-      const unitRef = item.relationships?.unit?.data as { id?: string } | null | undefined
-      const rawUnit = unitRef?.id != null
-        ? (unitMap.get(String(unitRef.id)) ?? String(unitRef.id))
-        : null
-      all.push({
-        id: String(item.id),
-        name: item.attributes?.name ?? `Ingrediente ${item.id}`,
-        cost: asNullableNumber(item.attributes?.cost),
-        stock: asNullableNumber(item.attributes?.stock),
-        stockControl: item.attributes?.stockControl ?? false,
-        unit: mapFudoUnit(rawUnit),
-      })
-    }
-
-    if (items.length < 200) break
-    page++
-  }
-
-  return all
 }
 
 /** Productos Fudo con control de stock (terminados, ej. empanadas) */
@@ -119,23 +52,6 @@ async function readFudoProductsWithStock(): Promise<UnmappedProduct[]> {
       cost: asNullableNumber(p.cost),
       stock: asNullableNumber(p.stock),
     }))
-}
-
-/** Sets de ids Fudo ya vinculados a algún stock_item (activo o no) */
-async function readLinkedFudoIds(admin: ReturnType<typeof createAdminClient>) {
-  const { data, error } = await admin
-    .from('stock_items')
-    .select('fudo_ingredient_id, fudo_product_id')
-
-  if (error) throw error
-
-  const linkedIngredients = new Set<string>()
-  const linkedProducts = new Set<string>()
-  for (const row of data ?? []) {
-    if (row.fudo_ingredient_id) linkedIngredients.add(String(row.fudo_ingredient_id))
-    if (row.fudo_product_id) linkedProducts.add(String(row.fudo_product_id))
-  }
-  return { linkedIngredients, linkedProducts }
 }
 
 async function requireManager() {
@@ -252,36 +168,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    let created = 0
-    let skipped = 0
-    const createdNames: string[] = []
-    const errors: string[] = []
-    const now = new Date().toISOString()
+    const ingredientResult = await createStockItemsFromIngredients(
+      admin,
+      ingredientCandidates,
+      linkedIngredients,
+    )
 
-    for (const ing of ingredientCandidates) {
-      if (linkedIngredients.has(ing.id)) {
-        skipped++
-        continue
-      }
-      const { error } = await admin.from('stock_items').insert({
-        name: ing.name,
-        unit: ing.unit,
-        cost_per_unit: ing.cost != null && ing.cost > 0 ? ing.cost : null,
-        current_qty: typeof ing.stock === 'number' ? Math.round(ing.stock * 100) / 100 : 0,
-        fudo_ingredient_id: ing.id,
-        is_active: true,
-        category: 'otros',
-        semaphore: 'green',
-        updated_at: now,
-      })
-      if (error) {
-        errors.push(`${ing.name}: ${error.message}`)
-      } else {
-        created++
-        createdNames.push(ing.name)
-        linkedIngredients.add(ing.id)
-      }
-    }
+    let created = ingredientResult.created
+    let skipped = ingredientResult.skipped
+    const createdNames: string[] = [...ingredientResult.createdNames]
+    const errors: string[] = [...ingredientResult.errors]
+    const now = new Date().toISOString()
 
     for (const prod of productCandidates) {
       if (linkedProducts.has(prod.id)) {

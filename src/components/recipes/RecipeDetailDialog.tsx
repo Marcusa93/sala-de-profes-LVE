@@ -1,6 +1,6 @@
 'use client'
 
-import { Pencil, Trash2, CookingPot } from 'lucide-react'
+import { Pencil, RefreshCw, Trash2, CookingPot } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -16,6 +16,8 @@ import type { Recipe } from '@/types/database'
 
 type RecipeDetailDialogProps = {
   recipe: Recipe | null
+  /** Receta espejo del export de Fudo (se edita en Fudo, no en la app). */
+  fudoSynced?: boolean
   isChef: boolean
   onClose: () => void
   onEdit: (recipe: Recipe) => void
@@ -24,6 +26,7 @@ type RecipeDetailDialogProps = {
 
 export function RecipeDetailDialog({
   recipe,
+  fudoSynced = false,
   isChef,
   onClose,
   onEdit,
@@ -60,6 +63,12 @@ export function RecipeDetailDialog({
                 >
                   {catConfig.icon} {catConfig.label}
                 </span>
+                {fudoSynced && (
+                  <span className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-[#e6f4f0] px-2 py-0.5 text-xs font-medium text-[#006d5a]">
+                    <RefreshCw className="size-3" />
+                    Sincronizada de Fudo
+                  </span>
+                )}
               </DialogDescription>
             </div>
           </div>

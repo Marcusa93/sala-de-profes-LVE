@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { syncFromFudo } from '@/lib/fudo/stock-sync'
 import { importFudoSales } from '@/lib/fudo/sales-sync'
+import { autoCreateMissingFudoIngredients, type CreateFromFudoResult } from '@/lib/fudo/create-from-fudo'
+import { notifyEvent } from '@/lib/push/notify-event'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/fudo-sync
@@ -59,6 +61,27 @@ export async function GET(request: NextRequest) {
     // ── 2) Sync stock from Fudo ──
     const stockResult = await syncFromFudo(admin)
 
+    // ── 2.5) Auto-crear insumos nuevos de Fudo (stockControl sin stock_item) ──
+    // Corre antes del snapshot para que los items recién creados ya entren en
+    // el snapshot diario. Reusa la lógica del botón manual (create-from-fudo).
+    let autoCreate: CreateFromFudoResult | null = null
+    let autoCreateError: string | null = null
+    try {
+      autoCreate = await autoCreateMissingFudoIngredients(admin)
+      if (autoCreate.created > 0) {
+        const names = autoCreate.createdNames
+        const shown = names.slice(0, 8).join(', ')
+        const extra = names.length > 8 ? ` y ${names.length - 8} más` : ''
+        await notifyEvent(admin, 'stock_adjusted', {
+          title: `🆕 ${autoCreate.created} insumo${autoCreate.created === 1 ? ' nuevo' : 's nuevos'} de Fudo creado${autoCreate.created === 1 ? '' : 's'} en la app`,
+          body: `${shown}${extra}. Revisá categoría y proveedor.`,
+          url: '/stock',
+        }).catch(() => {})
+      }
+    } catch (err) {
+      autoCreateError = err instanceof Error ? err.message : 'Error al auto-crear insumos de Fudo'
+    }
+
     // ── 3) Snapshot diario de stock (base del cálculo de mermas) ──
     let snapshotSaved = false
     let snapshotError: string | null = null
@@ -110,6 +133,13 @@ export async function GET(request: NextRequest) {
         description: `Cron sync: ${stockResult.synced} stock, ${salesImported} ventas, snapshot ${snapshotSaved ? 'OK' : 'FALLÓ'} (${elapsedMs}ms)`,
         metadata: JSON.parse(JSON.stringify({
           stock: stockResult,
+          auto_create: {
+            created: autoCreate?.created ?? 0,
+            skipped: autoCreate?.skipped ?? 0,
+            items: autoCreate?.createdNames ?? [],
+            errors: autoCreate?.errors ?? [],
+            error: autoCreateError,
+          },
           audit: { summary: auditSummary, error: auditError },
           sales: { imported: salesImported, errors: salesErrors, from: yesterdayStr },
           snapshot: { saved: snapshotSaved, error: snapshotError },
@@ -124,6 +154,12 @@ export async function GET(request: NextRequest) {
         synced: stockResult.synced,
         total: stockResult.total,
         errors: stockResult.errors.length,
+      },
+      auto_create: {
+        created: autoCreate?.created ?? 0,
+        items: autoCreate?.createdNames ?? [],
+        errors: autoCreate?.errors ?? [],
+        error: autoCreateError,
       },
       audit: {
         summary: auditSummary,
