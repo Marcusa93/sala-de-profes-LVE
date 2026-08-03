@@ -61,6 +61,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio', 'encargado'],
     target_user_ids: [],
   },
+  parallel_drift: {
+    label: 'Paralelo LVE vs Fudo',
+    description: 'Divergencia diaria entre el motor de stock propio y Fudo.',
+    enabled: true,
+    target_roles: ['socio'],
+    target_user_ids: [],
+  },
 }
 
 export type NotificationEventKey = keyof typeof DEFAULT_NOTIFICATION_EVENTS

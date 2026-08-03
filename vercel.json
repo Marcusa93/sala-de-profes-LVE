@@ -23,6 +23,10 @@
     {
       "path": "/api/cron/expiry-alerts",
       "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/sales-engine",
+      "schedule": "30 7 * * *"
     }
   ]
 }
