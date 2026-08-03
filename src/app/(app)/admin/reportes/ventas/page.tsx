@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, Download, Loader2, BarChart2, Clock, FileText } from 'lucide-react'
+import { ChevronLeft, Download, Loader2, BarChart2, Clock, FileText, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn } from '@/components/ui/motion'
 import { MomentosView } from '@/app/(app)/ventas/_components/MomentosView'
@@ -21,11 +21,20 @@ type ReporteDish = {
   food_cost_pct: number
 }
 
+type BrokenDish = {
+  menu_item_id: string
+  name: string
+  category: string
+  units: number
+  missing_items: string[]
+}
+
 type ReportePayload = {
   days: number
   from: string
   to: string
   dishes: ReporteDish[]
+  broken: BrokenDish[]
   generated_at: string
 }
 
@@ -395,6 +404,48 @@ export default function ReporteVentasPage() {
   </p>
                 </div>
               </div>
+            </FadeIn>
+          )}
+
+          {/* Recetas con costo roto */}
+          {data && data.broken && data.broken.length > 0 && (
+            <FadeIn>
+              <details className="group overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-[#ebe6df]">
+                <summary className="flex cursor-pointer select-none items-center justify-between px-4 py-3 hover:bg-[#faf8f5]">
+                  <span className="flex items-center gap-2">
+                    <AlertTriangle className="size-3.5 text-[#d4943a]" />
+                    <span className="text-[12px] font-semibold text-[#3d2c24]">
+                      {data.broken.length} productos sin costo completo — excluidos del reporte
+                    </span>
+                  </span>
+                  <span className="text-[10px] text-[#a39e97] group-open:hidden">Ver detalle</span>
+                  <span className="hidden text-[10px] text-[#a39e97] group-open:inline">Cerrar</span>
+                </summary>
+                <div className="overflow-x-auto border-t border-[#ebe6df]">
+                  <table className="w-full min-w-[480px] text-[12px]">
+                    <thead>
+                      <tr className="bg-[#faf8f5]">
+                        <th className="px-4 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Producto</th>
+                        <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Cat.</th>
+                        <th className="px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Unidades</th>
+                        <th className="px-4 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Qué falta</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#f3efe9]">
+                      {data.broken.map((dish) => (
+                        <tr key={dish.menu_item_id} className="hover:bg-[#faf8f5]">
+                          <td className="px-4 py-2 font-semibold text-[#3d2c24]">{dish.name}</td>
+                          <td className="px-3 py-2 text-[#a39e97]">{dish.category || '—'}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-[#3d2c24]">{dish.units.toLocaleString('es-AR')}</td>
+                          <td className="px-4 py-2 text-[#d4943a]">
+                            {dish.missing_items.join(' · ') || 'receta vacía'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
             </FadeIn>
           )}
         </div>

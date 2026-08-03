@@ -7,18 +7,6 @@ import { costRecipes } from '@/lib/recipes/recipe-cost'
 // ---------------------------------------------------------------------------
 // GET /api/ventas/reporte?days=30|60|90
 // ---------------------------------------------------------------------------
-// Tabla de productos con receta COMPLETA (sin ingredientes sin precio) y
-// ventas en el período. Una fila por producto con:
-//   nombre, categoría, unidades vendidas, precio promedio, costo por porción,
-//   food cost %.
-//
-// Filtros estrictos (vs /api/ventas/carta que solo exige cost > 0):
-//   · rc.missing === 0  → todos los ingredientes tienen precio cargado
-//   · avg_price > 0     → tiene precio de venta en Fudo
-//   · units > 0         → se vendió al menos una unidad en el período
-//
-// Solo managers. Cache de módulo 5 min por ventana de días.
-// ---------------------------------------------------------------------------
 
 const CACHE_TTL_MS = 5 * 60 * 1000
 const PAGE_SIZE = 1000
@@ -34,11 +22,20 @@ export type ReporteDish = {
   food_cost_pct: number
 }
 
+export type BrokenDish = {
+  menu_item_id: string
+  name: string
+  category: string
+  units: number
+  missing_items: string[]
+}
+
 export type ReportePayload = {
   days: number
   from: string
   to: string
   dishes: ReporteDish[]
+  broken: BrokenDish[]
   generated_at: string
 }
 
@@ -89,7 +86,6 @@ export async function GET(request: NextRequest) {
       .slice(0, 10)
     const sinceUTC = new Date(`${sinceDate}T00:00:00-03:00`).toISOString()
 
-    // Platos activos con receta y producto Fudo (incluyendo categoría)
     const { data: menuItems, error: miError } = await admin
       .from('menu_items')
       .select('id, name, category, recipe_id, fudo_product_id')
@@ -113,7 +109,6 @@ export async function GET(request: NextRequest) {
       ),
     ])
 
-    // Ventas agrupadas por producto Fudo
     type ProductAgg = { units: number; pricedUnits: number; pricedRevenue: number }
     const byProduct = new Map<string, ProductAgg>()
     for (const s of sales) {
@@ -129,17 +124,20 @@ export async function GET(request: NextRequest) {
       byProduct.set(s.fudo_product_id, agg)
     }
 
-    // Solo productos con receta completa (sin ingredientes sin precio)
     const dishes: ReporteDish[] = []
+    const brokenCandidates: Array<{ mi: typeof menuItems[0]; units: number }> = []
+
     for (const mi of menuItems ?? []) {
       const agg = mi.fudo_product_id ? byProduct.get(mi.fudo_product_id) : undefined
       if (!agg || agg.units <= 0) continue
 
       const rc = mi.recipe_id ? recipeCosts.get(mi.recipe_id) : undefined
-      if (!rc || rc.missing > 0 || rc.cost <= 0) continue
-
       const avgPrice = agg.pricedUnits > 0 ? agg.pricedRevenue / agg.pricedUnits : 0
-      if (avgPrice <= 0) continue
+
+      if (!rc || rc.missing > 0 || rc.cost <= 0 || avgPrice <= 0) {
+        brokenCandidates.push({ mi, units: Math.round(agg.units) })
+        continue
+      }
 
       dishes.push({
         menu_item_id: mi.id,
@@ -154,11 +152,53 @@ export async function GET(request: NextRequest) {
 
     dishes.sort((a, b) => b.units - a.units)
 
+    // ── Identificar qué ingredientes faltan en las recetas rotas ──────────────
+    const broken: BrokenDish[] = []
+    if (brokenCandidates.length > 0) {
+      const brokenRecipeIds = [...new Set(brokenCandidates.map(x => x.mi.recipe_id as string))]
+
+      const { data: riRows } = await admin
+        .from('recipe_ingredients')
+        .select('recipe_id, stock_item_id')
+        .in('recipe_id', brokenRecipeIds)
+
+      const ingredientIds = [...new Set((riRows ?? []).map(r => r.stock_item_id as string))]
+      const { data: ingredientItems } = await admin
+        .from('stock_items')
+        .select('id, name, cost_per_unit, is_produced')
+        .in('id', ingredientIds)
+
+      const itemById = new Map((ingredientItems ?? []).map(it => [it.id, it]))
+
+      const riByRecipe = new Map<string, string[]>()
+      for (const ri of riRows ?? []) {
+        const list = riByRecipe.get(ri.recipe_id) ?? []
+        const item = itemById.get(ri.stock_item_id)
+        if (item && (item.cost_per_unit == null || item.cost_per_unit === 0)) {
+          list.push(item.is_produced ? `${item.name} (sin receta)` : item.name)
+        }
+        riByRecipe.set(ri.recipe_id, list)
+      }
+
+      for (const { mi, units } of brokenCandidates) {
+        const missing = riByRecipe.get(mi.recipe_id ?? '') ?? ['receta vacía']
+        broken.push({
+          menu_item_id: mi.id,
+          name: mi.name,
+          category: mi.category ?? '',
+          units,
+          missing_items: [...new Set(missing)],
+        })
+      }
+      broken.sort((a, b) => b.units - a.units)
+    }
+
     const payload: ReportePayload = {
       days,
       from: sinceDate,
       to: todayAR,
       dishes,
+      broken,
       generated_at: new Date().toISOString(),
     }
     cache.set(days, { at: Date.now(), payload })
