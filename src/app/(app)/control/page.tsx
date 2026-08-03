@@ -113,6 +113,7 @@ const initialState = { loading: true, error: null, data: null }
 
 // Links compactos a reportes existentes
 const REPORT_LINKS: { label: string; href: string }[] = [
+  { label: 'Ventas y márgenes', href: '/admin/reportes/ventas' },
   { label: 'Asistencia', href: '/admin/reportes/asistencia' },
   { label: 'Sospechosos', href: '/admin/reportes/fichajes-sospechosos' },
   { label: 'Turnos', href: '/admin/reportes/turnos' },
@@ -123,7 +124,8 @@ const REPORT_LINKS: { label: string; href: string }[] = [
 
 // Accesos rápidos (ex /admin)
 const QUICK_LINKS = [
-  { href: '/asistente', icon: MessageCircle, label: 'La Vieja de Historia', color: '#006d5a' },
+  { href: '/admin/reportes/ventas', icon: TrendingUp, label: 'Reportes de ventas', color: '#006d5a' },
+  { href: '/asistente', icon: MessageCircle, label: 'La Vieja de Historia', color: '#8b5e34' },
   { href: '/ventas?m=personal', icon: Users, label: 'Consumo del personal', color: '#ea504c' },
   { href: '/equipo', icon: Users, label: 'Gestionar Equipo', color: '#8b5e34' },
   { href: '/stock', icon: Package, label: 'Gestionar Stock', color: '#ea504c' },
