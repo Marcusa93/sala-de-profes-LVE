@@ -36,6 +36,8 @@ export type StockReviewCard = {
   id: string
   item: StockItem | null
   priority: 'critico' | 'revisar' | 'accion'
+  /** Sub-orden dentro de la misma prioridad: 0 negativos, 1 críticos reales, 2 resto. */
+  rank?: number
   title: string
   detail: string
   primaryAction: 'sync' | 'count' | 'configure' | 'map' | 'watch'
@@ -72,10 +74,75 @@ export const PRIORITY_STYLES: Record<StockPriority, string> = {
 // Pure functions
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Criticidad gastronómica
+// ---------------------------------------------------------------------------
+// Un solo criterio para el semáforo, el KPI "Críticos", el orden del radar y
+// la cola de conteo:
+//   negative   → qty < 0: dato imposible (se vendió más de lo que entró).
+//                Máxima prioridad siempre: hay que contar.
+//   critical   → min_qty > 0 y qty ≤ min: quiebre real de stock.
+//   warning    → min_qty > 0 y qty ≤ min × 1,5: se acerca al mínimo.
+//   define_min → qty = 0 sin mínimo definido PERO con movimiento reciente:
+//                accionable (ámbar) — definir el mínimo, no es una emergencia.
+//   inactive   → qty = 0 sin mínimo y sin movimiento reciente: item sin datos,
+//                no es alerta (chip gris "sin mínimo definido" como mucho).
+//   ok         → resto.
+
+export type StockCriticality = 'negative' | 'critical' | 'define_min' | 'warning' | 'inactive' | 'ok'
+
+/**
+ * Ventana para considerar que un item "se mueve". updated_at solo se escribe
+ * cuando algo cambió de verdad (el sync de Fudo saltea items sin cambios), así
+ * que sirve como proxy de venta/compra/conteo reciente.
+ */
+export const RECENT_MOVEMENT_DAYS = 14
+
+export function hasRecentMovement(
+  item: Pick<StockItem, 'updated_at' | 'last_counted_at'>,
+  days = RECENT_MOVEMENT_DAYS,
+): boolean {
+  const timestamps = [item.updated_at, item.last_counted_at]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => new Date(value).getTime())
+    .filter((time) => Number.isFinite(time))
+  if (timestamps.length === 0) return false
+  return Date.now() - Math.max(...timestamps) <= days * 86_400_000
+}
+
+export function getCriticality(item: StockItem): StockCriticality {
+  const qty = Number(item.current_qty)
+  const min = Number(item.min_qty)
+
+  if (qty < 0) return 'negative'
+  if (min > 0) {
+    if (qty <= min) return 'critical'
+    if (qty <= min * 1.5) return 'warning'
+    return 'ok'
+  }
+  // Sin mínimo definido no hay umbral: qty=0 no es un quiebre, es falta de dato.
+  if (qty === 0) return hasRecentMovement(item) ? 'define_min' : 'inactive'
+  return 'ok'
+}
+
+/** Orden operativo: negativos → críticos reales → "definí mínimo" → resto. */
+export const CRITICALITY_RANK: Record<StockCriticality, number> = {
+  negative: 0,
+  critical: 1,
+  define_min: 2,
+  warning: 3,
+  ok: 4,
+  inactive: 5,
+}
+
+export function getCriticalityRank(item: StockItem): number {
+  return CRITICALITY_RANK[getCriticality(item)]
+}
+
 export function getSemaphore(item: StockItem): SemaphoreColor {
-  if (item.current_qty === 0) return 'red'
-  if (item.current_qty <= item.min_qty) return 'red'
-  if (item.current_qty <= item.min_qty * 1.5) return 'yellow'
+  const criticality = getCriticality(item)
+  if (criticality === 'negative' || criticality === 'critical') return 'red'
+  if (criticality === 'warning' || criticality === 'define_min') return 'yellow'
   return 'green'
 }
 
@@ -131,7 +198,9 @@ export function formatLotCountdown(expiresInDays: number) {
 }
 
 export function formatQty(qty: number) {
-  if (Number.isInteger(qty)) return String(qty)
+  if (!Number.isFinite(qty)) return '0'
+  // es-AR consistente y sin artefactos de coma flotante:
+  // 12.000000001 → "12" · 1234.5 → "1.234,5" · -18 → "-18"
   return qty.toLocaleString('es-AR', { maximumFractionDigits: 2 })
 }
 
@@ -153,39 +222,60 @@ export function needsVarianceNote(item: StockItem, countedQty: number) {
 
 export function getQuantityReview(item: StockItem): StockReviewCard | null {
   const source = getStockSource(item)
+  const criticality = getCriticality(item)
+
+  // Negativo primero, siempre: es un dato imposible aunque falte el mapeo.
+  if (criticality === 'negative') {
+    return {
+      id: `negative:${item.id}`,
+      item,
+      priority: 'critico',
+      rank: 0,
+      title: `${item.name}: stock negativo`,
+      detail: source.kind === 'unmapped'
+        ? `Figura ${formatQty(item.current_qty)} ${item.unit}: se vendió más de lo que entró al sistema. Para corregirlo primero hay que vincularlo a Fudo o marcarlo Local LVE.`
+        : `Figura ${formatQty(item.current_qty)} ${item.unit}: se vendió más de lo que entró al sistema. Contá físicamente y corregí contra Fudo.`,
+      primaryAction: source.kind === 'unmapped' ? 'map' : 'count',
+    }
+  }
 
   if (source.kind === 'unmapped') {
     return {
       id: `unmapped:${item.id}`,
       item,
       priority: 'critico',
+      rank: 2,
       title: `${item.name}: falta vínculo Fudo`,
       detail: 'No se puede corregir stock hasta vincularlo a Fudo o marcarlo como Local LVE.',
       primaryAction: 'map',
     }
   }
 
-  if (item.current_qty < 0) {
-    return {
-      id: `negative:${item.id}`,
-      item,
-      priority: 'critico',
-      title: `${item.name}: stock negativo`,
-      detail: `Figura ${formatQty(item.current_qty)} ${item.unit}. Contá físicamente y corregí contra Fudo.`,
-      primaryAction: 'count',
-    }
-  }
-
-  if (getSemaphore(item) === 'red') {
+  if (criticality === 'critical') {
     return {
       id: `low:${item.id}`,
       item,
       priority: 'critico',
+      rank: 1,
       title: `${item.name}: stock crítico`,
-      detail: `Hay ${formatQty(item.current_qty)} ${item.unit}; mínimo operativo ${formatQty(item.min_qty)}.`,
+      detail: `Hay ${formatQty(item.current_qty)} ${item.unit} y el mínimo operativo es ${formatQty(item.min_qty)}. Reponer o contar.`,
       primaryAction: 'count',
     }
   }
+
+  if (criticality === 'define_min') {
+    return {
+      id: `define-min:${item.id}`,
+      item,
+      priority: 'accion',
+      title: `${item.name}: quedó en 0 sin mínimo definido`,
+      detail: `Tuvo movimiento en los últimos ${RECENT_MOVEMENT_DAYS} días y está en 0 ${item.unit}. Definí el mínimo operativo para que el radar avise antes de que falte.`,
+      primaryAction: 'configure',
+    }
+  }
+
+  // 'inactive' (0 sin mínimo y sin movimiento reciente) no genera alerta:
+  // es un item sin datos, no una emergencia. En inventario queda en gris.
 
   const unit = item.unit.toLowerCase()
   if (item.fudo_ingredient_id && unit.includes('unidad') && !Number.isInteger(item.current_qty)) {

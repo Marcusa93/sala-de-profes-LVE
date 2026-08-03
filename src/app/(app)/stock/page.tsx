@@ -45,6 +45,7 @@ import {
   COLORS,
   PRIORITY_STYLES,
   getSemaphore,
+  getCriticalityRank,
   isPerishableForUi,
   getStockSource,
   formatPriority,
@@ -529,9 +530,15 @@ function StockPageContent() {
       })
     }
 
+    // Orden: por prioridad y, dentro de la misma prioridad, por rank operativo
+    // (0 negativos → 1 críticos reales → 2 resto: anomalías, mapeos, lotes).
     const priorityOrder = { critico: 0, accion: 1, revisar: 2 }
     return cards
-      .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
+      .sort((a, b) => {
+        const tier = priorityOrder[a.priority] - priorityOrder[b.priority]
+        if (tier !== 0) return tier
+        return (a.rank ?? 2) - (b.rank ?? 2)
+      })
       .slice(0, 12)
   }, [
     anomalies?.items,
@@ -551,10 +558,11 @@ function StockPageContent() {
       map.get(cat)!.push(item)
     }
     for (const [, arr] of map) {
+      // Negativos → críticos reales → "definí mínimo" → atención → OK → inactivos
       arr.sort((a, b) => {
-        const sa = getSemaphore(a) === 'red' ? 0 : getSemaphore(a) === 'yellow' ? 1 : 2
-        const sb = getSemaphore(b) === 'red' ? 0 : getSemaphore(b) === 'yellow' ? 1 : 2
-        if (sa !== sb) return sa - sb
+        const ra = getCriticalityRank(a)
+        const rb = getCriticalityRank(b)
+        if (ra !== rb) return ra - rb
         return a.name.localeCompare(b.name)
       })
     }
@@ -1316,15 +1324,18 @@ function StockPageContent() {
             const daysSince = item.last_counted_at
               ? Math.floor((now - new Date(item.last_counted_at).getTime()) / 86400000)
               : null
-            return { item, daysSince }
+            return { item, daysSince, rank: getCriticalityRank(item) }
           })
-          .filter(({ daysSince, item }) => {
-            // Mostrar items no contados en más de 3 días, o nunca contados si tienen stock bajo
-            if (daysSince === null) return item.current_qty <= item.min_qty * 1.5
+          .filter(({ daysSince, rank }) => {
+            if (rank === 0) return true   // negativos: contarlos siempre, aunque se hayan contado ayer
+            if (rank === 5) return false  // 0 sin mínimo y sin movimiento: no gastan tiempo de conteo
+            if (daysSince === null) return rank <= 3 // nunca contados: solo con señal real
             return daysSince >= 3
           })
           .sort((a, b) => {
-            // Sin conteo nunca → primero; luego por días desc
+            // Negativos → críticos reales → "definí mínimo" → resto; a igual
+            // criticidad, primero los nunca contados y después por días desc
+            if (a.rank !== b.rank) return a.rank - b.rank
             if (a.daysSince === null && b.daysSince !== null) return -1
             if (a.daysSince !== null && b.daysSince === null) return 1
             return (b.daysSince ?? 0) - (a.daysSince ?? 0)
@@ -1338,7 +1349,7 @@ function StockPageContent() {
               <CalendarClock className="size-4 text-[#d4943a]" />
               <div>
                 <p className="text-[11px] font-bold text-[#3d2c24]">Prioridad de conteo</p>
-                <p className="text-[10px] text-[#a39e97]">Items sin contar hace más tiempo o nunca contados</p>
+                <p className="text-[10px] text-[#a39e97]">Negativos y críticos primero; después, los que hace más tiempo no se cuentan</p>
               </div>
             </div>
             <div className="space-y-1.5">

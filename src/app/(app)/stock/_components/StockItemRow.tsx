@@ -22,6 +22,7 @@ import type { StockItem } from '@/lib/hooks/use-stock'
 import {
   COLORS,
   getSemaphore,
+  getCriticality,
   getStockSource,
   isPerishableForUi,
   formatQty,
@@ -103,6 +104,11 @@ export function StockItemRow({
 
   const s = getSemaphore(item)
   const c = COLORS[s]
+  const criticality = getCriticality(item)
+  // Item en 0 sin mínimo y sin movimiento: sin datos, se muestra gris (no verde)
+  const isInactive = criticality === 'inactive'
+  const qtyTone = isInactive ? 'text-[#a39e97]' : c.text
+  const accentColor = isInactive ? '#d8cfc6' : c.border.replace('border-[', '').replace(']', '')
   const isEditing = countOpen
   const source = getStockSource(item)
 
@@ -226,7 +232,7 @@ export function StockItemRow({
     <div
       key={item.id}
       className="overflow-hidden rounded-[1.15rem] border border-[#ebe6df] bg-white transition hover:border-[#d8cfc6] hover:shadow-sm"
-      style={{ borderLeftWidth: 3, borderLeftColor: c.border.replace('border-[', '').replace(']', '') }}
+      style={{ borderLeftWidth: 3, borderLeftColor: accentColor }}
     >
       <div className="flex items-center px-3 py-2.5">
         <div className="min-w-0 flex-1">
@@ -257,6 +263,16 @@ export function StockItemRow({
             {item.current_qty < 0 && (
               <span className="rounded-full bg-[#fef2f2] px-2 py-0.5 text-[9px] font-bold text-[#ea504c]">
                 {getStockSource(item).kind === 'fudo' ? 'Negativo en Fudo — contar' : 'Negativo — contar'}
+              </span>
+            )}
+            {criticality === 'define_min' && (
+              <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[9px] font-bold text-[#d4943a]">
+                Definí un mínimo
+              </span>
+            )}
+            {isInactive && (
+              <span className="rounded-full bg-[#f3efe9] px-2 py-0.5 text-[9px] font-bold text-[#7d6c64]">
+                Sin mínimo definido
               </span>
             )}
           </div>
@@ -299,7 +315,7 @@ export function StockItemRow({
               title={source.actionable ? `Editar ${source.label}` : 'Bloqueado: falta mapear a Fudo o marcar Local LVE'}
               className={`flex items-center gap-1 rounded-xl px-2.5 py-1.5 ${isEncargado && source.actionable ? 'cursor-pointer bg-[#faf8f5] hover:bg-[#f3efe9] active:scale-95' : ''} ${((source.kind === 'fudo' && (fudoState === 'checking' || fudoState === 'error')) || !source.actionable) ? 'opacity-60' : ''}`}
             >
-              <span className={`text-base font-bold tabular-nums ${c.text}`}>{formatQty(item.current_qty)}</span>
+              <span className={`text-base font-bold tabular-nums ${qtyTone}`}>{formatQty(item.current_qty)}</span>
               <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
               <span className="ml-1 rounded-full bg-white px-1.5 py-0.5 text-[9px] font-bold text-[#7d6c64] ring-1 ring-[#ebe6df]">
                 Contar
@@ -587,7 +603,7 @@ export function StockItemRow({
                         <div key={mv.id} className="flex items-start justify-between gap-2 text-[11px]">
                           <div className="min-w-0 flex-1">
                             <span className={`font-bold ${isEntry ? 'text-[#006d5a]' : 'text-[#ea504c]'}`}>
-                              {isEntry ? '+' : ''}{mv.change > 0 ? `+${mv.change}` : mv.change}
+                              {isEntry ? '+' : ''}{formatQty(mv.change)}
                             </span>
                             <span className="ml-1.5 rounded-full bg-[#ebe6df] px-1.5 py-0.5 text-[9px] font-semibold text-[#7d6c64]">
                               {reasonLabels[mv.reason as string] ?? mv.reason}
@@ -612,7 +628,9 @@ export function StockItemRow({
                         <div className="flex items-center gap-1.5">
                           <User className="size-2.5 text-[#a39e97]" />
                           <span className="font-medium text-[#3d2c24]">{log.profiles?.first_name ?? '?'}</span>
-                          <span className="text-[#a39e97]">{log.old_qty} → {log.new_qty}</span>
+                          <span className="text-[#a39e97]">
+                            {log.old_qty != null ? formatQty(log.old_qty) : '—'} → {log.new_qty != null ? formatQty(log.new_qty) : '—'}
+                          </span>
                         </div>
                         <span className="flex items-center gap-1 text-[#a39e97]">
                           <Clock className="size-2.5" />

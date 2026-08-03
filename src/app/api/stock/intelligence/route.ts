@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getStockSemaphore } from '@/lib/contracts/stock'
 import { isManagerOrAbove } from '@/lib/roles'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
@@ -21,6 +20,13 @@ import {
   type StockSetupIssue,
 } from '@/lib/stock/intelligence'
 import type { StockCategoryValue } from '@/types/database'
+
+/** Formato es-AR consistente para cantidades en textos (12.000000001 → "12"). */
+function fmtQty(value: number | null | undefined): string {
+  const num = Number(value ?? 0)
+  if (!Number.isFinite(num)) return '0'
+  return num.toLocaleString('es-AR', { maximumFractionDigits: 2 })
+}
 
 type StockRow = {
   id: string
@@ -160,7 +166,7 @@ function unitReviewDetail(item: StockRow): string | null {
   const expected = getExpectedUnit(item)
   if (!expected || isUnit(item.unit, expected)) return null
 
-  return `Figura como ${item.unit}, pero por nombre/categoría debería controlarse en ${expected}. Esto puede convertir ${item.current_qty} ${item.unit} en una lectura operativa falsa.`
+  return `Figura como ${item.unit}, pero por nombre/categoría debería controlarse en ${expected}. Esto puede convertir ${fmtQty(item.current_qty)} ${item.unit} en una lectura operativa falsa.`
 }
 
 function quantityAnomalyDetail(params: {
@@ -174,42 +180,42 @@ function quantityAnomalyDetail(params: {
   if (isUnit(item.unit, 'unidad') && Math.abs(item.current_qty - Math.round(item.current_qty)) > 0.001) {
     return {
       severity: 'medium',
-      detail: `Tiene ${item.current_qty} unidades con decimal. Si se cuenta por unidad, debería ser entero; si es peso/volumen, hay que corregir la unidad.`,
+      detail: `Tiene ${fmtQty(item.current_qty)} unidades con decimal. Si se cuenta por unidad, debería ser entero; si es peso/volumen, hay que corregir la unidad.`,
     }
   }
 
   if (/\bbanana|bananas\b/.test(name) && item.current_qty >= 150) {
     return {
       severity: 'high',
-      detail: `Hay ${item.current_qty} ${item.unit} de banana. Es una cantidad alta: confirmar conteo físico, unidad y carga en Fudo.`,
+      detail: `Hay ${fmtQty(item.current_qty)} ${item.unit} de banana. Es una cantidad alta: confirmar conteo físico, unidad y carga en Fudo.`,
     }
   }
 
   if (item.category === 'carnes' && item.current_qty >= 40) {
     return {
       severity: 'high',
-      detail: `Hay ${item.current_qty} ${item.unit} en carnes. Revisar unidad, merma o compra duplicada antes de volver a pedir.`,
+      detail: `Hay ${fmtQty(item.current_qty)} ${item.unit} en carnes. Revisar unidad, merma o compra duplicada antes de volver a pedir.`,
     }
   }
 
   if ((item.category === 'frutas' || item.category === 'verduras') && item.current_qty >= 120) {
     return {
       severity: 'medium',
-      detail: `Hay ${item.current_qty} ${item.unit} en ${item.category}. Confirmar si la unidad es correcta y si hay riesgo de merma.`,
+      detail: `Hay ${fmtQty(item.current_qty)} ${item.unit} en ${item.category}. Confirmar si la unidad es correcta y si hay riesgo de merma.`,
     }
   }
 
   if (item.category === 'lacteos' && item.current_qty >= 80) {
     return {
       severity: 'medium',
-      detail: `Hay ${item.current_qty} ${item.unit} en lácteos. Revisar vencimiento, unidad y compra reciente.`,
+      detail: `Hay ${fmtQty(item.current_qty)} ${item.unit} en lácteos. Revisar vencimiento, unidad y compra reciente.`,
     }
   }
 
   if (finishedGood && item.current_qty >= 20 && soldLast14Days <= 3) {
     return {
       severity: item.shelf_life_days != null && item.shelf_life_days <= 7 ? 'high' : 'medium',
-      detail: `Hay ${item.current_qty} ${item.unit} y solo ${soldLast14Days} ventas en los últimos 14 días. Revisar producción, promo o baja de compra.`,
+      detail: `Hay ${fmtQty(item.current_qty)} ${item.unit} y solo ${soldLast14Days} ventas en los últimos 14 días. Revisar producción, promo o baja de compra.`,
     }
   }
 
@@ -318,7 +324,7 @@ async function maybeNotifyRuleViolation(params: {
   if (lastNotifiedAt && Date.now() - lastNotifiedAt.getTime() < 24 * 60 * 60 * 1000) return
 
   const title = `Stock fuera de regla: ${item.name}`
-  const body = `${detail}\n\nActual: ${item.current_qty} ${item.unit}. Revisar en Control de mercadería.`
+  const body = `${detail}\n\nActual: ${fmtQty(item.current_qty)} ${item.unit}. Revisar en Control de mercadería.`
 
   await (admin as SupabaseClient).from('announcements').insert({
     author_id: userId,
@@ -486,7 +492,11 @@ export async function GET() {
       const perishableCandidate = isPerishableCandidate(item)
       const overstockThreshold = getOverstockThreshold(item)
       const isOverstock = item.current_qty >= overstockThreshold && item.current_qty > 0
-      const semaphore = getStockSemaphore(item.current_qty ?? 0, item.min_qty ?? 0)
+      // Criterio gastronómico: crítico real = negativo o por debajo de un mínimo
+      // definido (min_qty > 0). qty=0 con min_qty=0 no es un quiebre: no hay
+      // umbral operativo, así que no infla el conteo ni dispara "Reponer".
+      const isRealCritical = (item.current_qty ?? 0) < 0
+        || ((item.min_qty ?? 0) > 0 && (item.current_qty ?? 0) <= (item.min_qty ?? 0))
       const suggestedShelfLife = guessShelfLifeDays(item.category, menuCategoryName)
       const suggestedCategory = finishedGood ? guessCategoryForFinishedGood(menuCategoryName) : null
       const stockItemId = String(item.id)
@@ -546,7 +556,7 @@ export async function GET() {
           severity: 'high',
           type: 'negative_stock',
           title: `${item.name} quedó en negativo`,
-          detail: `Figura ${item.current_qty} ${item.unit}. Esto suele indicar venta sin stock, receta mal descontada o ajuste manual equivocado.`,
+          detail: `Figura ${fmtQty(item.current_qty)} ${item.unit}. Esto suele indicar venta sin stock, receta mal descontada o ajuste manual equivocado.`,
           current_qty: item.current_qty,
           unit: item.unit,
           suggested_shelf_life_days: suggestedShelfLife,
@@ -593,7 +603,7 @@ export async function GET() {
           severity: 'high',
           type: 'sales_stock_mismatch',
           title: `${item.name} se vende pero figura sin stock`,
-          detail: `Tiene ${item.current_qty} ${item.unit}, pero registra ${soldLast14Days} ventas en los últimos 14 días. Revisar stock Fudo, producción o vínculo del producto.`,
+          detail: `Tiene ${fmtQty(item.current_qty)} ${item.unit}, pero registra ${soldLast14Days} ventas en los últimos 14 días. Revisar stock Fudo, producción o vínculo del producto.`,
           current_qty: item.current_qty,
           unit: item.unit,
           suggested_shelf_life_days: suggestedShelfLife,
@@ -614,7 +624,7 @@ export async function GET() {
           severity: 'medium',
           type: 'missing_lot_control',
           title: `${item.name} tiene stock sin lote`,
-          detail: `Hay ${item.current_qty} ${item.unit} y vida útil de ${item.shelf_life_days} días, pero no hay lote activo para saber qué vence primero.`,
+          detail: `Hay ${fmtQty(item.current_qty)} ${item.unit} y vida útil de ${item.shelf_life_days} días, pero no hay lote activo para saber qué vence primero.`,
           current_qty: item.current_qty,
           unit: item.unit,
           suggested_shelf_life_days: suggestedShelfLife,
@@ -630,7 +640,7 @@ export async function GET() {
           severity: 'high',
           type: 'expired_lot_stock',
           title: `${item.name} tiene lote vencido con stock`,
-          detail: `Hay ${expiredQty} ${item.unit} en lotes vencidos. Hay que descartar, reprocesar o corregir el lote antes de confiar en el stock.`,
+          detail: `Hay ${fmtQty(expiredQty)} ${item.unit} en lotes vencidos. Hay que descartar, reprocesar o corregir el lote antes de confiar en el stock.`,
           current_qty: item.current_qty,
           unit: item.unit,
           suggested_shelf_life_days: suggestedShelfLife,
@@ -655,8 +665,8 @@ export async function GET() {
             ? `No puedo sugerir promo de ${item.name}`
             : `Definir vida útil de ${item.name}`,
           detail: finishedGood && isOverstock
-            ? `Hay ${item.current_qty} ${item.unit} en stock. Sin vida útil cargada no puedo disparar una promo automática con criterio.`
-            : `Tiene ${item.current_qty} ${item.unit}. Cargá vida útil para que el radar sepa cuándo empujarlo, frenarlo o priorizarlo.`,
+            ? `Hay ${fmtQty(item.current_qty)} ${item.unit} en stock. Sin vida útil cargada no puedo disparar una promo automática con criterio.`
+            : `Tiene ${fmtQty(item.current_qty)} ${item.unit}. Cargá vida útil para que el radar sepa cuándo empujarlo, frenarlo o priorizarlo.`,
           current_qty: item.current_qty,
           unit: item.unit,
           suggested_shelf_life_days: suggestedShelfLife,
@@ -698,7 +708,7 @@ export async function GET() {
         }))
       }
 
-      if (semaphore === 'red') {
+      if (isRealCritical) {
         lowStockItems++
         sectorActions.compras.push(createAction({
           stock_item_id: item.id,
@@ -708,7 +718,7 @@ export async function GET() {
           confidence: 'high',
           kind: 'replenish',
           title: `Reponer ${item.name}`,
-          detail: `Tiene ${item.current_qty} ${item.unit} y el mínimo operativo es ${item.min_qty}.`,
+          detail: `Tiene ${fmtQty(item.current_qty)} ${item.unit} y el mínimo operativo es ${fmtQty(item.min_qty)}.`,
           current_qty: item.current_qty,
           unit: item.unit,
           menu_item_name: menuMatch?.name ?? null,
@@ -730,7 +740,7 @@ export async function GET() {
           confidence,
           kind: primarySector === 'bar' ? 'push' : 'promo',
           title: getPromoTitle(menuMatch?.name ?? item.name, primarySector),
-          detail: `Hay ${item.current_qty} ${item.unit} en stock y la vida útil configurada es de ${item.shelf_life_days} días.`,
+          detail: `Hay ${fmtQty(item.current_qty)} ${item.unit} en stock y la vida útil configurada es de ${item.shelf_life_days} días.`,
           current_qty: item.current_qty,
           unit: item.unit,
           menu_item_name: menuMatch?.name ?? null,
@@ -744,7 +754,7 @@ export async function GET() {
           confidence,
           kind: 'freeze_purchase',
           title: `No reponer ${item.name} por ahora`,
-          detail: `Antes de comprar más, bajá las ${item.current_qty} ${item.unit} ya cargadas en stock.`,
+          detail: `Antes de comprar más, bajá las ${fmtQty(item.current_qty)} ${item.unit} ya cargadas en stock.`,
           current_qty: item.current_qty,
           unit: item.unit,
           menu_item_name: menuMatch?.name ?? null,
@@ -762,7 +772,7 @@ export async function GET() {
           confidence,
           kind: 'use_first',
           title: `Usar primero ${item.name}`,
-          detail: `Hay ${item.current_qty} ${item.unit} y una vida útil corta de ${item.shelf_life_days} días.`,
+          detail: `Hay ${fmtQty(item.current_qty)} ${item.unit} y una vida útil corta de ${item.shelf_life_days} días.`,
           current_qty: item.current_qty,
           unit: item.unit,
           menu_item_name: menuMatch?.name ?? null,
@@ -779,7 +789,7 @@ export async function GET() {
           confidence,
           kind: primarySector === 'bar' ? 'push' : 'promo',
           title: `Mover ${menuMatch?.name ?? item.name}`,
-          detail: `Hay ${item.current_qty} ${item.unit}. No es urgente por vida útil, pero ya está por encima del stock objetivo.`,
+          detail: `Hay ${fmtQty(item.current_qty)} ${item.unit}. No es urgente por vida útil, pero ya está por encima del stock objetivo.`,
           current_qty: item.current_qty,
           unit: item.unit,
           menu_item_name: menuMatch?.name ?? null,
@@ -796,7 +806,7 @@ export async function GET() {
         rule.min_qty != null ? `mín. ${Number(rule.min_qty)}` : null,
         rule.max_qty != null ? `máx. ${Number(rule.max_qty)}` : null,
       ].filter(Boolean).join(' / ')
-      const detail = `La regla aceptada para ${item.name} es ${range} ${rule.unit ?? item.unit}. Hoy figura ${item.current_qty} ${item.unit}.`
+      const detail = `La regla aceptada para ${item.name} es ${range} ${rule.unit ?? item.unit}. Hoy figura ${fmtQty(item.current_qty)} ${item.unit}.`
 
       setupIssues.push(createSetupIssue({
         stock_item_id: String(item.id),

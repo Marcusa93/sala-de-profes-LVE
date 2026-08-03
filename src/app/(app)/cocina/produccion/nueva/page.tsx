@@ -4,13 +4,15 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronLeft, ChevronRight, Check, Plus, Trash2,
-  Package, AlertTriangle, Loader2, Leaf, TrendingUp, BookmarkPlus,
+  Package, AlertTriangle, Loader2, Leaf, TrendingUp, BookmarkPlus, ShieldCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
 import { PRODUCTION_BATCHES, matchIngredientToStock, type ProductionBatch } from '@/lib/recipes/production-batches'
 import { convertQty } from '@/lib/produccion/units'
+import { useProfileContext } from '@/lib/hooks/use-profile'
+import { isManagerOrAbove } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -266,8 +268,12 @@ function StockSearch({
 
 export default function NuevaProduccionPage() {
   const router = useRouter()
+  const { profile } = useProfileContext()
+  // Socio y encargado pueden validar su propia producción en un solo paso.
+  const isManager = isManagerOrAbove(profile?.role)
   const [step, setStep] = useState(0)      // 0=insumo, 1=salidas, 2=resumen
   const [saving, setSaving] = useState(false)
+  const [validatingNow, setValidatingNow] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Data
@@ -646,7 +652,7 @@ export default function NuevaProduccionPage() {
       return linkedItem && isValidOutput(linkedItem)
     }) },
     { label: 'Cantidades cargadas', ok: inputDetails.every((input) => input.qty > 0) && outputs.every((output) => parseFloat(output.qty_produced) >= 0) },
-    { label: 'Queda para encargado', ok: true },
+    { label: isManager ? 'Podés validar vos mismo' : 'Queda para validación', ok: true },
   ]
   const readyForReview = step0Valid && step1Valid
 
@@ -692,7 +698,11 @@ export default function NuevaProduccionPage() {
   }
 
   // ── Submit ──
-  async function handleConfirm() {
+  // validateNow (solo socio/encargado): crea la orden y la valida en la misma
+  // acción, reutilizando el endpoint de validación existente (create → complete).
+  // La misma persona que produce puede validar: la validación protege los
+  // NÚMEROS (vínculos Fudo, unidades, eficiencia), no exige otro par de ojos.
+  async function handleConfirm(validateNow = false) {
     if (!inputsValid) {
       setError('Producción bloqueada: todas las materias primas deben elegirse desde el autocompletado y estar vinculadas a Fudo.')
       return
@@ -705,9 +715,12 @@ export default function NuevaProduccionPage() {
       setError(`Producción bloqueada: todos los productos finales deben elegirse desde el autocompletado y estar vinculados a Fudo (${blockedOutputs.map((item) => item?.name ?? 'salida sin item').join(', ')}).`)
       return
     }
-    const ok = window.confirm('La producción quedará pendiente de validación por encargado. Stock y Fudo no se modifican todavía. ¿Enviar?')
+    const ok = window.confirm(validateNow
+      ? `Validar "${orderName}" ahora?\n\nEsto descuenta insumos, suma producción terminada y sincroniza Fudo en el mismo paso.`
+      : 'La producción quedará pendiente de validación por socio o encargado. Stock y Fudo no se modifican todavía. ¿Enviar?')
     if (!ok) return
-    setSaving(true)
+    if (validateNow) setValidatingNow(true)
+    else setSaving(true)
     setError(null)
     try {
       // Single request: create order + add inputs/outputs. Stock moves only after manager validation.
@@ -745,12 +758,31 @@ export default function NuevaProduccionPage() {
         throw new Error(json.error ?? 'Error al procesar la producción')
       }
 
+      if (validateNow && json.order_id) {
+        // Segundo paso: validar con el MISMO endpoint del flujo normal
+        // (descuento de stock, lotes, sync Fudo y auditoría viven solo ahí).
+        const completeRes = await fetch(`/api/produccion/orders/${json.order_id}/complete`, { method: 'POST' })
+        const completeJson = await completeRes.json().catch(() => null)
+        if (!completeRes.ok || !completeJson?.success) {
+          // La orden ya quedó creada en pending_review: no reintentar acá para
+          // no duplicarla. Queda en la cola de validación con el motivo a la vista.
+          toast.error(`La producción quedó enviada a validación, pero no se pudo validar automáticamente: ${completeJson?.error ?? 'error desconocido'}`)
+          router.push('/stock/produccion')
+          return
+        }
+        const synced = typeof completeJson.fudo?.synced === 'number' ? completeJson.fudo.synced : null
+        toast.success(synced !== null
+          ? `Producción validada · Fudo ${synced} item${synced !== 1 ? 's' : ''}`
+          : 'Producción validada y aplicada')
+      }
+
       // Success — navigate to validation queue
       router.push('/stock/produccion')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error desconocido')
     } finally {
-      setSaving(false)
+      if (validateNow) setValidatingNow(false)
+      else setSaving(false)
     }
   }
 
@@ -1535,7 +1567,9 @@ export default function NuevaProduccionPage() {
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Control rápido</p>
               <p className="mt-0.5 text-[13px] font-semibold text-[#3d2c24]">
-                {readyForReview ? 'Listo para enviar a encargado' : 'Faltan datos para validar'}
+                {readyForReview
+                  ? (isManager ? 'Listo para validar o enviar' : 'Listo para enviar a validación')
+                  : 'Faltan datos para validar'}
               </p>
             </div>
             <span className={cn(
@@ -1590,17 +1624,38 @@ export default function NuevaProduccionPage() {
               <ChevronRight className="size-4" />
             </button>
           ) : (
-            <button
-              onClick={handleConfirm}
-              disabled={saving}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-semibold text-white disabled:opacity-60 active:scale-[0.99]"
-            >
-              {saving ? (
-                <><Loader2 className="size-4 animate-spin" />Enviando a validación...</>
-              ) : (
-                <><Check className="size-4" />Enviar a validación</>
+            <div className="flex flex-1 flex-col gap-2">
+              {/* Atajo manager: crea la orden y la valida en la misma acción */}
+              {isManager && (
+                <button
+                  onClick={() => handleConfirm(true)}
+                  disabled={saving || validatingNow}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-semibold text-white disabled:opacity-60 active:scale-[0.99]"
+                >
+                  {validatingNow ? (
+                    <><Loader2 className="size-4 animate-spin" />Validando y aplicando...</>
+                  ) : (
+                    <><ShieldCheck className="size-4" />Validar y aplicar ahora</>
+                  )}
+                </button>
               )}
-            </button>
+              <button
+                onClick={() => handleConfirm(false)}
+                disabled={saving || validatingNow}
+                className={cn(
+                  'flex items-center justify-center gap-2 rounded-xl py-3 text-[14px] font-semibold disabled:opacity-60 active:scale-[0.99]',
+                  isManager
+                    ? 'border border-[#006d5a]/30 bg-white text-[#006d5a]'
+                    : 'bg-[#006d5a] text-white',
+                )}
+              >
+                {saving ? (
+                  <><Loader2 className="size-4 animate-spin" />Enviando a validación...</>
+                ) : (
+                  <><Check className="size-4" />Enviar a validación</>
+                )}
+              </button>
+            </div>
           )}
         </div>
       </div>

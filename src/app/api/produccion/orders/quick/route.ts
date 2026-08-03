@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
+import { isManagerOrAbove } from '@/lib/roles'
 import { logAudit } from '@/lib/audit'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { snapshotProductionInputCosts } from '@/lib/produccion/cost-snapshot'
@@ -144,6 +145,14 @@ export async function POST(request: NextRequest) {
 
     const admin = createAdminClient()
     const autoComplete = body.auto_complete === true
+
+    // Cerrar producción sin pasar por la cola de validación impacta stock y
+    // Fudo directo: solo socio o encargado. Chef/cocina siempre envían a validar.
+    if (autoComplete && !isManagerOrAbove(profile?.role)) {
+      return NextResponse.json({
+        error: 'Solo socio o encargado puede completar producción sin validación. Enviala a validar.',
+      }, { status: 403 })
+    }
     const warnings: string[] = []
     const inputs = (Array.isArray(body.inputs) ? body.inputs : [body.input]) as QuickInputPayload[]
     const outputs = body.outputs as QuickOutputPayload[]

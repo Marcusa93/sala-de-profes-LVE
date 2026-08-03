@@ -154,7 +154,7 @@ function EffBar({ pct }: { pct: number | null }) {
 // ---------------------------------------------------------------------------
 
 export default function ProduccionDashboardPage() {
-  const { profile } = useProfileContext()
+  const { profile, loading: profileLoading } = useProfileContext()
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -302,7 +302,7 @@ export default function ProduccionDashboardPage() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/60">Flujo seguro Fudo</p>
               <h2 className="mt-1 text-lg font-semibold">Producción con validación</h2>
               <p className="mt-1 max-w-md text-[12px] leading-relaxed text-white/70">
-                El chef carga la transformación. El encargado valida entrada, salida y merma antes de mover stock en LVE y reescribir Fudo.
+                Quien produce carga la transformación. Un socio o encargado valida entrada, salida y merma antes de mover stock en LVE y reescribir Fudo — puede ser la misma persona que produjo.
               </p>
             </div>
             <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-white/10">
@@ -312,8 +312,8 @@ export default function ProduccionDashboardPage() {
 
           <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
             {[
-              ['1', 'Chef carga'],
-              ['2', 'Encargado valida'],
+              ['1', 'Se carga'],
+              ['2', 'Socio/encargado valida'],
               ['3', 'LVE + Fudo'],
             ].map(([step, label], idx) => (
               <div key={step} className="rounded-2xl bg-white/10 px-2 py-2">
@@ -349,7 +349,7 @@ export default function ProduccionDashboardPage() {
                     <div className="min-w-0">
                       <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-[#d4943a]">
                         <AlertTriangle className="size-3" />
-                        Espera encargado
+                        Espera validación
                       </span>
                       <h3 className="mt-2 truncate text-[16px] font-semibold text-[#3d2c24]">{order.name}</h3>
                       <p className="text-[11px] text-muted-foreground">
@@ -401,12 +401,14 @@ export default function ProduccionDashboardPage() {
                     >
                       {isApproving ? (
                         <Loader2 className="size-3.5 animate-spin" />
-                      ) : canValidateProduction ? (
+                      ) : canValidateProduction || profileLoading ? (
                         <ShieldCheck className="size-3.5" />
                       ) : (
                         <Lock className="size-3.5" />
                       )}
-                      {canValidateProduction ? 'Validar y sync Fudo' : 'Solo encargado'}
+                      {/* Mientras carga el perfil no mostrar el candado: un socio
+                          veía "Solo encargado" hasta que llegaba su rol. */}
+                      {canValidateProduction || profileLoading ? 'Validar y sync Fudo' : 'Solo socio/encargado'}
                     </button>
                   </div>
                 </div>
