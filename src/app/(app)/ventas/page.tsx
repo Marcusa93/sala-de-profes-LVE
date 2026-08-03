@@ -4,7 +4,8 @@ import { Suspense, useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { format, subDays, addDays, isToday } from 'date-fns'
 import { es } from 'date-fns/locale/es'
-import { BarChart3, ChevronLeft, ChevronRight, Loader2, RefreshCw } from 'lucide-react'
+import { BarChart3, ChevronLeft, ChevronRight, Loader2, RefreshCw, TrendingUp } from 'lucide-react'
+import Link from 'next/link'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -149,6 +150,19 @@ function VentasContent() {
             </div>
           </div>
         </div>
+
+        {/* Acceso directo a reportes de food cost y márgenes */}
+        {isManager && (
+          <div className="mb-3 flex justify-end">
+            <Link
+              href="/admin/reportes/ventas"
+              className="flex items-center gap-1.5 rounded-full bg-[#e8f5f1] px-3 py-1.5 text-[11px] font-semibold text-[#006d5a]"
+            >
+              <TrendingUp className="size-3.5" />
+              Ventas y márgenes
+            </Link>
+          </div>
+        )}
 
         {/* Date navigator — solo en modos Día y Mes */}
         {(viewMode === 'dia' || viewMode === 'mes') && (
