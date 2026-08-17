@@ -816,25 +816,44 @@ export default function ControlPage() {
         </section>
       </FadeIn>
 
-      {/* Control de Mermas — solo socios */}
+      {/* Control de Mermas y Productos — solo socios */}
       {isSocio(profile?.role) && (
-        <FadeIn delay={0.08}>
-          <Link
-            href="/admin/mermas"
-            className="flex items-center justify-between gap-3 rounded-2xl bg-[#fff5f5] px-4 py-3.5 ring-1 ring-[#ea504c]/30 transition hover:bg-[#fee2e2]"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#ea504c]/10">
-                <AlertTriangle className="size-4 text-[#ea504c]" />
+        <>
+          <FadeIn delay={0.08}>
+            <Link
+              href="/admin/mermas"
+              className="flex items-center justify-between gap-3 rounded-2xl bg-[#fff5f5] px-4 py-3.5 ring-1 ring-[#ea504c]/30 transition hover:bg-[#fee2e2]"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#ea504c]/10">
+                  <AlertTriangle className="size-4 text-[#ea504c]" />
+                </div>
+                <div>
+                  <p className="text-[13px] font-bold text-[#ea504c]">Control de Mermas</p>
+                  <p className="text-[11px] text-[#ea504c]/70">Faltantes y entradas sin registrar · Solo socios</p>
+                </div>
               </div>
-              <div>
-                <p className="text-[13px] font-bold text-[#ea504c]">Control de Mermas</p>
-                <p className="text-[11px] text-[#ea504c]/70">Faltantes y entradas sin registrar · Solo socios</p>
+              <ArrowRight className="size-4 shrink-0 text-[#ea504c]/60" />
+            </Link>
+          </FadeIn>
+          <FadeIn delay={0.09}>
+            <Link
+              href="/admin/productos-control"
+              className="flex items-center justify-between gap-3 rounded-2xl bg-[#fff5f5] px-4 py-3.5 ring-1 ring-[#ea504c]/30 transition hover:bg-[#fee2e2]"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#ea504c]/10">
+                  <TrendingDown className="size-4 text-[#ea504c]" />
+                </div>
+                <div>
+                  <p className="text-[13px] font-bold text-[#ea504c]">Control de Productos</p>
+                  <p className="text-[11px] text-[#ea504c]/70">Stock Fudo vs. esperado · Merma implícita hoy · Solo socios</p>
+                </div>
               </div>
-            </div>
-            <ArrowRight className="size-4 shrink-0 text-[#ea504c]/60" />
-          </Link>
-        </FadeIn>
+              <ArrowRight className="size-4 shrink-0 text-[#ea504c]/60" />
+            </Link>
+          </FadeIn>
+        </>
       )}
 
       {/* Reportes */}
