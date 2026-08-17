@@ -7,7 +7,7 @@ import Link from 'next/link'
 import {
   ShoppingCart, Truck, Check, X, Phone, MessageCircle,
   ChevronDown, ChevronUp, Plus, Trash2,
-  Loader2, Package, Clock, AlertTriangle, Search, Wallet, ChevronRight,
+  Loader2, Package, Clock, AlertTriangle, Search, Wallet, ChevronRight, TrendingDown,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -108,6 +108,10 @@ export default function PedidosPage() {
   // Total pendiente de pago (cuentas por pagar) — null si la columna aún no existe
   const [pendingTotal, setPendingTotal] = useState<number | null>(null)
 
+  // Consumo por insumo — para mostrar contexto al pedir
+  const [consumoDays, setConsumoDays] = useState(30)
+  const [consumoMap, setConsumoMap] = useState<Map<string, { qty: number; unit: string }>>(new Map())
+
   const canManage = isManagerOrAbove(profile?.role)
 
   const fetchData = useCallback(async () => {
@@ -143,6 +147,20 @@ export default function PedidosPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Cargar consumo de insumos para el período seleccionado
+  useEffect(() => {
+    fetch(`/api/stock/consumo?days=${consumoDays}`)
+      .then(r => r.json())
+      .then((d: { items?: Array<{ name: string; consumed: number; unit: string }> }) => {
+        const map = new Map<string, { qty: number; unit: string }>()
+        for (const item of d.items ?? []) {
+          map.set(item.name.toLowerCase(), { qty: item.consumed, unit: item.unit })
+        }
+        setConsumoMap(map)
+      })
+      .catch(() => {/* best-effort */})
+  }, [consumoDays])
 
   const allOrders = useMemo(() => [...barOrders, ...kitchenOrders], [barOrders, kitchenOrders])
 
@@ -223,6 +241,17 @@ export default function PedidosPage() {
     } catch {
       toast.error('Error al asignar proveedor')
     }
+  }
+
+  // Buscar consumo para un producto (fuzzy por palabras del nombre)
+  function getConsumo(productName: string): { qty: number; unit: string } | null {
+    const words = productName.toLowerCase().split(/\s+/).filter(w => w.length > 3)
+    for (const [key, val] of consumoMap) {
+      if (words.some(w => key.includes(w)) || key.split(/\s+/).some(w => w.length > 3 && productName.toLowerCase().includes(w))) {
+        return val
+      }
+    }
+    return null
   }
 
   // Build WhatsApp message for a supplier group
@@ -338,6 +367,27 @@ export default function PedidosPage() {
         </FadeIn>
       )}
 
+      {/* Selector de período de consumo — solo en paso Pedir */}
+      {step === 'pedir' && (
+        <FadeIn delay={0.06}>
+          <div className="flex items-center gap-2">
+            <TrendingDown className="size-3.5 shrink-0 text-[#7d6c64]" />
+            <span className="text-[11px] text-[#7d6c64]">Consumo últimos</span>
+            {[7, 14, 30].map(d => (
+              <button
+                key={d}
+                onClick={() => setConsumoDays(d)}
+                className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition-colors ${
+                  consumoDays === d ? 'bg-[#006d5a] text-white' : 'bg-secondary text-[#7d6c64]'
+                }`}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+        </FadeIn>
+      )}
+
       {step === 'pedir' && grouped.groups.map(({ supplier, orders }) => {
         const isExpanded = expandedSupplier === supplier.id
         const whatsappUrl = buildWhatsAppUrl(supplier, orders)
@@ -384,6 +434,8 @@ export default function PedidosPage() {
                       canManage={canManage}
                       getProfileName={getProfileName}
                       onUpdateStatus={updateStatus}
+                      consumption={getConsumo(order.product_name)}
+                      consumoDays={consumoDays}
                     />
                   ))}
                   {/* WhatsApp CTA */}
@@ -429,6 +481,8 @@ export default function PedidosPage() {
                   getProfileName={getProfileName}
                   onUpdateStatus={updateStatus}
                   onAssignSupplier={() => setAssignDialog({ order })}
+                  consumption={getConsumo(order.product_name)}
+                  consumoDays={consumoDays}
                 />
               ))}
             </div>
@@ -571,12 +625,16 @@ function OrderRow({
   getProfileName,
   onUpdateStatus,
   onAssignSupplier,
+  consumption,
+  consumoDays,
 }: {
   order: Order
   canManage: boolean
   getProfileName: (id: string | null) => string
   onUpdateStatus: (order: Order, status: string) => void
   onAssignSupplier?: () => void
+  consumption?: { qty: number; unit: string } | null
+  consumoDays?: number
 }) {
   const urgCfg = URGENCY_CONFIG[order.urgency] ?? URGENCY_CONFIG.normal
   const isOrdered = order.status === 'ordered'
@@ -618,6 +676,17 @@ function OrderRow({
           </span>
         )}
       </div>
+
+      {/* Consumo del período — contexto para decidir cuánto pedir */}
+      {consumption && order.status === 'pending' && (
+        <div className="mt-1.5 ml-[42px] flex items-center gap-1">
+          <TrendingDown className="size-3 text-[#006d5a]" />
+          <span className="text-[10px] text-[#006d5a] font-semibold">
+            Último{consumoDays === 1 ? ' día' : `s ${consumoDays}d`}:{' '}
+            {consumption.qty % 1 === 0 ? consumption.qty : consumption.qty.toLocaleString('es-AR', { maximumFractionDigits: 2 })} {consumption.unit}
+          </span>
+        </div>
+      )}
 
       {order.note && (
         <p className="mt-1.5 ml-[42px] text-[11px] italic text-[#a39e97] truncate">💬 {order.note}</p>
