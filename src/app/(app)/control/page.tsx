@@ -30,7 +30,7 @@ import { es } from 'date-fns/locale/es'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { useAdminKpis } from '@/lib/hooks/use-admin-kpis'
-import { isManagerOrAbove } from '@/lib/roles'
+import { isManagerOrAbove, isSocio } from '@/lib/roles'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn, StaggerList, StaggerItem, ScalePress } from '@/components/ui/motion'
@@ -815,6 +815,27 @@ export default function ControlPage() {
           </div>
         </section>
       </FadeIn>
+
+      {/* Control de Mermas — solo socios */}
+      {isSocio(profile?.role) && (
+        <FadeIn delay={0.08}>
+          <Link
+            href="/admin/mermas"
+            className="flex items-center justify-between gap-3 rounded-2xl bg-[#fff5f5] px-4 py-3.5 ring-1 ring-[#ea504c]/30 transition hover:bg-[#fee2e2]"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#ea504c]/10">
+                <AlertTriangle className="size-4 text-[#ea504c]" />
+              </div>
+              <div>
+                <p className="text-[13px] font-bold text-[#ea504c]">Control de Mermas</p>
+                <p className="text-[11px] text-[#ea504c]/70">Faltantes y entradas sin registrar · Solo socios</p>
+              </div>
+            </div>
+            <ArrowRight className="size-4 shrink-0 text-[#ea504c]/60" />
+          </Link>
+        </FadeIn>
+      )}
 
       {/* Reportes */}
       <FadeIn delay={0.1}>
