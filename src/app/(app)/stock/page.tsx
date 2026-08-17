@@ -153,6 +153,7 @@ function StockPageContent() {
   const [areaFilter, setAreaFilter] = useState<AreaFilter>('all')
   const [semaphoreFilter, setSemaphoreFilter] = useState<SemaphoreColor | null>(null)
   const [sourceFilter, setSourceFilter] = useState<StockSourceFilter>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'ingredient' | 'product'>('all')
   const [negativesOnly, setNegativesOnly] = useState(false)
   const [showHowItWorks, setShowHowItWorks] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -396,11 +397,16 @@ function StockPageContent() {
     if (semaphoreFilter) {
       result = result.filter(i => getSemaphore(i) === semaphoreFilter)
     }
+    if (typeFilter === 'ingredient') {
+      result = result.filter(i => Boolean(i.fudo_ingredient_id))
+    } else if (typeFilter === 'product') {
+      result = result.filter(i => Boolean(i.fudo_product_id) || i.category === 'elaborados')
+    }
     if (negativesOnly) {
       result = result.filter(i => Number(i.current_qty) < 0)
     }
     return result
-  }, [items, search, areaFilter, categoryFilter, sourceFilter, semaphoreFilter, negativesOnly])
+  }, [items, search, areaFilter, categoryFilter, sourceFilter, semaphoreFilter, typeFilter, negativesOnly])
 
   // Counts
   const counts = useMemo(() => {
@@ -432,6 +438,16 @@ function StockPageContent() {
     }
 
     return { red, yellow, green, fudoLinked, localOnly, unmapped, missingShelfLife, total: items.length }
+  }, [items])
+
+  const criticalBreakdown = useMemo(() => {
+    const red = items.filter(i => getSemaphore(i) === 'red')
+    const ingredientes = red.filter(i => ['carnes', 'verduras', 'frutas', 'lacteos', 'condimentos'].includes(i.category ?? '')).length
+    const elaborados = red.filter(i => i.category === 'elaborados').length
+    const pasteleria = red.filter(i => i.category === 'panaderia').length
+    const bebidas = red.filter(i => i.category === 'bebidas').length
+    const otros = Math.max(0, red.length - ingredientes - elaborados - pasteleria - bebidas)
+    return { ingredientes, elaborados, pasteleria, bebidas, otros }
   }, [items])
 
   const expiringLotsCount = (lotsData?.summary.expired ?? 0)
@@ -576,6 +592,16 @@ function StockPageContent() {
       else next.add(cat)
       return next
     })
+  }
+
+  const goToCritical = (opts: { area?: AreaFilter; category?: string; type?: 'ingredient' | 'product' } = {}) => {
+    setSemaphoreFilter('red')
+    setAreaFilter(opts.area ?? 'all')
+    setCategoryFilter(opts.category ?? 'all')
+    setTypeFilter(opts.type ?? 'all')
+    setSourceFilter('all')
+    setNegativesOnly(false)
+    setView('conteo')
   }
 
   const startPhysicalCount = (item: StockItem) => {
@@ -905,16 +931,37 @@ function StockPageContent() {
                 </div>
 
                 <div className="mt-4 space-y-2">
-                  <button
-                    onClick={() => { setSemaphoreFilter('red'); setView('conteo') }}
-                    className="flex w-full items-center justify-between rounded-2xl bg-[#fff7f7] px-3 py-3 text-left ring-1 ring-[#f3d0cf]"
-                  >
-                    <span>
-                      <span className="block text-[10px] font-bold uppercase tracking-wide text-[#ea504c]">Stock crítico</span>
-                      <span className="text-[12px] text-[#7d6c64]">contar o reponer</span>
-                    </span>
-                    <span className="text-2xl font-bold text-[#3d2c24]">{stockOverview.red}</span>
-                  </button>
+                  <div className="rounded-2xl bg-[#fff7f7] ring-1 ring-[#f3d0cf]">
+                    <button
+                      onClick={() => goToCritical()}
+                      className="flex w-full items-center justify-between px-3 py-3 text-left"
+                    >
+                      <span>
+                        <span className="block text-[10px] font-bold uppercase tracking-wide text-[#ea504c]">Stock crítico</span>
+                        <span className="text-[12px] text-[#7d6c64]">contar o reponer · tocá para ver todos</span>
+                      </span>
+                      <span className="text-2xl font-bold text-[#3d2c24]">{stockOverview.red}</span>
+                    </button>
+                    {stockOverview.red > 0 && (
+                      <div className="flex flex-wrap gap-1.5 border-t border-[#f3d0cf] px-3 pb-3 pt-2">
+                        {[
+                          { label: 'Ingredientes', count: criticalBreakdown.ingredientes, action: () => goToCritical({ area: 'cocina', type: 'ingredient' }) },
+                          { label: 'Elaborados', count: criticalBreakdown.elaborados, action: () => goToCritical({ category: 'elaborados' }) },
+                          { label: 'Pastelería', count: criticalBreakdown.pasteleria, action: () => goToCritical({ area: 'pasteleria' }) },
+                          { label: 'Bebidas', count: criticalBreakdown.bebidas, action: () => goToCritical({ category: 'bebidas' }) },
+                          { label: 'Otros', count: criticalBreakdown.otros, action: () => goToCritical() },
+                        ].filter(g => g.count > 0).map(g => (
+                          <button
+                            key={g.label}
+                            onClick={g.action}
+                            className="rounded-full bg-[#fef2f2] px-2.5 py-1 text-[10px] font-bold text-[#ea504c] ring-1 ring-[#f3d0cf] transition-colors hover:bg-[#fddcdb]"
+                          >
+                            {g.label} · {g.count}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <button
                     onClick={() => { setSourceFilter('unmapped'); setView('inventario') }}
                     className="flex w-full items-center justify-between rounded-2xl bg-[#fffaf2] px-3 py-3 text-left ring-1 ring-[#f1dfba]"
@@ -1417,6 +1464,27 @@ function StockPageContent() {
             }`}
           >
             {area.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tipo: ingrediente vs producto terminado */}
+      <div className="flex gap-2">
+        {([
+          { value: 'all', label: 'Todos los tipos' },
+          { value: 'ingredient', label: '🥩 Ingredientes' },
+          { value: 'product', label: '🥟 Prod. terminados' },
+        ] as const).map(opt => (
+          <button
+            key={opt.value}
+            onClick={() => setTypeFilter(opt.value)}
+            className={`flex-1 rounded-xl border py-2 text-xs font-bold transition-all ${
+              typeFilter === opt.value
+                ? 'border-[#3d2c24] bg-[#3d2c24] text-white'
+                : 'border-[#ebe6df] bg-white text-[#a39e97] hover:bg-[#faf8f5]'
+            }`}
+          >
+            {opt.label}
           </button>
         ))}
       </div>
