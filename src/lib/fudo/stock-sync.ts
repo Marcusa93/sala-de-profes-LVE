@@ -16,6 +16,8 @@ import {
   createFudoSyncEvent,
   finishFudoSyncEvent,
   recordFudoIncident,
+  resolveItemIncidents,
+  resolveSourceIncidents,
   type FudoEntityType,
 } from '@/lib/fudo/sync-events'
 import { notifyEvent } from '@/lib/push/notify-event'
@@ -256,6 +258,10 @@ export async function writeFudoStock(
       await finishFudoSyncEvent(context.admin, eventId, 'success', {
         responsePayload: { actual_stock: typeof actualStock === 'number' ? actualStock : newQty },
       })
+      // Escritura exitosa: limpiar cualquier incident de fallo previo para este item
+      if (context.stockItemId) {
+        await resolveItemIncidents(context.admin, String(context.stockItemId)).catch(() => null)
+      }
     }
 
     return { success: true }
@@ -341,6 +347,10 @@ async function writeFudoProductStock(
       await finishFudoSyncEvent(context.admin, eventId, 'success', {
         responsePayload: { actual_stock: typeof actualStock === 'number' ? actualStock : newQty },
       })
+      // Escritura exitosa: limpiar cualquier incident de fallo previo para este item
+      if (context.stockItemId) {
+        await resolveItemIncidents(context.admin, String(context.stockItemId)).catch(() => null)
+      }
     }
 
     return { success: true }
@@ -574,6 +584,10 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     },
     errorMessage: result.errors.length > 0 ? `${result.errors.length} errores de sync` : null,
   })
+
+  // Si el sync de lectura tuvo éxito (Fudo accesible), limpiar cualquier incident
+  // de fallo de lectura anterior que haya quedado abierto (ej: fudo_read_failed).
+  await resolveSourceIncidents(admin, 'stock_read_sync').catch(() => null)
 
   // El caller sigue recibiendo todo junto para mostrar el detalle en la UI.
   result.errors.push(...discrepancies)

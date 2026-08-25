@@ -139,6 +139,53 @@ export async function recordFudoIncident(
   }
 }
 
+/**
+ * Resuelve todos los incidentes abiertos de escritura para un stock_item específico.
+ * Llamar después de una escritura exitosa en Fudo para limpiar failures previos del item.
+ */
+export async function resolveItemIncidents(
+  admin: SupabaseClient,
+  stockItemId: string,
+) {
+  const { error } = await admin
+    .from('fudo_sync_incidents')
+    .update({
+      status: 'resolved',
+      resolved_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('stock_item_id', stockItemId)
+    .eq('status', 'open')
+
+  if (error) {
+    console.warn('[fudo_sync_incidents] resolveItemIncidents failed', error.message)
+  }
+}
+
+/**
+ * Resuelve todos los incidentes abiertos de un source dado (sin distinción de item).
+ * Útil cuando una operación a nivel global tuvo éxito (ej: sync de lectura exitosa
+ * después de un fallo previo).
+ */
+export async function resolveSourceIncidents(
+  admin: SupabaseClient,
+  source: string,
+) {
+  const { error } = await admin
+    .from('fudo_sync_incidents')
+    .update({
+      status: 'resolved',
+      resolved_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('source', source)
+    .eq('status', 'open')
+
+  if (error) {
+    console.warn('[fudo_sync_incidents] resolveSourceIncidents failed', error.message)
+  }
+}
+
 export async function resolveMissingFudoIncidents(
   admin: SupabaseClient,
   source: string,

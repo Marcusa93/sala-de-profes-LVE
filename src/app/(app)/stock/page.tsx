@@ -171,6 +171,7 @@ function StockPageContent() {
   const [wastingId, setWastingId] = useState<string | null>(null)
   const [reconciliationRows, setReconciliationRows] = useState<ReconciliationRow[]>([])
   const [loadingReconciliation, setLoadingReconciliation] = useState(false)
+  const [resolvingIncidents, setResolvingIncidents] = useState(false)
 
   const isEncargado = isManagerOrAbove(profile?.role)
   const [lastFudoSync, setLastFudoSync] = useState<string | null>(null)
@@ -327,6 +328,24 @@ function StockPageContent() {
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 400)
   }, [metaParam, metaParamHandled, loading, items])
+
+  const resolveIncidents = useCallback(async () => {
+    setResolvingIncidents(true)
+    try {
+      const res = await fetch('/api/fudo/incidents/resolve', { method: 'POST' })
+      const data = await res.json()
+      if (res.ok) {
+        toast.success(data.message ?? 'Incidentes resueltos')
+        void loadFudoStatus()
+      } else {
+        toast.error(data.error ?? 'No se pudieron resolver los incidentes')
+      }
+    } catch {
+      toast.error('Error al resolver incidentes')
+    } finally {
+      setResolvingIncidents(false)
+    }
+  }, [loadFudoStatus])
 
   // Única función de sync — usada tanto en el mount inicial como en el botón manual
   const runSync = useCallback(async (opts?: { silent?: boolean }) => {
@@ -1113,7 +1132,7 @@ function StockPageContent() {
               </div>
             )}
             {fudoConnection.state === 'error' && (
-              <p className="mt-0.5 text-[11px]">Las escrituras de stock quedan bloqueadas hasta sincronizar.</p>
+              <p className="mt-0.5 text-[11px]">Las escrituras de stock quedan bloqueadas hasta que Fudo vuelva a responder correctamente.</p>
             )}
             {fudoConnection.incidentSample.length > 0 && (fudoConnection.state === 'error' || fudoConnection.state === 'warning') && (
               <div className="mt-2 space-y-1">
@@ -1130,6 +1149,17 @@ function StockPageContent() {
                   <p className="text-[10px] text-[#7d6c64]">…y {fudoConnection.incidentSample.length - 8} incidentes más</p>
                 )}
               </div>
+            )}
+            {fudoConnection.state === 'error' && isEncargado && (
+              <button
+                onClick={() => void resolveIncidents()}
+                disabled={resolvingIncidents}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-[#ea504c] px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
+              >
+                {resolvingIncidents
+                  ? <><Loader2 className="size-3 animate-spin" /> Limpiando…</>
+                  : 'Fudo está OK ahora → Limpiar bloqueo'}
+              </button>
             )}
           </div>
 

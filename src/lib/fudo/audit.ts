@@ -170,16 +170,13 @@ function isSevereIssue(issue: FudoStockIssue) {
 }
 
 function stockIssueSeverity(code: FudoStockIssueCode): FudoIncidentSeverity {
-  if (
-    code === 'fudo_product_missing'
-    || code === 'fudo_ingredient_missing'
-    || code === 'product_stock_null'
-    || code === 'ingredient_stock_null'
-    || code === 'product_stockControl_false'
-    || code === 'ingredient_stockControl_false'
-    || code === 'stock_mismatch_ge_1'
-  ) {
-    return 'critical'
+  // 'critical' está reservado para fallos reales de Fudo (transporte, auth, escritura
+  // rechazada). Las discrepancias de auditoría — incluyendo stock_mismatch_ge_1 que
+  // ocurre continuamente porque Fudo descuenta ventas y LVE no — son informacionales.
+  // Un incident crítico de audit bloquea TODO el conteo físico, lo cual es incorrecto.
+  if (code === 'fudo_product_missing' || code === 'fudo_ingredient_missing') {
+    // Vínculo roto: ese item específico no puede sincronizarse, pero no bloquear el resto.
+    return 'high'
   }
   return 'medium'
 }
