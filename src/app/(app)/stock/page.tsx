@@ -22,6 +22,8 @@ import {
   ListChecks,
   TrendingDown,
   CalendarClock,
+  Unlink,
+  Trash2,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -117,6 +119,8 @@ type FudoIncidentSample = {
   code: string
   title: string
   entity_type: string | null
+  entity_id: string | null
+  stock_item_id: string | null
   fudo_type: string | null
   fudo_id: string | null
   last_seen_at: string
@@ -172,6 +176,7 @@ function StockPageContent() {
   const [reconciliationRows, setReconciliationRows] = useState<ReconciliationRow[]>([])
   const [loadingReconciliation, setLoadingReconciliation] = useState(false)
   const [resolvingIncidents, setResolvingIncidents] = useState(false)
+  const [fixingLinkId, setFixingLinkId] = useState<string | null>(null)
 
   const isEncargado = isManagerOrAbove(profile?.role)
   const [lastFudoSync, setLastFudoSync] = useState<string | null>(null)
@@ -328,6 +333,28 @@ function StockPageContent() {
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 400)
   }, [metaParam, metaParamHandled, loading, items])
+
+  const fixBrokenLink = useCallback(async (stockItemId: string, action: 'unlink' | 'deactivate', name: string) => {
+    setFixingLinkId(stockItemId)
+    try {
+      const res = await fetch('/api/admin/stock/mapping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock_item_id: stockItemId, action }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Error')
+      toast.success(action === 'unlink'
+        ? `"${name}" queda como local — ya no sincroniza con Fudo`
+        : `"${name}" desactivado`)
+      void loadFudoStatus()
+      void reloadAll()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al actualizar')
+    } finally {
+      setFixingLinkId(null)
+    }
+  }, [loadFudoStatus, reloadAll])
 
   const resolveIncidents = useCallback(async () => {
     setResolvingIncidents(true)
@@ -1134,22 +1161,58 @@ function StockPageContent() {
             {fudoConnection.state === 'error' && (
               <p className="mt-0.5 text-[11px]">Las escrituras de stock quedan bloqueadas hasta que Fudo vuelva a responder correctamente.</p>
             )}
-            {fudoConnection.incidentSample.length > 0 && (fudoConnection.state === 'error' || fudoConnection.state === 'warning') && (
-              <div className="mt-2 space-y-1">
-                {fudoConnection.incidentSample.slice(0, 8).map(inc => (
-                  <div key={inc.id} className={`rounded px-2 py-1 text-[10px] leading-snug ${inc.severity === 'critical' ? 'bg-[#fef2f2] text-[#3d2c24]' : 'bg-[#fffaf2] text-[#3d2c24]'}`}>
-                    <span className={`font-bold mr-1 ${inc.severity === 'critical' ? 'text-[#ea504c]' : 'text-[#d4943a]'}`}>
-                      {inc.severity === 'critical' ? '● CRIT' : '● ALTO'}
-                    </span>
-                    {inc.title}
-                    <span className="ml-1 text-[9px] opacity-50">{inc.code}</span>
-                  </div>
-                ))}
-                {fudoConnection.incidentSample.length > 8 && (
-                  <p className="text-[10px] text-[#7d6c64]">…y {fudoConnection.incidentSample.length - 8} incidentes más</p>
-                )}
-              </div>
-            )}
+            {fudoConnection.incidentSample.length > 0 && (fudoConnection.state === 'error' || fudoConnection.state === 'warning') && (() => {
+              const brokenLinks = fudoConnection.incidentSample.filter(
+                inc => (inc.code === 'fudo_product_missing' || inc.code === 'fudo_ingredient_missing') && inc.stock_item_id
+              )
+              const otherIncidents = fudoConnection.incidentSample.filter(
+                inc => inc.code !== 'fudo_product_missing' && inc.code !== 'fudo_ingredient_missing'
+              )
+              return (
+                <div className="mt-2 space-y-2">
+                  {brokenLinks.length > 0 && isEncargado && (
+                    <div className="rounded border border-[#f3d0cf] bg-[#fff7f7] p-2">
+                      <p className="text-[10px] font-bold text-[#ea504c] mb-1.5">
+                        {brokenLinks.length} vínculo{brokenLinks.length !== 1 ? 's' : ''} roto{brokenLinks.length !== 1 ? 's' : ''} — borrado{brokenLinks.length !== 1 ? 's' : ''} en Fudo
+                      </p>
+                      <div className="space-y-1.5">
+                        {brokenLinks.map(inc => (
+                          <div key={inc.id} className="rounded bg-white border border-[#f3d0cf] p-2">
+                            <p className="text-[11px] font-semibold text-[#3d2c24] mb-1.5 leading-tight">{inc.title}</p>
+                            <div className="flex gap-1.5">
+                              <button
+                                onClick={() => void fixBrokenLink(inc.stock_item_id!, 'unlink', inc.title)}
+                                disabled={fixingLinkId === inc.stock_item_id}
+                                className="flex flex-1 items-center justify-center gap-1 rounded bg-[#f5f0eb] px-2 py-1.5 text-[10px] font-semibold text-[#3d2c24] disabled:opacity-50"
+                              >
+                                {fixingLinkId === inc.stock_item_id ? <Loader2 className="size-3 animate-spin" /> : <Unlink className="size-3" />}
+                                Usar sin Fudo
+                              </button>
+                              <button
+                                onClick={() => void fixBrokenLink(inc.stock_item_id!, 'deactivate', inc.title)}
+                                disabled={fixingLinkId === inc.stock_item_id}
+                                className="flex flex-1 items-center justify-center gap-1 rounded bg-[#fef2f2] px-2 py-1.5 text-[10px] font-semibold text-[#ea504c] disabled:opacity-50"
+                              >
+                                {fixingLinkId === inc.stock_item_id ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                                Desactivar
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {otherIncidents.slice(0, 6).map(inc => (
+                    <div key={inc.id} className={`rounded px-2 py-1 text-[10px] leading-snug ${inc.severity === 'critical' ? 'bg-[#fef2f2] text-[#3d2c24]' : 'bg-[#fffaf2] text-[#3d2c24]'}`}>
+                      <span className={`font-bold mr-1 ${inc.severity === 'critical' ? 'text-[#ea504c]' : 'text-[#d4943a]'}`}>
+                        {inc.severity === 'critical' ? '● CRIT' : '● ALTO'}
+                      </span>
+                      {inc.title}
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
             {fudoConnection.state === 'error' && isEncargado && (
               <button
                 onClick={() => void resolveIncidents()}
