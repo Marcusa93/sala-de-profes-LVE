@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import {
   ArrowLeft, Link2, Unlink, Search, Package, ChevronDown,
-  ChevronUp, Check, X, ExternalLink, Loader2, RefreshCw,
+  ChevronUp, Check, X, ExternalLink, Loader2, RefreshCw, AlertTriangle, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
@@ -36,8 +36,21 @@ type UnlinkedItem = {
   best_score: number
 }
 
+type BrokenLink = {
+  id: string
+  name: string
+  category: string | null
+  unit: string
+  current_qty: number
+  fudo_ingredient_id: string | null
+  fudo_product_id: string | null
+  broken_type: 'ingredient' | 'product'
+  broken_fudo_id: string
+}
+
 type MappingData = {
   unlinked: UnlinkedItem[]
+  broken_links: BrokenLink[]
   linked_count: number
   unlinked_count: number
   skipped_count: number
@@ -172,6 +185,49 @@ export default function StockMappingPage() {
     }
   }
 
+  async function handleUnlink(stockItemId: string, name: string) {
+    setActionLoading(stockItemId)
+    try {
+      const res = await fetch('/api/admin/stock/mapping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock_item_id: stockItemId, action: 'unlink' }),
+      })
+      if (!res.ok) throw new Error('Error al desvincular')
+      toast.success(`"${name}" desvinculado de Fudo — queda como local`)
+      setData(prev => prev ? {
+        ...prev,
+        broken_links: prev.broken_links.filter(b => b.id !== stockItemId),
+      } : null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  async function handleDeactivate(stockItemId: string, name: string) {
+    setActionLoading(stockItemId)
+    try {
+      const res = await fetch('/api/admin/stock/mapping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock_item_id: stockItemId, action: 'deactivate' }),
+      })
+      if (!res.ok) throw new Error('Error al desactivar')
+      toast.success(`"${name}" desactivado y quitado de la app`)
+      setData(prev => prev ? {
+        ...prev,
+        broken_links: prev.broken_links.filter(b => b.id !== stockItemId),
+        linked_count: Math.max(0, prev.linked_count - 1),
+      } : null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   // Filter items
   const filtered = (data?.unlinked ?? []).filter(item => {
     if (search) {
@@ -214,8 +270,60 @@ export default function StockMappingPage() {
         </button>
       </div>
 
+      {/* Vínculos rotos — productos borrados en Fudo */}
+      {(data.broken_links?.length ?? 0) > 0 && (
+        <div className="rounded-xl border border-[#f3d0cf] bg-[#fff7f7] p-3">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="size-4 text-[#ea504c]" />
+            <div>
+              <p className="text-sm font-bold text-[#3d2c24]">
+                {data.broken_links.length} vínculo{data.broken_links.length !== 1 ? 's' : ''} roto{data.broken_links.length !== 1 ? 's' : ''}
+              </p>
+              <p className="text-[10px] text-[#7d6c64]">
+                Estos items apuntan a productos/ingredientes que ya no existen en Fudo
+              </p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {data.broken_links.map(item => (
+              <div key={item.id} className="rounded-lg bg-white border border-[#f3d0cf] p-3">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-[#3d2c24] truncate">{item.name}</p>
+                    <p className="text-[10px] text-[#7d6c64]">
+                      {item.category ?? 'sin categoría'} · {item.current_qty} {item.unit}
+                    </p>
+                    <p className="text-[9px] text-[#ea504c] mt-0.5">
+                      {item.broken_type === 'ingredient' ? 'Ingrediente' : 'Producto'} Fudo #{item.broken_fudo_id} — ya no existe
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleUnlink(item.id, item.name)}
+                    disabled={actionLoading === item.id}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#f5f0eb] px-3 py-2 text-[11px] font-semibold text-[#3d2c24] hover:bg-[#ebe5de] disabled:opacity-50"
+                  >
+                    {actionLoading === item.id ? <Loader2 className="size-3 animate-spin" /> : <Unlink className="size-3" />}
+                    Usar sin Fudo
+                  </button>
+                  <button
+                    onClick={() => handleDeactivate(item.id, item.name)}
+                    disabled={actionLoading === item.id}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#fef2f2] px-3 py-2 text-[11px] font-semibold text-[#ea504c] hover:bg-[#fee2e2] disabled:opacity-50"
+                  >
+                    {actionLoading === item.id ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                    Desactivar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         <div className="rounded-xl bg-[#e8f5e9] p-3 text-center">
           <p className="text-xl font-bold text-[#006d5a]">{data.linked_count}</p>
           <p className="text-[10px] font-medium text-[#006d5a]/70">Vinculados</p>
@@ -229,6 +337,14 @@ export default function StockMappingPage() {
         <div className="rounded-xl bg-[#f5f0eb] p-3 text-center">
           <p className="text-xl font-bold text-[#a39e97]">{data.skipped_count}</p>
           <p className="text-[10px] font-medium text-[#a39e97]/70">Sin Fudo</p>
+        </div>
+        <div className={`rounded-xl p-3 text-center ${(data.broken_links?.length ?? 0) > 0 ? 'bg-[#fff7f7]' : 'bg-[#f5f0eb]'}`}>
+          <p className={`text-xl font-bold ${(data.broken_links?.length ?? 0) > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]'}`}>
+            {data.broken_links?.length ?? 0}
+          </p>
+          <p className={`text-[10px] font-medium ${(data.broken_links?.length ?? 0) > 0 ? 'text-[#ea504c]/70' : 'text-[#a39e97]/70'}`}>
+            Rotos
+          </p>
         </div>
       </div>
 

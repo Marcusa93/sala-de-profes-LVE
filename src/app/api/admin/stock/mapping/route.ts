@@ -144,12 +144,42 @@ export async function GET() {
       (allItems ?? []).filter(i => i.fudo_product_id).map(i => i.fudo_product_id),
     )
 
-    // 4. Split into linked and unlinked
+    // 4. Build set of Fudo IDs that actually exist in Fudo right now
+    const fudoIngredientIds = new Set(fudoIngredients.map(i => i.id))
+    const fudoProductIds = new Set(fudoProducts.filter(p => p.active).map(p => p.id))
+
+    // 4b. Detect broken links: items with a Fudo ID that no longer exists in Fudo
+    const brokenLinks = (allItems ?? [])
+      .filter(i => {
+        if (i.fudo_ingredient_id && !fudoIngredientIds.has(i.fudo_ingredient_id)) return true
+        if (i.fudo_product_id && !fudoProductIds.has(i.fudo_product_id)) return true
+        return false
+      })
+      .map(i => ({
+        id: i.id,
+        name: i.name,
+        category: i.category,
+        unit: i.unit,
+        current_qty: i.current_qty,
+        fudo_ingredient_id: i.fudo_ingredient_id ?? null,
+        fudo_product_id: i.fudo_product_id ?? null,
+        broken_type: i.fudo_ingredient_id && !fudoIngredientIds.has(i.fudo_ingredient_id)
+          ? 'ingredient' as const
+          : 'product' as const,
+        broken_fudo_id: (
+          i.fudo_ingredient_id && !fudoIngredientIds.has(i.fudo_ingredient_id)
+            ? i.fudo_ingredient_id
+            : i.fudo_product_id
+        ) ?? '',
+      }))
+
+    // 4c. Split into linked and unlinked (excluding broken links from "linked" count)
+    const brokenIds = new Set(brokenLinks.map(b => b.id))
     const unlinked = (allItems ?? []).filter(
       i => !i.fudo_ingredient_id && !i.fudo_product_id,
     )
     const linked = (allItems ?? []).filter(
-      i => i.fudo_ingredient_id || i.fudo_product_id,
+      i => (i.fudo_ingredient_id || i.fudo_product_id) && !brokenIds.has(i.id),
     )
 
     // 5. For each unlinked item, find top suggestions
@@ -198,6 +228,7 @@ export async function GET() {
 
     return NextResponse.json({
       unlinked: unlinkedWithSuggestions,
+      broken_links: brokenLinks,
       linked_count: linked.length,
       unlinked_count: unlinked.length,
       skipped_count: unlinked.filter(i => i.fudo_skip).length,
@@ -309,6 +340,60 @@ export async function POST(request: Request) {
       }
 
       return NextResponse.json({ success: true, action: 'unskipped' })
+    }
+
+    // Desvincular de Fudo: limpia IDs y marca como local.
+    // Usado cuando un producto fue borrado en Fudo y el vínculo quedó roto.
+    if (action === 'unlink') {
+      const { error } = await admin
+        .from('stock_items')
+        .update({
+          fudo_ingredient_id: null,
+          fudo_product_id: null,
+          fudo_skip: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', stock_item_id)
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+
+      // Resolver incidents abiertos para este item
+      await admin
+        .from('fudo_sync_incidents')
+        .update({ status: 'resolved', resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('stock_item_id', stock_item_id)
+        .eq('status', 'open')
+
+      return NextResponse.json({ success: true, action: 'unlinked' })
+    }
+
+    // Desactivar: saca el item de la app. Limpia vínculos y marca inactivo.
+    // Usado cuando el producto fue borrado en Fudo y tampoco se usa más en LVE.
+    if (action === 'deactivate') {
+      const { error } = await admin
+        .from('stock_items')
+        .update({
+          is_active: false,
+          fudo_ingredient_id: null,
+          fudo_product_id: null,
+          fudo_skip: true,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', stock_item_id)
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+
+      await admin
+        .from('fudo_sync_incidents')
+        .update({ status: 'resolved', resolved_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('stock_item_id', stock_item_id)
+        .eq('status', 'open')
+
+      return NextResponse.json({ success: true, action: 'deactivated' })
     }
 
     return NextResponse.json({ error: 'Acción inválida' }, { status: 400 })
