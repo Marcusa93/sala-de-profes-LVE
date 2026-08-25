@@ -27,6 +27,10 @@
     {
       "path": "/api/cron/sales-engine",
       "schedule": "30 7 * * *"
+    },
+    {
+      "path": "/api/cron/sales-daily",
+      "schedule": "30 2 * * *"
     }
   ]
 }

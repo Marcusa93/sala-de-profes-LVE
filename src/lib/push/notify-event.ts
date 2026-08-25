@@ -68,6 +68,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio'],
     target_user_ids: [],
   },
+  sales_summary_daily: {
+    label: 'Top 5 platos del día',
+    description: 'Notificación a las 23:30 con los 5 platos más vendidos del día completo.',
+    enabled: true,
+    target_roles: ['socio', 'encargado', 'chef', 'barista', 'runner', 'cocina', 'bacha'],
+    target_user_ids: [],
+  },
 }
 
 export type NotificationEventKey = keyof typeof DEFAULT_NOTIFICATION_EVENTS
