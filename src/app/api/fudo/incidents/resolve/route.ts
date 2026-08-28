@@ -22,7 +22,7 @@ export async function POST() {
       .eq('id', user.id)
       .single()
 
-    if (!isEncargadoOrAbove(profile?.role)) {
+    if (!isManagerOrAbove(profile?.role)) {
       return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
     }
 
