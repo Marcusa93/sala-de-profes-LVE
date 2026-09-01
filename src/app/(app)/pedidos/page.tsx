@@ -39,7 +39,7 @@ type Order = {
   urgency: string
   status: string
   note: string | null
-  supplier_id: number | null
+  supplier_id: string | null
   created_by: string | null
   created_at: string
   source: 'barra' | 'cocina'
@@ -59,10 +59,22 @@ type StockItem = {
 }
 
 type Supplier = {
-  id: number
+  id: string
   name: string
   phone: string | null
   contact_name: string | null
+}
+
+type LowStockSuggestion = {
+  id: string
+  name: string
+  unit: string
+  current_qty: number
+  min_qty: number
+  supplier_id: string
+  supplier_name: string
+  supplier_phone: string | null
+  reason: 'sin_stock' | 'fecha_vencida'
 }
 
 type Profile = {
@@ -103,7 +115,9 @@ export default function PedidosPage() {
   const [step, setStep] = useState<'pedir' | 'camino' | 'recibido'>('pedir')
   const [assignDialog, setAssignDialog] = useState<{ order: Order } | null>(null)
   const [receiveDialog, setReceiveDialog] = useState<{ order: Order } | null>(null)
-  const [expandedSupplier, setExpandedSupplier] = useState<number | null>(null)
+  const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null)
+  const [suggestions, setSuggestions] = useState<LowStockSuggestion[]>([])
+  const [quickOrdering, setQuickOrdering] = useState<string | null>(null)
   const [newOrderOpen, setNewOrderOpen] = useState(false)
   // Total pendiente de pago (cuentas por pagar) — null si la columna aún no existe
   const [pendingTotal, setPendingTotal] = useState<number | null>(null)
@@ -124,14 +138,44 @@ export default function PedidosPage() {
       supabase.from('stock_items').select('id, name, unit, current_qty').eq('is_active', true).order('name'),
     ])
 
-    const bar = (barRes.data ?? []).map((o) => ({ ...o, source: 'barra' as const, supplier_id: (o as Record<string, unknown>).supplier_id as number | null ?? null })) as unknown as Order[]
-    const kitchen = (kitchenRes.data ?? []).map((o) => ({ ...o, source: 'cocina' as const, supplier_id: (o as Record<string, unknown>).supplier_id as number | null ?? null })) as unknown as Order[]
+    const bar = (barRes.data ?? []).map((o) => ({ ...o, source: 'barra' as const, supplier_id: (o as Record<string, unknown>).supplier_id as string | null ?? null })) as unknown as Order[]
+    const kitchen = (kitchenRes.data ?? []).map((o) => ({ ...o, source: 'cocina' as const, supplier_id: (o as Record<string, unknown>).supplier_id as string | null ?? null })) as unknown as Order[]
     setBarOrders(bar)
     setKitchenOrders(kitchen)
     setSuppliers((suppRes.data ?? []) as unknown as Supplier[])
     setProfiles((profRes.data ?? []) as unknown as Profile[])
     setStockItems((stockRes.data ?? []) as unknown as StockItem[])
     setLoading(false)
+
+    // Sugerencias: items sin stock o con fecha de compra vencida que tienen proveedor asignado
+    const today = new Date().toISOString().split('T')[0]
+    const suppMap = new Map((suppRes.data ?? []).map((s: Record<string, string | null>) => [s.id, s]))
+    supabase
+      .from('stock_items')
+      .select('id, name, unit, current_qty, min_qty, supplier_id, next_purchase_date')
+      .eq('is_active', true)
+      .not('supplier_id', 'is', null)
+      .or(`current_qty.lte.0,next_purchase_date.lte.${today}`)
+      .order('current_qty', { ascending: true })
+      .limit(30)
+      .then(({ data }) => {
+        const sugs: LowStockSuggestion[] = (data ?? []).map((item: Record<string, unknown>) => {
+          const supp = suppMap.get(item.supplier_id as string)
+          return {
+            id: item.id as string,
+            name: item.name as string,
+            unit: item.unit as string,
+            current_qty: item.current_qty as number,
+            min_qty: item.min_qty as number,
+            supplier_id: item.supplier_id as string,
+            supplier_name: (supp as Record<string, string | null> | undefined)?.name ?? 'Proveedor',
+            supplier_phone: (supp as Record<string, string | null> | undefined)?.phone ?? null,
+            reason: (item.current_qty as number) <= 0 ? 'sin_stock' : 'fecha_vencida',
+          }
+        })
+        setSuggestions(sugs)
+      })
+      .catch(() => {})
 
     // Saldo pendiente de pago — tolerante a que la migración no esté aplicada
     supabase
@@ -166,7 +210,7 @@ export default function PedidosPage() {
 
   // Agrupar por proveedor SOLO lo pendiente de pedir (el paso "Pedir")
   const grouped = useMemo(() => {
-    const supplierMap = new Map<number, { supplier: Supplier; orders: Order[] }>()
+    const supplierMap = new Map<string, { supplier: Supplier; orders: Order[] }>()
     const noSupplier: Order[] = []
 
     for (const order of allOrders.filter((o) => o.status === 'pending')) {
@@ -217,7 +261,32 @@ export default function PedidosPage() {
     }
   }
 
-  async function assignSupplier(order: Order, supplierId: number) {
+  async function handleQuickOrder(item: LowStockSuggestion) {
+    setQuickOrdering(item.id)
+    const urgency = item.current_qty <= 0 ? 'urgente' : 'alta'
+    try {
+      const res = await fetch('/api/kitchen/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_order',
+          items: [{ product_name: item.name, quantity: `? ${item.unit}` }],
+          urgency,
+          supplier_id: item.supplier_id,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Error')
+      toast.success(`Pedido creado — ${item.name}`)
+      fetchData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al crear pedido')
+    } finally {
+      setQuickOrdering(null)
+    }
+  }
+
+  async function assignSupplier(order: Order, supplierId: string) {
     const table = order.source === 'barra' ? 'bar_orders' : 'kitchen_orders'
     const supabase = createClient()
     try {
@@ -357,6 +426,62 @@ export default function PedidosPage() {
             )}
             <ChevronRight className="size-4 shrink-0 text-[#a39e97]" />
           </Link>
+        </FadeIn>
+      )}
+
+      {/* PASO 1 — PEDIR: stock agotado / vencido con proveedor asignado */}
+      {step === 'pedir' && suggestions.length > 0 && (
+        <FadeIn delay={0.08}>
+          <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-[#d4943a]/30">
+            <div className="flex items-center gap-2.5 border-b border-[#ebe6df] bg-[#fffbf5] px-4 py-3">
+              <AlertTriangle className="size-4 shrink-0 text-[#d4943a]" />
+              <p className="flex-1 text-sm font-semibold text-[#3d2c24]">A pedir</p>
+              <span className="rounded-full bg-[#d4943a] px-2 py-0.5 text-[11px] font-bold text-white tabular-nums">
+                {suggestions.length}
+              </span>
+            </div>
+            <div className="divide-y divide-[#f5f0ea]">
+              {suggestions.map((item) => {
+                const alreadyOrdered = allOrders.some(
+                  o => o.status === 'pending' && o.product_name.toLowerCase() === item.name.toLowerCase()
+                )
+                return (
+                  <div key={item.id} className="flex items-center gap-3 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-[#3d2c24]">{item.name}</p>
+                      <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#a39e97]">
+                        {item.reason === 'sin_stock' ? (
+                          <span className="font-semibold text-[#ea504c]">
+                            {item.current_qty < 0 ? `−${Math.abs(item.current_qty).toFixed(1)}` : 'Sin stock'}
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-[#d4943a]">Fecha vencida</span>
+                        )}
+                        <span>·</span>
+                        <span className="truncate">{item.supplier_name}</span>
+                      </div>
+                    </div>
+                    {alreadyOrdered ? (
+                      <span className="shrink-0 rounded-full bg-[#e8f5f1] px-2.5 py-1 text-[11px] font-semibold text-[#006d5a]">
+                        ✓ En lista
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleQuickOrder(item)}
+                        disabled={quickOrdering === item.id}
+                        className="flex shrink-0 items-center gap-1 rounded-xl bg-[#006d5a] px-3 py-1.5 text-[12px] font-semibold text-white transition-all active:scale-95 disabled:opacity-60"
+                      >
+                        {quickOrdering === item.id
+                          ? <Loader2 className="size-3 animate-spin" />
+                          : <Plus className="size-3" />}
+                        Pedir
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
         </FadeIn>
       )}
 
@@ -1056,7 +1181,7 @@ function NewOrderDialog({
           items: items.map((it) => ({ product_name: it.productName.trim(), quantity: it.quantity.trim() })),
           urgency,
           note: note.trim() || undefined,
-          supplier_id: supplierId ? Number(supplierId) : undefined,
+          supplier_id: supplierId || undefined,
         }),
       })
       const json = await res.json()
