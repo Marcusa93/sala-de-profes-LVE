@@ -74,7 +74,7 @@ type LowStockSuggestion = {
   supplier_id: string
   supplier_name: string
   supplier_phone: string | null
-  reason: 'sin_stock' | 'fecha_vencida'
+  reason: 'sin_stock' | 'bajo_minimo' | 'fecha_vencida'
 }
 
 type Profile = {
@@ -118,6 +118,8 @@ export default function PedidosPage() {
   const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<LowStockSuggestion[]>([])
   const [quickOrdering, setQuickOrdering] = useState<string | null>(null)
+  const [minQtyInputs, setMinQtyInputs] = useState<Record<string, string>>({})
+  const [savingMinQty, setSavingMinQty] = useState<string | null>(null)
   const [newOrderOpen, setNewOrderOpen] = useState(false)
   // Total pendiente de pago (cuentas por pagar) — null si la columna aún no existe
   const [pendingTotal, setPendingTotal] = useState<number | null>(null)
@@ -147,7 +149,9 @@ export default function PedidosPage() {
     setStockItems((stockRes.data ?? []) as unknown as StockItem[])
     setLoading(false)
 
-    // Sugerencias: items sin stock o con fecha de compra vencida que tienen proveedor asignado
+    // Sugerencias: items con proveedor asignado que necesitan pedirse
+    // Cargamos todos con proveedor y filtramos client-side para soportar
+    // la comparación current_qty <= min_qty (columna vs columna no soportada en Supabase JS)
     const today = new Date().toISOString().split('T')[0]
     const suppMap = new Map((suppRes.data ?? []).map((s: Record<string, string | null>) => [s.id, s]))
     supabase
@@ -155,22 +159,32 @@ export default function PedidosPage() {
       .select('id, name, unit, current_qty, min_qty, supplier_id, next_purchase_date')
       .eq('is_active', true)
       .not('supplier_id', 'is', null)
-      .or(`current_qty.lte.0,next_purchase_date.lte.${today}`)
       .order('current_qty', { ascending: true })
-      .limit(30)
+      .limit(200)
       .then(({ data }) => {
-        const sugs: LowStockSuggestion[] = (data ?? []).map((item: Record<string, unknown>) => {
+        const filtered = (data ?? []).filter((item: Record<string, unknown>) => {
+          const qty = item.current_qty as number
+          const min = item.min_qty as number
+          const nd = item.next_purchase_date as string | null
+          return qty <= 0 || (min > 0 && qty <= min) || (nd != null && nd <= today)
+        })
+        const sugs: LowStockSuggestion[] = filtered.map((item: Record<string, unknown>) => {
           const supp = suppMap.get(item.supplier_id as string)
+          const qty = item.current_qty as number
+          const min = item.min_qty as number
+          const nd = item.next_purchase_date as string | null
+          const reason: LowStockSuggestion['reason'] =
+            qty <= 0 ? 'sin_stock' : min > 0 && qty <= min ? 'bajo_minimo' : 'fecha_vencida'
           return {
             id: item.id as string,
             name: item.name as string,
             unit: item.unit as string,
-            current_qty: item.current_qty as number,
-            min_qty: item.min_qty as number,
+            current_qty: qty,
+            min_qty: min,
             supplier_id: item.supplier_id as string,
             supplier_name: (supp as Record<string, string | null> | undefined)?.name ?? 'Proveedor',
             supplier_phone: (supp as Record<string, string | null> | undefined)?.phone ?? null,
-            reason: (item.current_qty as number) <= 0 ? 'sin_stock' : 'fecha_vencida',
+            reason,
           }
         })
         setSuggestions(sugs)
@@ -258,6 +272,25 @@ export default function PedidosPage() {
       fetchData()
     } catch {
       toast.error('Error al actualizar')
+    }
+  }
+
+  async function handleSaveMinQty(itemId: string) {
+    const raw = minQtyInputs[itemId]
+    if (raw === undefined) return
+    const value = parseFloat(raw)
+    if (isNaN(value) || value < 0) return
+    setSavingMinQty(itemId)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.from('stock_items').update({ min_qty: value }).eq('id', itemId)
+      if (error) throw error
+      setSuggestions(prev => prev.map(s => s.id === itemId ? { ...s, min_qty: value } : s))
+      toast.success('Mínimo guardado')
+    } catch {
+      toast.error('No se pudo guardar el mínimo')
+    } finally {
+      setSavingMinQty(null)
     }
   }
 
@@ -445,37 +478,62 @@ export default function PedidosPage() {
                 const alreadyOrdered = allOrders.some(
                   o => o.status === 'pending' && o.product_name.toLowerCase() === item.name.toLowerCase()
                 )
+                const minInput = minQtyInputs[item.id] ?? String(item.min_qty)
                 return (
-                  <div key={item.id} className="flex items-center gap-3 px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-[#3d2c24]">{item.name}</p>
-                      <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#a39e97]">
-                        {item.reason === 'sin_stock' ? (
-                          <span className="font-semibold text-[#ea504c]">
-                            {item.current_qty < 0 ? `−${Math.abs(item.current_qty).toFixed(1)}` : 'Sin stock'}
-                          </span>
-                        ) : (
-                          <span className="font-semibold text-[#d4943a]">Fecha vencida</span>
-                        )}
-                        <span>·</span>
-                        <span className="truncate">{item.supplier_name}</span>
+                  <div key={item.id} className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-[#3d2c24]">{item.name}</p>
+                        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#a39e97]">
+                          {item.reason === 'sin_stock' ? (
+                            <span className="font-semibold text-[#ea504c]">
+                              {item.current_qty < 0 ? `−${Math.abs(item.current_qty).toFixed(1)} ${item.unit}` : 'Sin stock'}
+                            </span>
+                          ) : item.reason === 'bajo_minimo' ? (
+                            <span className="font-semibold text-[#d4943a]">
+                              {item.current_qty.toFixed(1)} / mín {item.min_qty} {item.unit}
+                            </span>
+                          ) : (
+                            <span className="font-semibold text-[#d4943a]">Fecha vencida</span>
+                          )}
+                          <span>·</span>
+                          <span className="truncate">{item.supplier_name}</span>
+                        </div>
                       </div>
+                      {alreadyOrdered ? (
+                        <span className="shrink-0 rounded-full bg-[#e8f5f1] px-2.5 py-1 text-[11px] font-semibold text-[#006d5a]">
+                          ✓ En lista
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleQuickOrder(item)}
+                          disabled={quickOrdering === item.id}
+                          className="flex shrink-0 items-center gap-1 rounded-xl bg-[#006d5a] px-3 py-1.5 text-[12px] font-semibold text-white transition-all active:scale-95 disabled:opacity-60"
+                        >
+                          {quickOrdering === item.id
+                            ? <Loader2 className="size-3 animate-spin" />
+                            : <Plus className="size-3" />}
+                          Pedir
+                        </button>
+                      )}
                     </div>
-                    {alreadyOrdered ? (
-                      <span className="shrink-0 rounded-full bg-[#e8f5f1] px-2.5 py-1 text-[11px] font-semibold text-[#006d5a]">
-                        ✓ En lista
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => handleQuickOrder(item)}
-                        disabled={quickOrdering === item.id}
-                        className="flex shrink-0 items-center gap-1 rounded-xl bg-[#006d5a] px-3 py-1.5 text-[12px] font-semibold text-white transition-all active:scale-95 disabled:opacity-60"
-                      >
-                        {quickOrdering === item.id
-                          ? <Loader2 className="size-3 animate-spin" />
-                          : <Plus className="size-3" />}
-                        Pedir
-                      </button>
+                    {/* Mínimo editable inline */}
+                    {canManage && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[10px] text-[#a39e97]">Stock mínimo:</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={minInput}
+                          onChange={e => setMinQtyInputs(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          onBlur={() => handleSaveMinQty(item.id)}
+                          onKeyDown={e => e.key === 'Enter' && handleSaveMinQty(item.id)}
+                          className="w-16 rounded-lg border border-[#ebe6df] bg-[#faf8f5] px-2 py-1 text-center text-[12px] font-semibold text-[#3d2c24] focus:border-[#006d5a] focus:outline-none"
+                        />
+                        <span className="text-[10px] text-[#a39e97]">{item.unit}</span>
+                        {savingMinQty === item.id && <Loader2 className="size-3 animate-spin text-[#006d5a]" />}
+                      </div>
                     )}
                   </div>
                 )
