@@ -127,6 +127,11 @@ export default function AuditoriaPage() {
       let query = supabase
         .from('audit_trail')
         .select('*')
+        // El espejo de Fudo generaba una fila anónima por cada cantidad que
+        // cambiaba (3.522 en 30 días). Ya no se escriben más (migración
+        // 20260907), pero las históricas se ocultan acá: la auditoría muestra
+        // lo que hicieron personas.
+        .or('action.neq.stock_update,user_id.not.is.null')
         .order('created_at', { ascending: false })
         .range(pageNum * PAGE_SIZE, (pageNum + 1) * PAGE_SIZE - 1)
 

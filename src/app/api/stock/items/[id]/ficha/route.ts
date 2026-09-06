@@ -499,13 +499,17 @@ export async function GET(
       const old = l.old_qty == null ? null : Number(l.old_qty)
       const next = l.new_qty == null ? null : Number(l.new_qty)
       const delta = old != null && next != null ? round2(next - old) : null
-      const isCount = (l.action ?? '').toLowerCase().includes('count')
+      const action = (l.action ?? '').toLowerCase()
+      const isCount = action.includes('count')
+      // 'fudo_mirror' = el sync espejó un número que cambió en Fudo (ventas del
+      // día o un ajuste hecho en el POS). No es una acción de nadie de LVE.
+      const isMirror = action === 'fudo_mirror' || (action === 'update' && !l.profiles)
       movements.push({
         id: `log:${l.id}`,
         source: 'log',
         at: l.created_at,
-        kind: isCount ? 'conteo' : 'ajuste',
-        label: isCount ? 'Conteo físico' : 'Ajuste de stock',
+        kind: isMirror ? 'otro' : isCount ? 'conteo' : 'ajuste',
+        label: isMirror ? 'Movimiento en Fudo' : isCount ? 'Conteo físico' : 'Ajuste de stock',
         qty: delta,
         previous_qty: old,
         new_qty: next,

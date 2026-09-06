@@ -333,6 +333,9 @@ export default function ControlPage() {
       const { data, error } = await supabase
         .from('audit_trail')
         .select('id, user_name, action, module, description, metadata, created_at')
+        // Sin las filas anónimas que dejaba el espejo de Fudo (ver migración
+        // 20260907): el historial reciente es de acciones de personas.
+        .or('action.neq.stock_update,user_id.not.is.null')
         .order('created_at', { ascending: false })
         .limit(15)
       if (error) throw error
