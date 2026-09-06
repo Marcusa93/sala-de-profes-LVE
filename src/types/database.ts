@@ -438,6 +438,11 @@ export type Database = {
       }
       bar_orders: {
         Row: {
+          ordered_at: string | null
+          fudo_expense_id: string | null
+          fudo_amount: number | null
+          received_mode: string | null
+          received_note: string | null
           bar_stock_item_id: number | null
           category: string
           created_at: string
@@ -458,6 +463,11 @@ export type Database = {
           urgency: string
         }
         Insert: {
+          ordered_at?: string | null
+          fudo_expense_id?: string | null
+          fudo_amount?: number | null
+          received_mode?: string | null
+          received_note?: string | null
           bar_stock_item_id?: number | null
           category?: string
           created_at?: string
@@ -478,6 +488,11 @@ export type Database = {
           urgency?: string
         }
         Update: {
+          ordered_at?: string | null
+          fudo_expense_id?: string | null
+          fudo_amount?: number | null
+          received_mode?: string | null
+          received_note?: string | null
           bar_stock_item_id?: number | null
           category?: string
           created_at?: string
@@ -1352,6 +1367,11 @@ export type Database = {
       }
       kitchen_orders: {
         Row: {
+          ordered_at: string | null
+          fudo_expense_id: string | null
+          fudo_amount: number | null
+          received_mode: string | null
+          received_note: string | null
           category: string
           created_at: string
           created_by: string | null
@@ -1371,6 +1391,11 @@ export type Database = {
           urgency: string
         }
         Insert: {
+          ordered_at?: string | null
+          fudo_expense_id?: string | null
+          fudo_amount?: number | null
+          received_mode?: string | null
+          received_note?: string | null
           category?: string
           created_at?: string
           created_by?: string | null
@@ -1390,6 +1415,11 @@ export type Database = {
           urgency?: string
         }
         Update: {
+          ordered_at?: string | null
+          fudo_expense_id?: string | null
+          fudo_amount?: number | null
+          received_mode?: string | null
+          received_note?: string | null
           category?: string
           created_at?: string
           created_by?: string | null
@@ -1773,6 +1803,7 @@ export type Database = {
       }
       production_inputs: {
         Row: {
+          movement_uuid: string | null
           cost_per_unit: number | null
           created_at: string
           id: number
@@ -1783,6 +1814,7 @@ export type Database = {
           unit: string
         }
         Insert: {
+          movement_uuid?: string | null
           cost_per_unit?: number | null
           created_at?: string
           id?: number
@@ -1793,6 +1825,7 @@ export type Database = {
           unit?: string
         }
         Update: {
+          movement_uuid?: string | null
           cost_per_unit?: number | null
           created_at?: string
           id?: number
@@ -1821,6 +1854,10 @@ export type Database = {
       }
       production_orders: {
         Row: {
+          efficiency_pct: number | null
+          total_cost: number | null
+          cost_per_output_unit: number | null
+          main_output_stock_item_id: string | null
           chef_id: string | null
           completed_at: string | null
           created_at: string
@@ -1838,6 +1875,10 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          efficiency_pct?: number | null
+          total_cost?: number | null
+          cost_per_output_unit?: number | null
+          main_output_stock_item_id?: string | null
           chef_id?: string | null
           completed_at?: string | null
           created_at?: string
@@ -1855,6 +1896,10 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          efficiency_pct?: number | null
+          total_cost?: number | null
+          cost_per_output_unit?: number | null
+          main_output_stock_item_id?: string | null
           chef_id?: string | null
           completed_at?: string | null
           created_at?: string
@@ -1904,6 +1949,7 @@ export type Database = {
       }
       production_outputs: {
         Row: {
+          movement_uuid: string | null
           created_at: string
           expires_at: string | null
           id: number
@@ -1920,6 +1966,7 @@ export type Database = {
           unit: string
         }
         Insert: {
+          movement_uuid?: string | null
           created_at?: string
           expires_at?: string | null
           id?: number
@@ -1936,6 +1983,7 @@ export type Database = {
           unit?: string
         }
         Update: {
+          movement_uuid?: string | null
           created_at?: string
           expires_at?: string | null
           id?: number
@@ -2684,6 +2732,9 @@ export type Database = {
       }
       stock_items: {
         Row: {
+          area: string | null
+          fudo_category: string | null
+          area_locked: boolean
           category: string
           cost_per_unit: number | null
           created_at: string
@@ -2708,6 +2759,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          area?: string | null
+          fudo_category?: string | null
+          area_locked?: boolean
           category: string
           cost_per_unit?: number | null
           created_at?: string
@@ -2732,6 +2786,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          area?: string | null
+          fudo_category?: string | null
+          area_locked?: boolean
           category?: string
           cost_per_unit?: number | null
           created_at?: string
@@ -2898,6 +2955,9 @@ export type Database = {
       }
       stock_movements: {
         Row: {
+          production_order_id: number | null
+          fudo_synced: boolean
+          cost_per_unit: number | null
           created_at: string | null
           created_by: string
           id: string
@@ -2911,6 +2971,9 @@ export type Database = {
           stock_item_id: string
         }
         Insert: {
+          production_order_id?: number | null
+          fudo_synced?: boolean
+          cost_per_unit?: number | null
           created_at?: string | null
           created_by: string
           id?: string
@@ -2924,6 +2987,9 @@ export type Database = {
           stock_item_id: string
         }
         Update: {
+          production_order_id?: number | null
+          fudo_synced?: boolean
+          cost_per_unit?: number | null
           created_at?: string | null
           created_by?: string
           id?: string

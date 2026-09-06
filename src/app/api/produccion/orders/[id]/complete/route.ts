@@ -5,7 +5,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { logAudit } from '@/lib/audit'
 import { notifyEvent } from '@/lib/push/notify-event'
-import { snapshotProductionInputCosts } from '@/lib/produccion/cost-snapshot'
+import { snapshotProductionInputCosts, persistProductionCost } from '@/lib/produccion/cost-snapshot'
 
 // ---------------------------------------------------------------------------
 // POST /api/produccion/orders/[id]/complete
@@ -245,16 +245,24 @@ export async function POST(
       total_input_qty?: number
       total_output_qty?: number
       waste_qty?: number
-      efficiency_pct?: number
-      movements?: { stock_item_id: number | string; change: number }[]
+      efficiency_pct?: number | null
+      total_cost?: number
+      cost_per_output_unit?: number | null
+      movements?: { stock_item_id: number | string; change: number; movement_id?: string | null }[]
     }
 
     if (!result.success) {
       return NextResponse.json({ error: result.error ?? 'Error al completar la orden' }, { status: 400 })
     }
 
-    // Congelar el costo de los insumos para que la producción quede histórica.
+    // Congelar el costo de los insumos y persistir el costo real de la tanda
+    // (el RPC v5 ya lo hace; con el RPC viejo lo calcula acá).
     await snapshotProductionInputCosts(admin, id)
+    const costSummary = await persistProductionCost(admin, id, {
+      rpcAlreadyPersisted: typeof result.cost_per_output_unit === 'number',
+    }).catch(() => null)
+    const costPerOutputUnit = result.cost_per_output_unit ?? costSummary?.cost_per_output_unit ?? null
+    const totalCost = result.total_cost ?? costSummary?.total_cost ?? null
 
     // Auto-reparación del vínculo receta → stock producido: si la orden viene
     // de una plantilla con receta y esa receta todavía no tiene
@@ -265,7 +273,7 @@ export async function POST(
     })
 
     // Sync affected stock items to Fudo
-    const movements = (result.movements ?? []) as { stock_item_id: number; change: number }[]
+    const movements = (result.movements ?? []) as { stock_item_id: number; change: number; movement_id?: string | null }[]
     let fudoSummary: { synced: number; errors: string[] } | null = null
     if (movements.length > 0) {
       try {
@@ -316,12 +324,14 @@ export async function POST(
       module: 'produccion',
       entityType: 'production_order',
       entityId: String(id),
-      description: `${validatorName ?? 'Alguien'}: validó "${order.name}" — eficiencia ${result.efficiency_pct}%`,
+      description: `${validatorName ?? 'Alguien'}: validó "${order.name}"${costPerOutputUnit ? ` — $${costPerOutputUnit}/u` : ''}${result.efficiency_pct != null ? ` — eficiencia ${result.efficiency_pct}%` : ''}`,
       metadata: {
         total_input_qty: result.total_input_qty,
         total_output_qty: result.total_output_qty,
         waste_qty: result.waste_qty,
         efficiency_pct: result.efficiency_pct,
+        total_cost: totalCost,
+        cost_per_output_unit: costPerOutputUnit,
         movements: result.movements,
         fudo_synced: fudoSummary ? fudoSummary.errors.length === 0 : true,
       },
@@ -329,7 +339,7 @@ export async function POST(
 
     notifyEvent(admin, 'production_completed', {
       title: '👨‍🍳 Producción validada',
-      body: `${validatorName ?? 'Alguien'}: "${order.name}" — eficiencia ${result.efficiency_pct}%`,
+      body: `${validatorName ?? 'Alguien'}: "${order.name}"${costPerOutputUnit ? ` · $${Math.round(costPerOutputUnit).toLocaleString('es-AR')}/u` : ''}`,
       url: '/stock/produccion',
     }).catch(() => {})
 
@@ -340,9 +350,13 @@ export async function POST(
       total_output_qty: result.total_output_qty,
       waste_qty: result.waste_qty,
       efficiency_pct: result.efficiency_pct,
+      total_cost: totalCost,
+      cost_per_output_unit: costPerOutputUnit,
       movements: result.movements,
       fudo: fudoSummary,
-      message: `Producción validada — eficiencia ${result.efficiency_pct}%`,
+      message: costPerOutputUnit
+        ? `Producción validada — $${Math.round(costPerOutputUnit).toLocaleString('es-AR')} por unidad`
+        : 'Producción validada',
     })
   } catch (err) {
     console.error('[POST /api/produccion/orders/[id]/complete]', err)

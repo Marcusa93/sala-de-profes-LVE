@@ -40,6 +40,7 @@ export function TopBar() {
     '/equipo/turnos': 'Turnos',
     '/cocina/produccion': 'Producción',
     '/cocina/stock': 'Stock Cocina',
+    '/stock/conteo': 'Conteo',
     '/stock/rendimiento': 'Rendimiento',
     '/admin/stock/mapeo': 'Mapeo Fudo',
     '/admin/recetas/pending': 'Recetas Pendientes',

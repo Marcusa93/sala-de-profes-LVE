@@ -8,7 +8,13 @@ const PUBLIC_ROUTES = ['/login']
 const MANAGER_ROUTES = [
   '/encargado',
   '/equipo',
-  '/stock',
+  // /stock, /stock/conteo, /stock/item y /stock/puesta-a-cero son operativas:
+  // cocina también cuenta. Lo económico/analítico sigue siendo de managers.
+  '/stock/rendimiento',
+  '/stock/historial',
+  '/stock/consumo',
+  '/stock/produccion',
+  '/stock/precios',
   '/proveedores',
   '/admin',
   '/auditoria',

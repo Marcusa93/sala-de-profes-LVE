@@ -27,6 +27,10 @@ import { fudoFetch } from '@/lib/fudoClient'
 export type FudoExpense = {
   id: string
   provider: string | null
+  /** id del Provider en Fudo (= suppliers.fudo_provider_id) */
+  providerId: string | null
+  /** ids de los Ingredient comprados (para cruzar con stock_items.fudo_ingredient_id) */
+  ingredientIds: string[]
   date: string // ISO del primer payment no cancelado
   amount: number // Σ payments no cancelados
   ingredientNames: string[]
@@ -136,9 +140,11 @@ export async function fetchFudoExpenses(sinceISO?: string): Promise<FudoExpense[
     // Ingredientes: nombres de los ingredient no-null de sus expenseItems
     const itemRefs = relArray(exp.relationships, 'expenseItems')
     const names: string[] = []
+    const ingredientIds: string[] = []
     for (const it of itemRefs) {
       const ingId = expenseItemIngredient.get(it.id)
       if (!ingId) continue
+      ingredientIds.push(ingId)
       const name = ingredientName.get(ingId)
       if (name) names.push(name)
     }
@@ -147,6 +153,8 @@ export async function fetchFudoExpenses(sinceISO?: string): Promise<FudoExpense[
     expenses.push({
       id: exp.id,
       provider: providerId ? providerName.get(providerId) ?? null : null,
+      providerId: providerId ?? null,
+      ingredientIds,
       date,
       amount: Math.round(amount * 100) / 100,
       ingredientNames: names,

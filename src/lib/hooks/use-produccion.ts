@@ -26,6 +26,8 @@ export type OrderSummary = {
     total_output_qty: number
     total_waste_qty: number
     efficiency_pct: number | null
+    total_input_cost?: number
+    cost_per_output_unit?: number | null
   }
 }
 

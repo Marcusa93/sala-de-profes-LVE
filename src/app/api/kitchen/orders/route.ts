@@ -32,11 +32,13 @@ export async function POST(request: NextRequest) {
 
     // ----- CREATE ORDER (single or batch) -----
     if (body.action === 'create_order') {
-      const { items, urgency, note, supplier_id } = body as {
-        items: { product_name: string; quantity: string; category?: string }[]
+      const { items, urgency, note, supplier_id, initial_status } = body as {
+        items: { product_name: string; quantity: string; category?: string; stock_item_id?: string | null }[]
         urgency?: string
         note?: string
-        supplier_id?: number | null
+        supplier_id?: string | number | null
+        /** 'ordered' cuando el pedido ya se le mandó al proveedor en el mismo gesto */
+        initial_status?: 'pending' | 'ordered'
       }
 
       if (!items || !Array.isArray(items) || items.length === 0) {
@@ -56,6 +58,8 @@ export async function POST(request: NextRequest) {
       }
 
       const orderUrgency = urgency || 'normal'
+      const startOrdered = initial_status === 'ordered' && ['encargado', 'socio'].includes(profile.role)
+      const nowIso = new Date().toISOString()
 
       // Insert all items
       const inserts = items.map((item) => ({
@@ -65,11 +69,32 @@ export async function POST(request: NextRequest) {
         urgency: orderUrgency as KitchenOrderUrgencyValue,
         note: note || null,
         created_by: user.id,
+        stock_item_id: item.stock_item_id ?? null,
         ...(supplier_id ? { supplier_id } : {}),
+        ...(startOrdered ? { status: 'ordered', ordered_at: nowIso } : {}),
       }))
 
-      const { error: orderError } = await admin.from('kitchen_orders').insert(inserts)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let { error: orderError } = await admin.from('kitchen_orders').insert(inserts as any)
+      if (orderError && /ordered_at|stock_item_id/.test(orderError.message)) {
+        // Migración pendiente: insertar sin las columnas nuevas
+        const legacy = inserts.map((row) => {
+          const { ordered_at: _o, stock_item_id: _s, ...rest } = row as Record<string, unknown>
+          void _o; void _s
+          return rest
+        })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;({ error: orderError } = await admin.from('kitchen_orders').insert(legacy as any))
+      }
       if (orderError) throw orderError
+
+      // Pedido enviado en el mismo gesto: fecha de "última vez pedido" del insumo
+      if (startOrdered) {
+        const linkedIds = items.map((i) => i.stock_item_id).filter((x): x is string => Boolean(x))
+        if (linkedIds.length > 0) {
+          await admin.from('stock_items').update({ last_ordered_at: nowIso }).in('id', linkedIds).then(() => null, () => null)
+        }
+      }
 
       const creatorName = profile
         ? `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'Cocina'
@@ -190,10 +215,15 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'Solo encargados pueden cambiar estado' }, { status: 403 })
       }
 
-      const { error } = await admin
+      const statusUpdate: Record<string, unknown> = { status }
+      if (status === 'ordered') statusUpdate.ordered_at = new Date().toISOString()
+      let { error } = await admin
         .from('kitchen_orders')
-        .update({ status })
+        .update(statusUpdate)
         .eq('id', orderId)
+      if (error && /ordered_at/.test(error.message)) {
+        ({ error } = await admin.from('kitchen_orders').update({ status }).eq('id', orderId))
+      }
 
       if (error) throw error
 
@@ -253,6 +283,117 @@ export async function POST(request: NextRequest) {
       }
 
       return NextResponse.json({ success: true })
+    }
+
+    // ----- CONFIRM ARRIVAL (encargado/socio) — cierre del ciclo sin duplicar Fudo -----
+    // La compra se carga UNA vez, en Fudo (Gastos). Acá el pedido se cierra:
+    //   mode 'fudo_expense': la compra ya está en Fudo → LVE NO toca stock, sólo
+    //                        vincula el gasto (proveedor, monto, fecha) al pedido.
+    //   mode 'lve_stock':    la compra NO se cargó en Fudo → LVE suma la cantidad
+    //                        recibida como DELTA sobre el stock actual de Fudo
+    //                        (nunca pisa ventas) y deja kardex + recibo con precio.
+    //   mode 'sin_stock':    sólo cerrar el pedido (ej. se recibió algo que no es stock).
+    if (body.action === 'confirm_arrival') {
+      const { orderId, source, mode, expense, receivedQty, unitCost, note } = body as {
+        orderId: number
+        source: 'cocina' | 'barra'
+        mode: 'fudo_expense' | 'lve_stock' | 'sin_stock'
+        expense?: { id: string; amount: number } | null
+        receivedQty?: string | null
+        unitCost?: number | null
+        note?: string | null
+      }
+      if (typeof orderId !== 'number' || !source || !mode) {
+        return NextResponse.json({ success: false, error: 'Faltan datos requeridos' }, { status: 400 })
+      }
+      const { data: profile } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
+      if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
+        return NextResponse.json({ success: false, error: 'Solo encargados pueden confirmar recepciones' }, { status: 403 })
+      }
+      const table = source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+      const { data: order, error: fetchErr } = await admin
+        .from(table)
+        .select('id, product_name, quantity, status, stock_item_id, supplier_id')
+        .eq('id', orderId)
+        .single()
+      if (fetchErr || !order) return NextResponse.json({ success: false, error: 'Pedido no encontrado' }, { status: 404 })
+      if (order.status === 'received') return NextResponse.json({ success: false, error: 'El pedido ya fue recibido' }, { status: 409 })
+
+      let stockUpdated = false
+      if (mode === 'lve_stock') {
+        const stockItemId = (order as { stock_item_id?: string | null }).stock_item_id ?? (body.stockItemId as string | undefined) ?? null
+        const numericQty = parseFloat(String(receivedQty ?? '').replace(',', '.'))
+        if (!stockItemId || isNaN(numericQty) || numericQty <= 0) {
+          return NextResponse.json({ success: false, error: 'Para cargar stock desde acá hace falta el insumo y la cantidad recibida' }, { status: 400 })
+        }
+        const { data: si } = await admin
+          .from('stock_items')
+          .select('id, name, unit, current_qty, cost_per_unit, supplier_id')
+          .eq('id', stockItemId)
+          .single()
+        if (!si) return NextResponse.json({ success: false, error: 'Insumo no encontrado' }, { status: 404 })
+        const unitMatch = String(receivedQty).toLowerCase().match(/\b(kg|g|lt|l|ml|unidad(?:es)?|u)\b/)
+        const receivedUnit = unitMatch ? (unitMatch[1] === 'u' || unitMatch[1].startsWith('unidad') ? 'unidad' : unitMatch[1]) : si.unit
+        const normalized = normalizeToStockUnit(numericQty, receivedUnit, si)
+        if (!normalized.ok) return NextResponse.json({ success: false, error: normalized.error }, { status: 409 })
+        const qty = normalized.qty
+        const costPerUnit = typeof unitCost === 'number' && unitCost > 0 ? unitCost : null
+        // syncToFudo con reason 'reception' escribe por DELTA sobre Fudo y deja kardex
+        const write = await syncToFudo(admin, stockItemId, Math.round((Number(si.current_qty ?? 0) + qty) * 100) / 100, user.id, {
+          reason: 'reception',
+          note: `Recepción: ${order.product_name} (+${qty} ${si.unit})${note ? ` — ${note}` : ''}`,
+          costPerUnit,
+        })
+        if (!write.success) {
+          return NextResponse.json({ success: false, error: write.error ?? 'No se pudo actualizar el stock' }, { status: 502 })
+        }
+        stockUpdated = true
+        // Recibo (precio de compra) — base del historial de precios LVE
+        const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+        await admin.from('stock_receipts').insert({
+          stock_item_id: stockItemId,
+          supplier_id: si.supplier_id ?? (order as { supplier_id?: string | null }).supplier_id ?? null,
+          order_source: source,
+          order_id: orderId,
+          qty,
+          unit: si.unit,
+          cost_total: costPerUnit != null ? Math.round(costPerUnit * qty * 100) / 100 : null,
+          cost_per_unit: costPerUnit,
+          note: `Pedido: ${order.product_name} (${order.quantity})`,
+          received_by: user.id,
+          received_date: receivedDate,
+        }).then(({ error }) => { if (error) console.warn('[confirm_arrival] receipt no registrado:', error.message) })
+      }
+
+      const { closeOrderWithExpense } = await import('@/lib/compras/conciliar')
+      const closed = await closeOrderWithExpense(admin, {
+        orderId,
+        source,
+        userId: user.id,
+        expense: mode === 'fudo_expense' ? (expense ?? null) : null,
+        mode,
+        note: note ?? null,
+        receivedQty: receivedQty ?? null,
+      })
+      if (!closed.success) throw new Error(closed.error)
+
+      const who = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null
+      logAudit(admin, {
+        userId: user.id,
+        userName: who,
+        action: 'confirm_arrival',
+        module: 'pedidos',
+        entityType: table,
+        entityId: String(orderId),
+        description: mode === 'fudo_expense'
+          ? `Llegó pedido #${orderId} (${order.product_name}) — compra cargada en Fudo${expense ? ` ($${expense.amount.toLocaleString('es-AR')}, gasto #${expense.id})` : ''}`
+          : mode === 'lve_stock'
+            ? `Llegó pedido #${orderId} (${order.product_name}) — stock cargado desde LVE (${receivedQty})`
+            : `Llegó pedido #${orderId} (${order.product_name}) — sin movimiento de stock`,
+        metadata: { orderId, source, mode, expense: expense ?? null, receivedQty: receivedQty ?? null, unitCost: unitCost ?? null, note: note ?? null, stockUpdated },
+      }).catch(() => {})
+
+      return NextResponse.json({ success: true, stockUpdated, mode })
     }
 
     // ----- RECEIVE ORDER (encargado only) -----

@@ -450,33 +450,37 @@ export default function ProduccionPage() {
                       <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground" />
                     </div>
 
-                    {/* Summary */}
-                    <div className="mt-3 grid grid-cols-3 gap-2">
-                      <div className="rounded-xl bg-[#f5f2ee] px-2 py-1.5 text-center">
-                        <p className="text-[10px] text-muted-foreground">Entrada</p>
-                        <p className="text-[13px] font-bold text-[#3d2c24]">
-                          {order.summary.total_input_qty > 0
-                            ? `${order.summary.total_input_qty.toFixed(2)} kg`
-                            : '—'}
-                        </p>
-                      </div>
-                      <div className="rounded-xl bg-[#f5f2ee] px-2 py-1.5 text-center">
-                        <p className="text-[10px] text-muted-foreground">Merma</p>
-                        <p className={cn('text-[13px] font-bold', order.summary.total_waste_qty > 0 ? 'text-[#ea504c]' : 'text-[#3d2c24]')}>
-                          {order.summary.total_waste_qty > 0
-                            ? `${order.summary.total_waste_qty.toFixed(3)} kg`
-                            : '—'}
-                        </p>
-                      </div>
-                      <div className="rounded-xl bg-[#f5f2ee] px-2 py-1.5 text-center">
-                        <p className="text-[10px] text-muted-foreground">Eficiencia</p>
-                        <p className={cn('text-[13px] font-bold', efficiencyColor(order.summary.efficiency_pct))}>
-                          {order.summary.efficiency_pct !== null
-                            ? `${order.summary.efficiency_pct}%`
-                            : '—'}
-                        </p>
-                      </div>
-                    </div>
+                    {/* Resumen: qué salió, cuánto costó, merma real */}
+                    {(() => {
+                      const main = order.outputs.filter((o) => !o.is_waste).sort((a, b) => b.qty - a.qty)[0] ?? null
+                      const waste = order.outputs.filter((o) => o.is_waste)
+                      const wasteLabel = waste.length > 0
+                        ? waste.map((w) => `${w.qty.toLocaleString('es-AR', { maximumFractionDigits: 3 })} ${w.unit}`).join(' + ')
+                        : null
+                      const cpu = order.summary.cost_per_output_unit
+                      return (
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                          <div className="rounded-xl bg-[#f5f2ee] px-2 py-1.5 text-center">
+                            <p className="text-[10px] text-muted-foreground">Salió</p>
+                            <p className="truncate text-[13px] font-bold text-[#3d2c24]">
+                              {main ? `${main.qty.toLocaleString('es-AR', { maximumFractionDigits: 2 })} ${main.unit}` : '—'}
+                            </p>
+                          </div>
+                          <div className="rounded-xl bg-[#f5f2ee] px-2 py-1.5 text-center">
+                            <p className="text-[10px] text-muted-foreground">Costo/u</p>
+                            <p className="text-[13px] font-bold text-[#3d2c24]">
+                              {cpu ? `$${Math.round(cpu).toLocaleString('es-AR')}` : '—'}
+                            </p>
+                          </div>
+                          <div className="rounded-xl bg-[#f5f2ee] px-2 py-1.5 text-center">
+                            <p className="text-[10px] text-muted-foreground">{wasteLabel ? 'Merma' : 'Eficiencia'}</p>
+                            <p className={cn('text-[13px] font-bold', wasteLabel ? 'text-[#ea504c]' : efficiencyColor(order.summary.efficiency_pct))}>
+                              {wasteLabel ?? (order.summary.efficiency_pct !== null ? `${order.summary.efficiency_pct}%` : '—')}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })()}
 
                     <p className="mt-2 text-[11px] text-muted-foreground">
                       {formatDate(order.submitted_at ?? order.created_at)}

@@ -51,6 +51,7 @@ type StockItemRow = {
   name: string
   unit: string
   cost_per_unit: number | null
+  is_produced?: boolean | null
 }
 
 export type RecipeCost = {
@@ -90,7 +91,7 @@ export async function costRecipes(
   //    receta. Vínculo explícito (output_stock_item_id) primero; match por
   //    nombre solo como fallback para recetas sin vincular.
   const [{ data: directItems, error: siError }, recipesRes] = await Promise.all([
-    admin.from('stock_items').select('id, name, unit, cost_per_unit').in('id', directItemIds),
+    admin.from('stock_items').select('id, name, unit, cost_per_unit, is_produced').in('id', directItemIds),
     admin.from('recipes').select('id, name, output_stock_item_id'),
   ])
   if (siError) throw new Error(siError.message)
@@ -137,7 +138,7 @@ export async function costRecipes(
   const allItemIds = [...new Set([...directItemIds, ...l1Ingredients.map(r => r.stock_item_id)])]
   const { data: allItems, error: aiError } = await admin
     .from('stock_items')
-    .select('id, name, unit, cost_per_unit')
+    .select('id, name, unit, cost_per_unit, is_produced')
     .in('id', allItemIds)
   if (aiError) throw new Error(aiError.message)
   const itemById = new Map<string, StockItemRow>()
@@ -169,6 +170,14 @@ export async function costRecipes(
     let missing = 0
     for (const ri of rows) {
       const l1Recipe = l1RecipeByItemId.get(ri.stock_item_id)
+      // Intermedio PRODUCIDO con costo real de producción (lo escribe
+      // complete_production_order al cerrar cada tanda): ese costo manda sobre
+      // el teórico de la receta. Es el número que de verdad costó hacerlo.
+      const producedItem = itemById.get(ri.stock_item_id)
+      if (l1Recipe && l1Recipe !== rid && producedItem?.is_produced && Number(producedItem.cost_per_unit ?? 0) > 0) {
+        total += rowCost(ri).cost
+        continue
+      }
       // Intermedio (y no auto-referencia): costo de esa receta × qty canónica
       if (l1Recipe && l1Recipe !== rid) {
         const perUnit = l1CostByRecipeId.get(l1Recipe) ?? 0

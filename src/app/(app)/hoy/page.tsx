@@ -203,7 +203,7 @@ export default function HoyPage() {
       key: 'pedir',
       title: 'Pedir',
       icon: ShoppingCart,
-      href: '/pedidos?from=hoy',
+      href: '/pedidos?from=hoy&step=pedir',
       cta: 'Armar pedidos',
       tone: data.orderToday.length > 0 ? 'action' : 'ok',
       body: data.orderToday.length > 0 ? (
@@ -228,7 +228,7 @@ export default function HoyPage() {
       key: 'recibir',
       title: 'Recibir',
       icon: Truck,
-      href: '/pedidos?from=hoy',
+      href: '/pedidos?from=hoy&step=camino',
       cta: 'Recibir mercadería',
       tone: data.incoming.length > 0 ? 'action' : 'ok',
       body: data.incoming.length > 0 ? (
@@ -241,7 +241,7 @@ export default function HoyPage() {
           {data.incoming.length > 4 && <p className="text-[11px] text-[#a39e97]">+{data.incoming.length - 4} más en camino</p>}
         </div>
       ) : (
-        <p className="text-xs text-[#7d6c64]">Nada pendiente de recibir. Al llegar mercadería, cargala desde Pedidos → Recibido.</p>
+        <p className="text-xs text-[#7d6c64]">Nada pendiente de recibir. Cuando llegue un pedido, confirmalo en Pedidos → En camino (la compra se carga una sola vez, en Fudo).</p>
       ),
     },
     {

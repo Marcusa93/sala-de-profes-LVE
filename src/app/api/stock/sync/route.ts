@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { fullSync, syncToFudo } from '@/lib/fudo/stock-sync'
+import { isKitchenRole } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // GET /api/stock/sync — Pull stock from Fudo → update Supabase
@@ -57,6 +58,12 @@ export async function POST(request: NextRequest) {
     const userSupabase = await createClient()
     const { data: { user } } = await userSupabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+
+    // Escribir stock en el POS es operativo: socio, encargado, chef y cocina.
+    const { data: profile } = await userSupabase.from('profiles').select('role').eq('id', user.id).single()
+    if (!isKitchenRole(profile?.role)) {
+      return NextResponse.json({ error: 'Sin permiso para modificar stock' }, { status: 403 })
+    }
 
     const body = await request.json()
     const { stockItemId, newQty } = body

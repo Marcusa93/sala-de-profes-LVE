@@ -4,6 +4,7 @@ import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
 import { SWR_KEYS } from '@/lib/swr/keys'
 import type { StockCategoryValue } from '@/types/database'
+import type { StockArea } from '@/lib/stock/areas'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,6 +27,13 @@ export type StockItem = {
   fudo_product_id?: string | null
   fudo_ingredient_id?: string | null
   fudo_skip?: boolean | null
+  is_produced?: boolean | null
+  cost_per_unit?: number | null
+  /** Área operativa (migración 20260906). null si todavía no está aplicada. */
+  area?: StockArea | null
+  /** Categoría real de Fudo (espejo). */
+  fudo_category?: string | null
+  area_locked?: boolean | null
   suppliers: { id: number; name: string; phone: string | null; contact_name: string | null } | null
 }
 
@@ -33,17 +41,23 @@ export type StockItem = {
 // Fetcher
 // ---------------------------------------------------------------------------
 
+const BASE_SELECT = 'id, name, category, unit, current_qty, min_qty, shelf_life_days, purchase_lead_time_days, is_active, notes, updated_at, supplier_id, last_counted_at, fudo_product_id, fudo_ingredient_id, fudo_skip, is_produced, cost_per_unit, suppliers(id, name, phone, contact_name)'
+const AREA_SELECT = `${BASE_SELECT}, area, fudo_category, area_locked`
+
 async function fetchStockItems(active: boolean): Promise<StockItem[]> {
   const supabase = createClient()
-  let query = supabase
-    .from('stock_items')
-    .select('id, name, category, unit, current_qty, min_qty, shelf_life_days, purchase_lead_time_days, is_active, notes, updated_at, supplier_id, last_counted_at, fudo_product_id, fudo_ingredient_id, fudo_skip, suppliers(id, name, phone, contact_name)')
-    .order('category')
-    .order('name')
+  const run = async (select: string) => {
+    let query = supabase.from('stock_items').select(select).order('category').order('name')
+    if (active) query = query.eq('is_active', true)
+    return query
+  }
 
-  if (active) query = query.eq('is_active', true)
-
-  const { data, error } = await query
+  // Select tolerante: si la migración de áreas no está aplicada, PostgREST
+  // rechaza las columnas nuevas → caer al select base.
+  let { data, error } = await run(AREA_SELECT)
+  if (error && /area|fudo_category/i.test(error.message)) {
+    ({ data, error } = await run(BASE_SELECT))
+  }
   if (error) throw error
   return (data ?? []) as unknown as StockItem[]
 }

@@ -110,6 +110,27 @@ export async function GET(request: NextRequest) {
       snapshotError = err instanceof Error ? err.message : 'Error al guardar snapshot'
     }
 
+    // ── 3.5) Conciliar pedidos en camino con los GASTOS de Fudo ──
+    // Si Fudo ya registró la compra de un proveedor con pedido en camino, avisar
+    // al encargado para que confirme la llegada desde /pedidos (no se cierra
+    // solo: la persona confirma; LVE no vuelve a cargar stock ni gasto).
+    let reconcile: { matches: number; strong: number; error: string | null } = { matches: 0, strong: 0, error: null }
+    try {
+      const { matchOrdersWithExpenses } = await import('@/lib/compras/conciliar')
+      const { matches } = await matchOrdersWithExpenses(admin, { sinceDays: 21 })
+      reconcile = { matches: matches.length, strong: matches.filter((m) => m.strength === 'fuerte').length, error: null }
+      if (matches.length > 0) {
+        const names = [...new Set(matches.map((m) => m.expense.provider ?? 'proveedor'))].slice(0, 4).join(', ')
+        await notifyEvent(admin, 'purchase_created', {
+          title: `📦 Fudo registró ${matches.length} compra${matches.length === 1 ? '' : 's'} de pedidos en camino`,
+          body: `${names}. Confirmá la llegada en Pedidos → En camino.`,
+          url: '/pedidos?step=camino',
+        }).catch(() => {})
+      }
+    } catch (err) {
+      reconcile.error = err instanceof Error ? err.message : 'No se pudo conciliar pedidos con gastos de Fudo'
+    }
+
     // ── 4) Auditoría de discrepancias (lo menos crítico va último) ──
     let auditSummary: Record<string, unknown> | null = null
     let auditError: string | null = null
@@ -143,6 +164,7 @@ export async function GET(request: NextRequest) {
           audit: { summary: auditSummary, error: auditError },
           sales: { imported: salesImported, errors: salesErrors, from: yesterdayStr },
           snapshot: { saved: snapshotSaved, error: snapshotError },
+          reconcile,
           elapsed_ms: elapsedMs,
         })),
       })
@@ -171,6 +193,7 @@ export async function GET(request: NextRequest) {
         from: yesterdayStr,
       },
       snapshot: { saved: snapshotSaved, error: snapshotError },
+      reconcile,
       elapsed_ms: elapsedMs,
       timestamp: new Date().toISOString(),
     })

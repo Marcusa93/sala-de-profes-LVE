@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-const connectionString = 'postgresql://postgres.tumbcpizdqlnuevplawr:SalaDeProfe2026!@aws-0-sa-east-1.pooler.supabase.com:6543/postgres'
+const connectionString = 'postgresql://postgres.tumbcpizdqlnuevplawr:SalaDeProfe2026!@aws-0-us-west-2.pooler.supabase.com:5432/postgres'
 
 const client = new pg.Client({ connectionString, ssl: { rejectUnauthorized: false } })
 
@@ -27,9 +27,12 @@ async function run() {
     console.log(`📄 Ejecutando: ${migrationFile}`)
     console.log(`   (${sql.length} caracteres)\n`)
 
-    await client.query(sql)
+    const result = await client.query(sql)
+    const rows = Array.isArray(result) ? result.flatMap(r => r.rows ?? []) : (result.rows ?? [])
+    if (rows.length) console.log(JSON.stringify(rows, null, 1))
     console.log('✅ Migración ejecutada correctamente\n')
 
+    if (process.argv[3] === "--no-tables") return
     // Verify tables
     const { rows } = await client.query(`
       SELECT table_name FROM information_schema.tables

@@ -179,7 +179,7 @@ const CHEF_MORE: ExpandableNavItem = {
       label: 'Cocina',
       items: [
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
-        { label: 'Stock cocina', href: '/cocina/stock', icon: Package, description: 'Faltantes e insumos del sector' },
+        { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
       ],
     },
@@ -202,7 +202,7 @@ const COCINA_MORE: ExpandableNavItem = {
       label: 'Cocina',
       items: [
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
-        { label: 'Stock cocina', href: '/cocina/stock', icon: Package, description: 'Faltantes e insumos del sector' },
+        { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
       ],
     },

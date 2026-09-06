@@ -5,7 +5,7 @@ import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { isManagerOrAbove } from '@/lib/roles'
 import { logAudit } from '@/lib/audit'
 import { notifyEvent } from '@/lib/push/notify-event'
-import { snapshotProductionInputCosts } from '@/lib/produccion/cost-snapshot'
+import { snapshotProductionInputCosts, persistProductionCost } from '@/lib/produccion/cost-snapshot'
 import type { Database } from '@/types/database'
 
 type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
@@ -360,8 +360,10 @@ export async function POST(request: NextRequest) {
       total_input_qty?: number
       total_output_qty?: number
       waste_qty?: number
-      efficiency_pct?: number
-      movements?: { stock_item_id: number | string; change: number }[]
+      efficiency_pct?: number | null
+      total_cost?: number
+      cost_per_output_unit?: number | null
+      movements?: { stock_item_id: number | string; change: number; movement_id?: string | null }[]
     }
 
     if (!rpcResult.success) {
@@ -372,8 +374,14 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // Congelar el costo de los insumos para que la producción quede histórica.
+    // Congelar el costo de los insumos y persistir el costo real de la tanda
+    // (el RPC v5 ya lo hace; con el RPC viejo lo calcula acá).
     await snapshotProductionInputCosts(admin, orderId)
+    const costSummary = await persistProductionCost(admin, orderId, {
+      rpcAlreadyPersisted: typeof rpcResult.cost_per_output_unit === 'number',
+    }).catch(() => null)
+    const costPerOutputUnit = rpcResult.cost_per_output_unit ?? costSummary?.cost_per_output_unit ?? null
+    const totalCost = rpcResult.total_cost ?? costSummary?.total_cost ?? null
 
     const movements = rpcResult.movements ?? []
     let fudoSummary: { synced: number; errors: string[] } | null = null
@@ -418,12 +426,14 @@ export async function POST(request: NextRequest) {
       module: 'produccion',
       entityType: 'production_order',
       entityId: String(orderId),
-      description: `${authorName}: completó "${body.name}" — eficiencia ${rpcResult.efficiency_pct}%`,
+      description: `${authorName}: completó "${body.name}"${costPerOutputUnit ? ` — $${costPerOutputUnit}/u` : ''}${rpcResult.efficiency_pct != null ? ` — eficiencia ${rpcResult.efficiency_pct}%` : ''}`,
       metadata: {
         total_input_qty: rpcResult.total_input_qty,
         total_output_qty: rpcResult.total_output_qty,
         waste_qty: rpcResult.waste_qty,
         efficiency_pct: rpcResult.efficiency_pct,
+        total_cost: totalCost,
+        cost_per_output_unit: costPerOutputUnit,
         movements: rpcResult.movements,
         fudo_synced: fudoSummary ? fudoSummary.errors.length === 0 : true,
       },
@@ -431,7 +441,7 @@ export async function POST(request: NextRequest) {
 
     notifyEvent(admin, 'production_completed', {
       title: '👨‍🍳 Producción completada',
-      body: `${authorName}: "${body.name}" — ${outputSummary || 'ver detalle'} (eficiencia ${rpcResult.efficiency_pct}%)`,
+      body: `${authorName}: "${body.name}" — ${outputSummary || 'ver detalle'}${costPerOutputUnit ? ` · $${Math.round(costPerOutputUnit).toLocaleString('es-AR')}/u` : ''}`,
       url: '/stock/produccion',
     }).catch(() => {})
 
@@ -443,9 +453,13 @@ export async function POST(request: NextRequest) {
       total_output_qty: rpcResult.total_output_qty,
       waste_qty: rpcResult.waste_qty,
       efficiency_pct: rpcResult.efficiency_pct,
+      total_cost: totalCost,
+      cost_per_output_unit: costPerOutputUnit,
       warnings,
       fudo: fudoSummary,
-      message: `Producción completada — eficiencia ${rpcResult.efficiency_pct}%`,
+      message: costPerOutputUnit
+        ? `Producción completada — $${Math.round(costPerOutputUnit).toLocaleString('es-AR')} por unidad`
+        : 'Producción completada',
     }, { status: 201 })
   } catch (err) {
     console.error('[POST /api/produccion/orders/quick]', err)

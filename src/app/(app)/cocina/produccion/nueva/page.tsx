@@ -723,7 +723,10 @@ export default function NuevaProduccionPage() {
     else setSaving(true)
     setError(null)
     try {
-      // Single request: create order + add inputs/outputs. Stock moves only after manager validation.
+      // UNA sola request: crea la orden con insumos/salidas y, si el manager
+      // eligió validar ahora, la completa en el mismo endpoint (stock, lotes,
+      // sync Fudo y auditoría). Antes eran dos requests y si la segunda fallaba
+      // la orden quedaba huérfana en pending_review sin reintento.
       const res = await fetch('/api/produccion/orders/quick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -750,30 +753,26 @@ export default function NuevaProduccionPage() {
               produced_at: dateInputToIso(productionDate),
               expires_at: o.expires_on ? dateInputToIso(o.expires_on) : null,
             })),
-          auto_complete: false,
+          auto_complete: validateNow && isManager,
         }),
       })
       const json = await res.json()
       if (!res.ok || !json.success) {
-        throw new Error(json.error ?? 'Error al procesar la producción')
-      }
-
-      if (validateNow && json.order_id) {
-        // Segundo paso: validar con el MISMO endpoint del flujo normal
-        // (descuento de stock, lotes, sync Fudo y auditoría viven solo ahí).
-        const completeRes = await fetch(`/api/produccion/orders/${json.order_id}/complete`, { method: 'POST' })
-        const completeJson = await completeRes.json().catch(() => null)
-        if (!completeRes.ok || !completeJson?.success) {
-          // La orden ya quedó creada en pending_review: no reintentar acá para
-          // no duplicarla. Queda en la cola de validación con el motivo a la vista.
-          toast.error(`La producción quedó enviada a validación, pero no se pudo validar automáticamente: ${completeJson?.error ?? 'error desconocido'}`)
+        if (validateNow && json.order_id) {
+          // La orden quedó creada pero no se pudo cerrar: va a la cola de validación con el motivo
+          toast.error(`La producción quedó enviada a validación, pero no se pudo validar automáticamente: ${json.error ?? 'error desconocido'}`)
           router.push('/stock/produccion')
           return
         }
-        const synced = typeof completeJson.fudo?.synced === 'number' ? completeJson.fudo.synced : null
+        throw new Error(json.error ?? 'Error al procesar la producción')
+      }
+
+      if (validateNow && json.status === 'completed') {
+        const synced = typeof json.fudo?.synced === 'number' ? json.fudo.synced : null
+        const costo = typeof json.cost_per_output_unit === 'number' ? ` · $${Math.round(json.cost_per_output_unit).toLocaleString('es-AR')}/u` : ''
         toast.success(synced !== null
-          ? `Producción validada · Fudo ${synced} item${synced !== 1 ? 's' : ''}`
-          : 'Producción validada y aplicada')
+          ? `Producción validada · Fudo ${synced} item${synced !== 1 ? 's' : ''}${costo}`
+          : `Producción validada y aplicada${costo}`)
       }
 
       // Success — navigate to validation queue

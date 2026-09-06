@@ -5,6 +5,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { STOCK_CATEGORY_OPTIONS } from '@/lib/constants'
 import { STOCK_UNITS } from '@/lib/constants'
 import type { StockCategoryValue } from '@/types/database'
+import { isStockArea } from '@/lib/stock/areas'
 
 const VALID_CATEGORIES = new Set(
   STOCK_CATEGORY_OPTIONS.map((option) => option.value),
@@ -128,18 +129,49 @@ export async function PATCH(
       }
     }
 
-    if (Object.keys(update).length === 1) {
+    // Área operativa fijada a mano → el sync de Fudo no la pisa (area_locked)
+    let areaUpdate: Record<string, unknown> | null = null
+    if ('area' in body) {
+      if (!isStockArea(body.area)) {
+        return NextResponse.json({ error: 'Área inválida' }, { status: 400 })
+      }
+      areaUpdate = { area: body.area, area_locked: true }
+    }
+
+    if (Object.keys(update).length === 1 && !areaUpdate) {
       return NextResponse.json({ error: 'No hay cambios para guardar' }, { status: 400 })
     }
 
-    const { data, error } = await admin
+    let { data, error } = await admin
       .from('stock_items')
-      .update(update)
+      .update({ ...update, ...(areaUpdate ?? {}) })
       .eq('id', id)
       .select('id, name, unit, category, min_qty, supplier_id, purchase_lead_time_days, shelf_life_days, notes')
       .single()
 
+    // Migración de áreas pendiente: guardar el resto igual
+    if (error && areaUpdate && /area/i.test(error.message)) {
+      ({ data, error } = await admin
+        .from('stock_items')
+        .update(update)
+        .eq('id', id)
+        .select('id, name, unit, category, min_qty, supplier_id, purchase_lead_time_days, shelf_life_days, notes')
+        .single())
+    }
+
     if (error) throw error
+
+    const { logAudit } = await import('@/lib/audit')
+    logAudit(admin, {
+      userId: user.id,
+      userName: null,
+      action: 'update_stock_item_settings',
+      module: 'stock',
+      entityType: 'stock_item',
+      entityId: id,
+      description: `${data?.name ?? id}: configuración actualizada (${Object.keys({ ...update, ...(areaUpdate ?? {}) }).filter((k) => k !== 'updated_at').join(', ')})`,
+      metadata: { ...update, ...(areaUpdate ?? {}) },
+    }).catch(() => {})
 
     return NextResponse.json({ success: true, item: data })
   } catch (error) {

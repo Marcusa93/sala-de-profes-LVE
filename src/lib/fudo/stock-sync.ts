@@ -1,13 +1,16 @@
 // ---------------------------------------------------------------------------
 // Fudo Stock Sync Engine — Bidirectional
 // ---------------------------------------------------------------------------
-// READS from Fudo: gets real-time stock quantities
-// WRITES to Fudo: pushes changes made in the webapp
+// READS from Fudo: cantidades, costo, unidad, mínimo, categoría y proveedor.
+// WRITES to Fudo: cambios hechos en la app (Fudo primero, LVE después).
 //
-// Source of truth: FUDO for items with fudo_ingredient_id
-//                  SUPABASE for items without (local-only)
+// Fuente de verdad: FUDO para items con fudo_ingredient_id / fudo_product_id
+//                   SUPABASE para items locales (fudo_skip = true)
 //
-// This is the bridge between the webapp and Fudo POS.
+// Reglas de escritura ("nunca ir en contra de Fudo"):
+//   - Conteo físico / ajuste manual  → valor ABSOLUTO (lo contado es la verdad)
+//   - Producción / merma / recepción → DELTA sobre lo que Fudo tiene AHORA
+//     (writeFudoStockDelta): si Fudo vendió entre medio, esas ventas no se pisan.
 // ---------------------------------------------------------------------------
 
 import { SupabaseClient } from '@supabase/supabase-js'
@@ -21,6 +24,12 @@ import {
   type FudoEntityType,
 } from '@/lib/fudo/sync-events'
 import { notifyEvent } from '@/lib/push/notify-event'
+import {
+  mapFudoIngredientCategory,
+  mapFudoProductCategory,
+  areaFromLveCategory,
+  isStockArea,
+} from '@/lib/stock/areas'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,10 +40,13 @@ export type FudoIngredient = {
   name: string
   stock: number | null
   cost: number | null
+  minStock: number | null
   stockControl: boolean
   categoryId?: string
   categoryName?: string
   providerId?: string
+  /** Unidad normalizada a LVE: 'kg' | 'l' | 'unidad' (null si Fudo no la informa) */
+  unit: 'kg' | 'l' | 'unidad' | null
 }
 
 export type SyncResult = {
@@ -60,9 +72,20 @@ type FudoWriteContext = {
   idempotencyKey?: string | null
 }
 
+export type StockWriteReason = 'physical_count' | 'manual_adjustment' | 'waste' | 'reception'
+
 type StockWriteOptions = {
-  reason?: 'physical_count' | 'manual_adjustment' | 'waste' | 'reception'
+  reason?: StockWriteReason
   note?: string | null
+  /** Costo unitario de la entrada (recepción) para valorizar el movimiento. */
+  costPerUnit?: number | null
+}
+
+const MOVEMENT_TYPE_BY_REASON: Record<StockWriteReason, 'ajuste' | 'merma' | 'entrada'> = {
+  physical_count: 'ajuste',
+  manual_adjustment: 'ajuste',
+  waste: 'merma',
+  reception: 'entrada',
 }
 
 function stockWriteNeedsNote(currentQty: number, newQty: number, unit?: string | null) {
@@ -82,15 +105,33 @@ function asNullableNumber(value: unknown): number | null {
 function findDuplicateIds(ids: Array<string | null | undefined>): Set<string> {
   const seen = new Set<string>()
   const duplicates = new Set<string>()
-
   for (const id of ids) {
     if (!id) continue
     if (seen.has(id)) duplicates.add(id)
     else seen.add(id)
   }
-
   return duplicates
 }
+
+/** Fudo informa 'kg' | 'litre' | 'unit'. */
+export function mapFudoUnitName(raw: string | null | undefined): 'kg' | 'l' | 'unidad' | null {
+  const value = (raw ?? '').toLowerCase().trim()
+  if (!value) return null
+  if (value.includes('kg') || value.includes('kilo')) return 'kg'
+  if (value.includes('lit') || value === 'l') return 'l'
+  if (value.includes('unit') || value.includes('unidad')) return 'unidad'
+  return null
+}
+
+/** Error de PostgREST por columna inexistente (migración pendiente). */
+function isMissingColumnError(message: string | undefined | null, columns: string[]) {
+  if (!message) return false
+  const m = message.toLowerCase()
+  return columns.some((c) => m.includes(c.toLowerCase())) && (m.includes('column') || m.includes('schema cache'))
+}
+
+const AREA_COLUMNS = ['area', 'fudo_category', 'area_locked']
+const MOVEMENT_NEW_COLUMNS = ['production_order_id', 'fudo_synced', 'cost_per_unit']
 
 // ---------------------------------------------------------------------------
 // READ: Fetch all ingredients from Fudo with stock
@@ -100,17 +141,19 @@ export async function readFudoStock(): Promise<FudoIngredient[]> {
   const token = await getFudoToken()
   const allIngredients: FudoIngredient[] = []
   let page = 1
+  let rateLimitRetries = 0
 
   while (page <= 10) {
     const res = await fetch(
-      `https://api.fu.do/v1alpha1/ingredients?include=ingredientCategory&page[size]=200&page[number]=${page}`,
+      `https://api.fu.do/v1alpha1/ingredients?include=ingredientCategory,unit&page[size]=200&page[number]=${page}`,
       { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
     )
 
     if (!res.ok) {
-      if (res.status === 429) {
-        // Rate limited — wait and retry
-        await new Promise(r => setTimeout(r, 2000))
+      if (res.status === 429 && rateLimitRetries < 5) {
+        // Rate limited — esperar y reintentar la MISMA página (con tope)
+        rateLimitRetries++
+        await new Promise(r => setTimeout(r, 2000 * rateLimitRetries))
         continue
       }
       throw new Error(`Fudo API error: ${res.status}`)
@@ -120,26 +163,30 @@ export async function readFudoStock(): Promise<FudoIngredient[]> {
     const items = data.data ?? []
     const included = data.included ?? []
 
-    // Build category map
     const catMap = new Map<string, string>()
+    const unitMap = new Map<string, string>()
     for (const inc of included) {
-      if (inc.type === 'IngredientCategory') {
-        catMap.set(inc.id, inc.attributes?.name ?? '')
+      if (inc.type === 'IngredientCategory') catMap.set(inc.id, inc.attributes?.name ?? '')
+      if ((inc.type ?? '').toLowerCase() === 'unit') {
+        unitMap.set(String(inc.id), String(inc.attributes?.name ?? inc.attributes?.code ?? inc.id))
       }
     }
 
     for (const item of items) {
       const catRef = item.relationships?.ingredientCategory?.data
       const provRef = item.relationships?.provider?.data as { id?: string } | null | undefined
+      const unitRef = item.relationships?.unit?.data as { id?: string } | null | undefined
       allIngredients.push({
         id: item.id,
         name: item.attributes.name,
         stock: asNullableNumber(item.attributes.stock),
         cost: asNullableNumber(item.attributes.cost),
+        minStock: asNullableNumber(item.attributes.minStock),
         stockControl: item.attributes.stockControl ?? false,
         categoryId: catRef?.id,
         categoryName: catRef?.id ? catMap.get(catRef.id) : undefined,
         providerId: provRef?.id,
+        unit: unitRef?.id != null ? mapFudoUnitName(unitMap.get(String(unitRef.id))) : null,
       })
     }
 
@@ -148,6 +195,28 @@ export async function readFudoStock(): Promise<FudoIngredient[]> {
   }
 
   return allIngredients
+}
+
+/** Stock actual de UN ingrediente en Fudo (para escrituras por delta). */
+export async function readFudoIngredientStock(fudoIngredientId: string): Promise<number | null> {
+  const token = await getFudoToken()
+  const res = await fetch(`https://api.fu.do/v1alpha1/ingredients/${fudoIngredientId}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  })
+  if (!res.ok) throw new Error(`Fudo ${res.status} al leer ingrediente #${fudoIngredientId}`)
+  const data = await res.json()
+  return asNullableNumber(data.data?.attributes?.stock)
+}
+
+/** Stock actual de UN producto en Fudo (para escrituras por delta). */
+export async function readFudoProductStock(fudoProductId: string): Promise<number | null> {
+  const token = await getFudoToken()
+  const res = await fetch(`https://api.fu.do/v1alpha1/products/${fudoProductId}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  })
+  if (!res.ok) throw new Error(`Fudo ${res.status} al leer producto #${fudoProductId}`)
+  const data = await res.json()
+  return asNullableNumber(data.data?.attributes?.stock)
 }
 
 // ---------------------------------------------------------------------------
@@ -258,7 +327,6 @@ export async function writeFudoStock(
       await finishFudoSyncEvent(context.admin, eventId, 'success', {
         responsePayload: { actual_stock: typeof actualStock === 'number' ? actualStock : newQty },
       })
-      // Escritura exitosa: limpiar cualquier incident de fallo previo para este item
       if (context.stockItemId) {
         await resolveItemIncidents(context.admin, String(context.stockItemId)).catch(() => null)
       }
@@ -315,9 +383,8 @@ async function writeFudoProductStock(
   try {
     const { fudo: fudoClient } = await import('@/lib/fudoClient')
     await fudoClient.updateProductStock(fudoProductId, newQty)
-    const products = await fudoClient.getProducts()
-    const product = products.find((item) => String(item.id) === String(fudoProductId))
-    const actualStock = product?.stock
+    // Verificación puntual (antes se releía TODO el catálogo de productos)
+    const actualStock = await readFudoProductStock(fudoProductId).catch(() => null)
 
     if (typeof actualStock === 'number' && Math.abs(actualStock - newQty) > 0.01) {
       const error = `Fudo aceptó producto pero stock quedó en ${actualStock} (esperado: ${newQty})`
@@ -347,7 +414,6 @@ async function writeFudoProductStock(
       await finishFudoSyncEvent(context.admin, eventId, 'success', {
         responsePayload: { actual_stock: typeof actualStock === 'number' ? actualStock : newQty },
       })
-      // Escritura exitosa: limpiar cualquier incident de fallo previo para este item
       if (context.stockItemId) {
         await resolveItemIncidents(context.admin, String(context.stockItemId)).catch(() => null)
       }
@@ -377,8 +443,130 @@ async function writeFudoProductStock(
 }
 
 // ---------------------------------------------------------------------------
+// WRITE BY DELTA: suma/resta sobre lo que Fudo tiene AHORA
+// ---------------------------------------------------------------------------
+// Para producción, merma y recepción. Lee el stock actual del ingrediente o
+// producto en Fudo, aplica el delta y escribe. Así una venta ocurrida entre el
+// cálculo local y el push no se pierde (antes se pisaba con el número de LVE).
+// Devuelve el stock final en Fudo para que LVE quede espejado a ESE número.
+
+export async function writeFudoStockDelta(
+  link: { fudoIngredientId?: string | null; fudoProductId?: string | null },
+  delta: number,
+  context: Omit<FudoWriteContext, 'fudoType' | 'fudoId' | 'newQty'>,
+): Promise<{ success: boolean; error?: string; fudoBefore?: number | null; fudoAfter?: number }> {
+  try {
+    if (link.fudoIngredientId) {
+      const before = await readFudoIngredientStock(link.fudoIngredientId)
+      const after = Math.round(((before ?? 0) + delta) * 100) / 100
+      const write = await writeFudoStock(link.fudoIngredientId, after, {
+        ...context,
+        fudoType: 'ingredient',
+        fudoId: link.fudoIngredientId,
+        oldQty: before,
+        newQty: after,
+      })
+      return { ...write, fudoBefore: before, fudoAfter: after }
+    }
+    if (link.fudoProductId) {
+      const before = await readFudoProductStock(link.fudoProductId)
+      const after = Math.round(((before ?? 0) + delta) * 100) / 100
+      const write = await writeFudoProductStock(link.fudoProductId, after, {
+        ...context,
+        fudoType: 'product',
+        fudoId: link.fudoProductId,
+        oldQty: before,
+        newQty: after,
+      })
+      return { ...write, fudoBefore: before, fudoAfter: after }
+    }
+    return { success: false, error: 'Item sin vínculo Fudo' }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : 'Error desconocido'
+    await recordFudoIncident(context.admin, {
+      source: 'write_stock',
+      code: 'fudo_read_before_write_failed',
+      severity: 'critical',
+      entityType: context.entityType ?? 'stock_item',
+      entityId: context.entityId ?? context.stockItemId,
+      stockItemId: context.stockItemId,
+      fudoType: link.fudoIngredientId ? 'ingredient' : 'product',
+      fudoId: link.fudoIngredientId ?? link.fudoProductId ?? null,
+      title: 'No se pudo leer el stock actual de Fudo antes de escribir',
+      detail: error,
+      payload: { operation: context.operation, delta },
+    }).catch(() => null)
+    return { success: false, error }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Kardex: un movimiento por cada cambio que LVE origina (tolerante a que la
+// migración 20260906 no esté aplicada todavía).
+// ---------------------------------------------------------------------------
+
+export async function insertStockMovement(
+  admin: SupabaseClient,
+  row: {
+    stock_item_id: string
+    movement_type: 'entrada' | 'uso' | 'ajuste' | 'merma'
+    qty: number
+    previous_qty: number
+    new_qty: number
+    reason: string
+    note?: string | null
+    created_by?: string | null
+    production_order_id?: number | null
+    fudo_synced?: boolean
+    cost_per_unit?: number | null
+  },
+): Promise<string | null> {
+  const full = {
+    stock_item_id: row.stock_item_id,
+    movement_type: row.movement_type,
+    qty: Math.abs(row.qty),
+    previous_qty: row.previous_qty,
+    new_qty: row.new_qty,
+    reason: row.reason,
+    note: row.note ?? null,
+    created_by: row.created_by ?? null,
+    production_order_id: row.production_order_id ?? null,
+    fudo_synced: row.fudo_synced ?? false,
+    cost_per_unit: row.cost_per_unit ?? null,
+  }
+  let res = await admin.from('stock_movements').insert(full).select('id').single()
+  if (res.error && isMissingColumnError(res.error.message, MOVEMENT_NEW_COLUMNS)) {
+    const { production_order_id: _p, fudo_synced: _f, cost_per_unit: _c, ...legacy } = full
+    void _p; void _f; void _c
+    res = await admin.from('stock_movements').insert(legacy).select('id').single()
+  }
+  if (res.error) {
+    console.warn('[stock_movements] insert failed', res.error.message)
+    return null
+  }
+  return (res.data as { id: string } | null)?.id ?? null
+}
+
+// ---------------------------------------------------------------------------
 // SYNC READ: Pull Fudo stock → update Supabase stock_items
 // ---------------------------------------------------------------------------
+
+type LveStockRow = {
+  id: string
+  name: string
+  unit: string
+  category: string | null
+  min_qty: number | null
+  is_produced: boolean | null
+  fudo_ingredient_id: string | null
+  fudo_product_id: string | null
+  current_qty: number
+  cost_per_unit: number | null
+  supplier_id: string | null
+  area?: string | null
+  fudo_category?: string | null
+  area_locked?: boolean | null
+}
 
 export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['read']> {
   const result = { synced: 0, total: 0, errors: [] as string[] }
@@ -392,32 +580,67 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
 
   try {
 
-  // 1. Read all Fudo ingredients (now includes cost + providerId)
+  // 1. Read all Fudo ingredients (stock, cost, unit, minStock, category, provider)
   // Transport/auth failures must bubble up. Stock cannot pretend it synced.
   const fudoItems = await readFudoStock()
 
-  // 2. Read Fudo products (for finished goods like empanadas)
+  // 2. Read Fudo products (for finished goods like empanadas, budines, gaseosas)
   const { fudo } = await import('@/lib/fudoClient')
-  const products = await fudo.getProducts()
-  const fudoProducts: { id: string; name: string; stock: number; cost: number | null; stockControl: boolean }[] = products
+  const [products, productCategories] = await Promise.all([
+    fudo.getProducts(),
+    fudo.getCategories().catch(() => [] as { id: string; name: string }[]),
+  ])
+  const productCategoryName = new Map(productCategories.map((c) => [String(c.id), c.name]))
+  const fudoProducts = products
     .filter(p => p.stockControl && p.stock != null)
-    .map(p => ({ id: p.id, name: p.name, stock: p.stock!, cost: p.cost, stockControl: true }))
+    .map(p => {
+      const catRef = p._relationships?.productCategory?.data as { id?: string } | null | undefined
+      return {
+        id: p.id,
+        name: p.name,
+        stock: p.stock!,
+        cost: p.cost,
+        stockControl: true,
+        categoryName: catRef?.id ? productCategoryName.get(String(catRef.id)) ?? null : null,
+      }
+    })
 
   result.total = fudoItems.length + fudoProducts.length
 
-  // 3. Get all stock_items (ingredient-linked AND product-linked)
-  //    Exclude items marked as fudo_skip — those are local-only
-  const { data: stockItems } = await admin
+  // 3. Get all stock_items (ingredient-linked AND product-linked), excluding fudo_skip.
+  //    Select tolerante: si la migración de áreas no está, cae al select legacy.
+  const baseSelect = 'id, name, unit, category, min_qty, is_produced, fudo_ingredient_id, fudo_product_id, current_qty, cost_per_unit, supplier_id'
+  let schemaHasAreas = true
+  let stockItemsRes: { data: unknown[] | null; error: { message: string } | null } = await admin
     .from('stock_items')
-    .select('id, fudo_ingredient_id, fudo_product_id, current_qty, cost_per_unit, supplier_id')
+    .select(`${baseSelect}, area, fudo_category, area_locked`)
     .eq('is_active', true)
     .neq('fudo_skip', true)
+  if (stockItemsRes.error && isMissingColumnError(stockItemsRes.error.message, AREA_COLUMNS)) {
+    schemaHasAreas = false
+    stockItemsRes = await admin
+      .from('stock_items')
+      .select(baseSelect)
+      .eq('is_active', true)
+      .neq('fudo_skip', true)
+  }
+  const stockItems = (stockItemsRes.data ?? null) as LveStockRow[] | null
 
   if (!stockItems) {
     await finishFudoSyncEvent(admin, eventId, 'success', {
       responsePayload: { synced: result.synced, total: result.total, errors: result.errors },
     })
     return result
+  }
+
+  // Items producidos alguna vez (para no desmarcar is_produced a lo que sí se produce)
+  const producedEver = new Set<string>()
+  if (schemaHasAreas) {
+    const { data: outs } = await admin
+      .from('production_outputs')
+      .select('stock_item_id')
+      .not('stock_item_id', 'is', null)
+    for (const o of outs ?? []) if (o.stock_item_id) producedEver.add(String(o.stock_item_id))
   }
 
   // 4. Build supplier map: fudo_provider_id → supplier.id
@@ -432,43 +655,23 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
 
   // 5. Build Fudo maps
   const fudoIngMap = new Map<string, FudoIngredient>()
-  for (const fi of fudoItems) {
-    fudoIngMap.set(fi.id, fi)
-  }
+  for (const fi of fudoItems) fudoIngMap.set(fi.id, fi)
 
-  const fudoProdMap = new Map<string, { stock: number; cost: number | null }>()
-  for (const fp of fudoProducts) {
-    fudoProdMap.set(fp.id, fp)
-  }
+  const fudoProdMap = new Map<string, (typeof fudoProducts)[number]>()
+  for (const fp of fudoProducts) fudoProdMap.set(fp.id, fp)
 
-  const duplicateIngredientIds = findDuplicateIds(
-    stockItems.map((item) => item.fudo_ingredient_id),
-  )
-  const duplicateProductIds = findDuplicateIds(
-    stockItems.map((item) => item.fudo_product_id),
-  )
+  const duplicateIngredientIds = findDuplicateIds(stockItems.map((item) => item.fudo_ingredient_id))
+  const duplicateProductIds = findDuplicateIds(stockItems.map((item) => item.fudo_product_id))
 
   // Discrepancias de trazabilidad (vínculos faltantes/duplicados): se reportan
   // pero NO son fallas de conexión — el evento de sync no debe marcarse failed.
   const discrepancies: string[] = []
 
-  for (const id of duplicateIngredientIds) {
-    discrepancies.push(`Duplicate Fudo ingredient link detected: ${id}`)
-  }
-  for (const id of duplicateProductIds) {
-    discrepancies.push(`Duplicate Fudo product link detected: ${id}`)
-  }
+  for (const id of duplicateIngredientIds) discrepancies.push(`Duplicate Fudo ingredient link detected: ${id}`)
+  for (const id of duplicateProductIds) discrepancies.push(`Duplicate Fudo product link detected: ${id}`)
 
-  const linkedIngredientIds = new Set(
-    stockItems
-      .map((item) => item.fudo_ingredient_id)
-      .filter((id): id is string => Boolean(id)),
-  )
-  const linkedProductIds = new Set(
-    stockItems
-      .map((item) => item.fudo_product_id)
-      .filter((id): id is string => Boolean(id)),
-  )
+  const linkedIngredientIds = new Set(stockItems.map((item) => item.fudo_ingredient_id).filter((id): id is string => Boolean(id)))
+  const linkedProductIds = new Set(stockItems.map((item) => item.fudo_product_id).filter((id): id is string => Boolean(id)))
 
   for (const fudoItem of fudoItems) {
     if (!fudoItem.stockControl) continue
@@ -476,14 +679,15 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       discrepancies.push(`Unmapped Fudo ingredient: ${fudoItem.name} (${fudoItem.id})`)
     }
   }
-
   for (const fudoProduct of fudoProducts) {
     if (!linkedProductIds.has(fudoProduct.id)) {
       discrepancies.push(`Unmapped Fudo product with stock control: ${fudoProduct.name} (${fudoProduct.id})`)
     }
   }
 
-  // 6. Update each stock_item with Fudo's current stock, cost, and provider
+  const unitChanges: string[] = []
+
+  // 6. Update each stock_item with Fudo's current stock, cost, unit, min, category, provider
   for (const si of stockItems) {
     if (
       (si.fudo_ingredient_id && duplicateIngredientIds.has(si.fudo_ingredient_id))
@@ -495,6 +699,10 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     let fudoQty: number | null = null
     let fudoCost: number | null = null
     let fudoProviderId: string | undefined
+    let fudoUnit: 'kg' | 'l' | 'unidad' | null = null
+    let fudoMin: number | null = null
+    let fudoCategory: string | null = null
+    let mapped: { area: string; category: string | null; isPreProduct: boolean } | null = null
 
     // Check ingredient link first
     if (si.fudo_ingredient_id) {
@@ -511,6 +719,11 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       if (fudoItem) {
         fudoCost = typeof fudoItem.cost === 'number' && fudoItem.cost > 0 ? fudoItem.cost : null
         fudoProviderId = fudoItem.providerId
+        fudoUnit = fudoItem.unit
+        fudoMin = fudoItem.minStock != null && fudoItem.minStock > 0 ? fudoItem.minStock : null
+        fudoCategory = fudoItem.categoryName ?? null
+        const m = mapFudoIngredientCategory(fudoCategory)
+        mapped = { area: m.area, category: m.category, isPreProduct: m.isPreProduct }
       }
     }
 
@@ -522,18 +735,17 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       }
       if (fudoProd) {
         fudoQty = Math.round(fudoProd.stock * 100) / 100
-        if (fudoProd.cost && fudoProd.cost > 0) {
-          fudoCost = fudoProd.cost
-        }
+        if (fudoProd.cost && fudoProd.cost > 0) fudoCost = fudoProd.cost
+        fudoCategory = fudoProd.categoryName ?? fudoCategory
+        const m = mapFudoProductCategory(fudoProd.categoryName)
+        mapped = { area: m.area, category: m.category, isPreProduct: false }
       }
     }
 
-    if (fudoQty === null && fudoCost === null && !fudoProviderId) continue
+    if (fudoQty === null && fudoCost === null && !fudoProviderId && !fudoCategory && !fudoUnit && fudoMin === null) continue
 
     // Build update payload — only include fields that changed
-    const update: Record<string, unknown> = {
-      updated_at: new Date().toISOString(),
-    }
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
     let hasChanges = false
 
     if (fudoQty !== null && Math.abs(si.current_qty - fudoQty) >= 0.01) {
@@ -546,6 +758,20 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       hasChanges = true
     }
 
+    // Unidad: Fudo manda (la cantidad espejada YA está en esa unidad, así que
+    // dejar otra unidad en LVE mostraría un número falso). Se audita el cambio.
+    if (fudoUnit && fudoUnit !== si.unit) {
+      update.unit = fudoUnit
+      unitChanges.push(`${si.name}: ${si.unit} → ${fudoUnit}`)
+      hasChanges = true
+    }
+
+    // Mínimo: si LVE no tiene mínimo y Fudo sí, tomarlo (Fudo es la verdad).
+    if (fudoMin !== null && (!si.min_qty || si.min_qty <= 0)) {
+      update.min_qty = fudoMin
+      hasChanges = true
+    }
+
     // Link supplier if not already set and Fudo has provider
     if (!si.supplier_id && fudoProviderId) {
       const supplierId = providerToSupplier.get(fudoProviderId)
@@ -555,21 +781,69 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       }
     }
 
+    // Categoría LVE sugerida (solo si el item está en 'otros')
+    if (mapped?.category && (!si.category || si.category === 'otros') && si.category !== mapped.category) {
+      update.category = mapped.category
+      hasChanges = true
+    }
+
+    // Intermedio (Pre-Producto en Fudo) → is_produced. Limpieza de falsos
+    // positivos: items en 'otros' marcados producidos que Fudo no clasifica
+    // como pre-producto y que nunca salieron de una producción.
+    if (mapped?.isPreProduct && !si.is_produced) {
+      update.is_produced = true
+      hasChanges = true
+    } else if (
+      schemaHasAreas
+      && si.is_produced
+      && mapped
+      && !mapped.isPreProduct
+      && si.fudo_ingredient_id
+      && (si.category === 'otros' || update.category === 'otros')
+      && !producedEver.has(si.id)
+    ) {
+      update.is_produced = false
+      hasChanges = true
+    }
+
+    // Área + categoría Fudo (espejo). area_locked = fijada a mano → no se toca.
+    if (schemaHasAreas) {
+      if (fudoCategory && si.fudo_category !== fudoCategory) {
+        update.fudo_category = fudoCategory
+        hasChanges = true
+      }
+      const targetArea = mapped?.area && mapped.area !== 'otros'
+        ? mapped.area
+        : areaFromLveCategory((update.category as string | undefined) ?? si.category)
+      if (!si.area_locked && isStockArea(targetArea) && si.area !== targetArea) {
+        update.area = targetArea
+        hasChanges = true
+      }
+    }
+
     if (!hasChanges) {
       result.synced++
       continue
     }
 
-    const { error } = await admin
-      .from('stock_items')
-      .update(update)
-      .eq('id', si.id)
+    const { error } = await admin.from('stock_items').update(update).eq('id', si.id)
 
     if (error) {
       result.errors.push(`${si.id}: ${error.message}`)
     } else {
       result.synced++
     }
+  }
+
+  if (unitChanges.length > 0) {
+    await admin.from('audit_trail').insert({
+      action: 'fudo_unit_sync',
+      module: 'stock',
+      entity_type: 'stock',
+      entity_id: 'sync',
+      description: `Unidades alineadas con Fudo: ${unitChanges.slice(0, 10).join('; ')}${unitChanges.length > 10 ? ` (+${unitChanges.length - 10})` : ''}`,
+      metadata: { changes: unitChanges },
+    }).then(() => null, () => null)
   }
 
   // Solo los errores reales (transporte / escritura en BD) marcan el evento como
@@ -581,6 +855,7 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       errors: result.errors,
       discrepancies,
       discrepancy_count: discrepancies.length,
+      schema_has_areas: schemaHasAreas,
     },
     errorMessage: result.errors.length > 0 ? `${result.errors.length} errores de sync` : null,
   })
@@ -621,11 +896,11 @@ export async function syncToFudo(
   newQty: number,
   userId?: string,
   options: StockWriteOptions = {},
-): Promise<{ success: boolean; fudoSynced: boolean; error?: string }> {
+): Promise<{ success: boolean; fudoSynced: boolean; error?: string; movementId?: string | null }> {
   // 1. Get the stock_item to find fudo link
   const { data: item } = await admin
     .from('stock_items')
-    .select('id, name, unit, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty')
+    .select('id, name, unit, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty, cost_per_unit')
     .eq('id', stockItemId)
     .single()
 
@@ -635,13 +910,16 @@ export async function syncToFudo(
   const skipFudo = (item as Record<string, unknown>).fudo_skip === true
 
   const fudoLink = item.fudo_ingredient_id || item.fudo_product_id
-  const writeReason = options.reason ?? 'physical_count'
+  const writeReason: StockWriteReason = options.reason ?? 'physical_count'
   const writeOperation = writeReason === 'physical_count'
     ? 'physical_stock_count'
     : writeReason === 'reception'
       ? 'stock_reception'
-      : 'manual_stock_write'
+      : writeReason === 'waste'
+        ? 'stock_waste'
+        : 'manual_stock_write'
   const note = options.note?.trim() || null
+  const delta = Math.round((newQty - item.current_qty) * 1000) / 1000
 
   if (writeReason === 'physical_count' && stockWriteNeedsNote(item.current_qty, newQty, item.unit) && !note) {
     return {
@@ -660,36 +938,46 @@ export async function syncToFudo(
   }
 
   // 2. Fudo-linked stock must write to Fudo first. If Fudo fails, local stock stays unchanged.
+  //    Conteos y ajustes → absoluto. Merma y recepción → delta sobre Fudo actual.
+  let finalQty = newQty
   if (fudoLink && !skipFudo) {
-    const fudoResult = item.fudo_ingredient_id
-      ? await writeFudoStock(item.fudo_ingredient_id, newQty, {
-        admin,
-        operation: writeOperation,
-        stockItemId,
-        userId,
-        entityType: 'stock_item',
-        entityId: stockItemId,
+    const isDeltaReason = writeReason === 'waste' || writeReason === 'reception'
+    const baseContext = {
+      admin,
+      operation: writeOperation,
+      stockItemId,
+      userId,
+      entityType: 'stock_item',
+      entityId: stockItemId,
+      reason: writeReason,
+      note,
+    }
+
+    let fudoResult: { success: boolean; error?: string; fudoAfter?: number }
+    if (isDeltaReason && delta !== 0) {
+      fudoResult = await writeFudoStockDelta(
+        { fudoIngredientId: item.fudo_ingredient_id, fudoProductId: item.fudo_product_id },
+        delta,
+        baseContext,
+      )
+      if (fudoResult.success && typeof fudoResult.fudoAfter === 'number') finalQty = fudoResult.fudoAfter
+    } else if (item.fudo_ingredient_id) {
+      fudoResult = await writeFudoStock(item.fudo_ingredient_id, newQty, {
+        ...baseContext,
         fudoType: 'ingredient',
         fudoId: item.fudo_ingredient_id,
         oldQty: item.current_qty,
         newQty,
-        reason: writeReason,
-        note,
       })
-      : await writeFudoProductStock(item.fudo_product_id!, newQty, {
-        admin,
-        operation: writeOperation,
-        stockItemId,
-        userId,
-        entityType: 'stock_item',
-        entityId: stockItemId,
+    } else {
+      fudoResult = await writeFudoProductStock(item.fudo_product_id!, newQty, {
+        ...baseContext,
         fudoType: 'product',
         fudoId: item.fudo_product_id!,
         oldQty: item.current_qty,
         newQty,
-        reason: writeReason,
-        note,
       })
+    }
 
     if (!fudoResult.success) {
       console.error(`[FudoSync] Write failed for ${item.name}: ${fudoResult.error}`)
@@ -708,9 +996,14 @@ export async function syncToFudo(
   }
 
   // 3. Update Supabase only after Fudo accepted the change, or for local-only items.
+  const itemUpdate: Record<string, unknown> = { current_qty: finalQty, updated_at: new Date().toISOString() }
+  if (writeReason === 'physical_count') itemUpdate.last_counted_at = new Date().toISOString()
+  if (writeReason === 'reception' && options.costPerUnit && options.costPerUnit > 0) {
+    itemUpdate.cost_per_unit = options.costPerUnit
+  }
   const { error: dbError } = await admin
     .from('stock_items')
-    .update({ current_qty: newQty, updated_at: new Date().toISOString() })
+    .update(itemUpdate)
     .eq('id', stockItemId)
 
   if (dbError) {
@@ -725,21 +1018,36 @@ export async function syncToFudo(
       fudoId: fudoLink,
       title: 'Fudo cambió pero LVE no pudo guardar el nuevo stock',
       detail: dbError.message,
-      payload: { old_qty: item.current_qty, new_qty: newQty },
+      payload: { old_qty: item.current_qty, new_qty: finalQty },
     })
 
     return { success: false, fudoSynced: false, error: dbError.message }
   }
 
-  // 4. Log the change
+  // 4. Log the change (conteos) + kardex (movimiento valorizado)
   await admin.from('stock_logs').insert({
     stock_item_id: stockItemId,
     user_id: userId ?? null,
     action: writeReason,
     old_qty: item.current_qty,
-    new_qty: newQty,
+    new_qty: finalQty,
     note,
   })
+
+  const movementId = delta !== 0
+    ? await insertStockMovement(admin, {
+      stock_item_id: stockItemId,
+      movement_type: MOVEMENT_TYPE_BY_REASON[writeReason],
+      qty: delta,
+      previous_qty: item.current_qty,
+      new_qty: finalQty,
+      reason: writeReason,
+      note,
+      created_by: userId ?? null,
+      fudo_synced: Boolean(fudoLink && !skipFudo),
+      cost_per_unit: options.costPerUnit ?? item.cost_per_unit ?? null,
+    })
+    : null
 
   if (fudoLink && !skipFudo) {
     await admin.from('audit_trail').insert({
@@ -748,19 +1056,19 @@ export async function syncToFudo(
       module: 'stock',
       entity_type: 'stock_item',
       entity_id: stockItemId,
-      description: `${item.name}: ${item.current_qty} → ${newQty} (sincronizado con Fudo)`,
-      metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: newQty, synced: true, reason: writeReason, note },
+      description: `${item.name}: ${item.current_qty} → ${finalQty} (sincronizado con Fudo)`,
+      metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: finalQty, synced: true, reason: writeReason, note, movement_id: movementId },
     })
 
     if (writeReason === 'physical_count' || writeReason === 'manual_adjustment') {
       notifyEvent(admin, 'stock_adjusted', {
         title: '📦 Stock modificado',
-        body: `${item.name}: ${item.current_qty} → ${newQty} ${item.unit}${note ? ` — ${note}` : ''}`,
+        body: `${item.name}: ${item.current_qty} → ${finalQty} ${item.unit}${note ? ` — ${note}` : ''}`,
         url: '/stock',
       }).catch(() => {})
     }
 
-    return { success: true, fudoSynced: true }
+    return { success: true, fudoSynced: true, movementId }
   }
 
   // No Fudo ID — local only. El conteo físico igual debe quedar auditado
@@ -772,38 +1080,46 @@ export async function syncToFudo(
       module: 'stock',
       entity_type: 'stock_item',
       entity_id: stockItemId,
-      description: `${item.name}: ${item.current_qty} → ${newQty} (conteo físico, local)`,
-      metadata: { old_qty: item.current_qty, new_qty: newQty, reason: writeReason, note, fudo_synced: false },
+      description: `${item.name}: ${item.current_qty} → ${finalQty} (conteo físico, local)`,
+      metadata: { old_qty: item.current_qty, new_qty: finalQty, reason: writeReason, note, fudo_synced: false, movement_id: movementId },
     })
   }
 
   if (writeReason === 'physical_count' || writeReason === 'manual_adjustment') {
     notifyEvent(admin, 'stock_adjusted', {
       title: '📦 Stock modificado',
-      body: `${item.name}: ${item.current_qty} → ${newQty} ${item.unit}${note ? ` — ${note}` : ''}`,
+      body: `${item.name}: ${item.current_qty} → ${finalQty} ${item.unit}${note ? ` — ${note}` : ''}`,
       url: '/stock',
     }).catch(() => {})
   }
 
-  return { success: true, fudoSynced: false }
+  return { success: true, fudoSynced: false, movementId }
 }
 
 // ---------------------------------------------------------------------------
-// SYNC PRODUCTION: Push updated stock to Fudo after production completes
-// The RPC already updated stock_items — this only pushes to Fudo API
+// SYNC PRODUCTION: Push production movements to Fudo BY DELTA
+// The RPC already updated stock_items — this pushes each item's net change
+// onto Fudo's CURRENT stock (never overwrites sales that happened in between)
+// and re-mirrors LVE to the number Fudo ends up with.
 // ---------------------------------------------------------------------------
 
 export async function syncProductionToFudo(
   admin: SupabaseClient,
-  movements: { stock_item_id: number | string; change: number }[],
+  movements: { stock_item_id: number | string; change: number; movement_id?: string | null }[],
   userId?: string,
 ): Promise<{ synced: number; errors: string[] }> {
   const result = { synced: 0, errors: [] as string[] }
 
-  // Unique stock item IDs from movements
-  const itemIds = [...new Set(movements.map((m) => m.stock_item_id))]
+  // Delta neto por item (un insumo puede aparecer más de una vez)
+  const deltaByItem = new Map<string, number>()
+  const movementIdsByItem = new Map<string, string[]>()
+  for (const m of movements) {
+    const key = String(m.stock_item_id)
+    deltaByItem.set(key, (deltaByItem.get(key) ?? 0) + Number(m.change))
+    if (m.movement_id) movementIdsByItem.set(key, [...(movementIdsByItem.get(key) ?? []), m.movement_id])
+  }
 
-  for (const itemId of itemIds) {
+  for (const [itemId, delta] of deltaByItem) {
     const { data: item } = await admin
       .from('stock_items')
       .select('id, name, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty')
@@ -823,47 +1139,45 @@ export async function syncProductionToFudo(
       continue
     }
 
-    let fudoResult: { success: boolean; error?: string }
+    if (Math.abs(delta) < 0.0005) { result.synced++; continue }
 
-    if (item.fudo_ingredient_id) {
-      fudoResult = await writeFudoStock(item.fudo_ingredient_id, item.current_qty, {
+    const fudoResult = await writeFudoStockDelta(
+      { fudoIngredientId: item.fudo_ingredient_id, fudoProductId: item.fudo_product_id },
+      delta,
+      {
         admin,
         operation: 'production_stock_write',
         stockItemId: itemId,
         userId,
         entityType: 'production_movement',
         entityId: itemId,
-        fudoType: 'ingredient',
-        fudoId: item.fudo_ingredient_id,
-        newQty: item.current_qty,
-      })
-    } else {
-      fudoResult = await writeFudoProductStock(item.fudo_product_id!, item.current_qty, {
-        admin,
-        operation: 'production_stock_write',
-        stockItemId: itemId,
-        userId,
-        entityType: 'production_movement',
-        entityId: itemId,
-        fudoType: 'product',
-        fudoId: item.fudo_product_id!,
-        newQty: item.current_qty,
-      })
-    }
+        reason: 'production',
+      },
+    )
 
     if (fudoResult.success) {
       result.synced++
+      // LVE queda espejado al número final de Fudo (incluye ventas intermedias)
+      if (typeof fudoResult.fudoAfter === 'number' && Math.abs(fudoResult.fudoAfter - Number(item.current_qty)) >= 0.01) {
+        await admin.from('stock_items').update({ current_qty: fudoResult.fudoAfter, updated_at: new Date().toISOString() }).eq('id', itemId)
+      }
+      const ids = movementIdsByItem.get(itemId) ?? []
+      if (ids.length > 0) {
+        await admin.from('stock_movements').update({ fudo_synced: true }).in('id', ids).then(() => null, () => null)
+      }
       await admin.from('audit_trail').insert({
         user_id: userId ?? null,
         action: 'fudo_production_sync',
         module: 'stock',
         entity_type: 'stock_item',
         entity_id: String(itemId),
-        description: `Producción: ${item.name} → ${item.current_qty} (sincronizado con Fudo)`,
+        description: `Producción: ${item.name} ${delta > 0 ? '+' : ''}${delta} → Fudo ${fudoResult.fudoBefore ?? '?'} → ${fudoResult.fudoAfter}`,
         metadata: {
           fudo_ingredient_id: item.fudo_ingredient_id,
           fudo_product_id: item.fudo_product_id,
-          qty: item.current_qty,
+          delta,
+          fudo_before: fudoResult.fudoBefore ?? null,
+          fudo_after: fudoResult.fudoAfter ?? null,
         },
       })
     } else {
@@ -878,7 +1192,7 @@ export async function syncProductionToFudo(
         metadata: {
           fudo_ingredient_id: item.fudo_ingredient_id,
           fudo_product_id: item.fudo_product_id,
-          attempted_qty: item.current_qty,
+          attempted_delta: delta,
         },
       })
     }
