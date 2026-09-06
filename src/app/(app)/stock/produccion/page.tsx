@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   TrendingUp, AlertTriangle, CheckCircle2, Clock, ChefHat,
   Package, Leaf, BarChart3, ChevronRight, RefreshCw, GitBranch,
-  ArrowRight, ShieldCheck, Lock, Loader2, DollarSign,
+  ArrowRight, ArrowLeft, ShieldCheck, Lock, Loader2, DollarSign,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
@@ -224,29 +224,35 @@ export default function ProduccionDashboardPage() {
       {/* Header */}
       <div className="sticky top-0 z-10 border-b border-[#ebe6df] bg-[#faf8f5]/95 backdrop-blur-md">
         <div className="mx-auto max-w-2xl px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex size-8 items-center justify-center rounded-lg bg-[#006d5a]/10">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <Link
+                href="/stock"
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[#ebe6df] bg-white text-[#3d2c24]"
+              >
+                <ArrowLeft className="size-4" />
+              </Link>
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#006d5a]/10">
                 <BarChart3 className="size-4 text-[#006d5a]" strokeWidth={1.75} />
               </div>
-              <div>
-                <h1 className="text-[15px] font-semibold text-[#3d2c24]">Control de Producción</h1>
-                <p className="text-[11px] text-muted-foreground">Rendimientos y mermas</p>
+              <div className="min-w-0">
+                <h1 className="truncate text-[15px] font-semibold text-[#3d2c24]">Control de Producción</h1>
+                <p className="truncate text-[11px] text-muted-foreground">Rendimientos y mermas</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-1.5">
               <select
                 value={period}
                 onChange={(e) => setPeriod(Number(e.target.value))}
-                className="rounded-lg border border-[#ebe6df] bg-white px-2 py-1 text-[12px] focus:outline-none"
+                className="rounded-lg border border-[#ebe6df] bg-white px-1.5 py-1 text-[12px] focus:outline-none"
               >
-                <option value={7}>7 días</option>
-                <option value={30}>30 días</option>
-                <option value={90}>90 días</option>
+                <option value={7}>7d</option>
+                <option value={30}>30d</option>
+                <option value={90}>90d</option>
               </select>
               <Link
                 href="/ventas?m=produccion"
-                className="flex size-8 items-center justify-center rounded-lg border border-[#ebe6df] bg-white text-[#006d5a]"
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[#ebe6df] bg-white text-[#006d5a]"
                 title="Costo por producción"
               >
                 <DollarSign className="size-4" />
@@ -254,7 +260,7 @@ export default function ProduccionDashboardPage() {
               <button
                 onClick={load}
                 disabled={loading}
-                className="flex size-8 items-center justify-center rounded-lg border border-[#ebe6df] bg-white text-muted-foreground disabled:opacity-50"
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[#ebe6df] bg-white text-muted-foreground disabled:opacity-50"
               >
                 <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
               </button>

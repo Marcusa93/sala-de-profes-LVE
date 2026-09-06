@@ -3,8 +3,9 @@
 import { useEffect, useState, useMemo } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
+import Link from 'next/link'
 import {
-  Camera, ArrowUpDown, TrendingDown, TrendingUp, Minus,
+  Camera, ArrowUpDown, ArrowLeft, TrendingDown, TrendingUp, Minus,
   Package, Wine, Loader2, Calendar, ChevronDown,
 } from 'lucide-react'
 import { isManagerOrAbove } from '@/lib/roles'
@@ -181,8 +182,15 @@ export default function StockHistorialPage() {
     <div className="mx-auto max-w-lg space-y-5 pb-28">
       {/* Header */}
       <FadeIn>
-        <h1 className="font-display text-2xl tracking-tight text-[#3d2c24]">Historial de Stock</h1>
-        <p className="section-label mt-0.5">Snapshots y comparaciones</p>
+        <div className="flex items-center gap-3">
+          <Link href="/stock" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary">
+            <ArrowLeft className="size-4 text-[#3d2c24]" />
+          </Link>
+          <div>
+            <h1 className="font-display text-2xl tracking-tight text-[#3d2c24]">Historial de Stock</h1>
+            <p className="section-label mt-0.5">Snapshots y comparaciones</p>
+          </div>
+        </div>
       </FadeIn>
 
       {/* Tab toggle */}
