@@ -11,7 +11,7 @@ import { format } from 'date-fns'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { useStockItems, type StockItem } from '@/lib/hooks/use-stock'
-import { isKitchenRole, isManagerOrAbove } from '@/lib/roles'
+import { canCountStock, isManagerOrAbove } from '@/lib/roles'
 import { STOCK_CATEGORIES } from '@/lib/constants'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn } from '@/components/ui/motion'
@@ -77,7 +77,7 @@ function StockPageContent() {
   const { items, isLoading, mutate } = useStockItems(true)
 
   const isManager = isManagerOrAbove(profile?.role)
-  const canOperate = isKitchenRole(profile?.role)
+  const canOperate = canCountStock(profile?.role)
 
   const areaParam = searchParams.get('area')
   const [area, setArea] = useState<StockArea | 'all'>(isStockArea(areaParam) ? areaParam : 'all')
@@ -187,7 +187,7 @@ function StockPageContent() {
   if (!canOperate) {
     return (
       <div className="mx-auto max-w-lg px-4 py-16 text-center text-sm text-[#7d6c64]">
-        Esta pantalla es para cocina, encargados y socios.
+        Esta pantalla es para cocina, barra, encargados y socios.
       </div>
     )
   }

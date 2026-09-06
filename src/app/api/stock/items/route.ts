@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!profile || !['socio', 'encargado', 'chef', 'cocina'].includes(profile.role)) {
+    if (!profile || !['socio', 'encargado', 'chef', 'cocina', 'barista'].includes(profile.role)) {
       return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
     }
 

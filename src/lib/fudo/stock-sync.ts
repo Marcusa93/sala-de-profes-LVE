@@ -79,6 +79,13 @@ type StockWriteOptions = {
   note?: string | null
   /** Costo unitario de la entrada (recepción) para valorizar el movimiento. */
   costPerUnit?: number | null
+  /**
+   * Delta explícito a aplicar sobre el stock ACTUAL de Fudo, para los motivos
+   * que son por naturaleza un movimiento y no un valor absoluto (merma).
+   * Sin esto, el delta se deduce de `newQty − current_qty` de LVE, que miente
+   * cuando LVE está desfasado o cuando el valor viene clampeado a 0.
+   */
+  deltaOverride?: number | null
 }
 
 const MOVEMENT_TYPE_BY_REASON: Record<StockWriteReason, 'ajuste' | 'merma' | 'entrada'> = {
@@ -111,6 +118,22 @@ function findDuplicateIds(ids: Array<string | null | undefined>): Set<string> {
     else seen.add(id)
   }
   return duplicates
+}
+
+/**
+ * Factor para reexpresar una cantidad de `from` a `to` dentro de la misma
+ * magnitud (g↔kg, ml↔l). null si no son convertibles (ej. unidad↔kg).
+ */
+function unitScaleFactor(from: string | null | undefined, to: string | null | undefined): number | null {
+  const f = (from ?? '').toLowerCase().trim()
+  const t = (to ?? '').toLowerCase().trim()
+  if (!f || !t) return null
+  if (f === t) return 1
+  const mass: Record<string, number> = { g: 0.001, gr: 0.001, gramos: 0.001, kg: 1, kilo: 1, kilos: 1 }
+  const volume: Record<string, number> = { ml: 0.001, cc: 0.001, l: 1, lt: 1, litro: 1, litros: 1 }
+  if (f in mass && t in mass) return mass[f] / mass[t]
+  if (f in volume && t in volume) return volume[f] / volume[t]
+  return null
 }
 
 /** Fudo informa 'kg' | 'litre' | 'unit'. */
@@ -458,7 +481,12 @@ export async function writeFudoStockDelta(
   try {
     if (link.fudoIngredientId) {
       const before = await readFudoIngredientStock(link.fudoIngredientId)
-      const after = Math.round(((before ?? 0) + delta) * 100) / 100
+      // Sin stock legible en Fudo (control de stock apagado) no hay base sobre
+      // la cual sumar: escribir `delta` a secas sería inventar un absoluto.
+      if (before === null) {
+        return { success: false, error: 'Fudo no informa stock de este insumo (¿control de stock apagado?). No se puede sumar ni restar sobre un valor desconocido.', fudoBefore: null }
+      }
+      const after = Math.round((before + delta) * 100) / 100
       const write = await writeFudoStock(link.fudoIngredientId, after, {
         ...context,
         fudoType: 'ingredient',
@@ -470,7 +498,10 @@ export async function writeFudoStockDelta(
     }
     if (link.fudoProductId) {
       const before = await readFudoProductStock(link.fudoProductId)
-      const after = Math.round(((before ?? 0) + delta) * 100) / 100
+      if (before === null) {
+        return { success: false, error: 'Fudo no informa stock de este producto (¿control de stock apagado?). No se puede sumar ni restar sobre un valor desconocido.', fudoBefore: null }
+      }
+      const after = Math.round((before + delta) * 100) / 100
       const write = await writeFudoProductStock(link.fudoProductId, after, {
         ...context,
         fudoType: 'product',
@@ -633,14 +664,20 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     return result
   }
 
-  // Items producidos alguna vez (para no desmarcar is_produced a lo que sí se produce)
+  // Items producidos alguna vez, o declarados como salida de alguna receta:
+  // no se les quita is_produced aunque Fudo no los llame "Pre-Producto".
   const producedEver = new Set<string>()
+  const recipeOutputItems = new Set<string>()
   if (schemaHasAreas) {
-    const { data: outs } = await admin
-      .from('production_outputs')
-      .select('stock_item_id')
-      .not('stock_item_id', 'is', null)
-    for (const o of outs ?? []) if (o.stock_item_id) producedEver.add(String(o.stock_item_id))
+    const [outsRes, recipesRes] = await Promise.all([
+      admin.from('production_outputs').select('stock_item_id').not('stock_item_id', 'is', null),
+      admin.from('recipes').select('output_stock_item_id').not('output_stock_item_id', 'is', null),
+    ])
+    for (const o of outsRes.data ?? []) if (o.stock_item_id) producedEver.add(String(o.stock_item_id))
+    for (const r of recipesRes.data ?? []) {
+      const id = (r as { output_stock_item_id?: string | null }).output_stock_item_id
+      if (id) recipeOutputItems.add(String(id))
+    }
   }
 
   // 4. Build supplier map: fudo_provider_id → supplier.id
@@ -758,16 +795,25 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       hasChanges = true
     }
 
-    // Unidad: Fudo manda (la cantidad espejada YA está en esa unidad, así que
-    // dejar otra unidad en LVE mostraría un número falso). Se audita el cambio.
-    if (fudoUnit && fudoUnit !== si.unit) {
+    // Unidad: Fudo manda, pero SOLO cuando además estamos espejando la cantidad
+    // en esa unidad. Cambiar la etiqueta sin cambiar el número deja un dato
+    // falso (500 g pasarían a leerse "500 kg").
+    const scaleToFudoUnit = fudoUnit ? unitScaleFactor(si.unit, fudoUnit) : null
+    if (fudoUnit && fudoUnit !== si.unit && fudoQty !== null) {
       update.unit = fudoUnit
       unitChanges.push(`${si.name}: ${si.unit} → ${fudoUnit}`)
       hasChanges = true
+
+      // El mínimo operativo lo puso una persona en la unidad vieja: se reescala
+      // para que siga significando lo mismo (0,5 kg y no "500 kg").
+      if (scaleToFudoUnit !== null && scaleToFudoUnit !== 1 && si.min_qty && si.min_qty > 0) {
+        update.min_qty = Math.round(si.min_qty * scaleToFudoUnit * 1000) / 1000
+        hasChanges = true
+      }
     }
 
     // Mínimo: si LVE no tiene mínimo y Fudo sí, tomarlo (Fudo es la verdad).
-    if (fudoMin !== null && (!si.min_qty || si.min_qty <= 0)) {
+    if (fudoMin !== null && (!si.min_qty || si.min_qty <= 0) && update.min_qty === undefined) {
       update.min_qty = fudoMin
       hasChanges = true
     }
@@ -799,8 +845,9 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       && mapped
       && !mapped.isPreProduct
       && si.fudo_ingredient_id
-      && (si.category === 'otros' || update.category === 'otros')
+      && si.category === 'otros'
       && !producedEver.has(si.id)
+      && !recipeOutputItems.has(si.id)
     ) {
       update.is_produced = false
       hasChanges = true
@@ -920,6 +967,10 @@ export async function syncToFudo(
         : 'manual_stock_write'
   const note = options.note?.trim() || null
   const delta = Math.round((newQty - item.current_qty) * 1000) / 1000
+  // Para merma/recepción manda el delta explícito si vino; si no, el implícito.
+  const effectiveDelta = options.deltaOverride != null
+    ? Math.round(options.deltaOverride * 1000) / 1000
+    : delta
 
   if (writeReason === 'physical_count' && stockWriteNeedsNote(item.current_qty, newQty, item.unit) && !note) {
     return {
@@ -954,13 +1005,20 @@ export async function syncToFudo(
     }
 
     let fudoResult: { success: boolean; error?: string; fudoAfter?: number }
-    if (isDeltaReason && delta !== 0) {
-      fudoResult = await writeFudoStockDelta(
-        { fudoIngredientId: item.fudo_ingredient_id, fudoProductId: item.fudo_product_id },
-        delta,
-        baseContext,
-      )
-      if (fudoResult.success && typeof fudoResult.fudoAfter === 'number') finalQty = fudoResult.fudoAfter
+    if (isDeltaReason) {
+      // Merma y recepción son MOVIMIENTOS: se aplican sobre lo que Fudo tiene
+      // ahora. Nunca se escribe un absoluto por este camino — hacerlo pisaría
+      // el stock real de Fudo con el número (posiblemente viejo) de LVE.
+      if (effectiveDelta === 0) {
+        fudoResult = { success: true }
+      } else {
+        fudoResult = await writeFudoStockDelta(
+          { fudoIngredientId: item.fudo_ingredient_id, fudoProductId: item.fudo_product_id },
+          effectiveDelta,
+          baseContext,
+        )
+        if (fudoResult.success && typeof fudoResult.fudoAfter === 'number') finalQty = fudoResult.fudoAfter
+      }
     } else if (item.fudo_ingredient_id) {
       fudoResult = await writeFudoStock(item.fudo_ingredient_id, newQty, {
         ...baseContext,
@@ -1034,11 +1092,15 @@ export async function syncToFudo(
     note,
   })
 
-  const movementId = delta !== 0
+  // El movimiento se registra contra el número con el que LVE quedó (finalQty),
+  // que para merma/recepción es el que devolvió Fudo. Así previous → new → qty
+  // cierran entre sí en el kardex.
+  const appliedDelta = Math.round((finalQty - item.current_qty) * 1000) / 1000
+  const movementId = appliedDelta !== 0
     ? await insertStockMovement(admin, {
       stock_item_id: stockItemId,
       movement_type: MOVEMENT_TYPE_BY_REASON[writeReason],
-      qty: delta,
+      qty: appliedDelta,
       previous_qty: item.current_qty,
       new_qty: finalQty,
       reason: writeReason,

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isKitchenRole } from '@/lib/roles'
+import { canCountStock } from '@/lib/roles'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +17,7 @@ export async function GET() {
       .eq('id', user.id)
       .single()
 
-    if (!isKitchenRole(profile?.role)) {
+    if (!canCountStock(profile?.role)) {
       return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
     }
 

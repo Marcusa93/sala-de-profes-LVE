@@ -140,6 +140,10 @@ function ConteoContent() {
   const plan = useMemo(() => {
     const order: Record<Bucket, number> = { negativo: 0, intermedio: 1, critico: 2, vencido: 3, otro: 4 }
     const scoped = countable.filter((i) => {
+      // Lo ya contado en esta pasada se queda a la vista: al guardarlo cambia
+      // de bucket (queda "al día") y si no, desaparecía de la lista y la barra
+      // de progreso retrocedía.
+      if (done[i.id] !== undefined) return true
       if (showAll) return true
       const b = bucketOf(i)
       if (modo === 'cero') return b === 'negativo' || b === 'intermedio'
@@ -152,7 +156,7 @@ function ConteoContent() {
       const da = daysSince(a.last_counted_at) ?? 9999, db = daysSince(b.last_counted_at) ?? 9999
       return db - da || a.name.localeCompare(b.name)
     })
-  }, [countable, showAll, modo])
+  }, [countable, showAll, modo, done])
 
   const grouped = useMemo(() => {
     const g: Record<Bucket, Item[]> = { negativo: [], intermedio: [], critico: [], vencido: [], otro: [] }

@@ -321,7 +321,12 @@ export async function POST(request: NextRequest) {
 
       let stockUpdated = false
       if (mode === 'lve_stock') {
-        const stockItemId = (order as { stock_item_id?: string | null }).stock_item_id ?? (body.stockItemId as string | undefined) ?? null
+        // Manda lo que eligió la persona en el diálogo: puede corregir el
+        // insumo pre-vinculado del pedido (si no, la entrada caía en el item
+        // equivocado, en LVE y en Fudo).
+        const stockItemId = (body.stockItemId as string | undefined)
+          ?? (order as { stock_item_id?: string | null }).stock_item_id
+          ?? null
         const numericQty = parseFloat(String(receivedQty ?? '').replace(',', '.'))
         if (!stockItemId || isNaN(numericQty) || numericQty <= 0) {
           return NextResponse.json({ success: false, error: 'Para cargar stock desde acá hace falta el insumo y la cantidad recibida' }, { status: 400 })

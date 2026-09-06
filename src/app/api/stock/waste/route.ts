@@ -44,7 +44,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Item no encontrado' }, { status: 404 })
     }
 
-    const newQty = Math.max(0, item.current_qty - qty)
+    // Una merma es un MOVIMIENTO: se restan `qty` unidades de lo que haya.
+    // No se clampea a 0 para calcular el destino — hacerlo invertía el signo
+    // en items negativos (stock −3, merma 2 → destino 0 → ¡sumaba 3 a Fudo!)
+    // y anulaba el descuento cuando LVE ya estaba en 0.
+    const newQty = Math.round((item.current_qty - qty) * 1000) / 1000
     const fullNote = note?.trim()
       ? `Merma ${wasteReason}: ${note.trim()}`
       : `Merma ${wasteReason}`
@@ -52,6 +56,7 @@ export async function POST(request: NextRequest) {
     const result = await syncToFudo(admin, stockItemId, newQty, user.id, {
       reason: 'waste',
       note: fullNote,
+      deltaOverride: -qty,
     })
 
     return NextResponse.json({

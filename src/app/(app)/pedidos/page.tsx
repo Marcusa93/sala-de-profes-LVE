@@ -43,6 +43,8 @@ type Order = {
   note: string | null
   supplier_id: string | null
   created_by: string | null
+  /** bar_orders guarda el autor en requested_by */
+  requested_by?: string | null
   created_at: string
   source: 'barra' | 'cocina'
   stock_item_id: string | null
@@ -326,7 +328,7 @@ function PedidosContent() {
                 </div>
                 <div className="divide-y divide-[#f5f0ea]">
                   {pending.map((o) => (
-                    <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.created_by)} supplier={suppliers.find((s) => s.id === o.supplier_id) ?? null}>
+                    <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.created_by ?? o.requested_by ?? null)} supplier={suppliers.find((s) => s.id === o.supplier_id) ?? null}>
                       {canManage && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {!o.supplier_id && (
@@ -492,7 +494,7 @@ function PedidosContent() {
                     {list.map((o) => {
                       const match = matchByOrder.get(`${o.source}-${o.id}`)
                       return (
-                        <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.created_by)} supplier={supplier}>
+                        <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.created_by ?? o.requested_by ?? null)} supplier={supplier}>
                           {match && (
                             <div className="mt-2 flex items-start gap-2 rounded-xl bg-[#e8f5f1] px-3 py-2 text-[11px] text-[#006d5a]">
                               <Receipt className="mt-0.5 size-3.5 shrink-0" />
@@ -543,7 +545,7 @@ function PedidosContent() {
             <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
               <div className="divide-y divide-[#f5f0ea]">
                 {received.slice(0, 40).map((o) => (
-                  <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.received_by ?? o.created_by)} supplier={suppliers.find((s) => s.id === o.supplier_id) ?? null} muted>
+                  <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.received_by ?? o.created_by ?? o.requested_by ?? null)} supplier={suppliers.find((s) => s.id === o.supplier_id) ?? null} muted>
                     <p className="mt-1 text-[11px] text-[#7d6c64]">
                       {o.received_at ? `Recibido ${format(new Date(o.received_at), "d MMM HH:mm", { locale: es })}` : 'Recibido'}
                       {o.received_by && ` por ${profileName(o.received_by)}`}
