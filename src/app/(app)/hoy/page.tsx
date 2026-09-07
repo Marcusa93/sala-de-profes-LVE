@@ -21,6 +21,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { isStockCritical } from '@/lib/contracts/stock'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
+import { AskBar } from '@/components/ai/AskBar'
 
 type PurchaseOrderLite = {
   supplier_id: string
@@ -414,6 +415,15 @@ export default function HoyPage() {
           </div>
           {loading && <Loader2 className="size-4 animate-spin text-[#a39e97]" />}
         </div>
+      </FadeIn>
+
+      {/* Preguntar en castellano — cruza stock, pedidos y producción */}
+      <FadeIn delay={0.03}>
+        <AskBar
+          scope="hoy"
+          placeholder="Preguntá: qué comprar, qué falta…"
+          examples={['¿qué tengo que comprar?', '¿qué me falta en cocina?', '¿qué produje esta semana?']}
+        />
       </FadeIn>
 
       <StaggerList className="space-y-3" staggerDelay={0.05}>

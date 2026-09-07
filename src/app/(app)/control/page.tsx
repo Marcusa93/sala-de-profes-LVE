@@ -31,6 +31,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { useAdminKpis } from '@/lib/hooks/use-admin-kpis'
 import { isManagerOrAbove, isSocio } from '@/lib/roles'
+import { AskBar } from '@/components/ai/AskBar'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn, StaggerList, StaggerItem, ScalePress } from '@/components/ui/motion'
@@ -480,6 +481,15 @@ export default function ControlPage() {
             </p>
           </div>
         </div>
+      </FadeIn>
+
+      {/* Preguntar en castellano — cruza stock, pedidos, producción y ventas */}
+      <FadeIn delay={0.03}>
+        <AskBar
+          scope="control"
+          placeholder="Preguntá lo que quieras chequear…"
+          examples={['¿qué insumos están sin proveedor?', '¿qué quedó sin área?', '¿qué hay en negativo?', '¿qué no cuento hace una semana?']}
+        />
       </FadeIn>
 
       {/* KPIs del día (ex /admin) — si falla, la fila se reemplaza por una nota y no rompe el resto */}

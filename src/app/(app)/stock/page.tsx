@@ -23,6 +23,7 @@ import {
   STOCK_AREAS, areaFromLveCategory, groupLabel, suggestedCountEveryDays, isStockArea, type StockArea,
 } from '@/lib/stock/areas'
 import { CountSheet } from './_components/CountSheet'
+import { AskBar } from '@/components/ai/AskBar'
 
 // ---------------------------------------------------------------------------
 // /stock — UNA lista, UN semáforo, por ÁREA.
@@ -256,6 +257,15 @@ function StockPageContent() {
             )
           })}
         </div>
+      </FadeIn>
+
+      {/* Preguntar en castellano */}
+      <FadeIn delay={0.05}>
+        <AskBar
+          scope="stock"
+          placeholder="Preguntá: qué falta, qué está en negativo…"
+          examples={['¿qué me falta en cocina?', '¿qué hay en negativo?', '¿qué no cuento hace una semana?', '¿cuánta plata tengo en stock?']}
+        />
       </FadeIn>
 
       {/* Búsqueda + filtros rápidos */}
