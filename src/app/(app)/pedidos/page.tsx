@@ -113,6 +113,8 @@ function PedidosContent() {
   const [arrivalDialog, setArrivalDialog] = useState<Order | null>(null)
   const [assignDialog, setAssignDialog] = useState<Order | null>(null)
   const [newOrderOpen, setNewOrderOpen] = useState(false)
+  // Saldo pendiente de pago a proveedores (null si la migración de pagos no está)
+  const [porPagar, setPorPagar] = useState<number | null>(null)
 
   const fetchOrders = useCallback(async () => {
     const supabase = createClient()
@@ -130,6 +132,17 @@ function PedidosContent() {
     setProfiles((profRes.data ?? []) as unknown as Profile[])
     setStockItems((stockRes.data ?? []) as unknown as StockLite[])
     setLoading(false)
+
+    supabase
+      .from('stock_receipts')
+      .select('cost_total')
+      .eq('payment_status', 'a_pagar')
+      .not('cost_total', 'is', null)
+      .then(({ data, error }) => {
+        if (error) { setPorPagar(null); return }
+        const total = (data ?? []).reduce((acc, r) => acc + (Number((r as { cost_total: number | null }).cost_total) || 0), 0)
+        setPorPagar(Math.round(total))
+      })
   }, [])
 
   const fetchSugerencias = useCallback(async (fresh = false) => {
@@ -530,11 +543,23 @@ function PedidosContent() {
       {step === 'recibido' && (
         <FadeIn>
           {canManage && (
-            <Link href="/ventas?m=precios" className="mb-2 flex items-center gap-2.5 rounded-2xl bg-white px-4 py-2.5 ring-1 ring-[#ebe6df] active:scale-[0.99]">
-              <Wallet className="size-4 shrink-0 text-[#8b5e34]" />
-              <span className="flex-1 text-xs font-semibold text-[#3d2c24]">Precios y compras reales (gastos de Fudo)</span>
-              <ChevronRight className="size-4 text-[#a39e97]" />
-            </Link>
+            <div className="mb-2 space-y-2">
+              <Link href="/pedidos/cuentas" className="flex items-center gap-2.5 rounded-2xl bg-white px-4 py-2.5 ring-1 ring-[#ebe6df] active:scale-[0.99]">
+                <Wallet className="size-4 shrink-0 text-[#d4943a]" />
+                <span className="flex-1 text-xs font-semibold text-[#3d2c24]">Cuentas por pagar</span>
+                {porPagar !== null && porPagar > 0 && (
+                  <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[#d4943a]">
+                    {money(porPagar)}
+                  </span>
+                )}
+                <ChevronRight className="size-4 shrink-0 text-[#a39e97]" />
+              </Link>
+              <Link href="/ventas?m=precios" className="flex items-center gap-2.5 rounded-2xl bg-white px-4 py-2.5 ring-1 ring-[#ebe6df] active:scale-[0.99]">
+                <Receipt className="size-4 shrink-0 text-[#8b5e34]" />
+                <span className="flex-1 text-xs font-semibold text-[#3d2c24]">Precios y compras reales (gastos de Fudo)</span>
+                <ChevronRight className="size-4 shrink-0 text-[#a39e97]" />
+              </Link>
+            </div>
           )}
           {received.length === 0 ? (
             <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-10 text-center ring-1 ring-[#ebe6df]">
