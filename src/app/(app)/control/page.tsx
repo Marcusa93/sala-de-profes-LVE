@@ -36,7 +36,6 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn, StaggerList, StaggerItem, ScalePress } from '@/components/ui/motion'
 import { KpiCard } from '@/components/admin/KpiCard'
-import { ExecutiveSummary } from '@/components/admin/ExecutiveSummary'
 import type { StockAnomaliesResponse, StockAnomalyItem } from '@/lib/contracts/stock-anomalies'
 import type { StockIntelligenceResponse, StockSetupIssue } from '@/lib/stock/intelligence'
 import { lotTone, formatLotCountdown, formatQty } from '@/lib/stock/helpers'
@@ -554,8 +553,47 @@ export default function ControlPage() {
         </p>
       )}
 
-      {/* Resumen ejecutivo (maneja su propio loading/error) */}
-      <ExecutiveSummary />
+      {/* Semáforo del día: qué necesita atención, tocable. Reemplaza al viejo
+          "resumen ejecutivo" (un párrafo de IA que no permitía hacer nada). */}
+      <FadeIn delay={0.02}>
+        {(() => {
+          const focos = [
+            { id: 'sec-critico', label: 'Stock crítico', n: criticalCount, tone: '#ea504c', bg: '#fef2f2' },
+            { id: 'sec-fichajes', label: 'Fichajes raros', n: attendanceAlerts.length, tone: '#ea504c', bg: '#fef2f2' },
+            { id: 'sec-anomalias', label: 'Anomalías', n: anomalyCount, tone: '#d4943a', bg: '#fdf6ec' },
+            { id: 'sec-vencer', label: 'Por vencer', n: expiryItems.length, tone: '#d4943a', bg: '#fdf6ec' },
+            { id: 'sec-datos', label: 'Datos incompletos', n: setupCount, tone: '#7d6c64', bg: '#f3efe9' },
+          ].filter((f) => f.n > 0)
+          if (focos.length === 0) {
+            return (
+              <div className="flex items-center gap-2.5 rounded-2xl bg-[#e8f5f1] px-4 py-3 ring-1 ring-[#dcefe8]">
+                <span className="text-lg">✅</span>
+                <p className="text-sm font-semibold text-[#006d5a]">Nada urgente ahora. Todo lo controlado está en orden.</p>
+              </div>
+            )
+          }
+          return (
+            <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-[#ebe6df]">
+              <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-[#a39e97]">
+                Hoy necesita atención — tocá para ir
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {focos.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => document.getElementById(f.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                    className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold active:scale-95"
+                    style={{ color: f.tone, backgroundColor: f.bg }}
+                  >
+                    {f.label}
+                    <span className="rounded-full bg-white/70 px-1.5 text-[11px] font-bold tabular-nums">{f.n}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
+      </FadeIn>
 
       {/* Accesos rápidos (ex /admin) */}
       <FadeIn delay={0.03}>
@@ -590,6 +628,7 @@ export default function ControlPage() {
       <FadeIn delay={0.05} className="space-y-4">
         {/* a. Stock crítico */}
         <ControlSection
+          id="sec-critico"
           title="Stock crítico"
           icon={AlertTriangle}
           tone="red"
@@ -623,6 +662,7 @@ export default function ControlPage() {
 
         {/* b. Anomalías de stock */}
         <ControlSection
+          id="sec-anomalias"
           title="Anomalías de stock"
           icon={Radar}
           tone="orange"
@@ -644,6 +684,7 @@ export default function ControlPage() {
 
         {/* b2. Por vencer (vida útil de lotes) */}
         <ControlSection
+          id="sec-vencer"
           title="⏰ Por vencer"
           icon={Clock}
           tone="orange"
@@ -683,6 +724,7 @@ export default function ControlPage() {
 
         {/* c. Datos por completar */}
         <ControlSection
+          id="sec-datos"
           title="Datos por completar"
           icon={ClipboardList}
           tone="yellow"
@@ -768,6 +810,7 @@ export default function ControlPage() {
 
         {/* d. Fichajes sospechosos */}
         <ControlSection
+          id="sec-fichajes"
           title="Fichajes sospechosos"
           icon={ScanFace}
           tone="purple"
@@ -969,6 +1012,7 @@ const TONE_STYLES: Record<SectionTone, { iconBg: string; iconText: string; badge
 }
 
 function ControlSection({
+  id,
   title,
   icon: Icon,
   tone,
@@ -978,6 +1022,7 @@ function ControlSection({
   emptyText,
   children,
 }: {
+  id?: string
   title: string
   icon: LucideIcon
   tone: SectionTone
@@ -992,7 +1037,7 @@ function ControlSection({
   const isEmpty = !loading && !error && count === 0
 
   return (
-    <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-[#ebe6df]">
+    <section id={id} className="scroll-mt-20 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-[#ebe6df]">
       {/* Header colapsable */}
       <button
         onClick={() => setOpen((v) => !v)}

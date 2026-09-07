@@ -4064,7 +4064,21 @@ export type AttendanceDashboardRow = {
   last_event_time: string | null
   days_worked: number
   total_hours: number
+  /** Fichajes sospechosos en el período (nombre histórico del campo). */
   open_anomalies: number
+  /** Horas programadas según turnos cargados en el período. */
+  scheduled_hours: number
+  /** Turno de HOY (si está cargado). */
+  shift_today: { start: string; end: string } | null
+  today_in: string | null
+  today_out: string | null
+  today_out_type: string | null
+  /** Minutos de diferencia contra el inicio del turno (positivo = tarde). */
+  late_min: number | null
+  /** Minutos que se fue antes del fin del turno (solo egreso manual). */
+  left_early_min: number | null
+  /** Tiene turno hoy, ya empezó hace >15 min y no fichó. */
+  no_show: boolean
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -12,13 +12,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Settings, LogOut, ChevronDown } from 'lucide-react'
+import { Settings, LogOut, ChevronDown, ChevronLeft } from 'lucide-react'
 import { ROLES } from '@/lib/constants'
 import { useState, useEffect } from 'react'
 import { signOutBrowserSession } from '@/lib/push/client'
 
 export function TopBar() {
   const pathname = usePathname()
+  const router = useRouter()
   const { profile } = useProfileContext()
   const [scrolled, setScrolled] = useState(false)
   const [mounted, setMounted] = useState(false)
@@ -74,11 +75,29 @@ export function TopBar() {
 
   const roleConfig = profile?.role ? ROLES[profile.role] : null
 
+  // Volver atrás desde cualquier pantalla que no sea el inicio. Si se llegó
+  // por link directo (sin historial), vuelve al inicio.
+  const showBack = pathname !== '/'
+  function handleBack() {
+    if (typeof window !== 'undefined' && window.history.length > 1) router.back()
+    else router.push('/')
+  }
+
   return (
     <header className={`sticky top-0 z-40 shrink-0 bg-[#006d5a] transition-all duration-200 ${scrolled ? 'shadow-md' : ''}`}>
       <div className={`flex items-center justify-between px-5 transition-all duration-200 ${scrolled ? 'h-[2.75rem]' : 'h-[3.75rem]'}`}>
-        {/* Brand */}
-        <Link href="/" className="flex items-center gap-3">
+        {/* Volver + Brand */}
+        <div className="flex min-w-0 items-center gap-1.5">
+          {showBack && (
+            <button
+              onClick={handleBack}
+              aria-label="Volver"
+              className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-xl text-white/90 transition-colors hover:bg-white/10 active:scale-95"
+            >
+              <ChevronLeft className="size-6" />
+            </button>
+          )}
+        <Link href="/" className="flex min-w-0 items-center gap-3">
           <Image
             src="/Logos/logo negativo.png"
             alt="La Vieja Escuela"
@@ -95,6 +114,7 @@ export function TopBar() {
             </span>
           </div>
         </Link>
+        </div>
 
         {/* User dropdown — only render after mount to avoid base-ui ID hydration mismatch */}
         {mounted ? (

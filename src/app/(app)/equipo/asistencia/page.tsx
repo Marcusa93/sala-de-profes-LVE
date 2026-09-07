@@ -84,14 +84,41 @@ function EmployeeRow({
           {roleConfig.emoji}
         </div>
 
-        {/* Name + role */}
+        {/* Name + role + turno vs fichada */}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-[#3d2c24]">
             {emp.first_name} {emp.last_name}
           </p>
-          <span className="text-[10px] font-semibold" style={{ color: roleConfig.color }}>
-            {roleConfig.label}
-          </span>
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <span className="text-[10px] font-semibold" style={{ color: roleConfig.color }}>
+              {roleConfig.label}
+            </span>
+            {emp.shift_today && (
+              <span className="text-[10px] tabular-nums text-[#7d6c64]">
+                · turno {emp.shift_today.start}–{emp.shift_today.end}
+              </span>
+            )}
+            {emp.late_min !== null && emp.late_min > 5 && (
+              <span className="rounded-full bg-[#fdf6ec] px-1.5 py-px text-[9px] font-bold text-[#d4943a]">
+                +{emp.late_min}′ tarde
+              </span>
+            )}
+            {emp.late_min !== null && emp.late_min < -5 && (
+              <span className="rounded-full bg-[#e8f5f1] px-1.5 py-px text-[9px] font-bold text-[#006d5a]">
+                {Math.abs(emp.late_min)}′ antes
+              </span>
+            )}
+            {emp.left_early_min !== null && emp.left_early_min > 5 && (
+              <span className="rounded-full bg-[#fdf6ec] px-1.5 py-px text-[9px] font-bold text-[#d4943a]">
+                salió {emp.left_early_min}′ antes
+              </span>
+            )}
+            {emp.today_out_type === 'auto' && (
+              <span className="rounded-full bg-[#f3efe9] px-1.5 py-px text-[9px] font-bold text-[#7d6c64]">
+                egreso auto
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Status */}
@@ -114,10 +141,15 @@ function EmployeeRow({
                 {format(new Date(emp.last_event_time), 'HH:mm')}
               </span>
             </>
-          ) : (
-            <div className="flex items-center gap-1 text-[#d4943a]">
+          ) : emp.no_show ? (
+            <div className="flex items-center gap-1 text-[#ea504c]">
               <UserX className="size-3.5" />
-              <span className="text-xs">Sin fichar</span>
+              <span className="text-xs font-bold">No fichó</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 text-[#a39e97]">
+              <UserX className="size-3.5" />
+              <span className="text-xs">{emp.shift_today ? 'Sin fichar' : 'Sin turno hoy'}</span>
             </div>
           )}
           {emp.open_anomalies > 0 && (
@@ -289,6 +321,9 @@ export default function EquipoAsistenciaPage() {
 
   const present = employees.filter(e => e.is_currently_in).length
   const anomalyCount = employees.reduce((s, e) => s + e.open_anomalies, 0)
+  const noShowCount = employees.filter(e => e.no_show).length
+  const workedH = Math.round(employees.reduce((a, e) => a + e.total_hours, 0) * 10) / 10
+  const scheduledH = Math.round(employees.reduce((a, e) => a + e.scheduled_hours, 0) * 10) / 10
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-24">
@@ -308,19 +343,25 @@ export default function EquipoAsistenciaPage() {
         </button>
       </div>
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-3 gap-2">
+      {/* KPI strip: presencia + exactitud de horas del día */}
+      <div className="grid grid-cols-4 gap-2">
         <div className="card-elevated rounded-xl p-3 text-center">
           <p className="font-display text-2xl font-bold text-[#006d5a]">{present}</p>
           <p className="mt-0.5 text-[10px] text-[#a39e97]">Presentes</p>
         </div>
+        <div className={cn('rounded-xl p-3 text-center', noShowCount > 0 ? 'bg-[#fef2f2]' : 'card-elevated')}>
+          <p className={cn('font-display text-2xl font-bold', noShowCount > 0 ? 'text-[#ea504c]' : 'text-[#3d2c24]')}>{noShowCount}</p>
+          <p className={cn('mt-0.5 text-[10px]', noShowCount > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]')}>No ficharon</p>
+        </div>
         <div className="card-elevated rounded-xl p-3 text-center">
-          <p className="font-display text-2xl font-bold text-[#3d2c24]">{employees.length - present}</p>
-          <p className="mt-0.5 text-[10px] text-[#a39e97]">Fuera / Sin fichar</p>
+          <p className="font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
+            {workedH}<span className="text-sm font-medium text-[#a39e97]">/{scheduledH}</span>
+          </p>
+          <p className="mt-0.5 text-[10px] text-[#a39e97]">Hs reales / plan</p>
         </div>
         <div className={cn('rounded-xl p-3 text-center', anomalyCount > 0 ? 'bg-[#fef2f2]' : 'card-elevated')}>
           <p className={cn('font-display text-2xl font-bold', anomalyCount > 0 ? 'text-[#ea504c]' : 'text-[#3d2c24]')}>{anomalyCount}</p>
-          <p className={cn('mt-0.5 text-[10px]', anomalyCount > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]')}>Anomalías</p>
+          <p className={cn('mt-0.5 text-[10px]', anomalyCount > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]')}>Sospechosos</p>
         </div>
       </div>
 
