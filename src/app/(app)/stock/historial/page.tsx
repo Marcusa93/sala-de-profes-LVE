@@ -188,8 +188,25 @@ export default function StockHistorialPage() {
           </Link>
           <div>
             <h1 className="font-display text-2xl tracking-tight text-[#3d2c24]">Historial de Stock</h1>
-            <p className="section-label mt-0.5">Snapshots y comparaciones</p>
+            <p className="section-label mt-0.5">Fotos diarias del stock</p>
           </div>
+        </div>
+
+        {/* Para qué sirve esto, dicho en una línea, y el link a la respuesta. */}
+        <div className="mt-3 rounded-2xl bg-[#faf8f5] px-4 py-3 ring-1 ring-[#ebe6df]">
+          <p className="text-[12px] leading-relaxed text-[#7d6c64]">
+            Todas las noches a las 3 se guarda sola una foto del stock. Sirven para una cosa:
+            comparar dos días y ver <b className="text-[#3d2c24]">qué desapareció sin venta</b>
+            {' '}(stock de ayer + lo que entró − lo vendido − stock de hoy). Eso es la merma no explicada.
+          </p>
+          {canEdit && (
+            <Link
+              href="/admin/mermas"
+              className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#ea504c]"
+            >
+              Ver la merma valorizada en pesos →
+            </Link>
+          )}
         </div>
       </FadeIn>
 

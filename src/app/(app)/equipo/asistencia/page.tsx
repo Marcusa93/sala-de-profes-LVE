@@ -220,7 +220,6 @@ export default function EquipoAsistenciaPage() {
   const todayLabel = format(new Date(), "EEEE d 'de' MMMM", { locale: es })
 
   const [employees, setEmployees] = useState<AttendanceDashboardRow[]>([])
-  const [corrections, setCorrections] = useState<Correction[]>([])
   const [loading, setLoading] = useState(true)
   const [processingId, setProcessingId] = useState<string | null>(null)
 
@@ -232,14 +231,9 @@ export default function EquipoAsistenciaPage() {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const [dashRes, corrRes] = await Promise.all([
-        fetch(`/api/attendance/dashboard?from=${today}&to=${today}`),
-        fetch('/api/attendance/corrections?status=pending'),
-      ])
+      const dashRes = await fetch(`/api/attendance/dashboard?from=${today}&to=${today}`)
       const dash = await dashRes.json()
-      const corr = await corrRes.json()
       setEmployees(dash.employees ?? [])
-      setCorrections(corr.corrections ?? [])
     } catch {
       toast.error('No se pudo cargar la asistencia')
     } finally {
@@ -272,24 +266,6 @@ export default function EquipoAsistenciaPage() {
     }
   }
 
-  async function handleCorrection(id: string, action: 'approved' | 'rejected') {
-    setProcessingId(id)
-    try {
-      const res = await fetch('/api/attendance/corrections', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status: action }),
-      })
-      if (!res.ok) throw new Error()
-      toast.success(action === 'approved' ? 'Corrección aprobada' : 'Corrección rechazada')
-      setCorrections(prev => prev.filter(c => c.id !== id))
-    } catch {
-      toast.error('No se pudo procesar la corrección')
-    } finally {
-      setProcessingId(null)
-    }
-  }
-
   if (profileLoading) return <LoadingState />
 
   if (!profile || !isEncargado) {
@@ -313,7 +289,6 @@ export default function EquipoAsistenciaPage() {
 
   const present = employees.filter(e => e.is_currently_in).length
   const anomalyCount = employees.reduce((s, e) => s + e.open_anomalies, 0)
-  const pendingCount = corrections.length
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-24">
@@ -373,60 +348,6 @@ export default function EquipoAsistenciaPage() {
             )}
           </div>
 
-          {/* Corrections pending */}
-          {corrections.length > 0 && (
-            <div className="space-y-2">
-              <p className="section-label flex items-center gap-1.5 px-1">
-                <AlertTriangle className="size-3.5 text-[#d4943a]" />
-                Correcciones pendientes ({pendingCount})
-              </p>
-              {corrections.map(c => {
-                const emp = c.employee
-                const roleConfig = emp ? (ROLES[emp.role as AppRole] ?? { label: emp.role, color: '#a39e97' }) : null
-                return (
-                  <div key={c.id} className="rounded-xl border border-[#e8c97c] bg-[#fdf6ec] p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-[#3d2c24]">
-                          {emp ? `${emp.first_name} ${emp.last_name}` : 'Empleado'}
-                          {roleConfig && (
-                            <span className="ml-1.5 text-[10px] font-medium" style={{ color: roleConfig.color }}>
-                              {roleConfig.label}
-                            </span>
-                          )}
-                        </p>
-                        <p className="mt-0.5 text-xs text-[#8b5e34]">
-                          {c.correction_type === 'add_entry' ? 'Agregar entrada' :
-                           c.correction_type === 'add_exit' ? 'Agregar salida' :
-                           c.correction_type === 'add_missing' ? 'Agregar fichaje' :
-                           c.correction_type === 'change_time' ? 'Cambiar horario' :
-                           c.correction_type === 'remove_event' ? 'Eliminar fichaje' : c.correction_type}
-                          {' · '}{format(new Date(c.created_at), "d MMM, HH:mm", { locale: es })}
-                        </p>
-                        <p className="mt-1 text-xs text-[#3d2c24]">"{c.reason}"</p>
-                      </div>
-                      <div className="flex shrink-0 gap-1.5">
-                        <button
-                          onClick={() => handleCorrection(c.id, 'approved')}
-                          disabled={processingId === c.id}
-                          className="flex size-8 items-center justify-center rounded-lg bg-[#006d5a] text-white disabled:opacity-50"
-                        >
-                          {processingId === c.id ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                        </button>
-                        <button
-                          onClick={() => handleCorrection(c.id, 'rejected')}
-                          disabled={processingId === c.id}
-                          className="flex size-8 items-center justify-center rounded-lg border border-[#ebe6df] bg-white text-[#ea504c] disabled:opacity-50"
-                        >
-                          <X className="size-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
         </>
       )}
     </div>

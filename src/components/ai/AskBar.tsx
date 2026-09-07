@@ -140,18 +140,27 @@ export function AskBar({ scope, examples, placeholder }: Props) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#f5f0ea]">
-                    {result.rows.map((row, i) => (
-                      <tr key={i}>
-                        {result.columns.map((c) => (
-                          <td
-                            key={c.key}
-                            className={`px-3 py-2 text-[#3d2c24] ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${c.key === result.columns[0].key ? 'font-medium' : 'text-[#7d6c64]'}`}
-                          >
-                            {row[c.key] ?? '—'}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
+                    {result.rows.map((row, i) => {
+                      const href = typeof row._href === 'string' ? row._href : null
+                      return (
+                        <tr key={i} className={href ? 'hover:bg-[#faf8f5]' : undefined}>
+                          {result.columns.map((c, ci) => {
+                            const value = row[c.key] ?? '—'
+                            const esPrimera = ci === 0
+                            return (
+                              <td
+                                key={c.key}
+                                className={`px-3 py-2 text-[#3d2c24] ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${esPrimera ? 'font-medium' : 'text-[#7d6c64]'}`}
+                              >
+                                {esPrimera && href
+                                  ? <Link href={href} className="underline decoration-[#d9d2c9] underline-offset-2">{value}</Link>
+                                  : value}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -69,6 +69,14 @@ function VentasContent() {
     momentos: 'Momentos', precios: 'Precios', produccion: 'Producción', personal: 'Personal',
   }
 
+  // Los 9 modos entraban en una sola fila que scrolleaba de costado: no se veía
+  // qué había más allá del tercero. Agrupados por intención entran todos.
+  const MODE_GROUPS: { label: string; modes: ViewMode[] }[] = [
+    { label: 'Cuánto vendí', modes: ['dia', 'mes', 'comparar'] },
+    { label: 'Cuánto me queda', modes: ['carta', 'momentos', 'balance'] },
+    { label: 'Cuánto me cuesta', modes: ['precios', 'produccion', 'personal'] },
+  ]
+
   // Si el deep-link apunta a un modo manager-only y el perfil no lo permite, volver a Día
   useEffect(() => {
     if (profileLoading) return
@@ -128,28 +136,41 @@ function VentasContent() {
         {/* View mode toggle */}
         <div className="mb-3 flex items-center justify-between gap-2">
           <h1 className="shrink-0 font-display text-2xl font-bold tracking-tight text-[#3d2c24]">Números</h1>
-          <div className="min-w-0 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <div className="flex w-max rounded-full bg-secondary p-0.5 shadow-inner">
-              {modes.map((mode) => (
-                <button
-                  key={mode}
-                  onClick={() => setViewMode(mode)}
-                  className="relative shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors"
-                >
-                  {viewMode === mode && (
-                    <motion.span
-                      layoutId="ventas-mode-pill"
-                      className="absolute inset-0 rounded-full bg-[#006d5a] shadow-sm"
-                      transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                    />
-                  )}
-                  <span className={`relative z-10 transition-colors ${viewMode === mode ? 'text-white' : 'text-muted-foreground'}`}>
-                    {MODE_LABELS[mode]}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
+        </div>
+
+        {/* Modos agrupados por lo que la persona quiere saber */}
+        <div className="mb-3 space-y-1.5">
+          {MODE_GROUPS.map((group) => {
+            const visibles = group.modes.filter((m) => modes.includes(m))
+            if (visibles.length === 0) return null
+            return (
+              <div key={group.label} className="flex items-center gap-2">
+                <span className="w-[6.5rem] shrink-0 text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
+                  {group.label}
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {visibles.map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => setViewMode(mode)}
+                      className={`relative rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+                        viewMode === mode ? 'text-white' : 'bg-secondary text-muted-foreground'
+                      }`}
+                    >
+                      {viewMode === mode && (
+                        <motion.span
+                          layoutId="ventas-mode-pill"
+                          className="absolute inset-0 rounded-full bg-[#006d5a] shadow-sm"
+                          transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                        />
+                      )}
+                      <span className="relative z-10">{MODE_LABELS[mode]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </div>
 
         {/* Preguntar en castellano — cruza ventas, márgenes y compras */}

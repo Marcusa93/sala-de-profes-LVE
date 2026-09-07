@@ -311,6 +311,8 @@ async function runStock(admin: SupabaseClient, plan: QueryPlan): Promise<AskResu
 
   const limite = plan.limite ?? 15
   const rows = items.slice(0, limite).map((i) => ({
+    // La ficha del insumo (kardex, precios, recetas, cadena) queda a un toque.
+    _href: `/stock/item/${i.id}`,
     insumo: i.name,
     area: AREA_LABEL[areaOf(i)],
     cantidad: `${qty(i.current_qty)} ${i.unit}`,
