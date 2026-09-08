@@ -191,10 +191,10 @@ export async function GET(request: NextRequest) {
       .map(([name, data]) => ({ name, ...data }))
       .sort((a, b) => b.revenue - a.revenue)
 
-    // By hour
+    // By hour — UTC-3 (Argentina, sin DST)
     const hourAgg = new Map<number, { tickets: number; revenue: number; items: number }>()
     for (const t of tickets) {
-      const hour = new Date(t.createdAt).getHours()
+      const hour = (new Date(t.createdAt).getUTCHours() - 3 + 24) % 24
       const ex = hourAgg.get(hour)
       const tItems = t.items.reduce((s, i) => s + i.qty, 0)
       if (ex) { ex.tickets++; ex.revenue += t.total; ex.items += tItems }
