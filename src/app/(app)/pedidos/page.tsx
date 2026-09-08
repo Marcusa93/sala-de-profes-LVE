@@ -773,6 +773,45 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
             {modeBtn('sin_stock', 'Solo cerrar el pedido', 'No es un insumo de stock. Podés registrar el monto igual.')}
           </div>
 
+          {/* Medio de pago — siempre visible, antes de los detalles del modo */}
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold text-[#3d2c24]">
+              Medio de pago <span className="font-normal text-[#a39e97]">(opcional)</span>
+            </p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {PAYMENT_METHODS.map((pm) => (
+                <button
+                  key={pm.key}
+                  type="button"
+                  onClick={() => setPaymentMethod(paymentMethod === pm.key ? null : pm.key)}
+                  className={cn(
+                    'rounded-xl border px-3 py-2 text-left transition-all',
+                    paymentMethod === pm.key
+                      ? pm.key === 'cuenta_corriente'
+                        ? 'border-[#d4943a] bg-[#fdf6ec]'
+                        : 'border-[#006d5a] bg-[#e8f5f1]'
+                      : 'border-[#ebe6df] bg-white',
+                  )}
+                >
+                  <span className={cn(
+                    'block text-[12px] font-bold',
+                    paymentMethod === pm.key
+                      ? pm.key === 'cuenta_corriente' ? 'text-[#d4943a]' : 'text-[#006d5a]'
+                      : 'text-[#3d2c24]',
+                  )}>
+                    {pm.label}
+                  </span>
+                  <span className="block text-[10px] text-[#7d6c64]">{pm.hint}</span>
+                </button>
+              ))}
+            </div>
+            {paymentMethod === 'cuenta_corriente' && (
+              <p className="mt-1.5 text-[10px] text-[#d4943a]">
+                Quedará pendiente en <strong>Cuentas por pagar</strong> hasta que lo saldes.
+              </p>
+            )}
+          </div>
+
           {mode === 'fudo_expense' && (
             <div>
               <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Gasto de Fudo <span className="font-normal text-[#a39e97]">(opcional, para dejar el monto)</span></p>
@@ -858,45 +897,6 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
               </div>
             </div>
           )}
-
-          {/* Medio de pago */}
-          <div>
-            <p className="mb-1.5 text-[11px] font-semibold text-[#3d2c24]">
-              Medio de pago <span className="font-normal text-[#a39e97]">(opcional)</span>
-            </p>
-            <div className="grid grid-cols-2 gap-1.5">
-              {PAYMENT_METHODS.map((pm) => (
-                <button
-                  key={pm.key}
-                  type="button"
-                  onClick={() => setPaymentMethod(paymentMethod === pm.key ? null : pm.key)}
-                  className={cn(
-                    'rounded-xl border px-3 py-2 text-left transition-all',
-                    paymentMethod === pm.key
-                      ? pm.key === 'cuenta_corriente'
-                        ? 'border-[#d4943a] bg-[#fdf6ec]'
-                        : 'border-[#006d5a] bg-[#e8f5f1]'
-                      : 'border-[#ebe6df] bg-white',
-                  )}
-                >
-                  <span className={cn(
-                    'block text-[12px] font-bold',
-                    paymentMethod === pm.key
-                      ? pm.key === 'cuenta_corriente' ? 'text-[#d4943a]' : 'text-[#006d5a]'
-                      : 'text-[#3d2c24]',
-                  )}>
-                    {pm.label}
-                  </span>
-                  <span className="block text-[10px] text-[#7d6c64]">{pm.hint}</span>
-                </button>
-              ))}
-            </div>
-            {paymentMethod === 'cuenta_corriente' && (
-              <p className="mt-1.5 text-[10px] text-[#d4943a]">
-                Quedará pendiente en <strong>Cuentas por pagar</strong> hasta que lo saldes.
-              </p>
-            )}
-          </div>
 
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Nota (opcional): faltó algo, vino distinto, etc." className="w-full resize-none rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none" />
         </div>
