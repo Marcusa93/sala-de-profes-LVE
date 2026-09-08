@@ -223,7 +223,9 @@ function PedidosContent() {
       }
       toast.success(`Pedido a ${group.supplier_name}: ${lines.length} insumo${lines.length !== 1 ? 's' : ''} en camino`)
       setCart((c) => { const n = { ...c }; for (const { item } of lines) delete n[item.stock_item_id]; return n })
-      await Promise.all([fetchOrders(), fetchSugerencias(true)])
+      // Fire-and-forget: no bloqueamos la UI mientras refrescan los datos
+      void fetchOrders()
+      void fetchSugerencias(true)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al enviar el pedido')
     } finally {
