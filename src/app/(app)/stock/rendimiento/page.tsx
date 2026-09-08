@@ -547,9 +547,10 @@ export default function RendimientoPage() {
 
   if (loading) return <LoadingState message="Calculando rendimiento…" />
 
-  const atRiskCount = data?.atRisk.sin_stock_count ?? 0
-  const bajoCount = data?.atRisk.bajo_count ?? 0
-  const totalRecipes = data?.availability.total_recipes ?? 0
+  const allRecipes = data?.availability.recipes ?? []
+  const atRiskCount = allRecipes.filter(r => (r.available_portions ?? 0) <= 0).length
+  const bajoCount = allRecipes.filter(r => (r.available_portions ?? 0) > 0 && (r.available_portions ?? 0) < 10).length
+  const totalRecipes = allRecipes.length
   const durCounts = data?.duration.semaphore_counts
 
   return (
@@ -633,8 +634,8 @@ export default function RendimientoPage() {
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-[#ea504c]" />
             <p className="text-xs text-[#ea504c]">
               <strong>{atRiskCount} receta{atRiskCount !== 1 ? 's' : ''} sin stock suficiente.</strong>{' '}
-              {data?.atRisk.recipes
-                .filter(r => r.status === 'sin_stock')
+              {allRecipes
+                .filter(r => (r.available_portions ?? 0) <= 0)
                 .map(r => r.recipe_name)
                 .join(', ')}
             </p>
