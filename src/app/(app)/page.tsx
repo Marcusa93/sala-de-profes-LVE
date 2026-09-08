@@ -22,6 +22,7 @@ import { useDashboardData } from '@/lib/hooks/use-dashboard'
 import { DashboardSkeleton } from '@/components/ui/skeleton'
 import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
 import { PulseCarousel } from '@/components/home/PulseCarousel'
+import { BirthdayBanner } from '@/components/home/BirthdayBanner'
 import { ShiftReminder } from '@/components/notifications/ShiftReminder'
 import { FadeIn, StaggerList, StaggerItem, ScalePress } from '@/components/ui/motion'
 
@@ -207,6 +208,15 @@ export default function DashboardPage() {
                       : 'Sin turnos asignados esta semana'}
             </p>
           </div>
+        </FadeIn>
+      )}
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Birthday banner — managers only                                  */}
+      {/* ---------------------------------------------------------------- */}
+      {isEncargado && (
+        <FadeIn>
+          <BirthdayBanner />
         </FadeIn>
       )}
 

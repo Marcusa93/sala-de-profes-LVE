@@ -2168,8 +2168,14 @@ export type Database = {
       }
       profiles: {
         Row: {
+          address: string | null
           avatar_url: string | null
+          birth_date: string | null
           created_at: string
+          cuit: string | null
+          dni: string | null
+          emergency_contact_name: string | null
+          emergency_contact_phone: string | null
           first_name: string
           id: string
           is_active: boolean
@@ -2180,8 +2186,14 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          address?: string | null
           avatar_url?: string | null
+          birth_date?: string | null
           created_at?: string
+          cuit?: string | null
+          dni?: string | null
+          emergency_contact_name?: string | null
+          emergency_contact_phone?: string | null
           first_name: string
           id: string
           is_active?: boolean
@@ -2192,8 +2204,14 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          address?: string | null
           avatar_url?: string | null
+          birth_date?: string | null
           created_at?: string
+          cuit?: string | null
+          dni?: string | null
+          emergency_contact_name?: string | null
+          emergency_contact_phone?: string | null
           first_name?: string
           id?: string
           is_active?: boolean

@@ -550,9 +550,9 @@ export default function EquipoPage() {
           ) : (
             <div className="space-y-2">
               {allProfiles.map((p) => (
-                <button
+                <Link
                   key={p.id}
-                  onClick={() => setEditUser(p)}
+                  href={`/equipo/${p.id}`}
                   className="flex w-full items-center gap-3 rounded-xl bg-white px-4 py-3 text-left shadow-sm ring-1 ring-[#ebe6df] transition hover:ring-[#006d5a]/20"
                 >
                   {/* Avatar */}
@@ -589,7 +589,7 @@ export default function EquipoPage() {
                   </div>
 
                   <ChevronRight className="size-4 shrink-0 text-[#d1cdc7]" />
-                </button>
+                </Link>
               ))}
             </div>
           )}
