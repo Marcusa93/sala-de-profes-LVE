@@ -398,6 +398,9 @@ export default function ProduccionDetailPage() {
                   <div key={out.id} className="flex items-center justify-between px-4 py-2.5">
                     <div>
                       <p className="text-[13px] text-[#ea504c]">{out.output_name}</p>
+                      {out.stock_item_name && (
+                        <p className="text-[11px] text-muted-foreground">de {out.stock_item_name}</p>
+                      )}
                       {out.notes && <p className="text-[11px] text-muted-foreground">{out.notes}</p>}
                     </div>
                     <span className="shrink-0 text-[12px] font-bold text-[#ea504c]">

@@ -1278,6 +1278,36 @@ export default function NuevaProduccionPage() {
                       />
                     </div>
 
+                    {o.is_waste && inputDetails.filter((inp) => inp.item).length > 0 && (
+                      <div>
+                        <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                          ¿De qué insumo viene? (opcional)
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {inputDetails
+                            .filter((inp) => inp.item)
+                            .map((inp) => (
+                              <button
+                                key={inp.item!.id}
+                                type="button"
+                                onClick={() => updateOutput(o.localId, {
+                                  stock_item_id: o.stock_item_id === inp.item!.id ? null : inp.item!.id,
+                                  stock_item_name: o.stock_item_id === inp.item!.id ? '' : inp.item!.name,
+                                })}
+                                className={cn(
+                                  'rounded-full px-2.5 py-1 text-[11px] font-medium transition-all',
+                                  o.stock_item_id === inp.item!.id
+                                    ? 'bg-[#ea504c] text-white'
+                                    : 'bg-[#faf8f5] text-[#7d6c64] ring-1 ring-[#ebe6df]',
+                                )}
+                              >
+                                {inp.item!.name}
+                              </button>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
