@@ -458,18 +458,43 @@ function PedidosContent() {
                           })}
                         </div>
                         {g.supplier_id && (
-                          <div className="flex items-center gap-2 border-t border-[#f5f0ea] bg-[#faf8f5] p-3">
-                            <button onClick={() => selectAll(g.items)} className="rounded-xl px-3 py-2 text-[12px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df]">Todo</button>
-                            <button
-                              onClick={() => void sendGroup(g, Boolean(g.supplier_phone))}
-                              disabled={selectedInGroup.length === 0 || sending === key}
-                              className={cn('flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-bold text-white active:scale-[0.98] disabled:opacity-50', g.supplier_phone ? 'bg-[#25D366]' : 'bg-[#4a90d9]')}
-                            >
-                              {sending === key ? <Loader2 className="size-4 animate-spin" /> : g.supplier_phone ? <MessageCircle className="size-4" /> : <Truck className="size-4" />}
-                              {g.supplier_phone ? 'Pedir por WhatsApp' : 'Marcar como pedido'}
-                              {selectedInGroup.length > 0 && <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedInGroup.length}</span>}
-                              {canManage && groupCost > 0 && <span className="text-[11px] font-medium opacity-90">· {money(groupCost)}</span>}
-                            </button>
+                          <div className="border-t border-[#f5f0ea] bg-[#faf8f5] p-3">
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => selectAll(g.items)} className="rounded-xl px-3 py-2 text-[12px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df]">Todo</button>
+                              {g.supplier_phone ? (
+                                <button
+                                  onClick={() => void sendGroup(g, true)}
+                                  disabled={selectedInGroup.length === 0 || sending === key}
+                                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-[13px] font-bold text-white active:scale-[0.98] disabled:opacity-50"
+                                >
+                                  {sending === key ? <Loader2 className="size-4 animate-spin" /> : <MessageCircle className="size-4" />}
+                                  WhatsApp
+                                  {selectedInGroup.length > 0 && <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedInGroup.length}</span>}
+                                  {canManage && groupCost > 0 && <span className="text-[11px] font-medium opacity-90">· {money(groupCost)}</span>}
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => void sendGroup(g, false)}
+                                  disabled={selectedInGroup.length === 0 || sending === key}
+                                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#4a90d9] py-2.5 text-[13px] font-bold text-white active:scale-[0.98] disabled:opacity-50"
+                                >
+                                  {sending === key ? <Loader2 className="size-4 animate-spin" /> : <Truck className="size-4" />}
+                                  Marcar como pedido
+                                  {selectedInGroup.length > 0 && <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedInGroup.length}</span>}
+                                  {canManage && groupCost > 0 && <span className="text-[11px] font-medium opacity-90">· {money(groupCost)}</span>}
+                                </button>
+                              )}
+                            </div>
+                            {g.supplier_phone && (
+                              <button
+                                onClick={() => void sendGroup(g, false)}
+                                disabled={selectedInGroup.length === 0 || sending === key}
+                                className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-xl py-2 text-[12px] font-semibold text-[#7d6c64] ring-1 ring-[#ebe6df] active:scale-[0.98] disabled:opacity-50"
+                              >
+                                <Truck className="size-3.5" />
+                                Solo marcar como pedido (sin WhatsApp)
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
