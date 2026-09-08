@@ -935,7 +935,14 @@ function NewOrderDialog({ suppliers, stockItems, onClose, onDone }: { suppliers:
   const update = (id: string, patch: Partial<OrderItemDraft>) => setItems((p) => p.map((it) => (it.id === id ? { ...it, ...patch } : it)))
   const filtered = (id: string) => {
     const q = (searches[id] ?? '').toLowerCase()
-    return q.length > 1 ? stockItems.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 6) : []
+    if (q.length <= 1) return []
+    return stockItems
+      .filter((s) => {
+        // Excluir productos Fudo (platos del menú): tienen fudo_product_id pero no fudo_ingredient_id
+        if (s.fudo_product_id && !s.fudo_ingredient_id) return false
+        return s.name.toLowerCase().includes(q)
+      })
+      .slice(0, 6)
   }
   const canSubmit = items.every((it) => it.productName.trim() && it.quantity.trim())
 
