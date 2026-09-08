@@ -77,7 +77,7 @@ async function validateStockMapping(
 
   if (error || !item) return { error: error?.message ?? 'Item de stock no encontrado', item: null }
 
-  if (!item.fudo_ingredient_id && !item.fudo_product_id) {
+  if (!item.fudo_ingredient_id && !item.fudo_product_id && !(item as { fudo_skip?: boolean | null }).fudo_skip) {
     return { error: `${item.name}: sin vínculo Fudo`, item: item as StockItemInfo }
   }
 

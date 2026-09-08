@@ -191,6 +191,7 @@ function StockSearch({
   placeholder = 'Buscar insumo...',
   className,
   requireFudoLink = false,
+  allowFudoSkip = false,
   emptyText = 'No hay coincidencias',
   helperText,
 }: {
@@ -200,12 +201,15 @@ function StockSearch({
   placeholder?: string
   className?: string
   requireFudoLink?: boolean
+  allowFudoSkip?: boolean
   emptyText?: string
   helperText?: string
 }) {
   const [query, setQuery] = useState(value?.name ?? '')
   const [open, setOpen] = useState(false)
-  const eligibleItems = requireFudoLink ? items.filter(isFudoLinked) : items
+  const eligibleItems = requireFudoLink
+    ? items.filter((i) => isFudoLinked(i) || (allowFudoSkip && Boolean(i.fudo_skip)))
+    : items
 
   const filtered = query.length >= 1
     ? eligibleItems.filter((i) => i.name.toLowerCase().includes(query.toLowerCase())).slice(0, 8)
@@ -640,8 +644,9 @@ export default function NuevaProduccionPage() {
 
   const step1Valid = outputs.length > 0 && outputs.every((o) => {
     const linkedItem = o.stock_item_id ? stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null : null
+    const qty = parseFloat(o.qty_produced)
     return o.output_name
-      && parseFloat(o.qty_produced) >= 0
+      && (o.is_waste ? qty >= 0 : qty > 0)
       && (o.is_waste || (linkedItem && isValidOutput(linkedItem)))
   })
   const finishedOutputs = outputs.filter((output) => !output.is_waste)
@@ -1236,8 +1241,9 @@ export default function NuevaProduccionPage() {
                           }}
                           placeholder="Buscar producto final (ej: Milanesa cruda)..."
                           requireFudoLink
-                          helperText="Obligatorio: elegí el item Fudo que sube stock."
-                          emptyText="No encontré ese producto vinculado a Fudo. Primero mapealo en stock."
+                          allowFudoSkip
+                          helperText="Obligatorio: elegí el item Fudo o semielaborado local que sube stock."
+                          emptyText="No encontré ese producto. Si es Fudo mapealo en stock; si es local activá fudo_skip."
                         />
                         {o.stock_item_id && (() => {
                           const linkedItem = stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
