@@ -294,7 +294,7 @@ export async function POST(request: NextRequest) {
     //                        (nunca pisa ventas) y deja kardex + recibo con precio.
     //   mode 'sin_stock':    sólo cerrar el pedido (ej. se recibió algo que no es stock).
     if (body.action === 'confirm_arrival') {
-      const { orderId, source, mode, expense, receivedQty, unitCost, note } = body as {
+      const { orderId, source, mode, expense, receivedQty, unitCost, note, paymentMethod } = body as {
         orderId: number
         source: 'cocina' | 'barra'
         mode: 'fudo_expense' | 'lve_stock' | 'sin_stock'
@@ -302,7 +302,11 @@ export async function POST(request: NextRequest) {
         receivedQty?: string | null
         unitCost?: number | null
         note?: string | null
+        /** efectivo | transferencia | tarjeta | cuenta_corriente */
+        paymentMethod?: string | null
       }
+      // cuenta_corriente → queda en cuentas a pagar; el resto → pagado de contado
+      const paymentStatus: 'pagado' | 'a_pagar' = paymentMethod === 'cuenta_corriente' ? 'a_pagar' : 'pagado'
       if (typeof orderId !== 'number' || !source || !mode) {
         return NextResponse.json({ success: false, error: 'Faltan datos requeridos' }, { status: 400 })
       }
@@ -353,9 +357,9 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ success: false, error: write.error ?? 'No se pudo actualizar el stock' }, { status: 502 })
         }
         stockUpdated = true
-        // Recibo (precio de compra) — base del historial de precios LVE
+        // Recibo (precio de compra) — base del historial de precios + cuentas a pagar
         const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
-        await admin.from('stock_receipts').insert({
+        const receiptBase = {
           stock_item_id: stockItemId,
           supplier_id: si.supplier_id ?? (order as { supplier_id?: string | null }).supplier_id ?? null,
           order_source: source,
@@ -367,7 +371,79 @@ export async function POST(request: NextRequest) {
           note: `Pedido: ${order.product_name} (${order.quantity})`,
           received_by: user.id,
           received_date: receivedDate,
-        }).then(({ error }) => { if (error) console.warn('[confirm_arrival] receipt no registrado:', error.message) })
+        }
+        let { error: lveReceiptErr } = await admin.from('stock_receipts').insert({
+          ...receiptBase,
+          payment_status: paymentStatus,
+          paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
+          paid_by: paymentStatus === 'pagado' ? user.id : null,
+          payment_method: paymentMethod ?? null,
+        })
+        if (lveReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(lveReceiptErr.message)) {
+          ;({ error: lveReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
+        }
+        if (lveReceiptErr) console.warn('[confirm_arrival] lve_stock receipt no registrado:', lveReceiptErr.message)
+      }
+
+      // fudo_expense: la compra ya existe en Fudo — solo creamos el recibo LVE
+      // para que quede en el historial de precios y en cuentas a pagar.
+      if (mode === 'fudo_expense' && paymentMethod) {
+        const supplierId = (order as { supplier_id?: string | null }).supplier_id ?? null
+        const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+        const receiptBase = {
+          stock_item_id: null as string | null,
+          supplier_id: supplierId,
+          order_source: source,
+          order_id: orderId,
+          qty: 1,
+          unit: null as string | null,
+          cost_total: expense?.amount ?? null,
+          cost_per_unit: null as number | null,
+          note: `Pedido: ${order.product_name} (${order.quantity})${expense ? ` — Fudo gasto #${expense.id}` : ''}`,
+          received_by: user.id,
+          received_date: receivedDate,
+        }
+        let { error: feReceiptErr } = await admin.from('stock_receipts').insert({
+          ...receiptBase,
+          payment_status: paymentStatus,
+          paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
+          paid_by: paymentStatus === 'pagado' ? user.id : null,
+          payment_method: paymentMethod,
+        })
+        if (feReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(feReceiptErr.message)) {
+          ;({ error: feReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
+        }
+        if (feReceiptErr) console.warn('[confirm_arrival] fudo_expense receipt no registrado:', feReceiptErr.message)
+      }
+
+      // sin_stock con monto: dejar registro de gasto para cuentas a pagar
+      if (mode === 'sin_stock' && paymentMethod && unitCost && unitCost > 0) {
+        const supplierId = (order as { supplier_id?: string | null }).supplier_id ?? null
+        const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+        const receiptBase = {
+          stock_item_id: null as string | null,
+          supplier_id: supplierId,
+          order_source: source,
+          order_id: orderId,
+          qty: 1,
+          unit: null as string | null,
+          cost_total: unitCost,
+          cost_per_unit: null as number | null,
+          note: `Pedido: ${order.product_name} (${order.quantity})`,
+          received_by: user.id,
+          received_date: receivedDate,
+        }
+        let { error: ssReceiptErr } = await admin.from('stock_receipts').insert({
+          ...receiptBase,
+          payment_status: paymentStatus,
+          paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
+          paid_by: paymentStatus === 'pagado' ? user.id : null,
+          payment_method: paymentMethod,
+        })
+        if (ssReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(ssReceiptErr.message)) {
+          ;({ error: ssReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
+        }
+        if (ssReceiptErr) console.warn('[confirm_arrival] sin_stock receipt no registrado:', ssReceiptErr.message)
       }
 
       const { closeOrderWithExpense } = await import('@/lib/compras/conciliar')
@@ -391,11 +467,11 @@ export async function POST(request: NextRequest) {
         entityType: table,
         entityId: String(orderId),
         description: mode === 'fudo_expense'
-          ? `Llegó pedido #${orderId} (${order.product_name}) — compra cargada en Fudo${expense ? ` ($${expense.amount.toLocaleString('es-AR')}, gasto #${expense.id})` : ''}`
+          ? `Llegó pedido #${orderId} (${order.product_name}) — compra cargada en Fudo${expense ? ` ($${expense.amount.toLocaleString('es-AR')}, gasto #${expense.id})` : ''}${paymentMethod ? ` · ${paymentMethod}` : ''}`
           : mode === 'lve_stock'
-            ? `Llegó pedido #${orderId} (${order.product_name}) — stock cargado desde LVE (${receivedQty})`
+            ? `Llegó pedido #${orderId} (${order.product_name}) — stock cargado desde LVE (${receivedQty})${paymentMethod ? ` · ${paymentMethod}` : ''}`
             : `Llegó pedido #${orderId} (${order.product_name}) — sin movimiento de stock`,
-        metadata: { orderId, source, mode, expense: expense ?? null, receivedQty: receivedQty ?? null, unitCost: unitCost ?? null, note: note ?? null, stockUpdated },
+        metadata: { orderId, source, mode, expense: expense ?? null, receivedQty: receivedQty ?? null, unitCost: unitCost ?? null, note: note ?? null, stockUpdated, paymentMethod: paymentMethod ?? null },
       }).catch(() => {})
 
       return NextResponse.json({ success: true, stockUpdated, mode })

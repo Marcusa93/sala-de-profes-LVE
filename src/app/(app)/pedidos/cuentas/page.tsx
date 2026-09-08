@@ -33,6 +33,7 @@ type Receipt = {
   received_date: string
   payment_status: 'pagado' | 'a_pagar'
   paid_at: string | null
+  payment_method: string | null
   supplier_name: string
 }
 
@@ -53,14 +54,14 @@ export default function CuentasPage() {
     const supabase = createClient()
     const { data, error } = await supabase
       .from('stock_receipts')
-      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, suppliers:supplier_id(name)')
+      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, suppliers:supplier_id(name)')
       .not('cost_total', 'is', null)
       .order('received_at', { ascending: false })
       .limit(300)
 
     if (error) {
-      // Columna payment_status inexistente → migración pendiente
-      if (/payment_status|paid_at/.test(error.message)) setMigrationMissing(true)
+      // Columna payment_status o payment_method inexistente → migración pendiente
+      if (/payment_status|paid_at|payment_method/.test(error.message)) setMigrationMissing(true)
       setLoading(false)
       return
     }
@@ -201,9 +202,14 @@ export default function CuentasPage() {
                         <p className="truncate text-xs font-medium text-[#3d2c24]">
                           {r.note ?? `${r.qty} ${r.unit ?? ''}`}
                         </p>
-                        <p className="text-[10px] text-[#a39e97]">
-                          {format(new Date(`${r.received_date}T12:00:00`), "d MMM yyyy", { locale: es })}
-                          {' · '}{r.qty} {r.unit ?? 'u'}
+                        <p className="flex flex-wrap items-center gap-x-1.5 text-[10px] text-[#a39e97]">
+                          <span>{format(new Date(`${r.received_date}T12:00:00`), "d MMM yyyy", { locale: es })}</span>
+                          <span>· {r.qty} {r.unit ?? 'u'}</span>
+                          {r.payment_method && (
+                            <span className="rounded-full bg-[#fdf6ec] px-1.5 py-0.5 font-semibold text-[#d4943a]">
+                              {r.payment_method === 'cuenta_corriente' ? 'cta. cte.' : r.payment_method}
+                            </span>
+                          )}
                         </p>
                       </div>
                       <span className="shrink-0 text-xs font-bold tabular-nums text-[#3d2c24]">

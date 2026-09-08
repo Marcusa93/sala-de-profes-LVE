@@ -3046,6 +3046,7 @@ export type Database = {
           payment_status: string
           paid_at: string | null
           paid_by: string | null
+          payment_method: string | null
         }
         Insert: {
           id?: number
@@ -3066,6 +3067,7 @@ export type Database = {
           payment_status?: string
           paid_at?: string | null
           paid_by?: string | null
+          payment_method?: string | null
         }
         Update: {
           id?: number
@@ -3086,6 +3088,7 @@ export type Database = {
           payment_status?: string
           paid_at?: string | null
           paid_by?: string | null
+          payment_method?: string | null
         }
         Relationships: [
           {

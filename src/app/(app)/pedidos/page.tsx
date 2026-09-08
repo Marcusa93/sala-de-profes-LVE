@@ -57,6 +57,7 @@ type Order = {
   fudo_amount?: number | null
   received_mode?: string | null
   received_note?: string | null
+  payment_method?: string | null
 }
 
 type Supplier = { id: string; name: string; phone: string | null; contact_name: string | null; fudo_provider_id?: string | null }
@@ -579,6 +580,12 @@ function PedidosContent() {
                       {o.received_mode === 'fudo_expense' && <span className="ml-1 rounded-full bg-[#e8f5f1] px-1.5 py-0.5 text-[10px] font-bold text-[#006d5a]">Fudo{o.fudo_amount ? ` ${money(o.fudo_amount)}` : ''}</span>}
                       {o.received_mode === 'lve_stock' && <span className="ml-1 rounded-full bg-[#eef4fc] px-1.5 py-0.5 text-[10px] font-bold text-[#4a90d9]">stock LVE{o.received_qty ? ` ${o.received_qty}` : ''}</span>}
                       {o.received_mode === 'sin_stock' && <span className="ml-1 rounded-full bg-[#f3efe9] px-1.5 py-0.5 text-[10px] font-bold text-[#7d6c64]">sin stock</span>}
+                      {o.payment_method && (
+                        <span className={cn('ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                          o.payment_method === 'cuenta_corriente' ? 'bg-[#fdf6ec] text-[#d4943a]' : 'bg-[#f3efe9] text-[#7d6c64]')}>
+                          {o.payment_method === 'cuenta_corriente' ? 'cta. cte.' : o.payment_method}
+                        </span>
+                      )}
                       {o.received_note && <span className="block italic text-[#a39e97]">“{o.received_note}”</span>}
                     </p>
                   </OrderRow>
@@ -674,6 +681,15 @@ function OrderRow({ order, who, supplier, muted, children }: { order: Order; who
 // ArrivalDialog — "Llegó": cerrar el ciclo sin duplicar la carga de Fudo
 // ---------------------------------------------------------------------------
 
+type PaymentMethod = 'cuenta_corriente' | 'efectivo' | 'transferencia' | 'tarjeta'
+
+const PAYMENT_METHODS: { key: PaymentMethod; label: string; hint: string }[] = [
+  { key: 'cuenta_corriente', label: 'Cuenta corriente', hint: 'Queda en cuentas por pagar' },
+  { key: 'efectivo', label: 'Efectivo', hint: 'Pagado en el momento' },
+  { key: 'transferencia', label: 'Transferencia', hint: 'Pagado en el momento' },
+  { key: 'tarjeta', label: 'Tarjeta', hint: 'Pagado en el momento' },
+]
+
 function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, onDone }: {
   order: Order
   supplier: Supplier | null
@@ -691,6 +707,7 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
   const [receivedQty, setReceivedQty] = useState(order.quantity)
   const [unitCost, setUnitCost] = useState('')
   const [note, setNote] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   const chosenExpense = expenses.find((e) => e.id === expenseId) ?? (match && match.expense.id === expenseId ? match.expense : null)
@@ -712,9 +729,10 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
           mode,
           expense: mode === 'fudo_expense' && chosenExpense ? { id: chosenExpense.id, amount: chosenExpense.amount } : null,
           receivedQty: mode === 'lve_stock' ? receivedQty : null,
-          unitCost: mode === 'lve_stock' && unitCost ? parseFloat(unitCost) : null,
+          unitCost: mode === 'lve_stock' && unitCost ? parseFloat(unitCost) : (mode === 'sin_stock' && unitCost ? parseFloat(unitCost) : null),
           stockItemId: mode === 'lve_stock' ? stockItemId : null,
           note: note.trim() || null,
+          paymentMethod: paymentMethod ?? null,
         }),
       })
       const json = await res.json()
@@ -750,9 +768,9 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
           </div>
 
           <div className="grid gap-1.5">
-            {modeBtn('fudo_expense', 'La compra está cargada en Fudo', 'Lo normal. Stock y gasto ya viven en Fudo; acá solo se cierra el pedido.')}
-            {modeBtn('lve_stock', 'Cargar el stock desde acá', 'Si NO se cargó en Fudo. LVE suma lo recibido al stock actual de Fudo.')}
-            {modeBtn('sin_stock', 'Solo cerrar el pedido', 'No es un insumo de stock o ya está resuelto.')}
+            {modeBtn('fudo_expense', 'La compra está en Fudo', 'Stock y gasto ya viven en Fudo; acá se cierra el pedido.')}
+            {modeBtn('lve_stock', 'Cargar stock desde acá', 'Si NO se cargó en Fudo. LVE suma lo recibido al stock de Fudo.')}
+            {modeBtn('sin_stock', 'Solo cerrar el pedido', 'No es un insumo de stock. Podés registrar el monto igual.')}
           </div>
 
           {mode === 'fudo_expense' && (
@@ -830,6 +848,55 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
               <p className="text-[10px] text-[#a39e97]">Se suma como delta sobre el stock actual de Fudo (no pisa ventas) y queda en el kardex con precio.</p>
             </div>
           )}
+
+          {mode === 'sin_stock' && (
+            <div>
+              <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Monto <span className="font-normal text-[#a39e97]">(opcional, para el historial de gastos)</span></p>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
+                <input type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
+              </div>
+            </div>
+          )}
+
+          {/* Medio de pago */}
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold text-[#3d2c24]">
+              Medio de pago <span className="font-normal text-[#a39e97]">(opcional)</span>
+            </p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {PAYMENT_METHODS.map((pm) => (
+                <button
+                  key={pm.key}
+                  type="button"
+                  onClick={() => setPaymentMethod(paymentMethod === pm.key ? null : pm.key)}
+                  className={cn(
+                    'rounded-xl border px-3 py-2 text-left transition-all',
+                    paymentMethod === pm.key
+                      ? pm.key === 'cuenta_corriente'
+                        ? 'border-[#d4943a] bg-[#fdf6ec]'
+                        : 'border-[#006d5a] bg-[#e8f5f1]'
+                      : 'border-[#ebe6df] bg-white',
+                  )}
+                >
+                  <span className={cn(
+                    'block text-[12px] font-bold',
+                    paymentMethod === pm.key
+                      ? pm.key === 'cuenta_corriente' ? 'text-[#d4943a]' : 'text-[#006d5a]'
+                      : 'text-[#3d2c24]',
+                  )}>
+                    {pm.label}
+                  </span>
+                  <span className="block text-[10px] text-[#7d6c64]">{pm.hint}</span>
+                </button>
+              ))}
+            </div>
+            {paymentMethod === 'cuenta_corriente' && (
+              <p className="mt-1.5 text-[10px] text-[#d4943a]">
+                Quedará pendiente en <strong>Cuentas por pagar</strong> hasta que lo saldes.
+              </p>
+            )}
+          </div>
 
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Nota (opcional): faltó algo, vino distinto, etc." className="w-full resize-none rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none" />
         </div>
