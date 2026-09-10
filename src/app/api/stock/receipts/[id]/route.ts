@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
 import { logAudit } from '@/lib/audit'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
+import { fudoFetch } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/stock/receipts/[id]
@@ -65,15 +66,39 @@ export async function PATCH(
 
     const body = await request.json().catch(() => ({})) as Record<string, unknown>
 
-    // Marcar como pagado (uso original)
+    // Marcar como pagado
     if (body.payment_status === 'pagado') {
       if (receipt.payment_status === 'pagado') return NextResponse.json({ error: 'Ya está pagado' }, { status: 409 })
       const paidAt = new Date().toISOString()
-      const { error: upErr } = await admin.from('stock_receipts').update({ payment_status: 'pagado', paid_at: paidAt, paid_by: user.id }).eq('id', receiptId)
+      const newPaidMethod = typeof body.payment_method === 'string' && body.payment_method ? body.payment_method : null
+      const update: Record<string, unknown> = { payment_status: 'pagado', paid_at: paidAt, paid_by: user.id }
+      if (newPaidMethod) update.payment_method = newPaidMethod
+      const { error: upErr } = await admin.from('stock_receipts').update(update).eq('id', receiptId)
       if (upErr) throw upErr
+
+      // Intentar imputar en Fudo si el pedido vinculado tiene fudo_expense_id
+      let fudoSynced = false
+      if (receipt.order_id && receipt.order_source && receipt.cost_total && receipt.cost_total > 0) {
+        const table = receipt.order_source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+        const { data: order } = await admin.from(table).select('fudo_expense_id').eq('id', receipt.order_id).maybeSingle()
+        const fudoExpenseId = (order as { fudo_expense_id?: string | null } | null)?.fudo_expense_id ?? null
+        if (fudoExpenseId) {
+          try {
+            await fudoFetch(`/expenses/${fudoExpenseId}/payments`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: receipt.cost_total, canceled: false } } }),
+            })
+            fudoSynced = true
+          } catch (fudoErr) {
+            console.warn('[PATCH receipt] Fudo payment post failed:', fudoErr instanceof Error ? fudoErr.message : fudoErr)
+          }
+        }
+      }
+
       const userName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
-      logAudit(admin, { userId: user.id, userName, action: 'receipt_payment', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} marcado como pagado`, metadata: { receiptId, cost_total: receipt.cost_total } }).catch(() => {})
-      return NextResponse.json({ success: true, paid_at: paidAt })
+      logAudit(admin, { userId: user.id, userName, action: 'receipt_payment', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} marcado como pagado${newPaidMethod ? ` (${newPaidMethod})` : ''}${fudoSynced ? ' — imputado en Fudo' : ''}`, metadata: { receiptId, cost_total: receipt.cost_total, payment_method: newPaidMethod, fudoSynced } }).catch(() => {})
+      return NextResponse.json({ success: true, paid_at: paidAt, fudoSynced })
     }
 
     // Edición de campos

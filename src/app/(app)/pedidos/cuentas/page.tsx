@@ -3,10 +3,6 @@
 // ---------------------------------------------------------------------------
 // /pedidos/cuentas — Cuentas por pagar (manager-only)
 // ---------------------------------------------------------------------------
-// Gastos de compras agrupados por proveedor: cada recepción de mercadería
-// con costo queda registrada como "pagado" o "a pagar". Acá se ven los
-// saldos pendientes por proveedor y se saldan recibo por recibo.
-// ---------------------------------------------------------------------------
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import Link from 'next/link'
@@ -14,11 +10,10 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   ArrowLeft, Wallet, ChevronDown, ChevronUp, Check,
-  Loader2, Package, AlertTriangle,
+  Loader2, Package, AlertTriangle, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { createClient } from '@/lib/supabase/client'
 import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
@@ -37,7 +32,22 @@ type Receipt = {
   supplier_name: string
 }
 
+type PayState = { id: number; method: 'efectivo' | 'transferencia' | 'tarjeta' | null }
+
+const PAY_METHODS: { key: 'efectivo' | 'transferencia' | 'tarjeta'; label: string }[] = [
+  { key: 'efectivo', label: 'Efectivo' },
+  { key: 'transferencia', label: 'Transf.' },
+  { key: 'tarjeta', label: 'Tarjeta' },
+]
+
 const fmtMoney = (n: number) => `$${n.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`
+
+function methodLabel(m: string | null) {
+  if (!m) return null
+  if (m === 'cuenta_corriente') return 'cta. cte.'
+  if (m === 'transferencia') return 'transf.'
+  return m
+}
 
 export default function CuentasPage() {
   const { profile } = useProfileContext()
@@ -45,22 +55,23 @@ export default function CuentasPage() {
   const [migrationMissing, setMigrationMissing] = useState(false)
   const [receipts, setReceipts] = useState<Receipt[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [paying, setPaying] = useState<number | null>(null)
+  const [payState, setPayState] = useState<PayState | null>(null)
+  const [confirming, setConfirming] = useState(false)
   const [showPaid, setShowPaid] = useState(false)
 
   const canManage = isManagerOrAbove(profile?.role)
 
   const fetchData = useCallback(async () => {
+    const { createClient } = await import('@/lib/supabase/client')
     const supabase = createClient()
     const { data, error } = await supabase
       .from('stock_receipts')
       .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, suppliers:supplier_id(name)')
       .not('cost_total', 'is', null)
-      .order('received_at', { ascending: false })
+      .order('received_date', { ascending: false })
       .limit(300)
 
     if (error) {
-      // Columna payment_status o payment_method inexistente → migración pendiente
       if (/payment_status|paid_at|payment_method/.test(error.message)) setMigrationMissing(true)
       setLoading(false)
       return
@@ -77,7 +88,6 @@ export default function CuentasPage() {
   const paid = useMemo(() => receipts.filter((r) => r.payment_status === 'pagado').slice(0, 15), [receipts])
   const totalPending = useMemo(() => pending.reduce((acc, r) => acc + (Number(r.cost_total) || 0), 0), [pending])
 
-  // Agrupar pendientes por proveedor
   const groups = useMemo(() => {
     const map = new Map<string, { name: string; receipts: Receipt[]; total: number }>()
     for (const r of pending) {
@@ -92,22 +102,24 @@ export default function CuentasPage() {
       .sort((a, b) => b.total - a.total)
   }, [pending])
 
-  async function markPaid(receipt: Receipt) {
-    setPaying(receipt.id)
+  async function markPaid(receipt: Receipt, method: 'efectivo' | 'transferencia' | 'tarjeta') {
+    setConfirming(true)
     try {
       const res = await fetch(`/api/stock/receipts/${receipt.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_status: 'pagado' }),
+        body: JSON.stringify({ payment_status: 'pagado', payment_method: method }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Error al marcar pagado')
-      toast.success(`Pagado — ${receipt.supplier_name}${receipt.cost_total != null ? ` (${fmtMoney(Number(receipt.cost_total))})` : ''}`)
+      const fudoMsg = json.fudoSynced ? ' — imputado en Fudo' : ''
+      toast.success(`Pagado (${methodLabel(method)}) — ${receipt.supplier_name}${fudoMsg}${receipt.cost_total != null ? ` · ${fmtMoney(Number(receipt.cost_total))}` : ''}`)
+      setPayState(null)
       fetchData()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al marcar pagado')
     } finally {
-      setPaying(null)
+      setConfirming(false)
     }
   }
 
@@ -126,7 +138,6 @@ export default function CuentasPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-28">
-      {/* Header */}
       <FadeIn>
         <div className="flex items-center gap-3">
           <Link href="/pedidos" className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-white ring-1 ring-[#ebe6df] active:scale-95">
@@ -150,7 +161,6 @@ export default function CuentasPage() {
         </FadeIn>
       )}
 
-      {/* Saldo total pendiente */}
       {!migrationMissing && (
         <FadeIn delay={0.05}>
           <div className="rounded-2xl bg-white p-4 ring-1 ring-[#ebe6df]">
@@ -171,7 +181,6 @@ export default function CuentasPage() {
         </FadeIn>
       )}
 
-      {/* Grupos por proveedor */}
       {!migrationMissing && groups.map((group) => {
         const isExpanded = expanded === group.key
         return (
@@ -196,35 +205,83 @@ export default function CuentasPage() {
 
               {isExpanded && (
                 <div className="divide-y border-t">
-                  {group.receipts.map((r) => (
-                    <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-[#3d2c24]">
-                          {r.note ?? `${r.qty} ${r.unit ?? ''}`}
-                        </p>
-                        <p className="flex flex-wrap items-center gap-x-1.5 text-[10px] text-[#a39e97]">
-                          <span>{format(new Date(`${r.received_date}T12:00:00`), "d MMM yyyy", { locale: es })}</span>
-                          <span>· {r.qty} {r.unit ?? 'u'}</span>
-                          {r.payment_method && (
-                            <span className="rounded-full bg-[#fdf6ec] px-1.5 py-0.5 font-semibold text-[#d4943a]">
-                              {r.payment_method === 'cuenta_corriente' ? 'cta. cte.' : r.payment_method}
-                            </span>
+                  {group.receipts.map((r) => {
+                    const isPaying = payState?.id === r.id
+                    return (
+                      <div key={r.id} className="px-4 py-2.5">
+                        {/* Fila principal */}
+                        <div className="flex items-center gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium text-[#3d2c24]">
+                              {r.note ?? `${r.qty} ${r.unit ?? ''}`}
+                            </p>
+                            <p className="flex flex-wrap items-center gap-x-1.5 text-[10px] text-[#a39e97]">
+                              <span>{format(new Date(`${r.received_date}T12:00:00`), 'd MMM yyyy', { locale: es })}</span>
+                              <span>· {r.qty} {r.unit ?? 'u'}</span>
+                              {r.payment_method && (
+                                <span className="rounded-full bg-[#fdf6ec] px-1.5 py-0.5 font-semibold text-[#d4943a]">
+                                  {methodLabel(r.payment_method)}
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-xs font-bold tabular-nums text-[#3d2c24]">
+                            {fmtMoney(Number(r.cost_total) || 0)}
+                          </span>
+                          {!isPaying && (
+                            <button
+                              onClick={() => setPayState({ id: r.id, method: null })}
+                              className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-semibold text-white transition-all active:scale-95"
+                            >
+                              <Check className="size-3" />
+                              Pagar
+                            </button>
                           )}
-                        </p>
+                          {isPaying && (
+                            <button
+                              onClick={() => setPayState(null)}
+                              className="flex shrink-0 items-center justify-center rounded-lg bg-[#f3efe9] p-1.5 text-[#a39e97]"
+                            >
+                              <X className="size-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Selector de medio de pago (aparece al tocar Pagar) */}
+                        {isPaying && (
+                          <div className="mt-2 border-t border-[#f5f0ea] pt-2">
+                            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">¿Cómo se paga?</p>
+                            <div className="flex items-center gap-2">
+                              {PAY_METHODS.map((m) => (
+                                <button
+                                  key={m.key}
+                                  onClick={() => setPayState((p) => p ? { ...p, method: m.key } : null)}
+                                  className={cn(
+                                    'flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-all',
+                                    payState?.method === m.key
+                                      ? 'bg-[#006d5a] text-white'
+                                      : 'bg-[#f3efe9] text-[#7d6c64] active:scale-95',
+                                  )}
+                                >
+                                  {m.label}
+                                </button>
+                              ))}
+                              <button
+                                onClick={() => {
+                                  if (payState?.method) void markPaid(r, payState.method)
+                                }}
+                                disabled={!payState?.method || confirming}
+                                className="flex shrink-0 items-center gap-1 rounded-lg bg-[#3d2c24] px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40"
+                              >
+                                {confirming ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                                OK
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <span className="shrink-0 text-xs font-bold tabular-nums text-[#3d2c24]">
-                        {fmtMoney(Number(r.cost_total) || 0)}
-                      </span>
-                      <button
-                        onClick={() => markPaid(r)}
-                        disabled={paying === r.id}
-                        className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-semibold text-white transition-all active:scale-95 disabled:opacity-60"
-                      >
-                        {paying === r.id ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
-                        Marcar pagado
-                      </button>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -244,7 +301,6 @@ export default function CuentasPage() {
         </FadeIn>
       )}
 
-      {/* Pagados recientes */}
       {!migrationMissing && paid.length > 0 && (
         <FadeIn>
           <button
@@ -263,7 +319,8 @@ export default function CuentasPage() {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-medium text-[#3d2c24]">{r.supplier_name} — {r.note ?? `${r.qty} ${r.unit ?? ''}`}</p>
                       <p className="text-[10px] text-[#a39e97]">
-                        Pagado {r.paid_at ? format(new Date(r.paid_at), "d MMM", { locale: es }) : ''}
+                        Pagado {r.paid_at ? format(new Date(r.paid_at), 'd MMM', { locale: es }) : ''}
+                        {r.payment_method ? ` · ${methodLabel(r.payment_method)}` : ''}
                       </p>
                     </div>
                     <span className="shrink-0 text-xs font-semibold tabular-nums text-[#006d5a]">
