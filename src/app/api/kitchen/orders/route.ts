@@ -324,6 +324,7 @@ export async function POST(request: NextRequest) {
       if (order.status === 'received') return NextResponse.json({ success: false, error: 'El pedido ya fue recibido' }, { status: 409 })
 
       let stockUpdated = false
+      let fudoSynced = false
       if (mode === 'lve_stock') {
         // Manda lo que eligió la persona en el diálogo: puede corregir el
         // insumo pre-vinculado del pedido (si no, la entrada caía en el item
@@ -357,6 +358,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ success: false, error: write.error ?? 'No se pudo actualizar el stock' }, { status: 502 })
         }
         stockUpdated = true
+        fudoSynced = write.fudoSynced
         // Recibo (precio de compra) — base del historial de precios + cuentas a pagar
         const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
         const receiptBase = {
@@ -474,7 +476,7 @@ export async function POST(request: NextRequest) {
         metadata: { orderId, source, mode, expense: expense ?? null, receivedQty: receivedQty ?? null, unitCost: unitCost ?? null, note: note ?? null, stockUpdated, paymentMethod: paymentMethod ?? null },
       }).catch(() => {})
 
-      return NextResponse.json({ success: true, stockUpdated, mode })
+      return NextResponse.json({ success: true, stockUpdated, fudoSynced, mode })
     }
 
     // ----- RECEIVE ORDER (encargado only) -----

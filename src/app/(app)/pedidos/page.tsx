@@ -762,7 +762,11 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
       })
       const json = await res.json()
       if (!res.ok || !json.success) throw new Error(json.error ?? 'No se pudo confirmar')
-      toast.success(mode === 'lve_stock' ? '✅ Llegó y stock cargado en Fudo' : mode === 'fudo_expense' ? '✅ Llegó — vinculado a la compra de Fudo' : '✅ Pedido cerrado')
+      if (mode === 'lve_stock') {
+        toast.success(json.fudoSynced ? '✅ Llegó — stock actualizado en Fudo' : '✅ Llegó — stock registrado en LVE (sin mapeo Fudo)')
+      } else {
+        toast.success(mode === 'fudo_expense' ? '✅ Llegó — vinculado a la compra de Fudo' : '✅ Pedido cerrado')
+      }
       onDone()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al confirmar')
@@ -786,19 +790,13 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-sm rounded-2xl">
         <DialogHeader><DialogTitle className="text-base">Llegó el pedido</DialogTitle></DialogHeader>
-        <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-0.5">
+        <div className="max-h-[80vh] space-y-3 overflow-y-auto pr-0.5">
           <div className="rounded-xl bg-[#f3efe9] px-3 py-2.5">
             <p className="text-sm font-semibold text-[#3d2c24]">{order.product_name}</p>
             <p className="text-[11px] text-[#7d6c64]">Pedido: <b>{order.quantity}</b>{supplier ? ` · ${supplier.name}` : ''}</p>
           </div>
 
-          <div className="grid gap-1.5">
-            {modeBtn('fudo_expense', 'La compra está en Fudo', 'Stock y gasto ya viven en Fudo; acá se cierra el pedido.')}
-            {modeBtn('lve_stock', 'Cargar stock desde acá', 'Si NO se cargó en Fudo. LVE suma lo recibido al stock de Fudo.')}
-            {modeBtn('sin_stock', 'Solo cerrar el pedido', 'No es un insumo de stock. Podés registrar el monto igual.')}
-          </div>
-
-          {/* Medio de pago — siempre visible, antes de los detalles del modo */}
+          {/* Medio de pago — primero, antes de elegir el modo */}
           <div>
             <p className="mb-1.5 text-[11px] font-semibold text-[#3d2c24]">
               Medio de pago <span className="font-normal text-[#a39e97]">(opcional)</span>
@@ -835,6 +833,12 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
                 Quedará pendiente en <strong>Cuentas por pagar</strong> hasta que lo saldes.
               </p>
             )}
+          </div>
+
+          <div className="grid gap-1.5">
+            {modeBtn('fudo_expense', 'La compra está en Fudo', 'Stock y gasto ya viven en Fudo; acá se cierra el pedido.')}
+            {modeBtn('lve_stock', 'Cargar stock desde acá', 'Si NO se cargó en Fudo. LVE suma lo recibido al stock de Fudo.')}
+            {modeBtn('sin_stock', 'Solo cerrar el pedido', 'No es un insumo de stock. Podés registrar el monto igual.')}
           </div>
 
           {mode === 'fudo_expense' && (
