@@ -7,7 +7,7 @@ import { es } from 'date-fns/locale/es'
 import Link from 'next/link'
 import {
   ShoppingCart, Truck, Check, X, MessageCircle, Plus, Loader2, Package, AlertTriangle,
-  CalendarClock, ChevronDown, ChevronUp, Trash2, Search, Receipt, Wallet, ChevronRight,
+  CalendarClock, ChevronDown, ChevronUp, Trash2, Search, Receipt, Wallet, ChevronRight, Pencil,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -112,6 +112,7 @@ function PedidosContent() {
   const [sending, setSending] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [arrivalDialog, setArrivalDialog] = useState<Order | null>(null)
+  const [correctionDialog, setCorrectionDialog] = useState<Order | null>(null)
   const [assignDialog, setAssignDialog] = useState<Order | null>(null)
   const [newOrderOpen, setNewOrderOpen] = useState(false)
   // Saldo pendiente de pago a proveedores (null si la migración de pagos no está)
@@ -611,8 +612,17 @@ function PedidosContent() {
                           {o.payment_method === 'cuenta_corriente' ? 'cta. cte.' : o.payment_method}
                         </span>
                       )}
-                      {o.received_note && <span className="block italic text-[#a39e97]">“{o.received_note}”</span>}
+                      {o.received_note && <span className="block italic text-[#a39e97]">"{o.received_note}"</span>}
                     </p>
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={() => setCorrectionDialog(o)}
+                        className="mt-1.5 text-[11px] font-semibold text-[#a39e97] underline underline-offset-2"
+                      >
+                        Corregir recepción
+                      </button>
+                    )}
                   </OrderRow>
                 ))}
               </div>
@@ -622,6 +632,14 @@ function PedidosContent() {
       )}
 
       {/* Diálogos */}
+      {correctionDialog && (
+        <CorrectionDialog
+          order={correctionDialog}
+          onClose={() => setCorrectionDialog(null)}
+          onDone={() => { setCorrectionDialog(null); void fetchOrders() }}
+        />
+      )}
+
       {arrivalDialog && (
         <ArrivalDialog
           order={arrivalDialog}
@@ -1068,6 +1086,230 @@ function NewOrderDialog({ suppliers, stockItems, onClose, onDone }: { suppliers:
             Crear
           </button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CorrectionDialog — corregir o anular una recepción ya registrada
+// ---------------------------------------------------------------------------
+
+type ReceiptData = {
+  id: number
+  qty: number
+  unit: string | null
+  cost_total: number | null
+  note: string | null
+  stock_item_id: string | null
+}
+
+function CorrectionDialog({ order, onClose, onDone }: {
+  order: Order
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [receipt, setReceipt] = useState<ReceiptData | null>(null)
+  const [loadingReceipt, setLoadingReceipt] = useState(true)
+  const [qty, setQty] = useState('')
+  const [costTotal, setCostTotal] = useState('')
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from('stock_receipts')
+      .select('id, qty, unit, cost_total, note, stock_item_id')
+      .eq('order_id', order.id)
+      .eq('order_source', order.source)
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        const r = data as ReceiptData | null
+        setReceipt(r)
+        if (r) {
+          setQty(String(r.qty))
+          setCostTotal(r.cost_total != null ? String(r.cost_total) : '')
+          setNote(r.note ?? '')
+        }
+        setLoadingReceipt(false)
+      })
+  }, [order.id, order.source])
+
+  async function save() {
+    if (!receipt) return
+    setSaving(true)
+    try {
+      const body: Record<string, unknown> = {}
+      const newQty = parseFloat(qty)
+      if (!isNaN(newQty) && newQty > 0 && Math.abs(newQty - receipt.qty) > 0.001) body.qty = newQty
+      const newCost = parseFloat(costTotal)
+      if (!isNaN(newCost) && newCost !== receipt.cost_total) body.cost_total = newCost
+      const trimNote = note.trim()
+      if (trimNote !== (receipt.note ?? '')) body.note = trimNote || null
+      if (Object.keys(body).length === 0) { onClose(); return }
+      const res = await fetch(`/api/stock/receipts/${receipt.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Error al guardar')
+      toast.success('Recepción corregida')
+      if (json.fudoSynced === false && body.qty !== undefined) toast.info('Stock ajustado solo en LVE (insumo sin mapeo Fudo)')
+      onDone()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al guardar')
+    } finally { setSaving(false) }
+  }
+
+  async function undoReceipt() {
+    setDeleting(true)
+    try {
+      if (!receipt) {
+        // Sin recibo: solo devolver el pedido a "ordered" directamente
+        const supabase = createClient()
+        const table = order.source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+        const { error } = await supabase.from(table).update({ status: 'ordered', received_by: null, received_at: null, received_qty: null }).eq('id', order.id)
+        if (error) throw error
+        toast.success('Pedido devuelto a "en camino"')
+      } else {
+        const res = await fetch(`/api/stock/receipts/${receipt.id}`, { method: 'DELETE' })
+        const json = await res.json()
+        if (!res.ok || !json.success) throw new Error(json.error ?? 'Error al anular')
+        const msg = json.stockReversed
+          ? json.fudoReversed ? 'Anulado — stock revertido en Fudo y LVE' : 'Anulado — stock revertido en LVE'
+          : 'Recepción anulada — pedido volvió a "en camino"'
+        toast.success(msg)
+      }
+      onDone()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al anular')
+    } finally { setDeleting(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-sm rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <Pencil className="size-4 text-[#a39e97]" />
+            Corregir recepción
+          </DialogTitle>
+        </DialogHeader>
+
+        {loadingReceipt ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="size-5 animate-spin text-[#a39e97]" />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-[#f3efe9] px-3 py-2.5">
+              <p className="text-sm font-semibold text-[#3d2c24]">{order.product_name}</p>
+              {receipt ? (
+                <p className="text-[11px] text-[#7d6c64]">
+                  Recibo #{receipt.id} · {receipt.qty} {receipt.unit ?? 'u'}
+                  {receipt.cost_total != null ? ` · $${Number(receipt.cost_total).toLocaleString('es-AR')}` : ''}
+                </p>
+              ) : (
+                <p className="text-[11px] text-[#a39e97]">Sin recibo de stock en LVE</p>
+              )}
+            </div>
+
+            {receipt && (
+              <>
+                {order.received_mode === 'lve_stock' && (
+                  <label className="block">
+                    <span className="text-[11px] font-semibold text-[#3d2c24]">
+                      Cantidad {receipt.unit ? `(${receipt.unit})` : ''}
+                    </span>
+                    <input
+                      type="number" min="0.001" step="any" value={qty}
+                      onChange={(e) => setQty(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm focus:border-[#006d5a] focus:outline-none"
+                    />
+                    {receipt.stock_item_id && (
+                      <p className="mt-0.5 text-[10px] text-[#a39e97]">
+                        Cambiar la cantidad ajusta el stock en Fudo/LVE.
+                      </p>
+                    )}
+                  </label>
+                )}
+
+                <label className="block">
+                  <span className="text-[11px] font-semibold text-[#3d2c24]">
+                    Monto total <span className="font-normal text-[#a39e97]">(opcional)</span>
+                  </span>
+                  <div className="relative mt-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
+                    <input
+                      type="number" min="0" value={costTotal}
+                      onChange={(e) => setCostTotal(e.target.value)}
+                      placeholder="0"
+                      className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none"
+                    />
+                  </div>
+                </label>
+
+                <label className="block">
+                  <span className="text-[11px] font-semibold text-[#3d2c24]">Nota</span>
+                  <input
+                    value={note} onChange={(e) => setNote(e.target.value)}
+                    placeholder="Corrección, motivo, etc."
+                    className="mt-1 w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm focus:border-[#006d5a] focus:outline-none"
+                  />
+                </label>
+
+                <button
+                  onClick={() => void save()} disabled={saving}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                  Guardar cambios
+                </button>
+              </>
+            )}
+
+            <div className={cn('pt-2', receipt ? 'border-t border-[#f3efe9]' : '')}>
+              {!confirmDelete ? (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#faf8f5] py-2.5 text-sm font-semibold text-[#ea504c]"
+                >
+                  <Trash2 className="size-4" />
+                  {receipt ? 'Anular recepción completa' : 'Devolver a "en camino"'}
+                </button>
+              ) : (
+                <div className="space-y-2 rounded-xl bg-[#fef2f2] p-3">
+                  <p className="text-[12px] font-semibold text-[#ea504c]">
+                    {receipt?.stock_item_id
+                      ? '¿Seguro? Revierte el stock y el pedido vuelve a "en camino".'
+                      : '¿Seguro? El pedido vuelve a "en camino".'}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setConfirmDelete(false)}
+                      className="rounded-xl border border-[#ebe6df] py-2 text-[12px] font-semibold text-[#7d6c64]"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={() => void undoReceipt()} disabled={deleting}
+                      className="flex items-center justify-center gap-1.5 rounded-xl bg-[#ea504c] py-2 text-[12px] font-semibold text-white disabled:opacity-60"
+                    >
+                      {deleting ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                      Sí, anular
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )
