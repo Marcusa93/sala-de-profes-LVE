@@ -68,7 +68,22 @@ type ExpenseLite = { id: string; provider: string | null; providerId: string | n
 type Match = { order_id: number; source: 'cocina' | 'barra'; strength: 'fuerte' | 'probable'; why: string; expense: ExpenseLite }
 type ConciliarPayload = { matches: Match[]; expenses: ExpenseLite[] }
 
-type Step = 'pedir' | 'camino' | 'recibido'
+type Step = 'pedir' | 'camino' | 'recibido' | 'pagos'
+
+type ReceiptRow = {
+  id: number
+  supplier_id: string | null
+  qty: number
+  unit: string | null
+  cost_total: number | null
+  note: string | null
+  received_date: string
+  payment_status: 'pagado' | 'a_pagar'
+  paid_at: string | null
+  payment_method: string | null
+  supplier_name: string
+}
+type ReceiptPayState = { id: number; method: 'efectivo' | 'transferencia' | 'tarjeta' | null }
 
 const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
 
@@ -90,7 +105,7 @@ function PedidosContent() {
   const canManage = isManagerOrAbove(profile?.role)
 
   const stepParam = params.get('step')
-  const [step, setStepState] = useState<Step>(stepParam === 'camino' || stepParam === 'recibido' ? stepParam : 'pedir')
+  const [step, setStepState] = useState<Step>(stepParam === 'camino' || stepParam === 'recibido' || stepParam === 'pagos' ? stepParam : 'pedir')
   const setStep = (s: Step) => {
     setStepState(s)
     const p = new URLSearchParams(params.toString())
@@ -117,6 +132,11 @@ function PedidosContent() {
   const [newOrderOpen, setNewOrderOpen] = useState(false)
   // Saldo pendiente de pago a proveedores (null si la migración de pagos no está)
   const [porPagar, setPorPagar] = useState<number | null>(null)
+  const [receiptsCount, setReceiptsCount] = useState(0)
+  const [receipts, setReceipts] = useState<ReceiptRow[]>([])
+  const [receiptsLoading, setReceiptsLoading] = useState(false)
+  const [receiptPayState, setReceiptPayState] = useState<ReceiptPayState | null>(null)
+  const [receiptConfirming, setReceiptConfirming] = useState(false)
 
   const fetchOrders = useCallback(async () => {
     const supabase = createClient()
@@ -142,8 +162,9 @@ function PedidosContent() {
       .not('cost_total', 'is', null)
       .then(({ data, error }) => {
         if (error) { setPorPagar(null); return }
-        const total = (data ?? []).reduce((acc, r) => acc + (Number((r as { cost_total: number | null }).cost_total) || 0), 0)
-        setPorPagar(Math.round(total))
+        const rows = data ?? []
+        setPorPagar(Math.round(rows.reduce((acc, r) => acc + (Number((r as { cost_total: number | null }).cost_total) || 0), 0)))
+        setReceiptsCount(rows.length)
       })
   }, [])
 
@@ -168,8 +189,26 @@ function PedidosContent() {
     } catch { /* best-effort */ }
   }, [canManage])
 
+  const fetchReceipts = useCallback(async () => {
+    setReceiptsLoading(true)
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from('stock_receipts')
+      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, suppliers:supplier_id(name)')
+      .eq('payment_status', 'a_pagar')
+      .not('cost_total', 'is', null)
+      .order('received_date', { ascending: false })
+      .limit(300)
+    if (!error && data) {
+      setReceipts(((data) as unknown as (Omit<ReceiptRow, 'supplier_name'> & { suppliers: { name: string } | null })[])
+        .map((r) => ({ ...r, supplier_name: r.suppliers?.name ?? 'Sin proveedor' })))
+    }
+    setReceiptsLoading(false)
+  }, [])
+
   useEffect(() => { void fetchOrders(); void fetchSugerencias() }, [fetchOrders, fetchSugerencias])
   useEffect(() => { if (step === 'camino') void fetchConciliar() }, [step, fetchConciliar])
+  useEffect(() => { if (step === 'pagos') void fetchReceipts() }, [step, fetchReceipts])
 
   const pending = useMemo(() => orders.filter((o) => o.status === 'pending'), [orders])
   const ordered = useMemo(() => orders.filter((o) => o.status === 'ordered'), [orders])
@@ -270,6 +309,28 @@ function PedidosContent() {
     void fetchOrders()
   }
 
+  async function markReceiptPaid(receipt: ReceiptRow, method: 'efectivo' | 'transferencia' | 'tarjeta') {
+    setReceiptConfirming(true)
+    try {
+      const res = await fetch(`/api/stock/receipts/${receipt.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_status: 'pagado', payment_method: method }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Error al marcar pagado')
+      const fudoMsg = json.fudoSynced ? ' — imputado en Fudo' : ''
+      toast.success(`Pagado (${method}) — ${receipt.supplier_name}${fudoMsg}`)
+      setReceiptPayState(null)
+      void fetchReceipts()
+      void fetchOrders()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al marcar pagado')
+    } finally {
+      setReceiptConfirming(false)
+    }
+  }
+
   if (loading) return <LoadingState message="Cargando pedidos..." />
 
   const orderToday = sugerencias?.groups.filter((g) => g.is_order_day && g.supplier_id) ?? []
@@ -285,7 +346,7 @@ function PedidosContent() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">Pedidos</h1>
-            <p className="mt-0.5 text-[12px] text-[#7d6c64]">Pedir → en camino → recibido. La compra se carga una sola vez, en Fudo.</p>
+            <p className="mt-0.5 text-[12px] text-[#7d6c64]">Pedir · en camino · recibido · pagos</p>
           </div>
           {canManage && (
             <button onClick={() => setNewOrderOpen(true)} className="flex shrink-0 items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-sm font-semibold text-white shadow-sm active:scale-[0.97]">
@@ -297,11 +358,12 @@ function PedidosContent() {
 
       {/* Pasos */}
       <FadeIn delay={0.04}>
-        <div className="grid grid-cols-3 gap-2 rounded-[1.4rem] bg-[#faf8f5] p-1 ring-1 ring-[#ebe6df]">
+        <div className="grid grid-cols-4 gap-1.5 rounded-[1.4rem] bg-[#faf8f5] p-1 ring-1 ring-[#ebe6df]">
           {([
             { key: 'pedir' as const, label: 'Pedir', count: (sugerencias?.total_items ?? 0) + pending.length, Icon: ShoppingCart, tone: '#d4943a' },
             { key: 'camino' as const, label: 'En camino', count: ordered.length, Icon: Truck, tone: '#4a90d9' },
             { key: 'recibido' as const, label: 'Recibidos', count: received.length, Icon: Check, tone: '#006d5a' },
+            { key: 'pagos' as const, label: 'Pagos', count: receiptsCount, Icon: Wallet, tone: '#8b5e34' },
           ]).map(({ key, label, count, Icon, tone }) => {
             const active = step === key
             return (
@@ -522,7 +584,7 @@ function PedidosContent() {
         ) : (
           <FadeIn>
             <p className="px-1 text-[11px] text-[#a39e97]">
-              Cuando la compra se carga en Fudo (Gastos), aparece el gasto sugerido. &quot;Llegó&quot; cierra el pedido sin volver a cargar stock.
+              Cuando llegue el pedido, tocá <strong className="text-[#006d5a]">Llegó</strong> para registrar la recepción y elegir cómo se paga.
             </p>
             <div className="mt-2 space-y-2">
               {groupBySupplier(ordered, suppliers).map(({ supplier, list }) => (
@@ -571,24 +633,16 @@ function PedidosContent() {
       {/* ═══════════ PASO 3 — RECIBIDOS ═══════════ */}
       {step === 'recibido' && (
         <FadeIn>
-          {canManage && (
-            <div className="mb-2 space-y-2">
-              <Link href="/pedidos/cuentas" className="flex items-center gap-2.5 rounded-2xl bg-white px-4 py-2.5 ring-1 ring-[#ebe6df] active:scale-[0.99]">
-                <Wallet className="size-4 shrink-0 text-[#d4943a]" />
-                <span className="flex-1 text-xs font-semibold text-[#3d2c24]">Cuentas por pagar</span>
-                {porPagar !== null && porPagar > 0 && (
-                  <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[#d4943a]">
-                    {money(porPagar)}
-                  </span>
-                )}
-                <ChevronRight className="size-4 shrink-0 text-[#a39e97]" />
-              </Link>
-              <Link href="/ventas?m=precios" className="flex items-center gap-2.5 rounded-2xl bg-white px-4 py-2.5 ring-1 ring-[#ebe6df] active:scale-[0.99]">
-                <Receipt className="size-4 shrink-0 text-[#8b5e34]" />
-                <span className="flex-1 text-xs font-semibold text-[#3d2c24]">Precios y compras reales (gastos de Fudo)</span>
-                <ChevronRight className="size-4 shrink-0 text-[#a39e97]" />
-              </Link>
-            </div>
+          {canManage && porPagar !== null && porPagar > 0 && (
+            <button
+              onClick={() => setStep('pagos')}
+              className="mb-2 flex w-full items-center gap-2.5 rounded-2xl bg-[#fdf6ec] px-4 py-2.5 ring-1 ring-[#d4943a]/30 active:scale-[0.99]"
+            >
+              <Wallet className="size-4 shrink-0 text-[#d4943a]" />
+              <span className="flex-1 text-xs font-semibold text-[#8b5e34]">Pendiente de pago</span>
+              <span className="rounded-full bg-[#d4943a]/15 px-2.5 py-0.5 text-[12px] font-bold tabular-nums text-[#d4943a]">{money(porPagar)}</span>
+              <ChevronRight className="size-4 shrink-0 text-[#a39e97]" />
+            </button>
           )}
           {received.length === 0 ? (
             <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-10 text-center ring-1 ring-[#ebe6df]">
@@ -632,6 +686,111 @@ function PedidosContent() {
       )}
 
       {/* Diálogos */}
+      {/* ═══════════ PASO 4 — PAGOS ═══════════ */}
+      {step === 'pagos' && (
+        receiptsLoading ? (
+          <LoadingState message="Cargando pagos..." />
+        ) : (
+          <FadeIn>
+            {porPagar !== null && porPagar > 0 && (
+              <div className="mb-3 rounded-2xl bg-white p-4 ring-1 ring-[#ebe6df]">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#fdf6ec]">
+                    <Wallet className="size-4 text-[#8b5e34]" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Saldo pendiente</p>
+                    <p className="font-display text-xl font-bold tabular-nums text-[#3d2c24]">{money(porPagar)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-base font-bold tabular-nums text-[#d4943a]">{receiptsCount}</p>
+                    <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">recibos</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {receipts.length === 0 ? (
+              <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-10 text-center ring-1 ring-[#ebe6df]">
+                <Wallet className="size-8 text-[#ebe6df]" />
+                <p className="mt-3 text-sm font-medium text-[#7d6c64]">Todo al día</p>
+                <p className="mt-1 text-[11px] text-[#a39e97]">Los pedidos recibidos en cuenta corriente aparecen acá.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {groupReceiptsBySupplier(receipts).map((group) => (
+                  <div key={group.key} className="overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
+                    <div className="flex items-center gap-3 bg-[#faf8f5] px-4 py-2.5">
+                      <Package className="size-4 shrink-0 text-[#006d5a]" />
+                      <p className="flex-1 truncate text-[12px] font-bold uppercase tracking-wider text-[#3d2c24]">{group.name}</p>
+                      <span className="text-[12px] font-bold tabular-nums text-[#d4943a]">{money(group.total)}</span>
+                    </div>
+                    <div className="divide-y divide-[#f5f0ea]">
+                      {group.receipts.map((r) => {
+                        const isPaying = receiptPayState?.id === r.id
+                        return (
+                          <div key={r.id} className="px-4 py-2.5">
+                            <div className="flex items-center gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs font-medium text-[#3d2c24]">{r.note ?? `${r.qty} ${r.unit ?? ''}`}</p>
+                                <p className="text-[10px] text-[#a39e97]">
+                                  {format(new Date(`${r.received_date}T12:00:00`), 'd MMM', { locale: es })}
+                                  {' · '}{r.qty} {r.unit ?? 'u'}
+                                </p>
+                              </div>
+                              <span className="shrink-0 text-xs font-bold tabular-nums text-[#3d2c24]">
+                                {money(Number(r.cost_total) || 0)}
+                              </span>
+                              {!isPaying ? (
+                                <button
+                                  onClick={() => setReceiptPayState({ id: r.id, method: null })}
+                                  className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-semibold text-white active:scale-95"
+                                >
+                                  <Check className="size-3" /> Pagar
+                                </button>
+                              ) : (
+                                <button onClick={() => setReceiptPayState(null)} className="flex shrink-0 items-center justify-center rounded-lg bg-[#f3efe9] p-1.5 text-[#a39e97]">
+                                  <X className="size-3.5" />
+                                </button>
+                              )}
+                            </div>
+                            {isPaying && (
+                              <div className="mt-2 border-t border-[#f5f0ea] pt-2">
+                                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">¿Cómo se paga?</p>
+                                <div className="flex items-center gap-2">
+                                  {(['efectivo', 'transferencia', 'tarjeta'] as const).map((m) => (
+                                    <button
+                                      key={m}
+                                      onClick={() => setReceiptPayState((p) => p ? { ...p, method: m } : null)}
+                                      className={cn('flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-all',
+                                        receiptPayState?.method === m ? 'bg-[#006d5a] text-white' : 'bg-[#f3efe9] text-[#7d6c64]')}
+                                    >
+                                      {m === 'efectivo' ? 'Efectivo' : m === 'transferencia' ? 'Transf.' : 'Tarjeta'}
+                                    </button>
+                                  ))}
+                                  <button
+                                    onClick={() => { if (receiptPayState?.method) void markReceiptPaid(r, receiptPayState.method) }}
+                                    disabled={!receiptPayState?.method || receiptConfirming}
+                                    className="flex shrink-0 items-center gap-1 rounded-lg bg-[#3d2c24] px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40"
+                                  >
+                                    {receiptConfirming ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                                    OK
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </FadeIn>
+        )
+      )}
+
       {correctionDialog && (
         <CorrectionDialog
           order={correctionDialog}
@@ -645,13 +804,8 @@ function PedidosContent() {
           order={arrivalDialog}
           supplier={suppliers.find((s) => s.id === arrivalDialog.supplier_id) ?? null}
           stockItems={stockItems}
-          match={matchByOrder.get(`${arrivalDialog.source}-${arrivalDialog.id}`) ?? null}
-          expenses={(conciliar?.expenses ?? []).filter((e) => {
-            const sup = suppliers.find((s) => s.id === arrivalDialog.supplier_id)
-            return sup?.fudo_provider_id && e.providerId === sup.fudo_provider_id
-          })}
           onClose={() => setArrivalDialog(null)}
-          onDone={() => { setArrivalDialog(null); void fetchOrders(); void fetchConciliar(); void fetchSugerencias(true) }}
+          onDone={() => { setArrivalDialog(null); void fetchOrders(); void fetchSugerencias(true) }}
         />
       )}
 
@@ -684,6 +838,18 @@ function PedidosContent() {
 // ---------------------------------------------------------------------------
 // Helpers de presentación
 // ---------------------------------------------------------------------------
+
+function groupReceiptsBySupplier(list: ReceiptRow[]) {
+  const map = new Map<string, { key: string; name: string; receipts: ReceiptRow[]; total: number }>()
+  for (const r of list) {
+    const key = r.supplier_id ?? 'none'
+    const g = map.get(key) ?? { key, name: r.supplier_name, receipts: [], total: 0 }
+    g.receipts.push(r)
+    g.total += Number(r.cost_total) || 0
+    map.set(key, g)
+  }
+  return Array.from(map.values()).sort((a, b) => b.total - a.total)
+}
 
 function groupBySupplier(list: Order[], suppliers: Supplier[]) {
   const map = new Map<string, { supplier: Supplier | null; list: Order[] }>()
@@ -733,18 +899,13 @@ const PAYMENT_METHODS: { key: PaymentMethod; label: string; hint: string }[] = [
   { key: 'tarjeta', label: 'Tarjeta', hint: 'Pagado en el momento' },
 ]
 
-function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, onDone }: {
+function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
   order: Order
   supplier: Supplier | null
   stockItems: StockLite[]
-  match: Match | null
-  expenses: ExpenseLite[]
   onClose: () => void
   onDone: () => void
 }) {
-  const linkedItem = order.stock_item_id ? stockItems.find((s) => s.id === order.stock_item_id) ?? null : null
-  const [mode, setMode] = useState<'fudo_expense' | 'lve_stock' | 'sin_stock'>(match ? 'fudo_expense' : linkedItem ? 'fudo_expense' : 'sin_stock')
-  const [expenseId, setExpenseId] = useState<string | null>(match?.expense.id ?? null)
   const [stockItemId, setStockItemId] = useState<string | null>(order.stock_item_id)
   const [stockSearch, setStockSearch] = useState('')
   const [receivedQty, setReceivedQty] = useState(order.quantity)
@@ -753,13 +914,16 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const chosenExpense = expenses.find((e) => e.id === expenseId) ?? (match && match.expense.id === expenseId ? match.expense : null)
+  const mode: 'lve_stock' | 'sin_stock' = stockItemId ? 'lve_stock' : 'sin_stock'
   const selectedStock = stockItems.find((s) => s.id === stockItemId) ?? null
   const filteredStock = stockSearch.length > 1
-    ? stockItems.filter((s) => s.name.toLowerCase().includes(stockSearch.toLowerCase())).slice(0, 6)
+    ? stockItems.filter((s) => !(s.fudo_product_id && !s.fudo_ingredient_id) && s.name.toLowerCase().includes(stockSearch.toLowerCase())).slice(0, 6)
     : []
 
+  const canConfirm = !!paymentMethod && (mode === 'sin_stock' || (mode === 'lve_stock' && !!stockItemId && !!receivedQty.trim()))
+
   async function confirm() {
+    if (!paymentMethod) return
     setSubmitting(true)
     try {
       const res = await fetch('/api/kitchen/orders', {
@@ -770,21 +934,22 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
           orderId: order.id,
           source: order.source,
           mode,
-          expense: mode === 'fudo_expense' && chosenExpense ? { id: chosenExpense.id, amount: chosenExpense.amount } : null,
+          expense: null,
           receivedQty: mode === 'lve_stock' ? receivedQty : null,
-          unitCost: mode === 'lve_stock' && unitCost ? parseFloat(unitCost) : (mode === 'sin_stock' && unitCost ? parseFloat(unitCost) : null),
+          unitCost: unitCost ? parseFloat(unitCost) : null,
           stockItemId: mode === 'lve_stock' ? stockItemId : null,
           note: note.trim() || null,
-          paymentMethod: paymentMethod ?? null,
+          paymentMethod,
         }),
       })
       const json = await res.json()
       if (!res.ok || !json.success) throw new Error(json.error ?? 'No se pudo confirmar')
       if (mode === 'lve_stock') {
-        toast.success(json.fudoSynced ? '✅ Llegó — stock actualizado en Fudo' : '✅ Llegó — stock registrado en LVE (sin mapeo Fudo)')
+        toast.success(json.fudoSynced ? 'Llegó — stock actualizado' : 'Llegó — stock registrado en LVE')
       } else {
-        toast.success(mode === 'fudo_expense' ? '✅ Llegó — vinculado a la compra de Fudo' : '✅ Pedido cerrado')
+        toast.success('Llegó — pedido cerrado')
       }
+      if (paymentMethod === 'cuenta_corriente') toast.info('Quedó en Pagos pendiente de saldar')
       onDone()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al confirmar')
@@ -793,31 +958,22 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
     }
   }
 
-  const modeBtn = (key: typeof mode, label: string, hint: string) => (
-    <button
-      type="button"
-      onClick={() => setMode(key)}
-      className={cn('rounded-xl border px-3 py-2 text-left transition-all', mode === key ? 'border-[#006d5a] bg-[#e8f5f1]' : 'border-[#ebe6df] bg-white')}
-    >
-      <span className={cn('block text-[12px] font-bold', mode === key ? 'text-[#006d5a]' : 'text-[#3d2c24]')}>{label}</span>
-      <span className="block text-[10px] text-[#7d6c64]">{hint}</span>
-    </button>
-  )
-
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-sm rounded-2xl">
         <DialogHeader><DialogTitle className="text-base">Llegó el pedido</DialogTitle></DialogHeader>
-        <div className="max-h-[80vh] space-y-3 overflow-y-auto pr-0.5">
+        <div className="max-h-[80vh] space-y-4 overflow-y-auto pr-0.5">
+
+          {/* Producto */}
           <div className="rounded-xl bg-[#f3efe9] px-3 py-2.5">
             <p className="text-sm font-semibold text-[#3d2c24]">{order.product_name}</p>
             <p className="text-[11px] text-[#7d6c64]">Pedido: <b>{order.quantity}</b>{supplier ? ` · ${supplier.name}` : ''}</p>
           </div>
 
-          {/* Medio de pago — primero, antes de elegir el modo */}
+          {/* Medio de pago — PRIMERA PREGUNTA */}
           <div>
-            <p className="mb-1.5 text-[11px] font-semibold text-[#3d2c24]">
-              Medio de pago <span className="font-normal text-[#a39e97]">(opcional)</span>
+            <p className="mb-1.5 text-[12px] font-semibold text-[#3d2c24]">
+              ¿Cómo se paga? <span className="text-[#ea504c]">*</span>
             </p>
             <div className="grid grid-cols-2 gap-1.5">
               {PAYMENT_METHODS.map((pm) => (
@@ -826,7 +982,7 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
                   type="button"
                   onClick={() => setPaymentMethod(paymentMethod === pm.key ? null : pm.key)}
                   className={cn(
-                    'rounded-xl border px-3 py-2 text-left transition-all',
+                    'rounded-xl border px-3 py-2.5 text-left transition-all',
                     paymentMethod === pm.key
                       ? pm.key === 'cuenta_corriente'
                         ? 'border-[#d4943a] bg-[#fdf6ec]'
@@ -835,7 +991,7 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
                   )}
                 >
                   <span className={cn(
-                    'block text-[12px] font-bold',
+                    'block text-[13px] font-bold',
                     paymentMethod === pm.key
                       ? pm.key === 'cuenta_corriente' ? 'text-[#d4943a]' : 'text-[#006d5a]'
                       : 'text-[#3d2c24]',
@@ -846,116 +1002,73 @@ function ArrivalDialog({ order, supplier, stockItems, match, expenses, onClose, 
                 </button>
               ))}
             </div>
-            {paymentMethod === 'cuenta_corriente' && (
-              <p className="mt-1.5 text-[10px] text-[#d4943a]">
-                Quedará pendiente en <strong>Cuentas por pagar</strong> hasta que lo saldes.
-              </p>
-            )}
           </div>
 
-          <div className="grid gap-1.5">
-            {modeBtn('fudo_expense', 'La compra está en Fudo', 'Stock y gasto ya viven en Fudo; acá se cierra el pedido.')}
-            {modeBtn('lve_stock', 'Cargar stock desde acá', 'Si NO se cargó en Fudo. LVE suma lo recibido al stock de Fudo.')}
-            {modeBtn('sin_stock', 'Solo cerrar el pedido', 'No es un insumo de stock. Podés registrar el monto igual.')}
-          </div>
-
-          {mode === 'fudo_expense' && (
-            <div>
-              <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Gasto de Fudo <span className="font-normal text-[#a39e97]">(opcional, para dejar el monto)</span></p>
-              {expenses.length === 0 && !match ? (
-                <p className="rounded-xl bg-[#faf8f5] px-3 py-2 text-[11px] text-[#7d6c64]">
-                  Todavía no hay gastos de {supplier?.name ?? 'este proveedor'} en Fudo después del pedido. Podés cerrar igual y cargarlo después en Fudo.
-                </p>
-              ) : (
-                <div className="max-h-40 space-y-1 overflow-y-auto">
-                  {[...(match && !expenses.some((e) => e.id === match.expense.id) ? [match.expense] : []), ...expenses].map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onClick={() => setExpenseId(expenseId === e.id ? null : e.id)}
-                      className={cn('flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left', expenseId === e.id ? 'border-[#006d5a] bg-[#e8f5f1]' : 'border-[#ebe6df] bg-white')}
-                    >
-                      <Receipt className="size-3.5 shrink-0 text-[#006d5a]" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-[12px] font-bold text-[#3d2c24]">{money(e.amount)} · {format(new Date(e.date), 'd MMM', { locale: es })}</span>
-                        <span className="block truncate text-[10px] text-[#a39e97]">{e.ingredientNames.length > 0 ? e.ingredientNames.join(', ') : 'sin detalle de insumos'}</span>
-                      </span>
-                      {match?.expense.id === e.id && <span className="rounded-full bg-[#006d5a] px-1.5 py-0.5 text-[9px] font-bold text-white">sugerido</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {mode === 'lve_stock' && (
+          {/* Stock (si hay insumo vinculado) */}
+          {stockItemId ? (
             <div className="space-y-2">
-              <div>
-                <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Insumo de stock <span className="text-[#ea504c]">*</span></p>
-                {selectedStock ? (
-                  <div className="flex items-center gap-2 rounded-xl border border-[#006d5a] bg-[#e8f5f1] px-3 py-2">
-                    <Package className="size-4 shrink-0 text-[#006d5a]" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold text-[#006d5a]">{selectedStock.name}</span>
-                      <span className="block text-[10px] text-[#006d5a]/70">Ahora: {selectedStock.current_qty} {selectedStock.unit}</span>
-                    </span>
-                    <button onClick={() => { setStockItemId(null); setStockSearch('') }} className="text-[#a39e97]"><X className="size-4" /></button>
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[#a39e97]" />
-                    <input value={stockSearch} onChange={(e) => setStockSearch(e.target.value)} placeholder={`Buscar "${order.product_name}"…`} className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-8 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
-                    {filteredStock.length > 0 && (
-                      <div className="absolute z-10 mt-1 w-full rounded-xl border border-[#ebe6df] bg-white shadow-lg">
-                        {filteredStock.map((s) => (
-                          <button key={s.id} type="button" onClick={() => { setStockItemId(s.id); setStockSearch('') }} className="flex w-full items-center gap-2 px-3 py-2 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-[#f8f5f0]">
-                            <span className="flex-1 truncate text-sm font-medium text-[#3d2c24]">{s.name}</span>
-                            <span className="text-[10px] text-[#a39e97]">{s.current_qty} {s.unit}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+              <div className="flex items-center gap-2 rounded-xl border border-[#006d5a] bg-[#e8f5f1] px-3 py-2">
+                <Package className="size-4 shrink-0 text-[#006d5a]" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-[#006d5a]">{selectedStock?.name ?? stockItemId}</span>
+                  {selectedStock && <span className="block text-[10px] text-[#006d5a]/70">Ahora: {selectedStock.current_qty} {selectedStock.unit}</span>}
+                </span>
+                <button onClick={() => { setStockItemId(null); setStockSearch('') }} className="text-[#a39e97]"><X className="size-4" /></button>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
-                  <span className="text-[11px] font-semibold text-[#3d2c24]">Cantidad recibida <span className="text-[#ea504c]">*</span></span>
+                  <span className="text-[11px] font-semibold text-[#3d2c24]">Cantidad <span className="text-[#ea504c]">*</span></span>
                   <input value={receivedQty} onChange={(e) => setReceivedQty(e.target.value)} placeholder="ej: 5 kg" className="mt-1 w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm focus:border-[#006d5a] focus:outline-none" />
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-semibold text-[#3d2c24]">Precio por {selectedStock?.unit ?? 'unidad'}</span>
+                  <span className="text-[11px] font-semibold text-[#3d2c24]">$ por {selectedStock?.unit ?? 'unidad'}</span>
                   <div className="relative mt-1">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
                     <input type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
                   </div>
                 </label>
               </div>
-              <p className="text-[10px] text-[#a39e97]">Se suma como delta sobre el stock actual de Fudo (no pisa ventas) y queda en el kardex con precio.</p>
             </div>
-          )}
-
-          {mode === 'sin_stock' && (
-            <div>
-              <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Monto <span className="font-normal text-[#a39e97]">(opcional, para el historial de gastos)</span></p>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
-                <input type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
+          ) : (
+            <div className="space-y-2">
+              <div>
+                <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Insumo <span className="font-normal text-[#a39e97]">(si aplica — para actualizar stock)</span></p>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[#a39e97]" />
+                  <input value={stockSearch} onChange={(e) => setStockSearch(e.target.value)} placeholder={`Buscar "${order.product_name}"…`} className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-8 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
+                  {filteredStock.length > 0 && (
+                    <div className="absolute z-10 mt-1 w-full rounded-xl border border-[#ebe6df] bg-white shadow-lg">
+                      {filteredStock.map((s) => (
+                        <button key={s.id} type="button" onClick={() => { setStockItemId(s.id); setStockSearch('') }} className="flex w-full items-center gap-2 px-3 py-2 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-[#f8f5f0]">
+                          <span className="flex-1 truncate text-sm font-medium text-[#3d2c24]">{s.name}</span>
+                          <span className="text-[10px] text-[#a39e97]">{s.current_qty} {s.unit}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div>
+                <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Monto <span className="font-normal text-[#a39e97]">(opcional)</span></p>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
+                  <input type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
+                </div>
               </div>
             </div>
           )}
 
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Nota (opcional): faltó algo, vino distinto, etc." className="w-full resize-none rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none" />
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Nota (opcional): faltó algo, vino distinto…" className="w-full resize-none rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none" />
         </div>
         <DialogFooter className="mt-2 gap-2">
           <DialogClose className="rounded-xl px-4 py-2 text-sm font-medium text-[#7d6c64]">Cancelar</DialogClose>
           <button
             onClick={() => void confirm()}
-            disabled={submitting || (mode === 'lve_stock' && (!stockItemId || !receivedQty.trim()))}
+            disabled={submitting || !canConfirm}
             className="flex items-center gap-2 rounded-xl bg-[#006d5a] px-5 py-2 text-sm font-semibold text-white active:scale-[0.98] disabled:opacity-60"
           >
             {submitting ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            Confirmar
+            Confirmar llegada
           </button>
         </DialogFooter>
       </DialogContent>
