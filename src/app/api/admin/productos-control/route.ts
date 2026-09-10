@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { fudo } from '@/lib/fudoClient'
+import { esCostoConfiable } from '@/lib/costos/confiable'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,6 +15,7 @@ export type ProductoControlRow = {
   name: string
   unit: string
   category: string | null
+  /** SOLO con fuente de costo confiable (compra/manual/produccion); si no, null y la UI no muestra plata */
   cost_per_unit: number | null
   fudo_product_id: string
   /** Stock actual en Fudo (null si no tiene stockControl activo) */
@@ -89,12 +91,22 @@ export async function GET() {
     const nowAR = new Date(new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }))
     const todayStr = nowAR.toISOString().slice(0, 10)
 
-    // 1. Stock items con fudo_product_id
-    const { data: stockItems } = await admin
+    // 1. Stock items con fudo_product_id — cost_source con select tolerante
+    // (migración pendiente → sin la columna, ningún costo cuenta como real)
+    const baseSelect = 'id, name, unit, category, current_qty, cost_per_unit, fudo_product_id'
+    let stockItemsRes: { data: unknown[] | null; error: { message: string } | null } = await admin
       .from('stock_items')
-      .select('id, name, unit, category, current_qty, cost_per_unit, fudo_product_id')
+      .select(`${baseSelect}, cost_source`)
       .eq('is_active', true)
       .not('fudo_product_id', 'is', null)
+    if (stockItemsRes.error) {
+      stockItemsRes = await admin
+        .from('stock_items')
+        .select(baseSelect)
+        .eq('is_active', true)
+        .not('fudo_product_id', 'is', null)
+    }
+    const stockItems = stockItemsRes.data
 
     if (!stockItems?.length) {
       const empty: ProductosControlPayload = {
@@ -174,7 +186,7 @@ export async function GET() {
     const rows: ProductoControlRow[] = []
     let withStockControl = 0
 
-    for (const si of stockItems as { id: string; name: string; unit: string; category: string | null; current_qty: number; cost_per_unit: number | null; fudo_product_id: string }[]) {
+    for (const si of stockItems as { id: string; name: string; unit: string; category: string | null; current_qty: number; cost_per_unit: number | null; cost_source?: string | null; fudo_product_id: string }[]) {
       const fudoStock = fudoStockMap.get(si.fudo_product_id) ?? null
       if (fudoStock !== null) withStockControl++
 
@@ -182,7 +194,10 @@ export async function GET() {
       const sold = soldMap.get(si.fudo_product_id) ?? 0
       const expected = baseline !== null ? baseline - sold : null
       const mermaImplicita = (expected !== null && fudoStock !== null) ? expected - fudoStock : null
-      const mermaValue = (mermaImplicita !== null && si.cost_per_unit != null) ? mermaImplicita * si.cost_per_unit : null
+      // Plata SOLO con costo confiable (compra/manual/produccion): la merma en
+      // unidades se muestra igual, pero sin valorizar con costos de Fudo.
+      const costoReal = esCostoConfiable(si.cost_source, si.cost_per_unit) ? Number(si.cost_per_unit) : null
+      const mermaValue = (mermaImplicita !== null && costoReal != null) ? mermaImplicita * costoReal : null
       const waste = wasteMap.get(si.id)
 
       rows.push({
@@ -190,7 +205,7 @@ export async function GET() {
         name: si.name,
         unit: si.unit ?? 'unidad',
         category: si.category,
-        cost_per_unit: si.cost_per_unit,
+        cost_per_unit: costoReal,
         fudo_product_id: si.fudo_product_id,
         fudo_stock: fudoStock,
         baseline,

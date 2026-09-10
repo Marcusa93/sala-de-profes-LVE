@@ -52,6 +52,8 @@ export type FichaPrices = {
   max: number | null
   count: number
   item_cost_per_unit: number | null
+  /** Fuente del costo del item: número solo si es confiable (compra/manual/produccion) */
+  item_cost_source: string | null
   fudo_cost: number | null
 }
 

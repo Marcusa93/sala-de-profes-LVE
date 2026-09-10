@@ -2755,6 +2755,8 @@ export type Database = {
           area_locked: boolean
           category: string
           cost_per_unit: number | null
+          cost_source: string | null
+          cost_updated_at: string | null
           created_at: string
           current_qty: number
           fudo_ingredient_id: string | null
@@ -2782,6 +2784,8 @@ export type Database = {
           area_locked?: boolean
           category: string
           cost_per_unit?: number | null
+          cost_source?: string | null
+          cost_updated_at?: string | null
           created_at?: string
           current_qty?: number
           fudo_ingredient_id?: string | null
@@ -2809,6 +2813,8 @@ export type Database = {
           area_locked?: boolean
           category?: string
           cost_per_unit?: number | null
+          cost_source?: string | null
+          cost_updated_at?: string | null
           created_at?: string
           current_qty?: number
           fudo_ingredient_id?: string | null

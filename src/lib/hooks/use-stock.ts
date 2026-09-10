@@ -29,6 +29,9 @@ export type StockItem = {
   fudo_skip?: boolean | null
   is_produced?: boolean | null
   cost_per_unit?: number | null
+  /** Fuente del costo (migración 20260909): compra | manual | produccion | estimado | fudo | null. */
+  cost_source?: string | null
+  cost_updated_at?: string | null
   /** Área operativa (migración 20260906). null si todavía no está aplicada. */
   area?: StockArea | null
   /** Categoría real de Fudo (espejo). */
@@ -43,6 +46,7 @@ export type StockItem = {
 
 const BASE_SELECT = 'id, name, category, unit, current_qty, min_qty, shelf_life_days, purchase_lead_time_days, is_active, notes, updated_at, supplier_id, last_counted_at, fudo_product_id, fudo_ingredient_id, fudo_skip, is_produced, cost_per_unit, suppliers(id, name, phone, contact_name)'
 const AREA_SELECT = `${BASE_SELECT}, area, fudo_category, area_locked`
+const COSTO_SELECT = `${AREA_SELECT}, cost_source, cost_updated_at`
 
 async function fetchStockItems(active: boolean): Promise<StockItem[]> {
   const supabase = createClient()
@@ -52,9 +56,13 @@ async function fetchStockItems(active: boolean): Promise<StockItem[]> {
     return query
   }
 
-  // Select tolerante: si la migración de áreas no está aplicada, PostgREST
-  // rechaza las columnas nuevas → caer al select base.
-  let { data, error } = await run(AREA_SELECT)
+  // Select tolerante: si una migración no está aplicada (costo confiable
+  // 20260909 o áreas 20260906), PostgREST rechaza las columnas nuevas →
+  // caer en cascada al select anterior.
+  let { data, error } = await run(COSTO_SELECT)
+  if (error && /cost_source|cost_updated_at/i.test(error.message)) {
+    ({ data, error } = await run(AREA_SELECT))
+  }
   if (error && /area|fudo_category/i.test(error.message)) {
     ({ data, error } = await run(BASE_SELECT))
   }

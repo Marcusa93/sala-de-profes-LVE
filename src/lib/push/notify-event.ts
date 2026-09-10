@@ -130,6 +130,10 @@ export async function notifyEvent(
   admin: SupabaseClient,
   eventKey: NotificationEventKey,
   payload: { title: string; body: string; url?: string },
+  options?: {
+    /** Quien disparó el evento: se excluye del push (no se autonotifica) */
+    excludeUserId?: string | null
+  },
 ): Promise<void> {
   const settings = await getNotificationSettings(admin)
   const cfg = settings[eventKey]
@@ -145,6 +149,8 @@ export async function notifyEvent(
       .eq('is_active', true)
     for (const p of profiles ?? []) targetIds.add(p.id)
   }
+
+  if (options?.excludeUserId) targetIds.delete(options.excludeUserId)
 
   if (targetIds.size === 0) return
 

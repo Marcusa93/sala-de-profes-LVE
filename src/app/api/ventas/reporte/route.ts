@@ -181,7 +181,13 @@ export async function GET(request: NextRequest) {
       }
 
       for (const { mi, units } of brokenCandidates) {
-        const missing = riByRecipe.get(mi.recipe_id ?? '') ?? ['receta vacía']
+        // Preferir los nombres que ya identificó costRecipes (incluye insumos
+        // con costo Fudo/estimado, que para el modelo confiable son "sin costo
+        // real" aunque tengan un número cargado).
+        const rc = mi.recipe_id ? recipeCosts.get(mi.recipe_id) : undefined
+        const missing = rc && rc.missingNames.length > 0
+          ? rc.missingNames
+          : (riByRecipe.get(mi.recipe_id ?? '') ?? ['receta vacía'])
         broken.push({
           menu_item_id: mi.id,
           name: mi.name,

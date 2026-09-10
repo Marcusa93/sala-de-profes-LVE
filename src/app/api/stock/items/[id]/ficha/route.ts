@@ -5,6 +5,7 @@ import { isKitchenRole } from '@/lib/roles'
 import { lotTone, formatLotCountdown } from '@/lib/stock/helpers'
 import { fudoFetch } from '@/lib/fudoClient'
 import { fetchFudoExpenses } from '@/lib/fudo/expenses'
+import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
 // ---------------------------------------------------------------------------
 // GET /api/stock/items/[id]/ficha
@@ -52,6 +53,9 @@ export type FichaItem = {
   shelf_life_days: number | null
   purchase_lead_time_days: number | null
   cost_per_unit: number | null
+  /** Fuente del costo: compra | manual | produccion | estimado | fudo | null. */
+  cost_source: string | null
+  cost_updated_at: string | null
   is_produced: boolean
   is_active: boolean
   notes: string | null
@@ -257,17 +261,33 @@ export async function GET(
     const wantsExpenses = request.nextUrl.searchParams.get('expenses') === '1'
 
     // --- Identidad (si esto falla, no hay ficha) ---------------------------
-    const { data: raw, error: itemError } = await admin
+    // cost_source/cost_updated_at con tolerancia a migración pendiente
+    let itemRes = await admin
       .from('stock_items')
       .select(`
         id, name, unit, category, current_qty, min_qty, shelf_life_days,
-        purchase_lead_time_days, cost_per_unit, is_produced, is_active, notes,
+        purchase_lead_time_days, cost_per_unit, cost_source, cost_updated_at,
+        is_produced, is_active, notes,
         last_counted_at, next_purchase_date, updated_at,
         fudo_ingredient_id, fudo_product_id, fudo_skip, supplier_id
       `)
       .eq('id', id)
       .maybeSingle()
 
+    if (itemRes.error && esErrorColumnaFaltante(itemRes.error.message, ['cost_source', 'cost_updated_at'])) {
+      itemRes = await admin
+        .from('stock_items')
+        .select(`
+          id, name, unit, category, current_qty, min_qty, shelf_life_days,
+          purchase_lead_time_days, cost_per_unit, is_produced, is_active, notes,
+          last_counted_at, next_purchase_date, updated_at,
+          fudo_ingredient_id, fudo_product_id, fudo_skip, supplier_id
+        `)
+        .eq('id', id)
+        .maybeSingle() as typeof itemRes
+    }
+
+    const { data: raw, error: itemError } = itemRes
     if (itemError) throw itemError
     if (!raw) return NextResponse.json({ error: 'Insumo no encontrado' }, { status: 404 })
 
@@ -281,6 +301,8 @@ export async function GET(
       shelf_life_days: raw.shelf_life_days,
       purchase_lead_time_days: raw.purchase_lead_time_days,
       cost_per_unit: raw.cost_per_unit,
+      cost_source: (raw as { cost_source?: string | null }).cost_source ?? null,
+      cost_updated_at: (raw as { cost_updated_at?: string | null }).cost_updated_at ?? null,
       is_produced: Boolean(raw.is_produced),
       is_active: Boolean(raw.is_active),
       notes: raw.notes,
@@ -580,6 +602,8 @@ export async function GET(
       count: pricePoints.length,
       /** Costo de referencia guardado en el item (y el que reporta Fudo). */
       item_cost_per_unit: item.cost_per_unit,
+      /** Fuente del costo del item: la UI solo muestra número si es confiable */
+      item_cost_source: item.cost_source,
       fudo_cost: fudo.fudo_cost,
     }
 

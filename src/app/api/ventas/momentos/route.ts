@@ -257,8 +257,10 @@ export async function GET(request: NextRequest) {
         if (!agg || agg.units <= 0) continue
         const avgPrice = agg.pricedUnits > 0 ? agg.pricedRevenue / agg.pricedUnits : 0
         if (avgPrice <= 0) continue
-        const cost = (mi.recipe_id ? recipeCosts.get(mi.recipe_id)?.cost : 0) ?? 0
-        if (cost <= 0) continue
+        const rc = mi.recipe_id ? recipeCosts.get(mi.recipe_id) : undefined
+        const cost = rc?.cost ?? 0
+        // Solo platos con costo CONFIABLE completo — nada de márgenes fantasma
+        if (!rc || rc.missing > 0 || cost <= 0) continue
         const marginUnit = avgPrice - cost
         costeados.push({
           menu_item_id: mi.id,

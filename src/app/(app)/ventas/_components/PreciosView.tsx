@@ -70,8 +70,9 @@ export function PreciosView() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <p className="text-[13px] leading-relaxed text-muted-foreground">
-          Precios reales de compra, del <b>módulo de gastos de Fudo</b>. Así ves qué proveedor
-          te remarcó y qué insumo se está <b>encareciendo</b>.
+          Gastos reales de compra, del <b>módulo de gastos de Fudo</b>. Ojo: cada $ es el
+          <b> monto total de esa compra</b> (no el precio por kg/unidad). Sirve para ver qué
+          proveedor te remarcó y qué insumo se está <b>encareciendo</b>.
         </p>
         <select
           value={days}
@@ -121,7 +122,7 @@ export function PreciosView() {
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <div className="text-right">
-                        <p className="text-[11px] text-muted-foreground">último precio</p>
+                        <p className="text-[11px] text-muted-foreground">última compra ($ total)</p>
                         <p className="flex items-center gap-1 text-[18px] font-bold text-[#006d5a]">
                           {trendUp && <TrendingUp className="size-4 text-[#ea504c]" />}
                           {trendDown && <TrendingDown className="size-4 text-[#006d5a]" />}
@@ -138,6 +139,7 @@ export function PreciosView() {
                       <span>mín <b className="text-[#006d5a]">{money(g.min)}</b></span>
                       <span>prom <b className="text-[#3d2c24]">{money(g.avg)}</b></span>
                       <span>máx <b className="text-[#ea504c]">{money(g.max)}</b></span>
+                      <span className="ml-auto">$ por compra</span>
                     </div>
                   )}
 
@@ -164,7 +166,7 @@ export function PreciosView() {
           </div>
 
           <p className="mt-4 text-center text-[11px] text-muted-foreground">
-            {totalPoints} compras de un solo insumo · la tendencia compara el último precio contra el promedio del período
+            {totalPoints} compras de un solo insumo · montos totales por compra (no precio unitario) · la tendencia compara la última compra contra el promedio del período
           </p>
         </FadeIn>
       )}

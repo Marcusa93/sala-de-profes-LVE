@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
 import { PRODUCTION_BATCHES, matchIngredientToStock, type ProductionBatch } from '@/lib/recipes/production-batches'
 import { convertQty } from '@/lib/produccion/units'
+import { esCostoConfiable } from '@/lib/costos/confiable'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
 
@@ -24,6 +25,9 @@ type StockItem = {
   unit: string
   current_qty: number
   cost_per_unit: number
+  /** Fuente del costo (migración 20260909); solo compra/manual/produccion valen.
+   *  undefined = la API todavía no manda la columna (migración pendiente). */
+  cost_source?: string | null
   shelf_life_days: number | null
   fudo_ingredient_id: string | null
   fudo_product_id: string | null
@@ -334,6 +338,7 @@ export default function NuevaProduccionPage() {
           unit: String(i.unit),
           current_qty: Number(i.current_qty ?? 0),
           cost_per_unit: Number(i.cost_per_unit ?? 0),
+          cost_source: 'cost_source' in i ? (i.cost_source == null ? null : String(i.cost_source)) : undefined,
           shelf_life_days: i.shelf_life_days == null ? null : Number(i.shelf_life_days),
           fudo_ingredient_id: i.fudo_ingredient_id == null ? null : String(i.fudo_ingredient_id),
           fudo_product_id: i.fudo_product_id == null ? null : String(i.fudo_product_id),
@@ -577,19 +582,28 @@ export default function NuevaProduccionPage() {
     : null
 
   // Costo estimado de la producción (mismo cálculo que el backend, en vivo).
-  // Convierte cada insumo a la unidad de su item de stock y lo multiplica por
-  // su costo unitario. El costo por unidad producida = costo total / salidas no-merma.
+  // Solo suman los insumos con costo REAL (cost_source compra/manual/producción);
+  // el resto se lista como "sin costo real" y el total queda parcial. Si la API
+  // todavía no manda cost_source (migración pendiente), criterio legacy: costo > 0.
   const costEstimate = (() => {
     let totalCost = 0
     let missingCost = false
     let costed = false
+    const missingNames: string[] = []
     for (const input of inputDetails) {
       if (!input.item || input.qty <= 0) continue
       const qtyInStockUnit = convertQty(input.qty, input.unit, input.item.unit)
       if (qtyInStockUnit == null) continue
       const unitCost = input.item.cost_per_unit || 0
-      if (unitCost <= 0) missingCost = true
-      else costed = true
+      const confiable = input.item.cost_source === undefined
+        ? unitCost > 0
+        : esCostoConfiable(input.item.cost_source, unitCost)
+      if (!confiable) {
+        missingCost = true
+        if (!missingNames.includes(input.item.name) && missingNames.length < 6) missingNames.push(input.item.name)
+        continue
+      }
+      costed = true
       totalCost += qtyInStockUnit * unitCost
     }
     const producedQty = outputs
@@ -602,6 +616,7 @@ export default function NuevaProduccionPage() {
       producedUnit,
       perUnit: producedQty > 0 ? totalCost / producedQty : 0,
       missingCost,
+      missingNames,
       costed,
     }
   })()
@@ -1579,7 +1594,8 @@ export default function NuevaProduccionPage() {
                   </div>
                   {costEstimate.missingCost && (
                     <p className="mt-2 text-[11px] text-[#d4943a]">
-                      Algún insumo no tiene costo cargado — el total es parcial.
+                      Sin costo real de: {costEstimate.missingNames.join(', ') || 'algún insumo'} — el total es parcial.
+                      Se completa al recibir una compra con precio o cargándolo a mano en la ficha.
                     </p>
                   )}
                 </div>

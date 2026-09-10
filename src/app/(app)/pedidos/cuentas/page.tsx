@@ -57,6 +57,10 @@ export default function CuentasPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [payState, setPayState] = useState<PayState | null>(null)
   const [confirming, setConfirming] = useState(false)
+  /** "Saldar todo" de un proveedor: UN medio de pago para todos los recibos */
+  const [groupPay, setGroupPay] = useState<{ key: string; method: 'efectivo' | 'transferencia' | 'tarjeta' | null } | null>(null)
+  const [payingAll, setPayingAll] = useState<string | null>(null)
+  const [undoing, setUndoing] = useState<number | null>(null)
   const [showPaid, setShowPaid] = useState(false)
 
   const canManage = isManagerOrAbove(profile?.role)
@@ -102,25 +106,73 @@ export default function CuentasPage() {
       .sort((a, b) => b.total - a.total)
   }, [pending])
 
+  /** PATCH de estado de pago. Devuelve el json (fudoSynced / fudoPaymentLinked). */
+  async function patchStatus(receiptId: number, status: 'pagado' | 'a_pagar', method?: 'efectivo' | 'transferencia' | 'tarjeta') {
+    const res = await fetch(`/api/stock/receipts/${receiptId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(status === 'pagado'
+        ? { payment_status: 'pagado', payment_method: method ?? null }
+        : { payment_status: 'a_pagar' }),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.error ?? 'Error al actualizar el pago')
+    return json as { fudoSynced?: boolean; fudoPaymentLinked?: boolean }
+  }
+
   async function markPaid(receipt: Receipt, method: 'efectivo' | 'transferencia' | 'tarjeta') {
     setConfirming(true)
     try {
-      const res = await fetch(`/api/stock/receipts/${receipt.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_status: 'pagado', payment_method: method }),
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? 'Error al marcar pagado')
+      const json = await patchStatus(receipt.id, 'pagado', method)
       const fudoMsg = json.fudoSynced ? ' — imputado en Fudo' : ''
       toast.success(`Pagado (${methodLabel(method)}) — ${receipt.supplier_name}${fudoMsg}${receipt.cost_total != null ? ` · ${fmtMoney(Number(receipt.cost_total))}` : ''}`)
       setPayState(null)
       fetchData()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al marcar pagado')
+      toast.error(err instanceof Error ? err.message : 'Error al actualizar el pago')
     } finally {
       setConfirming(false)
     }
+  }
+
+  /** Deshace un pago marcado por error: el recibo vuelve a "a pagar". */
+  async function deshacer(receipt: Receipt) {
+    setUndoing(receipt.id)
+    try {
+      const json = await patchStatus(receipt.id, 'a_pagar')
+      toast.success(`Volvió a "a pagar" — ${receipt.supplier_name}`)
+      if (json.fudoPaymentLinked) {
+        toast.warning('Ojo: el pago ya imputado en Fudo no se revierte solo — corregilo en Fudo si hace falta')
+      }
+      fetchData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al actualizar el pago')
+    } finally {
+      setUndoing(null)
+    }
+  }
+
+  /** Salda TODOS los recibos pendientes de un proveedor con UN medio de pago. */
+  async function saldarTodo(group: { key: string; name: string; receipts: Receipt[]; total: number }, method: 'efectivo' | 'transferencia' | 'tarjeta') {
+    const n = group.receipts.length
+    const ok = window.confirm(`¿Marcar como pagados (${methodLabel(method)}) los ${n} recibo${n > 1 ? 's' : ''} de ${group.name} por ${fmtMoney(group.total)}?`)
+    if (!ok) return
+    setPayingAll(group.key)
+    let saldados = 0
+    let fallidos = 0
+    let enFudo = 0
+    for (const r of group.receipts) {
+      try {
+        const json = await patchStatus(r.id, 'pagado', method)
+        saldados++
+        if (json.fudoSynced) enFudo++
+      } catch { fallidos++ }
+    }
+    setPayingAll(null)
+    setGroupPay(null)
+    if (fallidos === 0) toast.success(`${group.name}: ${saldados} recibo${saldados !== 1 ? 's' : ''} saldado${saldados !== 1 ? 's' : ''} (${fmtMoney(group.total)})${enFudo > 0 ? ` — ${enFudo} imputado${enFudo !== 1 ? 's' : ''} en Fudo` : ''}`)
+    else toast.error(`${group.name}: ${saldados} saldado${saldados !== 1 ? 's' : ''}, ${fallidos} con error — revisá la lista`)
+    fetchData()
   }
 
   if (loading) {
@@ -205,6 +257,59 @@ export default function CuentasPage() {
 
               {isExpanded && (
                 <div className="divide-y border-t">
+                  {/* Saldar todo el proveedor: UN medio de pago para todos los recibos */}
+                  {group.receipts.length > 1 && (
+                    <div className="bg-[#faf8f5] px-4 py-2">
+                      {groupPay?.key !== group.key ? (
+                        <div className="flex justify-end">
+                          <button
+                            onClick={() => setGroupPay({ key: group.key, method: null })}
+                            disabled={payingAll === group.key}
+                            className="flex items-center gap-1.5 rounded-lg bg-[#006d5a] px-3 py-1.5 text-[11px] font-semibold text-white transition-all active:scale-95 disabled:opacity-60"
+                          >
+                            {payingAll === group.key ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                            Saldar todo ({fmtMoney(group.total)})
+                          </button>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">¿Cómo se paga todo? ({fmtMoney(group.total)})</p>
+                          <div className="flex items-center gap-2">
+                            {PAY_METHODS.map((m) => (
+                              <button
+                                key={m.key}
+                                onClick={() => setGroupPay((p) => p ? { ...p, method: m.key } : null)}
+                                className={cn(
+                                  'flex-1 rounded-lg py-1.5 text-[11px] font-semibold transition-all',
+                                  groupPay?.method === m.key
+                                    ? 'bg-[#006d5a] text-white'
+                                    : 'bg-[#f3efe9] text-[#7d6c64] active:scale-95',
+                                )}
+                              >
+                                {m.label}
+                              </button>
+                            ))}
+                            <button
+                              onClick={() => {
+                                if (groupPay?.method) void saldarTodo(group, groupPay.method)
+                              }}
+                              disabled={!groupPay?.method || payingAll === group.key}
+                              className="flex shrink-0 items-center gap-1 rounded-lg bg-[#3d2c24] px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40"
+                            >
+                              {payingAll === group.key ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                              OK
+                            </button>
+                            <button
+                              onClick={() => setGroupPay(null)}
+                              className="flex shrink-0 items-center justify-center rounded-lg bg-[#f3efe9] p-1.5 text-[#a39e97]"
+                            >
+                              <X className="size-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {group.receipts.map((r) => {
                     const isPaying = payState?.id === r.id
                     return (
@@ -326,6 +431,14 @@ export default function CuentasPage() {
                     <span className="shrink-0 text-xs font-semibold tabular-nums text-[#006d5a]">
                       {fmtMoney(Number(r.cost_total) || 0)}
                     </span>
+                    <button
+                      onClick={() => void deshacer(r)}
+                      disabled={undoing === r.id}
+                      title="Volver a a pagar (si lo marcaste por error)"
+                      className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-semibold text-[#7d6c64] ring-1 ring-[#ebe6df] transition-all active:scale-95 disabled:opacity-60"
+                    >
+                      {undoing === r.id ? <Loader2 className="size-3 animate-spin" /> : 'Deshacer'}
+                    </button>
                   </div>
                 ))}
               </div>

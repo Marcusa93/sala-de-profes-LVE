@@ -50,8 +50,11 @@ type ExpensesResponse = {
 }
 
 // Cache en memoria de módulo (30 min), patrón de personal/consumo.
+// Guarda la lista COMPLETA (sin filtrar): cada llamada filtra por su sinceISO,
+// así el cache sirve para cualquier ventana (antes se cacheaba filtrado por un
+// sinceISO con milisegundos → nunca coincidía y el cache no servía de nada).
 const CACHE_TTL_MS = 30 * 60 * 1000
-let cache: { at: number; sinceISO: string | undefined; expenses: FudoExpense[] } | null = null
+let cache: { at: number; expenses: FudoExpense[] } | null = null
 
 function relArray(rel: JsonApiRes['relationships'], key: string): { id: string; type: string }[] {
   const data = rel?.[key]?.data
@@ -68,11 +71,15 @@ function relOne(rel: JsonApiRes['relationships'], key: string): { id: string; ty
 /**
  * Trae los gastos del módulo de gastos de Fudo, ya normalizados.
  * @param sinceISO opcional — si se pasa, se descartan gastos con date < sinceISO.
- * Cache en memoria 30 min (por sinceISO). Si Fudo falla, lanza error claro.
+ * @param options.force true → saltea el cache (botón "Actualizar gastos de Fudo").
+ * Cache en memoria 30 min. Si Fudo falla, lanza error claro.
  */
-export async function fetchFudoExpenses(sinceISO?: string): Promise<FudoExpense[]> {
-  if (cache && cache.sinceISO === sinceISO && Date.now() - cache.at < CACHE_TTL_MS) {
-    return cache.expenses
+export async function fetchFudoExpenses(
+  sinceISO?: string,
+  options: { force?: boolean } = {},
+): Promise<FudoExpense[]> {
+  if (!options.force && cache && Date.now() - cache.at < CACHE_TTL_MS) {
+    return sinceISO ? cache.expenses.filter((e) => e.date >= sinceISO) : cache.expenses
   }
 
   const pageSize = 200
@@ -162,9 +169,8 @@ export async function fetchFudoExpenses(sinceISO?: string): Promise<FudoExpense[
     })
   }
 
-  const filtered = sinceISO ? expenses.filter((e) => e.date >= sinceISO) : expenses
-  filtered.sort((a, b) => b.date.localeCompare(a.date))
+  expenses.sort((a, b) => b.date.localeCompare(a.date))
+  cache = { at: Date.now(), expenses }
 
-  cache = { at: Date.now(), sinceISO, expenses: filtered }
-  return filtered
+  return sinceISO ? expenses.filter((e) => e.date >= sinceISO) : expenses
 }

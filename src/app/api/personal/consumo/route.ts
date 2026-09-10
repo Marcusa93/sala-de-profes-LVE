@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isSocio, isManagerOrAbove } from '@/lib/roles'
 import { fudo } from '@/lib/fudoClient'
+import { costRecipes } from '@/lib/recipes/recipe-cost'
 
 // ---------------------------------------------------------------------------
 // GET /api/personal/consumo?days=30
@@ -89,19 +90,6 @@ function isPersonalName(name: string): boolean {
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .includes('personal')
-}
-
-/** Convierte qty de la unidad de receta a la unidad del stock_item (g→kg, ml→l). */
-function toStockUnit(qty: number, fromUnit: string | null, toUnit: string): number {
-  if (!fromUnit) return qty
-  const f = fromUnit.trim().toLowerCase()
-  const t = toUnit.trim().toLowerCase()
-  if (f === t) return qty
-  if ((f === 'g' || f === 'gr' || f === 'gramos') && (t === 'kg' || t === 'kilo' || t === 'kilos')) return qty / 1000
-  if ((t === 'g' || t === 'gr' || t === 'gramos') && (f === 'kg' || f === 'kilo' || f === 'kilos')) return qty * 1000
-  if ((f === 'ml' || f === 'cc') && (t === 'l' || t === 'lt' || t === 'litro' || t === 'litros')) return qty / 1000
-  if ((t === 'ml' || t === 'cc') && (f === 'l' || f === 'lt' || f === 'litro' || f === 'litros')) return qty * 1000
-  return qty
 }
 
 /**
@@ -259,85 +247,17 @@ export async function GET(request: NextRequest) {
       if (match) recipeByPersonalId.set(pid, match.recipeId)
     }
 
-    // 5. Costo por receta (Σ ingredientes × cost_per_unit, con nivel 2)
+    // 5. Costo por receta vía costRecipes (canonicalización + nivel 2 +
+    //    gating de costo confiable). Antes acá había un cálculo manual que
+    //    multiplicaba qty de intermedios sin canon() y sumaba costos Fudo:
+    //    números fantasma. Ahora solo se costea lo 100% confiable; el resto
+    //    queda "sin costeo" — no se inventa costo (misma filosofía del módulo).
     const usedRecipeIds = [...new Set(recipeByPersonalId.values())]
     const costPerPortionByRecipe = new Map<string, number>()
-
     if (usedRecipeIds.length > 0) {
-      // Nivel 1: ingredientes directos
-      const { data: riRows, error: riError } = await admin
-        .from('recipe_ingredients')
-        .select('recipe_id, stock_item_id, qty_per_portion, ingredient_unit')
-        .in('recipe_id', usedRecipeIds)
-      if (riError) throw new Error(riError.message)
-
-      const allIngredientIds = [...new Set((riRows ?? []).map((r) => r.stock_item_id))]
-      const { data: stockItems } = await admin
-        .from('stock_items')
-        .select('id, name, unit, cost_per_unit')
-        .in('id', allIngredientIds.length ? allIngredientIds : ['__none__'])
-
-      const stockById = new Map(
-        (stockItems ?? []).map((si) => [si.id, si]),
-      )
-
-      // Nivel 2: insumos que a su vez son recetas intermedias (mismo nombre)
-      const { data: allRecipes } = await admin.from('recipes').select('id, name')
-      const recipeIdByName = new Map<string, string>()
-      for (const r of allRecipes ?? []) recipeIdByName.set(r.name.trim().toLowerCase(), r.id)
-
-      // stock_item intermedio → receta que lo produce
-      const l1RecipeByItemId = new Map<string, string>()
-      for (const si of stockItems ?? []) {
-        const rid = recipeIdByName.get(si.name.trim().toLowerCase())
-        if (rid) l1RecipeByItemId.set(si.id, rid)
-      }
-
-      // Cargar recetas de los intermedios para costear su porción
-      const l1RecipeIds = [...new Set(l1RecipeByItemId.values())]
-      const l1CostPerPortion = new Map<string, number>() // recipeId intermedio → costo/porción
-      if (l1RecipeIds.length > 0) {
-        const { data: l1Ris } = await admin
-          .from('recipe_ingredients')
-          .select('recipe_id, stock_item_id, qty_per_portion, ingredient_unit')
-          .in('recipe_id', l1RecipeIds)
-        const l1IngIds = [...new Set((l1Ris ?? []).map((r) => r.stock_item_id))]
-        const { data: l1Stock } = await admin
-          .from('stock_items')
-          .select('id, unit, cost_per_unit')
-          .in('id', l1IngIds.length ? l1IngIds : ['__none__'])
-        const l1StockById = new Map((l1Stock ?? []).map((si) => [si.id, si]))
-
-        for (const rid of l1RecipeIds) {
-          let cost = 0
-          for (const ri of (l1Ris ?? []).filter((r) => r.recipe_id === rid)) {
-            const si = l1StockById.get(ri.stock_item_id)
-            if (!si || si.cost_per_unit == null) continue
-            const qty = toStockUnit(Number(ri.qty_per_portion ?? 0), ri.ingredient_unit, si.unit)
-            cost += qty * Number(si.cost_per_unit)
-          }
-          l1CostPerPortion.set(rid, cost)
-        }
-      }
-
-      // Costear cada receta base usada
-      for (const rid of usedRecipeIds) {
-        let cost = 0
-        for (const ri of (riRows ?? []).filter((r) => r.recipe_id === rid)) {
-          const si = stockById.get(ri.stock_item_id)
-          if (!si) continue
-          const qtyPortion = Number(ri.qty_per_portion ?? 0)
-          // Si el insumo es un intermedio con receta, usar su costo/porción
-          const intermediateRecipe = l1RecipeByItemId.get(ri.stock_item_id)
-          if (intermediateRecipe && l1CostPerPortion.has(intermediateRecipe)) {
-            cost += qtyPortion * (l1CostPerPortion.get(intermediateRecipe) ?? 0)
-            continue
-          }
-          if (si.cost_per_unit == null) continue
-          const qty = toStockUnit(qtyPortion, ri.ingredient_unit, si.unit)
-          cost += qty * Number(si.cost_per_unit)
-        }
-        costPerPortionByRecipe.set(rid, cost)
+      const recipeCosts = await costRecipes(admin, usedRecipeIds)
+      for (const [rid, rc] of recipeCosts) {
+        if (rc.confiable && rc.cost > 0) costPerPortionByRecipe.set(rid, rc.cost)
       }
     }
 

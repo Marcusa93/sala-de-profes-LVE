@@ -6,10 +6,13 @@
 //     el stock subió más de lo esperado).
 //  2) Lotes vencidos con resto (stock_lots).
 //  3) Desperdicio declarado en producción (production_outputs.is_waste).
-// Todo valorizado a cost_per_unit.
+// Valorizado SOLO con costos reales (cost_source compra/manual/producción):
+// las líneas cuyo insumo no tiene costo real quedan con value null y no
+// suman al total — nada de plata fantasma con costos del espejo de Fudo.
 // ---------------------------------------------------------------------------
 
 import { SupabaseClient } from '@supabase/supabase-js'
+import { esCostoConfiable, esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
 type SnapshotItem = {
   id: string
@@ -45,10 +48,37 @@ export type WasteReport = {
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString('es-AR')}`
 
+/**
+ * id → costo real vigente. Solo entran items con cost_source confiable
+ * (compra/manual/producción). Tolera que la migración 20260909 no esté
+ * aplicada: en ese caso cae al criterio legacy (todo costo > 0).
+ */
+async function fetchCostosReales(admin: SupabaseClient): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  const res = await admin
+    .from('stock_items')
+    .select('id, cost_per_unit, cost_source')
+    .gt('cost_per_unit', 0)
+  if (res.error && esErrorColumnaFaltante(res.error.message, ['cost_source'])) {
+    const legacy = await admin.from('stock_items').select('id, cost_per_unit').gt('cost_per_unit', 0)
+    for (const r of (legacy.data ?? []) as { id: string; cost_per_unit: number | null }[]) {
+      if (Number(r.cost_per_unit ?? 0) > 0) map.set(r.id, Number(r.cost_per_unit))
+    }
+    return map
+  }
+  for (const r of (res.data ?? []) as { id: string; cost_per_unit: number | null; cost_source?: string | null }[]) {
+    if (esCostoConfiable(r.cost_source ?? null, r.cost_per_unit)) map.set(r.id, Number(r.cost_per_unit))
+  }
+  return map
+}
+
 export async function buildWasteReport(admin: SupabaseClient, windowDays = 7): Promise<WasteReport> {
   const sinceDate = new Date()
   sinceDate.setDate(sinceDate.getDate() - windowDays - 1)
   const sinceStr = sinceDate.toISOString().slice(0, 10)
+
+  // Costos reales vigentes (una sola query, se usa en las 3 fuentes)
+  const costReal = await fetchCostosReales(admin)
 
   // --- 1) Snapshots diarios de la ventana ---
   const { data: snapshots } = await admin
@@ -117,7 +147,8 @@ export async function buildWasteReport(admin: SupabaseClient, windowDays = 7): P
 
       if (Math.abs(unexplained) < 0.5) continue // ruido de redondeo
 
-      const cost = a.cost_per_unit ?? b.cost_per_unit
+      // Costo real vigente (gating por fuente); el del snapshot podía ser Fudo
+      const cost = costReal.get(id) ?? null
       if (unexplained < 0) {
         const qty = -unexplained
         const prev = shrinkMap.get(id) ?? { name: b.name, unit: b.unit, qty: 0, value: cost != null ? 0 : null, detail: '' }
@@ -140,38 +171,46 @@ export async function buildWasteReport(admin: SupabaseClient, windowDays = 7): P
   // --- 2) Lotes vencidos con resto ---
   const { data: lots } = await admin
     .from('stock_lots')
-    .select('lot_code, qty_remaining, unit, expires_at, stock_items(name, cost_per_unit)')
+    .select('lot_code, qty_remaining, unit, expires_at, stock_item_id, stock_items(name)')
     .gt('qty_remaining', 0)
     .lte('expires_at', new Date().toISOString())
 
   const expiredLines: WasteLine[] = ((lots ?? []) as unknown as {
     lot_code: string | null; qty_remaining: number; unit: string | null; expires_at: string
-    stock_items: { name: string; cost_per_unit: number | null } | null
-  }[]).map(l => ({
-    name: l.stock_items?.name ?? l.lot_code ?? 'Lote',
-    unit: l.unit,
-    qty: Number(l.qty_remaining),
-    value: l.stock_items?.cost_per_unit != null ? Number(l.qty_remaining) * l.stock_items.cost_per_unit : null,
-    detail: `lote ${l.lot_code ?? 's/c'} vencido el ${l.expires_at.slice(0, 10)}`,
-  }))
+    stock_item_id: string | null
+    stock_items: { name: string } | null
+  }[]).map(l => {
+    const cost = l.stock_item_id ? costReal.get(l.stock_item_id) ?? null : null
+    return {
+      name: l.stock_items?.name ?? l.lot_code ?? 'Lote',
+      unit: l.unit,
+      qty: Number(l.qty_remaining),
+      value: cost != null ? Number(l.qty_remaining) * cost : null,
+      detail: `lote ${l.lot_code ?? 's/c'} vencido el ${l.expires_at.slice(0, 10)}`,
+    }
+  })
 
   // --- 3) Desperdicio declarado en producción ---
   const { data: wasteOutputs } = await admin
     .from('production_outputs')
-    .select('output_name, qty_produced, unit, created_at, stock_items(name, cost_per_unit)')
+    .select('output_name, qty_produced, unit, created_at, stock_item_id, stock_items(name)')
     .eq('is_waste', true)
     .gte('created_at', sinceStr)
 
   const prodLines: WasteLine[] = ((wasteOutputs ?? []) as unknown as {
     output_name: string; qty_produced: number; unit: string | null
-    stock_items: { name: string; cost_per_unit: number | null } | null
-  }[]).map(o => ({
-    name: o.output_name || o.stock_items?.name || 'Merma de producción',
-    unit: o.unit,
-    qty: Number(o.qty_produced),
-    value: o.stock_items?.cost_per_unit != null ? Number(o.qty_produced) * o.stock_items.cost_per_unit : null,
-    detail: 'declarado como merma en una orden de producción',
-  }))
+    stock_item_id: string | null
+    stock_items: { name: string } | null
+  }[]).map(o => {
+    const cost = o.stock_item_id ? costReal.get(o.stock_item_id) ?? null : null
+    return {
+      name: o.output_name || o.stock_items?.name || 'Merma de producción',
+      unit: o.unit,
+      qty: Number(o.qty_produced),
+      value: cost != null ? Number(o.qty_produced) * cost : null,
+      detail: 'declarado como merma en una orden de producción',
+    }
+  })
 
   const sum = (lines: WasteLine[]) => lines.reduce((s, l) => s + (l.value ?? 0), 0)
   const shrinkLines = Array.from(shrinkMap.values()).sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
@@ -221,7 +260,7 @@ async function generateWasteText(r: WasteReport): Promise<{ analysis: string; mo
     `VENTANA: últimos ${r.windowDays} días — ${r.daysWithData} días con snapshot comparable`,
     '',
     `FALTANTES SIN EXPLICAR (stock bajó más que las ventas) — total ${fmt(r.shrinkage.totalValue)}:`,
-    ...r.shrinkage.lines.slice(0, 12).map(l => `- ${l.name}: ${Math.round(l.qty * 10) / 10} ${l.unit ?? 'u'} ${l.value != null ? `≈ ${fmt(l.value)}` : '(sin costo cargado)'}`),
+    ...r.shrinkage.lines.slice(0, 12).map(l => `- ${l.name}: ${Math.round(l.qty * 10) / 10} ${l.unit ?? 'u'} ${l.value != null ? `≈ ${fmt(l.value)}` : '(sin costo real, no valorizado)'}`),
     '',
     `ENTRADAS SIN REGISTRAR (stock subió sin carga) — total ${fmt(r.unexplainedGains.totalValue)}:`,
     ...r.unexplainedGains.lines.slice(0, 8).map(l => `- ${l.name}: +${Math.round(l.qty * 10) / 10} ${l.unit ?? 'u'}`),

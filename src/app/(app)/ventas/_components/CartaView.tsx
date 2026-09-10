@@ -258,12 +258,22 @@ export function CartaView() {
               })
             )}
 
-            {/* Transparencia: platos sin datos */}
+            {/* Transparencia: platos sin datos, con el motivo de cada uno */}
             {data.sin_datos.length > 0 && (
-              <p className="flex items-center gap-1.5 px-1 text-[10px] text-[#a39e97]">
-                <Info className="size-3 shrink-0" />
-                {data.sin_datos.length} {data.sin_datos.length === 1 ? 'plato quedó afuera' : 'platos quedaron afuera'} por falta de datos (sin ventas, sin precio o sin costo de receta). Nada se estima.
-              </p>
+              <details className="px-1">
+                <summary className="flex cursor-pointer items-center gap-1.5 text-[10px] text-[#a39e97]">
+                  <Info className="size-3 shrink-0" />
+                  {data.sin_datos.length} {data.sin_datos.length === 1 ? 'plato quedó afuera' : 'platos quedaron afuera'} por falta de datos reales. Nada se estima — tocá para ver por qué.
+                </summary>
+                <ul className="mt-1.5 space-y-0.5 pl-4">
+                  {data.sin_datos.map((d) => (
+                    <li key={d.menu_item_id} className="text-[10px] text-[#a39e97]">
+                      <span className="font-medium text-[#6b6560]">{d.name}</span>
+                      {' — '}{d.motivo}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
 
             {/* Recetas que faltan (por impacto) */}

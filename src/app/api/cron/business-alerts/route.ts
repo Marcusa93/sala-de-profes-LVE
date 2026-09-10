@@ -244,7 +244,9 @@ export async function GET(request: NextRequest) {
       const costs = await costRecipes(admin, [...new Set(popular.map((d) => d.recipeId))])
       for (const d of popular) {
         const rc = costs.get(d.recipeId)
-        if (!rc || rc.cost <= 0) continue
+        // Solo platos con costo CONFIABLE completo — un food cost parcial
+        // dispararía alertas con números fantasma.
+        if (!rc || !rc.confiable || rc.cost <= 0) continue
         const avgPrice = d.revenue / d.units
         if (avgPrice <= 0) continue
         const pct = (rc.cost / avgPrice) * 100

@@ -126,8 +126,11 @@ function ProductRow({ product }: { product: MermaProductRow }) {
           </div>
           {product.faltante_value > 0 && (
             <span className="text-xs font-bold text-[#ea504c]">
-              {fmtPrice(product.faltante_value)} a costo
+              {fmtPrice(product.faltante_value)} a costo real
             </span>
+          )}
+          {product.faltante_value === 0 && product.faltante_units > 2 && product.costo_confiable === false && (
+            <span className="text-[10px] text-[#a39e97]">sin costo real: no se valoriza en $</span>
           )}
         </div>
         <span className="ml-3 mt-0.5 shrink-0 text-[#a39e97]">
@@ -314,11 +317,16 @@ export default function MermasPage() {
         <FadeIn delay={0.08}>
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-[#ebe6df] shadow-sm">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#ea504c]">Faltantes a costo</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#ea504c]">Faltantes a costo real</p>
               <p className="mt-1 font-display text-2xl font-bold tabular-nums text-[#ea504c]">
                 {fmtPrice(data.total_faltante_value)}
               </p>
-              <p className="mt-0.5 text-[10px] text-[#a39e97]">{data.days_with_data} días con datos</p>
+              <p className="mt-0.5 text-[10px] text-[#a39e97]">
+                {data.days_with_data} días con datos
+                {data.products_con_precio != null && data.products.length > 0 && (
+                  <> · {data.products_con_precio} de {data.products.length} con precio real</>
+                )}
+              </p>
             </div>
             <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-[#ebe6df] shadow-sm">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-[#f59e0b]">Sin registrar</p>

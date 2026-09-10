@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { esCostoConfiable, esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
 // ---------------------------------------------------------------------------
 // Tipos exportados para consumo desde la página
@@ -23,8 +24,10 @@ export type MermaProductRow = {
   name: string
   unit: string
   cost_per_unit: number | null
+  /** false = sin costo real (fuente no confiable): faltante_value queda en 0. */
+  costo_confiable: boolean
   faltante_units: number   // total del período
-  faltante_value: number   // faltante_units × cost_per_unit
+  faltante_value: number   // faltante_units × cost_per_unit (solo confiables)
   entrada_units: number
   entrada_value: number
   worst_faltante_date: string | null
@@ -40,6 +43,8 @@ export type MermasPayload = {
   products: MermaProductRow[]  // ordenado por faltante_value desc
   total_faltante_value: number
   total_entrada_value: number
+  /** Cobertura de la valorización: cuántos productos tienen precio real. */
+  products_con_precio: number
   days_with_data: number
 }
 
@@ -215,9 +220,10 @@ export async function GET(request: NextRequest) {
 
         const acc = itemAccMap.get(id)!
         acc.faltante_units += faltante
-        acc.faltante_value += cost != null ? faltante * cost : 0
         acc.entrada_units += entrada
-        acc.entrada_value += cost != null ? entrada * cost : 0
+        // La valorización $ se hace DESPUÉS, con el costo real vigente del
+        // item (gating de cost_source) — el costo del snapshot podía venir
+        // del espejo de Fudo, que no es un precio real.
 
         if (faltante > acc.worst_faltante_qty) {
           acc.worst_faltante_qty = faltante
@@ -238,27 +244,58 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // --- 5) Filtrar ruido y construir products ---
+    // --- 5) Valorizar con costo REAL vigente (solo fuentes confiables) ---
+    // Los snapshots guardan el cost_per_unit histórico, que podía ser el
+    // espejo de Fudo. Para poner $ se usa el costo actual del item y SOLO si
+    // su fuente es confiable (compra/manual/producción); si no, va sin $.
+    const accIds = [...itemAccMap.keys()]
+    const costRealById = new Map<string, number>()
+    if (accIds.length > 0) {
+      let rows: { id: string; cost_per_unit: number | null; cost_source?: string | null }[] = []
+      const res = await admin
+        .from('stock_items')
+        .select('id, cost_per_unit, cost_source')
+        .in('id', accIds)
+      if (res.error && esErrorColumnaFaltante(res.error.message, ['cost_source'])) {
+        // Migración pendiente → criterio legacy (costo > 0)
+        const legacy = await admin.from('stock_items').select('id, cost_per_unit').in('id', accIds)
+        rows = ((legacy.data ?? []) as typeof rows).map(r => ({
+          ...r,
+          cost_source: Number(r.cost_per_unit ?? 0) > 0 ? 'compra' : null,
+        }))
+      } else if (!res.error) {
+        rows = (res.data ?? []) as typeof rows
+      }
+      for (const r of rows) {
+        if (esCostoConfiable(r.cost_source ?? null, r.cost_per_unit)) {
+          costRealById.set(r.id, Number(r.cost_per_unit))
+        }
+      }
+    }
+
+    // --- 6) Filtrar ruido y construir products ---
     const products: MermaProductRow[] = []
     for (const [id, acc] of itemAccMap) {
       if (acc.faltante_units <= 2 && acc.entrada_units <= 30) continue
+      const costReal = costRealById.get(id) ?? null
       products.push({
         stock_item_id: id,
         name: acc.name,
         unit: acc.unit,
-        cost_per_unit: acc.cost_per_unit,
+        cost_per_unit: costReal,
+        costo_confiable: costReal != null,
         faltante_units: acc.faltante_units,
-        faltante_value: acc.faltante_value,
+        faltante_value: costReal != null ? acc.faltante_units * costReal : 0,
         entrada_units: acc.entrada_units,
-        entrada_value: acc.entrada_value,
+        entrada_value: costReal != null ? acc.entrada_units * costReal : 0,
         worst_faltante_date: acc.worst_faltante_date,
         worst_faltante_qty: acc.worst_faltante_qty,
         days: acc.days.filter(d => d.faltante > 0 || d.entrada > 0),
       })
     }
 
-    // Ordenar por faltante_value desc
-    products.sort((a, b) => b.faltante_value - a.faltante_value)
+    // Ordenar por faltante_value desc, y a igual valor por unidades faltantes
+    products.sort((a, b) => b.faltante_value - a.faltante_value || b.faltante_units - a.faltante_units)
 
     const payload: MermasPayload = {
       period_days: days,
@@ -268,6 +305,7 @@ export async function GET(request: NextRequest) {
       products,
       total_faltante_value: products.reduce((s, p) => s + p.faltante_value, 0),
       total_entrada_value: products.reduce((s, p) => s + p.entrada_value, 0),
+      products_con_precio: products.filter(p => p.costo_confiable).length,
       days_with_data: Math.max(snaps.length - 1, 0),
     }
 

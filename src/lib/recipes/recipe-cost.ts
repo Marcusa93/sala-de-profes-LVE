@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { esCostoConfiable, esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
 // ---------------------------------------------------------------------------
 // recipe-cost.ts — costo por porción de recetas, con canonicalización de
@@ -8,6 +9,12 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // filas del mismo insumo ('kg', 'gramos', 'g', 'ml', 'l', 'unidad'...).
 // SIEMPRE canonicalizar cada fila (g/gr/gramos → ÷1000 kg, ml/cc → ÷1000 l)
 // ANTES de sumar o multiplicar por stock_items.cost_per_unit.
+//
+// COSTO CONFIABLE (2026-09): solo suman las líneas cuyo stock_item tiene
+// cost_source confiable ('compra' | 'manual' | 'produccion') y costo > 0.
+// Todo lo demás (costo Fudo, estimado, 0, null, o unidad incompatible con la
+// del item) cuenta como MISSING y la receta queda `confiable: false` — la UI
+// debe mostrar "sin costo real", nunca un número fantasma.
 //
 // Nivel 2: si un ingrediente es un stock_item producido por otra receta
 // (ej: "Milanesa cruda"), su costo se toma del costo por porción de esa
@@ -23,20 +30,36 @@ export function canon(qty: number, unit: string | null): { qty: number; unit: st
   if (u === 'ml' || u === 'cc') return { qty: qty / 1000, unit: 'l' }
   if (u === 'lt' || u === 'litro' || u === 'litros') return { qty, unit: 'l' }
   if (u === 'kilo' || u === 'kilos') return { qty, unit: 'kg' }
+  // Variantes de 'unidad': sin esto, una receta cargada en 'u'/'un' contra un
+  // item en 'unidad' daba unidad-incompatible y la receta quedaba "sin costo"
+  // por falso positivo.
+  if (u === 'u' || u === 'un' || u === 'unid' || u === 'unidades') return { qty, unit: 'unidad' }
   return { qty, unit: u }
 }
 
-/** Convierte qty de una unidad (ya canónica) a la unidad del stock_item. */
+/**
+ * Convierte qty de una unidad (ya canónica) a la unidad del stock_item.
+ * OJO: si las unidades NO son convertibles (unidad↔kg, kg↔l) devuelve qty tal
+ * cual — comportamiento histórico que varios callers usan para cantidades.
+ * Para COSTOS usar toStockUnitStrict, que detecta el caso.
+ */
 export function toStockUnit(qty: number, fromUnit: string | null, toUnit: string): number {
+  return toStockUnitStrict(qty, fromUnit, toUnit) ?? qty
+}
+
+/**
+ * Igual que toStockUnit pero devuelve null cuando las unidades son
+ * incompatibles (unidad↔kg, masa↔volumen, etc.): multiplicar ahí inventa
+ * plata. La línea debe contarse como "sin costo real".
+ */
+export function toStockUnitStrict(qty: number, fromUnit: string | null, toUnit: string): number | null {
+  // Sin unidad en la receta → se asume la unidad del item (histórico).
   if (!fromUnit) return qty
-  const f = fromUnit.trim().toLowerCase()
-  const t = toUnit.trim().toLowerCase()
-  if (f === t) return qty
-  if ((f === 'g' || f === 'gr' || f === 'gramos') && (t === 'kg' || t === 'kilo' || t === 'kilos')) return qty / 1000
-  if ((t === 'g' || t === 'gr' || t === 'gramos') && (f === 'kg' || f === 'kilo' || f === 'kilos')) return qty * 1000
-  if ((f === 'ml' || f === 'cc') && (t === 'l' || t === 'lt' || t === 'litro' || t === 'litros')) return qty / 1000
-  if ((t === 'ml' || t === 'cc') && (f === 'l' || f === 'lt' || f === 'litro' || f === 'litros')) return qty * 1000
-  return qty
+  if (fromUnit.trim().toLowerCase() === toUnit.trim().toLowerCase()) return qty
+  const from = canon(qty, fromUnit)
+  const to = canon(1, toUnit) // 1 unidad destino = to.qty unidades canónicas
+  if (from.unit === to.unit && to.qty > 0) return from.qty / to.qty
+  return null
 }
 
 type IngredientRow = {
@@ -51,6 +74,7 @@ type StockItemRow = {
   name: string
   unit: string
   cost_per_unit: number | null
+  cost_source?: string | null
   is_produced?: boolean | null
 }
 
@@ -59,15 +83,19 @@ export type RecipeCost = {
   cost: number
   /** Cantidad de ingredientes de la receta. */
   ingredients: number
-  /** Ingredientes sin costo conocido (cost_per_unit nulo y sin receta intermedia). */
+  /** Ingredientes sin costo confiable (fuente no confiable, costo 0/null o unidad incompatible). */
   missing: number
+  /** Nombres de los insumos sin costo real (cap 6, sin duplicados). */
+  missingNames: string[]
+  /** true solo si TODAS las líneas se costearon con fuentes confiables. */
+  confiable: boolean
 }
 
 /**
  * Costea un conjunto de recetas: costo por porción = Σ ingredientes
  * (canonicalizados) × cost_per_unit del stock_item, con expansión nivel-2
- * de intermedios (ingrediente cuyo nombre matchea otra receta → usar el
- * costo por porción de esa receta).
+ * de intermedios. Solo suman líneas con costo CONFIABLE; el resto queda en
+ * missing/missingNames y la receta sale con confiable=false.
  */
 export async function costRecipes(
   admin: SupabaseClient,
@@ -87,14 +115,35 @@ export async function costRecipes(
   const directItemIds = [...new Set(ingredients.map(r => r.stock_item_id))]
   if (directItemIds.length === 0) return result
 
+  // Select tolerante: si la migración de cost_source no está aplicada todavía,
+  // cae al select legacy y el criterio de confiable pasa a ser costo > 0.
+  let hasCostSource = true
+  const selectItems = async (ids: string[]): Promise<StockItemRow[]> => {
+    if (ids.length === 0) return []
+    if (hasCostSource) {
+      const res = await admin
+        .from('stock_items')
+        .select('id, name, unit, cost_per_unit, cost_source, is_produced')
+        .in('id', ids)
+      if (!res.error) return (res.data ?? []) as StockItemRow[]
+      if (!esErrorColumnaFaltante(res.error.message, ['cost_source'])) throw new Error(res.error.message)
+      hasCostSource = false
+    }
+    const legacy = await admin
+      .from('stock_items')
+      .select('id, name, unit, cost_per_unit, is_produced')
+      .in('id', ids)
+    if (legacy.error) throw new Error(legacy.error.message)
+    return (legacy.data ?? []) as StockItemRow[]
+  }
+
   // 2. Detectar intermedios: stock_items usados que son producidos por otra
   //    receta. Vínculo explícito (output_stock_item_id) primero; match por
   //    nombre solo como fallback para recetas sin vincular.
-  const [{ data: directItems, error: siError }, recipesRes] = await Promise.all([
-    admin.from('stock_items').select('id, name, unit, cost_per_unit, is_produced').in('id', directItemIds),
+  const [directItems, recipesRes] = await Promise.all([
+    selectItems(directItemIds),
     admin.from('recipes').select('id, name, output_stock_item_id'),
   ])
-  if (siError) throw new Error(siError.message)
 
   type RecipeRow = { id: string; name: string; output_stock_item_id?: string | null }
   let allRecipes: RecipeRow[]
@@ -116,7 +165,7 @@ export async function costRecipes(
 
   // stock_item intermedio → receta L1 que lo produce (explícito > nombre)
   const l1RecipeByItemId = new Map<string, string>()
-  for (const item of (directItems ?? []) as StockItemRow[]) {
+  for (const item of directItems) {
     const rid = recipeIdByOutputItemId.get(item.id)
       ?? recipeIdByName.get(item.name.trim().toLowerCase())
     if (rid) l1RecipeByItemId.set(item.id, rid)
@@ -136,31 +185,41 @@ export async function costRecipes(
 
   // 4. Catálogo de stock_items involucrados (directos + crudos de intermedios)
   const allItemIds = [...new Set([...directItemIds, ...l1Ingredients.map(r => r.stock_item_id)])]
-  const { data: allItems, error: aiError } = await admin
-    .from('stock_items')
-    .select('id, name, unit, cost_per_unit, is_produced')
-    .in('id', allItemIds)
-  if (aiError) throw new Error(aiError.message)
+  const allItems = await selectItems(allItemIds)
   const itemById = new Map<string, StockItemRow>()
-  for (const it of (allItems ?? []) as StockItemRow[]) itemById.set(it.id, it)
+  for (const it of allItems) itemById.set(it.id, it)
 
-  /** Costo en $ de una fila de ingrediente contra el costo del stock_item. */
-  const rowCost = (ri: IngredientRow): { cost: number; known: boolean } => {
+  /** ¿El costo directo del item es usable? (fuente confiable + costo > 0) */
+  const itemCostConfiable = (item: StockItemRow): boolean =>
+    hasCostSource
+      ? esCostoConfiable(item.cost_source ?? null, item.cost_per_unit)
+      : Number(item.cost_per_unit ?? 0) > 0 // columna aún no migrada → criterio legacy
+
+  /** Costo en $ de una fila contra el costo del stock_item, con gating. */
+  const rowCost = (ri: IngredientRow): { cost: number; known: boolean; missingName: string } => {
     const item = itemById.get(ri.stock_item_id)
-    if (!item || item.cost_per_unit == null) return { cost: 0, known: false }
+    if (!item) return { cost: 0, known: false, missingName: 'insumo desconocido' }
+    if (!itemCostConfiable(item)) return { cost: 0, known: false, missingName: item.name }
     const c = canon(Number(ri.qty_per_portion ?? 0), ri.ingredient_unit)
-    const qtyInStockUnit = toStockUnit(c.qty, c.unit, item.unit)
-    return { cost: qtyInStockUnit * Number(item.cost_per_unit), known: true }
+    const qtyInStockUnit = toStockUnitStrict(c.qty, c.unit, item.unit)
+    if (qtyInStockUnit === null) {
+      return { cost: 0, known: false, missingName: `${item.name} (unidad incompatible)` }
+    }
+    return { cost: qtyInStockUnit * Number(item.cost_per_unit), known: true, missingName: '' }
   }
 
-  // 5. Costo por porción de cada receta intermedia (solo crudos)
-  const l1CostByRecipeId = new Map<string, number>()
+  // 5. Costo por porción de cada receta intermedia (solo crudos). Si alguna
+  //    línea no es confiable, el costo teórico de la intermedia tampoco lo es.
+  const l1CostByRecipeId = new Map<string, { cost: number; missing: number }>()
   for (const rid of l1RecipeIds) {
     let total = 0
+    let missing = 0
     for (const ri of l1Ingredients.filter(r => r.recipe_id === rid)) {
-      total += rowCost(ri).cost
+      const r = rowCost(ri)
+      if (!r.known) missing += 1
+      total += r.cost
     }
-    l1CostByRecipeId.set(rid, total)
+    l1CostByRecipeId.set(rid, { cost: total, missing })
   }
 
   // 6. Costo por porción de cada receta pedida, expandiendo intermedios
@@ -168,34 +227,57 @@ export async function costRecipes(
     const rows = ingredients.filter(r => r.recipe_id === rid)
     let total = 0
     let missing = 0
+    const missingNames: string[] = []
+    const addMissing = (name: string) => {
+      missing += 1
+      if (name && missingNames.length < 6 && !missingNames.includes(name)) missingNames.push(name)
+    }
     for (const ri of rows) {
       const l1Recipe = l1RecipeByItemId.get(ri.stock_item_id)
-      // Intermedio PRODUCIDO con costo real de producción (lo escribe
-      // complete_production_order al cerrar cada tanda): ese costo manda sobre
-      // el teórico de la receta. Es el número que de verdad costó hacerlo.
       const producedItem = itemById.get(ri.stock_item_id)
-      if (l1Recipe && l1Recipe !== rid && producedItem?.is_produced && Number(producedItem.cost_per_unit ?? 0) > 0) {
-        total += rowCost(ri).cost
+      // Intermedio PRODUCIDO con costo real de producción CONFIABLE (lo escribe
+      // complete_production_order v7 con cost_source='produccion'): ese costo
+      // manda sobre el teórico de la receta.
+      if (l1Recipe && l1Recipe !== rid && producedItem?.is_produced && itemCostConfiable(producedItem)) {
+        const r = rowCost(ri)
+        if (r.known) { total += r.cost; continue }
+        addMissing(r.missingName)
         continue
       }
-      // Intermedio (y no auto-referencia): costo de esa receta × qty canónica
+      // Intermedio (y no auto-referencia): costo teórico de esa receta × qty,
+      // SOLO si esa receta se costeó completa con fuentes confiables. OJO: el
+      // costo teórico es POR PORCIÓN, y cómo se denomina esa porción no es
+      // conocible acá — multiplicar una línea en masa/volumen (ej. 0.2 kg) por
+      // un costo por porción inventa plata. Conservador: el teórico solo
+      // aplica cuando la línea está en unidades/porciones; en masa/volumen la
+      // línea cae al costo directo del item (rowCost), que si no es confiable
+      // o compatible la marca como missing.
       if (l1Recipe && l1Recipe !== rid) {
-        const perUnit = l1CostByRecipeId.get(l1Recipe) ?? 0
-        if (perUnit > 0) {
+        const l1 = l1CostByRecipeId.get(l1Recipe)
+        if (l1 && l1.missing === 0 && l1.cost > 0) {
           const c = canon(Number(ri.qty_per_portion ?? 0), ri.ingredient_unit)
-          total += c.qty * perUnit
-          continue
+          const effUnit = c.unit ?? producedItem?.unit?.trim().toLowerCase() ?? null
+          const lineIsPortions = effUnit === null
+            || effUnit === 'unidad'
+            || effUnit === 'porcion' || effUnit === 'porción' || effUnit === 'porciones'
+          if (lineIsPortions) {
+            total += c.qty * l1.cost
+            continue
+          }
         }
-        // Receta intermedia sin costo → caer al costo directo del item
+        // Receta intermedia sin costo confiable (o línea en masa/volumen)
+        // → caer al costo directo del item
       }
-      const { cost, known } = rowCost(ri)
-      if (!known) missing += 1
-      total += cost
+      const r = rowCost(ri)
+      if (!r.known) addMissing(r.missingName)
+      total += r.cost
     }
     result.set(rid, {
       cost: Math.round(total * 100) / 100,
       ingredients: rows.length,
       missing,
+      missingNames,
+      confiable: missing === 0,
     })
   }
 

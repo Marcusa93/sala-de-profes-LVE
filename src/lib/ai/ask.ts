@@ -433,31 +433,45 @@ async function runMargen(admin: SupabaseClient, plan: QueryPlan): Promise<AskRes
   const withRecipe = items.filter((m) => m.recipe_id && Number(m.sale_price) > 0)
   const costs = await costRecipes(admin, [...new Set(withRecipe.map((m) => m.recipe_id!))])
 
+  // Solo entran al ranking los platos con costo CONFIABLE completo (todas las
+  // líneas con fuente compra/manual/producción). El resto queda afuera y se
+  // avisa cuántos son — un margen con costos fantasma es peor que ninguno.
+  let excluidos = 0
   const list = withRecipe.map((m) => {
     const c = costs.get(m.recipe_id!)
     const costo = c?.cost ?? 0
     const precio = Number(m.sale_price)
-    return { plato: m.name, precio, costo, margen: precio - costo, pct: precio > 0 ? ((precio - costo) / precio) * 100 : 0, incompleto: (c?.missing ?? 0) > 0 }
-  }).filter((r) => r.costo > 0)
+    return { plato: m.name, precio, costo, margen: precio - costo, pct: precio > 0 ? ((precio - costo) / precio) * 100 : 0, confiable: c?.confiable === true }
+  }).filter((r) => {
+    if (r.confiable && r.costo > 0) return true
+    excluidos += 1
+    return false
+  })
 
   const matched = list.length
   list.sort((a, b) => (plan.orden === 'peor_margen' ? a.margen - b.margen : b.margen - a.margen))
 
   const rows = list.slice(0, plan.limite ?? 15).map((r) => ({
-    plato: r.plato + (r.incompleto ? ' *' : ''),
+    plato: r.plato,
     precio: money(r.precio), costo: money(r.costo), margen: money(r.margen), pct: `${Math.round(r.pct)}%`,
   }))
 
   const promedio = matched > 0 ? list.reduce((s, r) => s + r.pct, 0) / matched : 0
   const answer = matched === 0
-    ? 'No hay platos con receta y precio como para calcular margen.'
+    ? (excluidos > 0
+        ? `No hay platos con costo real completo todavía (${excluidos} quedaron afuera por insumos sin precio de compra, manual o de producción).`
+        : 'No hay platos con receta y precio como para calcular margen.')
     : focoEncontrado
       ? `${list[0].plato}: se vende a ${money(list[0].precio)}, cuesta ${money(list[0].costo)} y deja ${money(list[0].margen)} (${Math.round(list[0].pct)}%).`
-      : `${matched} platos costeados. Margen promedio ${Math.round(promedio)}%. ${plan.orden === 'peor_margen' ? 'Los que menos dejan, primero.' : 'Los que más dejan, primero.'}`
+      : `${matched} platos con costo real. Margen promedio ${Math.round(promedio)}%. ${plan.orden === 'peor_margen' ? 'Los que menos dejan, primero.' : 'Los que más dejan, primero.'}`
 
   return {
     plan, answer, matched, rows, via: 'reglas', href: '/ventas?m=carta',
-    note: [filtroMargen.aviso, 'El costo sale de la receta cargada. Los marcados con * tienen algún ingrediente sin costo, así que el margen real es menor.'].filter(Boolean).join(' '),
+    note: [
+      filtroMargen.aviso,
+      'El costo sale de la receta con precios reales (compra/manual/producción).',
+      excluidos > 0 ? `${excluidos} ${excluidos === 1 ? 'plato quedó afuera' : 'platos quedaron afuera'} del ranking por no tener costo real completo.` : null,
+    ].filter(Boolean).join(' '),
     columns: [
       { key: 'plato', label: 'Plato' },
       { key: 'precio', label: 'Precio', align: 'right' },

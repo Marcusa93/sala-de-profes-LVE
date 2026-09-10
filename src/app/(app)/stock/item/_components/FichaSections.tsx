@@ -19,6 +19,7 @@ import {
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import { formatQty } from '@/lib/stock/helpers'
+import { esCostoConfiable, etiquetaFuenteCosto } from '@/lib/costos/confiable'
 import type {
   FichaFudo,
   FichaItem,
@@ -183,7 +184,24 @@ export function StockMirror({
         />
         <Meta label="Vida útil" value={item.shelf_life_days ? `${item.shelf_life_days} días` : 'Sin definir'} />
         <Meta label="Último conteo" value={item.last_counted_at ? fecha(item.last_counted_at) : 'Nunca'} />
-        <Meta label="Costo LVE" value={money(item.cost_per_unit)} />
+        {/* Costo: número SOLO con fuente confiable (compra/manual/producción).
+            El costo de la API de Fudo no es real → referencia gris rotulada. */}
+        {esCostoConfiable(item.cost_source, item.cost_per_unit) ? (
+          <Meta
+            label="Costo LVE"
+            value={`${money(item.cost_per_unit)} · ${etiquetaFuenteCosto(item.cost_source)}${item.cost_updated_at ? ` · ${fecha(item.cost_updated_at, 'd MMM')}` : ''}`}
+          />
+        ) : (
+          <div className="min-w-0">
+            <dt className="text-[9px] font-bold uppercase tracking-wide text-[#a39e97]">Costo LVE</dt>
+            <dd className="truncate font-semibold text-[#a39e97]">
+              sin costo real
+              {item.cost_per_unit != null && item.cost_per_unit > 0 && (
+                <span className="font-normal"> · {money(item.cost_per_unit)} según Fudo (no usado)</span>
+              )}
+            </dd>
+          </div>
+        )}
         <Meta label="Costo Fudo" value={money(fudo.fudo_cost)} />
         {fudo.last_sync && (
           <Meta
@@ -378,10 +396,14 @@ export function PricesBlock({
       {prices.receipts.length === 0 ? (
         <div className="mt-2">
           <Empty text="Sin recepciones cargadas: no hay historial de precio de compra." />
+          {/* Igual que el resto de la ficha: número SOLO con fuente confiable;
+              lo demás va en gris y rotulado, nunca como precio de referencia. */}
           <p className="text-center text-[10px] text-[#a39e97]">
-            {prices.item_cost_per_unit || prices.fudo_cost
-              ? `Costo de referencia: ${money(prices.item_cost_per_unit ?? prices.fudo_cost)} / ${unit}`
-              : 'Se llena al marcar “Recibido” en Pedidos.'}
+            {esCostoConfiable(prices.item_cost_source, prices.item_cost_per_unit)
+              ? `Costo de referencia: ${money(prices.item_cost_per_unit)} / ${unit}`
+              : (prices.item_cost_per_unit || prices.fudo_cost)
+                ? `sin costo real · ${money(prices.item_cost_per_unit ?? prices.fudo_cost)} según Fudo (no usado)`
+                : 'Se llena al marcar “Recibido” en Pedidos.'}
           </p>
         </div>
       ) : (

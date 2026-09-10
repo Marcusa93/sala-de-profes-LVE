@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
+import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
 // ---------------------------------------------------------------------------
 // POST /api/stock/receive — Recepción de mercadería (encargado, teléfono en mano)
@@ -89,9 +90,19 @@ export async function POST(request: NextRequest) {
     })
     if (receiptErr) console.error('[stock/receive] receipt no registrado:', receiptErr.message)
 
-    // 3) Actualizar costo unitario del item si vino el costo de compra
-    if (costPerUnit != null && costPerUnit !== item.cost_per_unit) {
-      await admin.from('stock_items').update({ cost_per_unit: costPerUnit }).eq('id', stockItemId)
+    // 3) Actualizar costo unitario del item si vino el costo de compra.
+    //    Precio de compra real → cost_source 'compra' (fuente CONFIABLE).
+    if (costPerUnit != null) {
+      const costUpdate = {
+        cost_per_unit: costPerUnit,
+        cost_source: 'compra',
+        cost_updated_at: new Date().toISOString(),
+      }
+      const { error: costErr } = await admin.from('stock_items').update(costUpdate).eq('id', stockItemId)
+      if (costErr && esErrorColumnaFaltante(costErr.message, ['cost_source', 'cost_updated_at'])) {
+        // Migración pendiente: guardar al menos el costo
+        await admin.from('stock_items').update({ cost_per_unit: costPerUnit }).eq('id', stockItemId)
+      }
     }
 
     // 4) Lote de freezer opcional

@@ -109,65 +109,70 @@ export async function POST(request: NextRequest) {
         metadata: { productName, category, quantity, urgency, note },
       }).catch(() => {})
 
-      // 2) Create announcement for encargado
-      const urgencyLabels: Record<string, string> = {
-        normal: 'Normal',
-        alta: 'Alta',
-        urgente: 'Urgente',
+      // 2) Avisar a los encargados. El announcement es un FEED compartido:
+      // queda siempre (aunque el pedido lo cree un encargado/socio, el resto
+      // lo ve). Lo único que se evita es autonotificar al CREADOR por email/push.
+      {
+        const urgencyLabels: Record<string, string> = {
+          normal: 'Normal',
+          alta: 'Alta',
+          urgente: 'Urgente',
+        }
+        const priorityMap: Record<string, string> = {
+          normal: 'media',
+          alta: 'alta',
+          urgente: 'critica',
+        }
+
+        // Get user name from profile
+        const { data: profile } = await admin
+          .from('profiles')
+          .select('first_name, last_name')
+          .eq('id', user.id)
+          .single()
+
+        const authorName = profile
+          ? `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'Barista'
+          : 'Barista'
+
+        // Contexto de consumo semanal del insumo (best-effort: si falla o
+        // tarda, las notificaciones salen igual sin esa línea — jamás bloquea)
+        let consumptionCtx: string | undefined
+        try {
+          consumptionCtx = (
+            await getConsumptionContextWithTimeout(admin, [String(productName)])
+          ).get(String(productName))
+        } catch { /* notificación normal sin contexto */ }
+
+        const itemLine = `${productName} — ${quantity}${consumptionCtx ? ` · ${consumptionCtx}` : ''}`
+
+        await admin.from('announcements').insert({
+          author_id: user.id,
+          type: 'operativo',
+          priority: priorityMap[urgency] || 'media',
+          title: `☕ Pedido de Barra — ${urgencyLabels[urgency] || 'Normal'}`,
+          body: `${authorName} solicita: ${itemLine}${note ? `\nNota: ${note}` : ''}`,
+          scope: 'role',
+          target_role: 'encargado',
+          is_active: true,
+        })
+
+        // Email to encargados + socios (sin el creador: no se autonotifica)
+        notifyOrderToEncargados({
+          type: 'barra',
+          authorName,
+          items: [{ name: productName, quantity }],
+          urgency: urgency || 'normal',
+          note,
+          excludeUserId: user.id,
+        }).catch(() => {})
+
+        notifyEvent(admin, 'purchase_created', {
+          title: '🛒 Nuevo pedido de barra',
+          body: `${authorName}: ${itemLine}`,
+          url: '/pedidos',
+        }, { excludeUserId: user.id }).catch(() => {})
       }
-      const priorityMap: Record<string, string> = {
-        normal: 'media',
-        alta: 'alta',
-        urgente: 'critica',
-      }
-
-      // Get user name from profile
-      const { data: profile } = await admin
-        .from('profiles')
-        .select('first_name, last_name')
-        .eq('id', user.id)
-        .single()
-
-      const authorName = profile
-        ? `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'Barista'
-        : 'Barista'
-
-      // Contexto de consumo semanal del insumo (best-effort: si falla o
-      // tarda, las notificaciones salen igual sin esa línea — jamás bloquea)
-      let consumptionCtx: string | undefined
-      try {
-        consumptionCtx = (
-          await getConsumptionContextWithTimeout(admin, [String(productName)])
-        ).get(String(productName))
-      } catch { /* notificación normal sin contexto */ }
-
-      const itemLine = `${productName} — ${quantity}${consumptionCtx ? ` · ${consumptionCtx}` : ''}`
-
-      await admin.from('announcements').insert({
-        author_id: user.id,
-        type: 'operativo',
-        priority: priorityMap[urgency] || 'media',
-        title: `☕ Pedido de Barra — ${urgencyLabels[urgency] || 'Normal'}`,
-        body: `${authorName} solicita: ${itemLine}${note ? `\nNota: ${note}` : ''}`,
-        scope: 'role',
-        target_role: 'encargado',
-        is_active: true,
-      })
-
-      // Email to encargados + socios
-      notifyOrderToEncargados({
-        type: 'barra',
-        authorName,
-        items: [{ name: productName, quantity }],
-        urgency: urgency || 'normal',
-        note,
-      }).catch(() => {})
-
-      notifyEvent(admin, 'purchase_created', {
-        title: '🛒 Nuevo pedido de barra',
-        body: `${authorName}: ${itemLine}`,
-        url: '/pedidos',
-      }).catch(() => {})
 
       return NextResponse.json({ success: true })
     }
@@ -179,12 +184,35 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'orderId y status requeridos' }, { status: 400 })
       }
 
-      const { error } = await admin
+      // Igual que la ruta de cocina: al pasar a 'ordered' queda la fecha de
+      // envío (la conciliación con gastos Fudo se ancla en ordered_at).
+      const statusUpdate: Record<string, unknown> = { status }
+      if (status === 'ordered') statusUpdate.ordered_at = new Date().toISOString()
+      let { error } = await admin
         .from('bar_orders')
-        .update({ status })
+        .update(statusUpdate)
         .eq('id', orderId)
+      if (error && /ordered_at/.test(error.message)) {
+        // Migración pendiente: sin la columna, al menos el estado cambia
+        ;({ error } = await admin.from('bar_orders').update({ status }).eq('id', orderId))
+      }
 
       if (error) throw error
+
+      // El insumo vinculado queda con fecha de "última vez pedido" también
+      // cuando el pedido pasa pending→ordered acá (flujo propone→envía).
+      // Best-effort y tolerante a migración pendiente de stock_item_id.
+      if (status === 'ordered') {
+        const { data: ord } = await admin
+          .from('bar_orders')
+          .select('stock_item_id')
+          .eq('id', orderId)
+          .maybeSingle()
+        const sid = (ord as { stock_item_id?: string | null } | null)?.stock_item_id
+        if (sid) {
+          await admin.from('stock_items').update({ last_ordered_at: new Date().toISOString() }).eq('id', sid).then(() => null, () => null)
+        }
+      }
 
       logAudit(admin, {
         userId: user.id,

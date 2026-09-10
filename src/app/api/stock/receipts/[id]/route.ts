@@ -11,6 +11,11 @@ import { fudoFetch } from '@/lib/fudoClient'
 // ---------------------------------------------------------------------------
 // Edita un recibo de compra: monto, nota, medio de pago, cantidad.
 // Si cambia la cantidad y el recibo tiene stock_item_id, aplica el delta a Fudo.
+// Estado de pago:
+//   'pagado'  → marca pagado (paid_at + paid_by) e intenta imputar en Fudo
+//   'a_pagar' → deshace un pago marcado por error (limpia paid_at/paid_by);
+//               un pago ya imputado en Fudo NO se revierte solo (se avisa).
+// Manager-only. Usado desde /pedidos (pestaña Pagos) y /pedidos/cuentas.
 //
 // DELETE /api/stock/receipts/[id]
 // ---------------------------------------------------------------------------
@@ -33,12 +38,13 @@ type ReceiptRow = {
   supplier_id: string | null
   order_id: number | null
   order_source: string | null
+  received_date: string | null
 }
 
 async function loadReceipt(admin: ReturnType<typeof createAdminClient>, receiptId: number): Promise<ReceiptRow | null> {
   const { data } = await admin
     .from('stock_receipts')
-    .select('id, stock_item_id, qty, unit, cost_total, cost_per_unit, note, payment_status, payment_method, supplier_id, order_id, order_source')
+    .select('id, stock_item_id, qty, unit, cost_total, cost_per_unit, note, payment_status, payment_method, supplier_id, order_id, order_source, received_date')
     .eq('id', receiptId)
     .maybeSingle()
   return (data as ReceiptRow | null) ?? null
@@ -99,6 +105,30 @@ export async function PATCH(
       const userName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
       logAudit(admin, { userId: user.id, userName, action: 'receipt_payment', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} marcado como pagado${newPaidMethod ? ` (${newPaidMethod})` : ''}${fudoSynced ? ' — imputado en Fudo' : ''}`, metadata: { receiptId, cost_total: receipt.cost_total, payment_method: newPaidMethod, fudoSynced } }).catch(() => {})
       return NextResponse.json({ success: true, paid_at: paidAt, fudoSynced })
+    }
+
+    // Deshacer un pago (volver a "a pagar") — gesto puro, sin editar campos.
+    // Si el pago se había imputado en Fudo (POST /expenses/{id}/payments), esa
+    // imputación NO se revierte sola: devolvemos fudoPaymentLinked para que la
+    // UI lo avise en el toast.
+    if (body.payment_status === 'a_pagar' && body.qty === undefined && body.cost_total === undefined && body.note === undefined) {
+      if (receipt.payment_status !== 'pagado') return NextResponse.json({ error: 'El recibo ya está a pagar' }, { status: 409 })
+      const { error: upErr } = await admin
+        .from('stock_receipts')
+        .update({ payment_status: 'a_pagar', paid_at: null, paid_by: null })
+        .eq('id', receiptId)
+      if (upErr) throw upErr
+
+      let fudoPaymentLinked = false
+      if (receipt.order_id && receipt.order_source) {
+        const table = receipt.order_source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+        const { data: order } = await admin.from(table).select('fudo_expense_id').eq('id', receipt.order_id).maybeSingle()
+        fudoPaymentLinked = Boolean((order as { fudo_expense_id?: string | null } | null)?.fudo_expense_id)
+      }
+
+      const userName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
+      logAudit(admin, { userId: user.id, userName, action: 'receipt_payment', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} devuelto a "a pagar"${fudoPaymentLinked ? ' — ojo: el pago imputado en Fudo no se revierte solo' : ''}`, metadata: { receiptId, payment_status: 'a_pagar', cost_total: receipt.cost_total, supplier_id: receipt.supplier_id, fudoPaymentLinked } }).catch(() => {})
+      return NextResponse.json({ success: true, paid_at: null, fudoPaymentLinked })
     }
 
     // Edición de campos
@@ -196,6 +226,31 @@ export async function DELETE(
         stockReversed = true
         fudoReversed = write.fudoSynced
         if (!write.success) console.warn('[DELETE receipt] Stock reversal failed:', write.error)
+      }
+    }
+
+    // 1b) Si la recepción creó un lote por vencimiento (lot_code 'REC-…'),
+    //     eliminarlo también — best-effort: si stock_lots no existe o no hay
+    //     match exacto, la anulación sigue igual. El cost_source sellado por
+    //     la compra NO se revierte: el precio pagado fue real de todos modos.
+    if (receipt.stock_item_id && receipt.qty > 0) {
+      try {
+        const { data: lots } = await admin
+          .from('stock_lots')
+          .select('id, lot_code, qty_original, qty_remaining, created_at')
+          .eq('stock_item_id', receipt.stock_item_id)
+          .like('lot_code', receipt.received_date ? `REC-${receipt.received_date}-%` : 'REC-%')
+          .eq('qty_original', receipt.qty)
+          .is('production_output_id', null)
+          .order('created_at', { ascending: false })
+          .limit(1)
+        const lot = (lots ?? [])[0] as { id: number } | undefined
+        if (lot) {
+          const { error: lotErr } = await admin.from('stock_lots').delete().eq('id', lot.id)
+          if (lotErr) console.warn('[DELETE receipt] Lote de recepción no eliminado:', lotErr.message)
+        }
+      } catch (lotErr) {
+        console.warn('[DELETE receipt] stock_lots no disponible:', lotErr instanceof Error ? lotErr.message : lotErr)
       }
     }
 

@@ -790,10 +790,10 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       hasChanges = true
     }
 
-    if (fudoCost !== null && si.cost_per_unit !== fudoCost) {
-      update.cost_per_unit = fudoCost
-      hasChanges = true
-    }
+    // COSTO: el sync YA NO escribe cost_per_unit. Los costos de la API de Fudo
+    // no son reales (decisión de producto 2026-09): el costo solo entra por
+    // recepción de compra, carga manual o producción, con cost_source sellado.
+    // fudoCost se sigue leyendo únicamente para decidir si hay algo que espejar.
 
     // Unidad: Fudo manda, pero SOLO cuando además estamos espejando la cantidad
     // en esa unidad. Cambiar la etiqueta sin cambiar el número deja un dato
@@ -809,6 +809,25 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       if (scaleToFudoUnit !== null && scaleToFudoUnit !== 1 && si.min_qty && si.min_qty > 0) {
         update.min_qty = Math.round(si.min_qty * scaleToFudoUnit * 1000) / 1000
         hasChanges = true
+      }
+
+      // El costo unitario también se reexpresa: $/kg → $/g divide 1000. Si la
+      // unidad nueva no es convertible (kg → unidad), el número deja de tener
+      // sentido y se borra: mejor "sin costo real" que un costo fantasma.
+      if (si.cost_per_unit && si.cost_per_unit > 0) {
+        if (scaleToFudoUnit !== null && scaleToFudoUnit !== 1) {
+          update.cost_per_unit = Math.round((si.cost_per_unit / scaleToFudoUnit) * 10000) / 10000
+          // Reexpresado: misma fuente, pero la fecha del costo se refresca
+          update.cost_updated_at = new Date().toISOString()
+          hasChanges = true
+        } else if (scaleToFudoUnit === null) {
+          update.cost_per_unit = null
+          // Sin costo no puede quedar una fuente/fecha apuntando a la nada:
+          // el item vuelve a "sin dato" limpio.
+          update.cost_source = null
+          update.cost_updated_at = null
+          hasChanges = true
+        }
       }
     }
 
@@ -873,7 +892,14 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       continue
     }
 
-    const { error } = await admin.from('stock_items').update(update).eq('id', si.id)
+    let { error } = await admin.from('stock_items').update(update).eq('id', si.id)
+
+    // Migración de cost_source pendiente: guardar el resto igual (patrón usual)
+    if (error && isMissingColumnError(error.message, ['cost_source', 'cost_updated_at'])) {
+      delete update.cost_source
+      delete update.cost_updated_at
+      ;({ error } = await admin.from('stock_items').update(update).eq('id', si.id))
+    }
 
     if (error) {
       result.errors.push(`${si.id}: ${error.message}`)
@@ -1056,13 +1082,27 @@ export async function syncToFudo(
   // 3. Update Supabase only after Fudo accepted the change, or for local-only items.
   const itemUpdate: Record<string, unknown> = { current_qty: finalQty, updated_at: new Date().toISOString() }
   if (writeReason === 'physical_count') itemUpdate.last_counted_at = new Date().toISOString()
-  if (writeReason === 'reception' && options.costPerUnit && options.costPerUnit > 0) {
+  const isCostWrite = writeReason === 'reception' && Boolean(options.costPerUnit && options.costPerUnit > 0)
+  if (isCostWrite) {
+    // Costo de compra real → fuente CONFIABLE ('compra').
     itemUpdate.cost_per_unit = options.costPerUnit
+    itemUpdate.cost_source = 'compra'
+    itemUpdate.cost_updated_at = new Date().toISOString()
   }
-  const { error: dbError } = await admin
+  let { error: dbError } = await admin
     .from('stock_items')
     .update(itemUpdate)
     .eq('id', stockItemId)
+
+  // Migración de cost_source pendiente: guardar el resto igual (patrón usual)
+  if (dbError && isCostWrite && isMissingColumnError(dbError.message, ['cost_source', 'cost_updated_at'])) {
+    delete itemUpdate.cost_source
+    delete itemUpdate.cost_updated_at
+    ;({ error: dbError } = await admin
+      .from('stock_items')
+      .update(itemUpdate)
+      .eq('id', stockItemId))
+  }
 
   if (dbError) {
     await recordFudoIncident(admin, {

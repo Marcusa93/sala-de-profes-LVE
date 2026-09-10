@@ -93,6 +93,8 @@ function ProductRow({ row }: { row: ProductoControlRow }) {
                 ? ` (${fmt(row.merma_implicita_value)})`
                 : ''}
             </span>
+            {/* cost_per_unit ya viene gateado del server: número SOLO con
+                fuente confiable (compra/manual/produccion); si no, null acá. */}
             {row.cost_per_unit != null && (
               <>
                 <span>Costo unitario</span>

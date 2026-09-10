@@ -22,6 +22,7 @@ import {
 import {
   STOCK_AREAS, areaFromLveCategory, groupLabel, suggestedCountEveryDays, isStockArea, type StockArea,
 } from '@/lib/stock/areas'
+import { esCostoConfiable } from '@/lib/costos/confiable'
 import { CountSheet } from './_components/CountSheet'
 import { AskBar } from '@/components/ai/AskBar'
 
@@ -126,13 +127,21 @@ function StockPageContent() {
 
   // ── Derivados ──
   const perArea = useMemo(() => {
-    const map = new Map<StockArea | 'all', { count: number; critical: number; value: number; due: number }>()
+    const map = new Map<StockArea | 'all', { count: number; critical: number; value: number; due: number; valued: number; withStock: number }>()
     const bump = (key: StockArea | 'all', item: StockItem) => {
-      const cur = map.get(key) ?? { count: 0, critical: 0, value: 0, due: 0 }
+      const cur = map.get(key) ?? { count: 0, critical: 0, value: 0, due: 0, valued: 0, withStock: 0 }
       cur.count++
       if (getSemaphore(item) === 'red') cur.critical++
       if (isCountDue(item)) cur.due++
-      if (item.cost_per_unit && item.current_qty > 0) cur.value += item.current_qty * item.cost_per_unit
+      // Valorización SOLO con costo confiable (compra/manual/producción):
+      // sumar costos Fudo/estimados inventaba plata.
+      if (item.current_qty > 0) {
+        cur.withStock++
+        if (esCostoConfiable(item.cost_source, item.cost_per_unit)) {
+          cur.value += item.current_qty * (item.cost_per_unit ?? 0)
+          cur.valued++
+        }
+      }
       map.set(key, cur)
     }
     for (const item of items) { bump(areaOf(item), item); bump('all', item) }
@@ -193,7 +202,7 @@ function StockPageContent() {
     )
   }
 
-  const total = perArea.get('all') ?? { count: 0, critical: 0, value: 0, due: 0 }
+  const total = perArea.get('all') ?? { count: 0, critical: 0, value: 0, due: 0, valued: 0, withStock: 0 }
   const fudoBlocked = fudo?.state === 'error'
   const fudoUi = fudoBlocked
     ? { label: 'Fudo bloqueado', cls: 'bg-[#fff7f7] text-[#ea504c] ring-[#f3d0cf]', Icon: AlertTriangle }
@@ -213,7 +222,7 @@ function StockPageContent() {
             <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">Stock</h1>
             <p className="mt-0.5 text-[12px] text-[#7d6c64]">
               {total.count} insumos
-              {isManager && total.value > 0 && <> · <span className="font-semibold text-[#3d2c24]">${Math.round(total.value).toLocaleString('es-AR')}</span> en stock</>}
+              {isManager && total.value > 0 && <> · <span className="font-semibold text-[#3d2c24]">${Math.round(total.value).toLocaleString('es-AR')}</span> valor real ({total.valued} de {total.withStock} con precio)</>}
               {total.critical > 0 && <> · <span className="font-semibold text-[#ea504c]">{total.critical} críticos</span></>}
             </p>
           </div>
@@ -397,7 +406,10 @@ function StockRow({ item, showMoney, onClick }: { item: StockItem; showMoney: bo
   const source = getStockSource(item)
   const since = daysSince(item.last_counted_at)
   const due = isCountDue(item)
-  const value = showMoney && item.cost_per_unit && item.current_qty > 0 ? Math.round(item.current_qty * item.cost_per_unit) : null
+  // $ por fila SOLO con costo confiable — un número de Fudo acá es fantasía
+  const value = showMoney && esCostoConfiable(item.cost_source, item.cost_per_unit) && item.current_qty > 0
+    ? Math.round(item.current_qty * (item.cost_per_unit ?? 0))
+    : null
 
   return (
     <button onClick={onClick} className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-[#faf8f5]">

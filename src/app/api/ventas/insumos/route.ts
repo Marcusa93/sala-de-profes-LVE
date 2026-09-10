@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
+import { esCostoConfiable, esErrorColumnaFaltante } from '@/lib/costos/confiable'
+import { toStockUnitStrict } from '@/lib/recipes/recipe-cost'
 
 // ---------------------------------------------------------------------------
 // GET /api/ventas/insumos?days=7
@@ -237,20 +239,45 @@ export async function GET(request: NextRequest) {
       .not('stock_item_id', 'is', null)
     const wasteIds = new Set((wasteOutputs ?? []).map(w => w.stock_item_id as string))
 
-    // 7. Detalle de los insumos consumidos + costo estimado
+    // 7. Detalle de los insumos consumidos + costo (SOLO fuentes confiables:
+    //    compra/manual/producción — el costo Fudo no se valoriza).
     const finalIds = [...consumed.keys()].filter(id => !wasteIds.has(id))
-    const { data: stockItems, error: siError } = await admin
-      .from('stock_items')
-      .select('id, name, unit, cost_per_unit, is_active')
-      .in('id', finalIds)
-    if (siError) throw new Error(siError.message)
+    type SiRow = { id: string; name: string; unit: string; cost_per_unit: number | null; cost_source?: string | null; is_active: boolean }
+    let hasCostSource = true
+    let stockItems: SiRow[]
+    {
+      const res = await admin
+        .from('stock_items')
+        .select('id, name, unit, cost_per_unit, cost_source, is_active')
+        .in('id', finalIds)
+      if (res.error && esErrorColumnaFaltante(res.error.message, ['cost_source'])) {
+        hasCostSource = false
+        const legacy = await admin
+          .from('stock_items')
+          .select('id, name, unit, cost_per_unit, is_active')
+          .in('id', finalIds)
+        if (legacy.error) throw new Error(legacy.error.message)
+        stockItems = (legacy.data ?? []) as SiRow[]
+      } else if (res.error) {
+        throw new Error(res.error.message)
+      } else {
+        stockItems = (res.data ?? []) as SiRow[]
+      }
+    }
 
     const items: InsumoRow[] = (stockItems ?? [])
       .filter(si => si.is_active)
       .map(si => {
         const c = consumed.get(si.id)!
         const qtyInStockUnit = toStockUnit(c.qty, c.unit, si.unit)
-        const cost = si.cost_per_unit != null ? Math.round(qtyInStockUnit * Number(si.cost_per_unit)) : null
+        const confiable = hasCostSource
+          ? esCostoConfiable(si.cost_source ?? null, si.cost_per_unit)
+          : Number(si.cost_per_unit ?? 0) > 0
+        // Para el $ la conversión debe ser estricta: unidad incompatible = sin costo
+        const qtyForCost = toStockUnitStrict(c.qty, c.unit, si.unit)
+        const cost = confiable && qtyForCost !== null
+          ? Math.round(qtyForCost * Number(si.cost_per_unit))
+          : null
         return {
           stock_item_id: si.id,
           name: si.name,

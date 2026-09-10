@@ -14,6 +14,21 @@ function norm(unit: string | null | undefined): string {
 }
 
 /**
+ * Unidad tipeada dentro de una cantidad libre ('500 g', '2,5 kg', '3 un').
+ * Devuelve la unidad canónica ('g', 'kg', 'l', 'ml', 'lt', 'unidad') o null si
+ * no trae unidad. Es la MISMA regla en cliente y server: la conversión de
+ * verdad la hace convertQty/normalizeToStockUnit.
+ */
+export function parseTypedUnit(raw: string | null | undefined): string | null {
+  const m = String(raw ?? '').toLowerCase().match(/\b(kg|g|gr|lt|l|ml|unidad(?:es)?|un|u)\b/)
+  if (!m) return null
+  const u = m[1]
+  if (u === 'u' || u === 'un' || u.startsWith('unidad')) return 'unidad'
+  if (u === 'gr') return 'g'
+  return u
+}
+
+/**
  * Convierte qty de una unidad a otra. Devuelve null si las unidades no son
  * compatibles (ej. kg → unidad), en cuyo caso el caller debe rechazar.
  */

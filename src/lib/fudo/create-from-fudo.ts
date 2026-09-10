@@ -12,6 +12,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getFudoToken } from '@/lib/fudoClient'
 import { readFudoStock, type FudoIngredient } from '@/lib/fudo/stock-sync'
+import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -142,17 +143,26 @@ export async function createStockItemsFromIngredients(
       result.skipped++
       continue
     }
-    const { error } = await admin.from('stock_items').insert({
+    const hasCost = ing.cost != null && ing.cost > 0
+    const basePayload = {
       name: ing.name,
       unit: ing.unit,
-      cost_per_unit: ing.cost != null && ing.cost > 0 ? ing.cost : null,
+      cost_per_unit: hasCost ? ing.cost : null,
       current_qty: typeof ing.stock === 'number' ? Math.round(ing.stock * 100) / 100 : 0,
       fudo_ingredient_id: ing.id,
       is_active: true,
       category: 'otros',
       semaphore: 'green',
       updated_at: now,
-    })
+    }
+    // Costo inicial tomado de Fudo al CREAR el item: se marca 'fudo' (fuente
+    // NO confiable) — la UI no lo muestra como costo real.
+    let { error } = await admin.from('stock_items').insert(
+      hasCost ? { ...basePayload, cost_source: 'fudo', cost_updated_at: now } : basePayload,
+    )
+    if (error && hasCost && esErrorColumnaFaltante(error.message, ['cost_source', 'cost_updated_at'])) {
+      ;({ error } = await admin.from('stock_items').insert(basePayload))
+    }
     if (error) {
       result.errors.push(`${ing.name}: ${error.message}`)
     } else {

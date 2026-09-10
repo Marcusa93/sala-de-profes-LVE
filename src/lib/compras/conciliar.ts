@@ -77,7 +77,7 @@ export async function loadOrderedOrders(admin: SupabaseClient): Promise<OrderFor
 }
 
 /** ids de gastos Fudo ya usados por algún pedido (para no vincular dos veces). */
-async function loadLinkedExpenseIds(admin: SupabaseClient): Promise<Set<string>> {
+export async function loadLinkedExpenseIds(admin: SupabaseClient): Promise<Set<string>> {
   const linked = new Set<string>()
   for (const table of ['kitchen_orders', 'bar_orders'] as const) {
     const res = await admin.from(table).select('fudo_expense_id').not('fudo_expense_id', 'is', null)
@@ -91,7 +91,7 @@ async function loadLinkedExpenseIds(admin: SupabaseClient): Promise<Set<string>>
  * Propone, para cada pedido en camino, el gasto de Fudo que mejor lo explica.
  * No escribe nada.
  */
-export async function matchOrdersWithExpenses(admin: SupabaseClient, options: { sinceDays?: number } = {}): Promise<{
+export async function matchOrdersWithExpenses(admin: SupabaseClient, options: { sinceDays?: number; forceExpenses?: boolean } = {}): Promise<{
   matches: ExpenseMatch[]
   orders: OrderForMatch[]
   expenses_considered: number
@@ -102,7 +102,7 @@ export async function matchOrdersWithExpenses(admin: SupabaseClient, options: { 
   const sinceDays = options.sinceDays ?? 21
   const sinceISO = new Date(Date.now() - sinceDays * 86_400_000).toISOString()
   const [expenses, { data: suppliers }, linkedIds, { data: stockItems }] = await Promise.all([
-    fetchFudoExpenses(sinceISO),
+    fetchFudoExpenses(sinceISO, { force: options.forceExpenses }),
     admin.from('suppliers').select('id, name, fudo_provider_id'),
     loadLinkedExpenseIds(admin),
     admin.from('stock_items').select('id, fudo_ingredient_id').not('fudo_ingredient_id', 'is', null),

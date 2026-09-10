@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isKitchenRole } from '@/lib/roles'
 import { costRecipes, canon, toStockUnit } from '@/lib/recipes/recipe-cost'
+import { esCostoConfiable, esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
 // ---------------------------------------------------------------------------
 // GET /api/stock/cadena?item=<stock_item_id>
@@ -212,20 +213,25 @@ const cache = new Map<string, { at: number; payload: CadenaPayload }>()
 
 // --- Helpers de dominio --------------------------------------------------
 
-type StockItemLite = { id: string; name: string; unit: string; cost_per_unit: number | null }
+type StockItemLite = { id: string; name: string; unit: string; cost_per_unit: number | null; cost_source?: string | null }
 
-/** Costo en $ de `qty` de un insumo, convirtiendo unidades. */
+/**
+ * Costo en $ de `qty` de un insumo, convirtiendo unidades.
+ * `usable` = el costo del item pasó el gating de fuente confiable
+ * (compra/manual/producción); si es false la línea no se valoriza.
+ */
 function lineCost(
   qty: number,
   unit: string | null,
   item: StockItemLite | undefined,
+  usable: boolean,
 ): { costo: number | null; qtyEnUnidadItem: number; dudosa: boolean } {
   if (!item) return { costo: null, qtyEnUnidadItem: qty, dudosa: true }
   const c = canon(qty, unit)
   const qtyItem = toStockUnit(c.qty, c.unit, item.unit)
   // Unidad dudosa: no coincide con la del insumo y la conversión la dejó igual
   const dudosa = !!c.unit && c.unit !== item.unit.trim().toLowerCase() && qtyItem === c.qty
-  if (item.cost_per_unit == null) return { costo: null, qtyEnUnidadItem: qtyItem, dudosa }
+  if (!usable || item.cost_per_unit == null) return { costo: null, qtyEnUnidadItem: qtyItem, dudosa }
   return { costo: round(qtyItem * Number(item.cost_per_unit)), qtyEnUnidadItem: qtyItem, dudosa }
 }
 
@@ -239,12 +245,31 @@ export async function buildCadena(
   itemId: string,
 ): Promise<CadenaPayload | null> {
   {
-    const { data: itemRow, error: itemErr } = await admin
+    // Select tolerante a la migración de costo confiable (20260909) pendiente
+    let hasCostSource = true
+    let itemRes = await admin
       .from('stock_items')
-      .select('id, name, unit, category, current_qty, cost_per_unit, is_produced')
+      .select('id, name, unit, category, current_qty, cost_per_unit, cost_source, is_produced')
       .eq('id', itemId)
       .single()
+    if (itemRes.error && esErrorColumnaFaltante(itemRes.error.message, ['cost_source'])) {
+      hasCostSource = false
+      itemRes = await admin
+        .from('stock_items')
+        .select('id, name, unit, category, current_qty, cost_per_unit, is_produced')
+        .eq('id', itemId)
+        .single() as typeof itemRes
+    }
+    const { data: itemRow, error: itemErr } = itemRes
     if (itemErr || !itemRow) return null
+
+    /** Gating único: ¿el cost_per_unit de este item es un costo REAL usable? */
+    const costoUsable = (i: { cost_per_unit: number | null; cost_source?: string | null } | undefined | null): boolean => {
+      if (!i) return false
+      return hasCostSource
+        ? esCostoConfiable(i.cost_source ?? null, i.cost_per_unit)
+        : Number(i.cost_per_unit ?? 0) > 0 // columna aún no migrada → criterio legacy
+    }
 
     const item = {
       id: itemRow.id,
@@ -255,6 +280,7 @@ export async function buildCadena(
       cost_per_unit: itemRow.cost_per_unit != null ? Number(itemRow.cost_per_unit) : null,
       is_produced: !!itemRow.is_produced,
     }
+    const itemCostConfiable = costoUsable(itemRow as { cost_per_unit: number | null; cost_source?: string | null })
 
     const sinceLong = arWindowStartUTC(WINDOW_LONG)
     const sinceShort = arWindowStartUTC(WINDOW_SHORT)
@@ -508,10 +534,12 @@ export async function buildCadena(
           .from('recipe_ingredients')
           .select('recipe_id, stock_item_id, qty_per_portion, ingredient_unit')
           .in('stock_item_id', intermedioIds),
-        admin.from('stock_items').select('id, name, unit, cost_per_unit').in('id', intermedioIds),
+        admin.from('stock_items')
+          .select(hasCostSource ? 'id, name, unit, cost_per_unit, cost_source' : 'id, name, unit, cost_per_unit')
+          .in('id', intermedioIds),
       ])
       riL2 = (riL2Res.data ?? []) as RiL2[]
-      intermedioItems = new Map(((intItemsRes.data ?? []) as StockItemLite[]).map(i => [i.id, i]))
+      intermedioItems = new Map(((intItemsRes.data ?? []) as unknown as StockItemLite[]).map(i => [i.id, i]))
     }
 
     // recipe_id → { qty insumo por porción, vía, nombre del intermedio }
@@ -534,11 +562,11 @@ export async function buildCadena(
       })
     }
 
-    // Intermedios sin costo ni receta propia: los platos que pasan por ahí
-    // tienen el costo por porción subestimado. Se avisa con nombre y apellido.
+    // Intermedios sin costo REAL ni receta propia: los platos que pasan por
+    // ahí tienen el costo por porción subestimado. Se avisa con nombre y apellido.
     const intermediosMudos = [...intermedios.keys()]
       .map(id => intermedioItems.get(id))
-      .filter((i): i is StockItemLite => !!i && (i.cost_per_unit == null || Number(i.cost_per_unit) <= 0))
+      .filter((i): i is StockItemLite => !!i && !costoUsable(i))
       .filter(i => !recipeByOutput.has(i.id) && !recipeByName.has(i.name.trim().toLowerCase()))
 
     const recipeIdsVenta = [...linkByRecipe.keys()]
@@ -584,9 +612,9 @@ export async function buildCadena(
       }
 
       const recipeCosts = await costRecipes(admin, [...new Set((menuItems ?? []).map(m => m.recipe_id as string))])
-      // Si el insumo no tiene costo propio cargado, costRecipes lo cuenta como
-      // $0 y el margen de cada plato queda inflado. Lo decimos en vez de callarlo.
-      const costoPropioAusente = item.cost_per_unit == null || item.cost_per_unit <= 0
+      // Si el insumo no tiene costo REAL propio, costRecipes lo cuenta como
+      // missing y el margen de cada plato queda inflado. Lo decimos en vez de callarlo.
+      const costoPropioAusente = !itemCostConfiable
 
       platos = (menuItems ?? []).map(mi => {
         const link = linkByRecipe.get(mi.recipe_id as string)
@@ -595,11 +623,15 @@ export async function buildCadena(
         const precio = agg && agg.pricedUnits > 0
           ? round(agg.pricedRevenue / agg.pricedUnits)
           : (mi.sale_price != null && Number(mi.sale_price) > 0 ? Number(mi.sale_price) : null)
-        const costo = rc && rc.cost > 0 ? rc.cost : null
+        // Solo se muestra costo cuando TODAS las líneas son confiables
+        const costo = rc && rc.confiable && rc.cost > 0 ? rc.cost : null
         const margen = precio != null && costo != null ? round(precio - costo) : null
         let motivo: string | null = null
-        if (costo == null) motivo = 'Receta sin costo — falta precio en sus ingredientes'
-        else if (precio == null) motivo = 'Sin precio de venta registrado'
+        if (costo == null) {
+          motivo = rc && rc.missingNames.length > 0
+            ? `Sin costo real — faltan precios de: ${rc.missingNames.join(', ')}`
+            : 'Receta sin costo real — falta precio en sus ingredientes'
+        } else if (precio == null) motivo = 'Sin precio de venta registrado'
         return {
           menu_item_id: mi.id,
           name: mi.name,
@@ -641,9 +673,9 @@ export async function buildCadena(
       if (allInputIds.length > 0) {
         const { data: catRows } = await admin
           .from('stock_items')
-          .select('id, name, unit, cost_per_unit')
+          .select(hasCostSource ? 'id, name, unit, cost_per_unit, cost_source' : 'id, name, unit, cost_per_unit')
           .in('id', allInputIds)
-        catalogo = new Map(((catRows ?? []) as StockItemLite[]).map(i => [i.id, i]))
+        catalogo = new Map(((catRows ?? []) as unknown as StockItemLite[]).map(i => [i.id, i]))
       }
 
       // Insumos base del eslabón 1 (ahora que tenemos el catálogo)
@@ -652,7 +684,7 @@ export async function buildCadena(
         let algunoSinCosto = false
         compra.insumos = insumosRows.map(r => {
           const base = catalogo.get(r.stock_item_id)
-          const { costo, dudosa } = lineCost(r.qty, r.unit, base)
+          const { costo, dudosa } = lineCost(r.qty, r.unit, base, costoUsable(base))
           if (costo == null) algunoSinCosto = true
           else totalInsumos += costo
           return {
@@ -675,8 +707,9 @@ export async function buildCadena(
       const costoPorOrden = new Map<number, { total: number; parcial: boolean }>()
       for (const inp of inputsDeOrdenes) {
         const base = inp.stock_item_id ? catalogo.get(inp.stock_item_id) : undefined
+        // Congelado por la tanda primero; el costo vigente solo si es REAL
         const frozen = inp.cost_per_unit != null ? Number(inp.cost_per_unit) : null
-        const unitCost = frozen ?? (base?.cost_per_unit != null ? Number(base.cost_per_unit) : null)
+        const unitCost = frozen ?? (costoUsable(base) && base?.cost_per_unit != null ? Number(base.cost_per_unit) : null)
         const entry = costoPorOrden.get(inp.production_order_id) ?? { total: 0, parcial: false }
         if (unitCost == null || unitCost <= 0) {
           entry.parcial = true
@@ -761,10 +794,11 @@ export async function buildCadena(
     let facturacion = 0
     let platosCosteados = 0
 
-    // Costo unitario de referencia del insumo, en orden de confianza
+    // Costo unitario de referencia del insumo, en orden de confianza.
+    // El costo cargado en la ficha solo cuenta si su fuente es REAL.
     const costoUnitarioRef = compra.ultima_compra?.cost_per_unit
       ?? produccion?.ultimo_costo_por_unidad
-      ?? item.cost_per_unit
+      ?? (itemCostConfiable ? item.cost_per_unit : null)
       ?? null
 
     for (const p of platos) {
@@ -785,13 +819,15 @@ export async function buildCadena(
 
     if (platos.length === 0) notas.push('Ningún plato activo con producto Fudo consume este insumo.')
     if (platos.length > 0 && platosCosteados < platos.length) {
-      notas.push(`${platos.length - platosCosteados} de ${platos.length} platos sin costo de receta — el margen mostrado es parcial.`)
+      notas.push(`${platos.length - platosCosteados} de ${platos.length} platos sin costo real de receta — el margen mostrado es parcial.`)
     }
     if (insumoConsumido != null && costoUnitarioRef == null) {
-      notas.push('Sin precio de referencia del insumo — no se puede valorizar lo consumido.')
+      notas.push('Sin precio real de referencia del insumo — no se valoriza lo consumido (el costo de Fudo no cuenta).')
     }
     if (compra.tipo === 'comprado' && receipts.length === 0) {
-      notas.push('Sin compras registradas con precio: se usa el costo cargado en la ficha.')
+      notas.push(itemCostConfiable
+        ? 'Sin compras registradas con precio: se usa el costo real cargado en la ficha.'
+        : 'Sin compras registradas con precio ni costo real en la ficha: nada se valoriza.')
     }
     if (compra.tipo === 'elaborado' && !recetaProductora) {
       notas.push('No hay receta que produzca este elaborado — el desglose sale de la última producción real.')
@@ -801,7 +837,7 @@ export async function buildCadena(
       notas.push(`El elaborado ${intermediosMudos.map(i => `«${i.name}»`).join(', ')} no tiene costo ni receta cargada: el costo por porción de los platos que lo usan queda subestimado.`)
     }
 
-    const costoPropioAusenteFlag = item.cost_per_unit == null || item.cost_per_unit <= 0
+    const costoPropioAusenteFlag = !itemCostConfiable
     if (costoPropioAusenteFlag && platos.some(p => p.margen_inflado)) {
       const sugerencia = produccion?.ultimo_costo_por_unidad != null
         ? ` La última producción salió $${Math.round(produccion.ultimo_costo_por_unidad).toLocaleString('es-AR')} por ${item.unit}.`

@@ -14,6 +14,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
 import { fudo } from '@/lib/fudoClient'
 import { logAudit } from '@/lib/audit'
+import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 import {
   createStockItemsFromIngredients,
   readFudoIngredientsWithUnit,
@@ -185,17 +186,25 @@ export async function POST(request: NextRequest) {
         skipped++
         continue
       }
-      const { error } = await admin.from('stock_items').insert({
+      const hasCost = prod.cost != null && prod.cost > 0
+      const basePayload = {
         name: prod.name,
         unit: 'unidad',
-        cost_per_unit: prod.cost != null && prod.cost > 0 ? prod.cost : null,
+        cost_per_unit: hasCost ? prod.cost : null,
         current_qty: typeof prod.stock === 'number' ? Math.round(prod.stock * 100) / 100 : 0,
         fudo_product_id: prod.id,
         is_active: true,
         category: 'otros',
         semaphore: 'green',
         updated_at: now,
-      })
+      }
+      // Costo inicial de Fudo → cost_source 'fudo' (no confiable, solo referencia)
+      let { error } = await admin.from('stock_items').insert(
+        hasCost ? { ...basePayload, cost_source: 'fudo', cost_updated_at: now } : basePayload,
+      )
+      if (error && hasCost && esErrorColumnaFaltante(error.message, ['cost_source', 'cost_updated_at'])) {
+        ;({ error } = await admin.from('stock_items').insert(basePayload))
+      }
       if (error) {
         errors.push(`${prod.name}: ${error.message}`)
       } else {

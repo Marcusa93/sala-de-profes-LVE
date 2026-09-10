@@ -28,7 +28,10 @@ import { fetchFudoExpenses } from '@/lib/fudo/expenses'
 //   food_cost_real_pct    = compras_total / revenue_total
 //   coverage_pct   = revenue costeado / revenue_total
 //
-// Nada estimado: platos sin precio o sin costo van a `sin_datos` con motivo.
+// Nada estimado: platos sin precio o sin costo CONFIABLE (compra/manual/
+// producción — ver src/lib/costos/confiable.ts) van a `sin_datos` con motivo.
+// food_cost_teorico_pct se calcula SOLO sobre platos confiables;
+// food_cost_real_pct (compras Fudo / ventas Fudo) es el único 100% real.
 // Solo managers. Cache en memoria de módulo: 5 min por ventana de días.
 // ---------------------------------------------------------------------------
 
@@ -186,6 +189,13 @@ export async function GET(request: NextRequest) {
       const avgPrice = agg.pricedUnits > 0 ? agg.pricedRevenue / agg.pricedUnits : 0
       if (avgPrice <= 0) {
         sinDatos.push({ menu_item_id: mi.id, name: mi.name, motivo: 'Sin precio en las ventas (modificador o precio en 0)' })
+        continue
+      }
+      // Gating de costo confiable: si alguna línea de la receta no tiene costo
+      // REAL (compra/manual/producción), el plato no se costea — nada estimado.
+      if (rc && rc.missing > 0) {
+        const nombres = rc.missingNames.length > 0 ? `: ${rc.missingNames.join(', ')}` : ''
+        sinDatos.push({ menu_item_id: mi.id, name: mi.name, motivo: `Faltan costos reales${nombres}` })
         continue
       }
       if (cost <= 0) {

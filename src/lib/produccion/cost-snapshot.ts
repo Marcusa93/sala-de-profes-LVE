@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
 // ---------------------------------------------------------------------------
 // Costo real de una producción — congelado y persistido.
@@ -98,7 +99,15 @@ export async function persistProductionCost(
         const blended = prevQty > 0 && prevCost > 0
           ? Math.round(((prevQty * prevCost + mainQty * costPerUnit) / (prevQty + mainQty)) * 100) / 100
           : costPerUnit
-        await admin.from('stock_items').update({ cost_per_unit: blended }).eq('id', main.stock_item_id)
+        // Fallback del RPC viejo: los insumos no pasaron el chequeo de fuentes
+        // del v7, así que este número es 'estimado' (NO confiable).
+        const { error: costErr } = await admin
+          .from('stock_items')
+          .update({ cost_per_unit: blended, cost_source: 'estimado', cost_updated_at: new Date().toISOString() })
+          .eq('id', main.stock_item_id)
+        if (costErr && esErrorColumnaFaltante(costErr.message, ['cost_source', 'cost_updated_at'])) {
+          await admin.from('stock_items').update({ cost_per_unit: blended }).eq('id', main.stock_item_id)
+        }
       }
     }
   } else {

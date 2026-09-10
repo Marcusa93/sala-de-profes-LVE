@@ -14,6 +14,8 @@ import { useProfileContext } from '@/lib/hooks/use-profile'
 import { createClient } from '@/lib/supabase/client'
 import { logAuditClient } from '@/lib/audit'
 import { isManagerOrAbove } from '@/lib/roles'
+import { esCostoConfiable } from '@/lib/costos/confiable'
+import { convertQty, parseTypedUnit } from '@/lib/produccion/units'
 import { cn } from '@/lib/utils'
 import { FadeIn, AnimatedNumber, motion } from '@/components/ui/motion'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -64,7 +66,7 @@ type Supplier = { id: string; name: string; phone: string | null; contact_name: 
 type Profile = { id: string; first_name: string; last_name: string }
 type StockLite = { id: string; name: string; unit: string; current_qty: number; fudo_skip?: boolean | null; fudo_ingredient_id?: string | null; fudo_product_id?: string | null }
 
-type ExpenseLite = { id: string; provider: string | null; providerId: string | null; date: string; amount: number; ingredientNames: string[] }
+type ExpenseLite = { id: string; provider: string | null; providerId: string | null; date: string; amount: number; ingredientIds: string[]; ingredientNames: string[] }
 type Match = { order_id: number; source: 'cocina' | 'barra'; strength: 'fuerte' | 'probable'; why: string; expense: ExpenseLite }
 type ConciliarPayload = { matches: Match[]; expenses: ExpenseLite[] }
 
@@ -89,6 +91,22 @@ const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
 
 function stripNonDigits(s: string): string { return s.replace(/\D/g, '') }
 function money(n: number) { return `$${Math.round(n).toLocaleString('es-AR')}` }
+
+/**
+ * Cantidad tipeada → número. Acepta coma decimal ('2,5' → 2.5): antes
+ * Number('2,5') daba NaN y el ítem desaparecía del pedido en silencio.
+ * Devuelve NaN si no hay número parseable.
+ */
+function parseQty(raw: string | undefined | null): number {
+  if (raw == null) return NaN
+  const n = parseFloat(String(raw).trim().replace(',', '.'))
+  return Number.isFinite(n) ? n : NaN
+}
+
+/** Número → cantidad legible con coma decimal (para el mensaje de WhatsApp). */
+function formatQty(n: number): string {
+  return String(Math.round(n * 1000) / 1000).replace('.', ',')
+}
 
 export default function PedidosPage() {
   return (
@@ -181,10 +199,10 @@ function PedidosContent() {
     }
   }, [])
 
-  const fetchConciliar = useCallback(async () => {
+  const fetchConciliar = useCallback(async (fresh = false) => {
     if (!canManage) return
     try {
-      const res = await fetch('/api/compras/conciliar')
+      const res = await fetch(`/api/compras/conciliar${fresh ? '?fresh=1' : ''}`)
       if (res.ok) setConciliar(await res.json())
     } catch { /* best-effort */ }
   }, [canManage])
@@ -205,6 +223,14 @@ function PedidosContent() {
     }
     setReceiptsLoading(false)
   }, [])
+
+  // "Actualizar gastos de Fudo": repide la conciliación salteando el cache
+  // de 30 min (para cuando la compra se acaba de cargar en Fudo).
+  const [refreshingExpenses, setRefreshingExpenses] = useState(false)
+  const refreshExpenses = useCallback(async () => {
+    setRefreshingExpenses(true)
+    try { await fetchConciliar(true) } finally { setRefreshingExpenses(false) }
+  }, [fetchConciliar])
 
   useEffect(() => { void fetchOrders(); void fetchSugerencias() }, [fetchOrders, fetchSugerencias])
   useEffect(() => { if (step === 'camino') void fetchConciliar() }, [step, fetchConciliar])
@@ -239,36 +265,62 @@ function PedidosContent() {
   }
 
   async function sendGroup(group: SugerenciasPayload['groups'][number], viaWhatsApp: boolean) {
-    const lines = group.items
-      .filter((s) => cart[s.stock_item_id] !== undefined && Number(cart[s.stock_item_id]) > 0)
-      .map((s) => ({ item: s, qty: cart[s.stock_item_id] }))
-    if (lines.length === 0) { toast.error('Elegí al menos un insumo'); return }
+    // parseQty acepta coma decimal; lo que no parsea se avisa, no se traga
+    const lines: { item: SugerenciaCompra; qty: number }[] = []
+    const invalidas: string[] = []
+    for (const s of group.items) {
+      const raw = cart[s.stock_item_id]
+      if (raw === undefined) continue
+      const qty = parseQty(raw)
+      if (Number.isFinite(qty) && qty > 0) lines.push({ item: s, qty })
+      else invalidas.push(`${s.name} («${raw}»)`)
+    }
+    if (invalidas.length > 0) {
+      toast.warning(`Cantidad inválida — quedó afuera: ${invalidas.join(', ')}`)
+    }
+    if (lines.length === 0) { toast.error('Elegí al menos un insumo con cantidad válida'); return }
+
+    // Roles sin manejo (chef/cocina): no mandan WhatsApp — proponen y el
+    // encargado envía. El server igual los deja en 'pending'.
+    const propone = !canManage
     setSending(group.supplier_id ?? 'none')
+    let whatsAppAbierto = false
     try {
+      if (viaWhatsApp && group.supplier_phone) {
+        // ANTES del fetch: window.open tiene que salir del gesto del usuario
+        // (después de un await, el popup blocker suele matar la ventana).
+        const url = `https://wa.me/${stripNonDigits(group.supplier_phone)}?text=${encodeURIComponent(buildMessage(group.supplier_name, group.supplier_contact, lines.map(({ item, qty }) => ({ name: item.name, qty: formatQty(qty), unit: item.unit }))))}`
+        window.open(url, '_blank', 'noopener,noreferrer')
+        whatsAppAbierto = true
+      }
       const res = await fetch('/api/kitchen/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'create_order',
-          items: lines.map(({ item, qty }) => ({ product_name: item.name, quantity: `${qty} ${item.unit}`, stock_item_id: item.stock_item_id })),
+          items: lines.map(({ item, qty }) => ({ product_name: item.name, quantity: `${formatQty(qty)} ${item.unit}`, stock_item_id: item.stock_item_id })),
           urgency: lines.some(({ item }) => item.reason === 'negativo' || item.reason === 'sin_stock') ? 'alta' : 'normal',
           supplier_id: group.supplier_id,
-          initial_status: 'ordered',
+          initial_status: propone ? 'pending' : 'ordered',
         }),
       })
       const json = await res.json()
       if (!res.ok || !json.success) throw new Error(json.error ?? 'No se pudo crear el pedido')
-      if (viaWhatsApp && group.supplier_phone) {
-        const url = `https://wa.me/${stripNonDigits(group.supplier_phone)}?text=${encodeURIComponent(buildMessage(group.supplier_name, group.supplier_contact, lines.map(({ item, qty }) => ({ name: item.name, qty, unit: item.unit }))))}`
-        window.open(url, '_blank', 'noopener,noreferrer')
-      }
-      toast.success(`Pedido a ${group.supplier_name}: ${lines.length} insumo${lines.length !== 1 ? 's' : ''} en camino`)
+      toast.success(propone
+        ? `Propuesto a ${group.supplier_name}: ${lines.length} insumo${lines.length !== 1 ? 's' : ''} — el encargado lo envía`
+        : `Pedido a ${group.supplier_name}: ${lines.length} insumo${lines.length !== 1 ? 's' : ''} en camino`)
       setCart((c) => { const n = { ...c }; for (const { item } of lines) delete n[item.stock_item_id]; return n })
       // Fire-and-forget: no bloqueamos la UI mientras refrescan los datos
       void fetchOrders()
       void fetchSugerencias(true)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al enviar el pedido')
+      // OJO: si el WhatsApp ya salió pero el registro falló, NO marcamos nada
+      // localmente — el carrito queda como estaba para reintentar.
+      if (whatsAppAbierto) {
+        toast.error('El WhatsApp salió pero el pedido NO quedó registrado — tocá "Solo marcar como pedido (sin WhatsApp)" para registrarlo')
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Error al enviar el pedido')
+      }
     } finally {
       setSending(null)
     }
@@ -336,6 +388,11 @@ function PedidosContent() {
   const orderToday = sugerencias?.groups.filter((g) => g.is_order_day && g.supplier_id) ?? []
   const cartCount = Object.keys(cart).length
   const matchByOrder = new Map((conciliar?.matches ?? []).map((m) => [`${m.source}-${m.order_id}`, m]))
+  // Costos estimados: solo cuentan los insumos con costo REAL (cost_source
+  // confiable) — el resto viaja sin número, decisión de producto.
+  const allSugs = sugerencias?.groups.flatMap((g) => g.items) ?? []
+  const sugsConCosto = allSugs.filter((s) => s.estimated_cost != null).length
+  const receivedShown = received.slice(0, 40)
 
   return (
     <div className="mx-auto max-w-lg space-y-4 pb-28">
@@ -362,7 +419,7 @@ function PedidosContent() {
           {([
             { key: 'pedir' as const, label: 'Pedir', count: (sugerencias?.total_items ?? 0) + pending.length, Icon: ShoppingCart, tone: '#d4943a' },
             { key: 'camino' as const, label: 'En camino', count: ordered.length, Icon: Truck, tone: '#4a90d9' },
-            { key: 'recibido' as const, label: 'Recibidos', count: received.length, Icon: Check, tone: '#006d5a' },
+            { key: 'recibido' as const, label: 'Recibidos', count: receivedShown.length, Icon: Check, tone: '#006d5a' },
             { key: 'pagos' as const, label: 'Pagos', count: receiptsCount, Icon: Wallet, tone: '#8b5e34' },
           ]).map(({ key, label, count, Icon, tone }) => {
             const active = step === key
@@ -445,13 +502,24 @@ function PedidosContent() {
             <div className="space-y-3">
               <p className="px-1 text-[11px] text-[#a39e97]">
                 Sugerido con ventas de {sugerencias.window_days} días × recetas, mínimos y calendario de cada proveedor.
-                {canManage && sugerencias.total_estimated_cost > 0 && <> Total estimado: <span className="font-semibold text-[#3d2c24]">{money(sugerencias.total_estimated_cost)}</span>.</>}
+                {canManage && sugerencias.total_estimated_cost > 0 && sugsConCosto > 0 && (
+                  <> Total estimado (solo {sugsConCosto} de {allSugs.length} con precio real): <span className="font-semibold text-[#3d2c24]">{money(sugerencias.total_estimated_cost)}</span>.</>
+                )}
               </p>
+              {loadingSug && (
+                <div className="flex items-center justify-center gap-1.5 rounded-full bg-[#eef4fc] px-3 py-1.5 text-[11px] font-semibold text-[#4a90d9]">
+                  <Loader2 className="size-3 animate-spin" /> actualizando lista…
+                </div>
+              )}
               {sugerencias.groups.map((g) => {
                 const key = g.supplier_id ?? 'sin-proveedor'
                 const open = expanded.has(key) || g.is_order_day || sugerencias.groups.length <= 3
                 const selectedInGroup = g.items.filter((s) => cart[s.stock_item_id] !== undefined)
-                const groupCost = selectedInGroup.reduce((acc, s) => acc + (s.cost_per_unit ? s.cost_per_unit * Number(cart[s.stock_item_id] || 0) : 0), 0)
+                // cost_per_unit ya viene gateado (solo fuentes confiables); parseQty acepta coma
+                const groupCost = selectedInGroup.reduce((acc, s) => {
+                  const q = parseQty(cart[s.stock_item_id])
+                  return acc + (s.cost_per_unit && Number.isFinite(q) && q > 0 ? s.cost_per_unit * q : 0)
+                }, 0)
                 return (
                   <section key={key} className={cn('overflow-hidden rounded-2xl bg-white ring-1', g.is_order_day ? 'ring-[#d4943a]/40' : 'ring-[#ebe6df]')}>
                     <button
@@ -499,6 +567,21 @@ function PedidosContent() {
                                     {s.daily_consumption ? <span> · ~{s.daily_consumption} {s.unit}/día</span> : null}
                                     {s.already_ordered && <span className="ml-1 font-bold text-[#006d5a]">· ya pedido</span>}
                                   </p>
+                                  {/* Lo que el sistema ya sabe: cuándo se pidió y cuánto salió la última compra (monto del gasto Fudo, no precio unitario) */}
+                                  {canManage && (s.last_ordered_at || s.last_purchase) && (
+                                    <p className="mt-0.5 flex flex-wrap gap-1">
+                                      {s.last_ordered_at && (
+                                        <span className="rounded-full bg-[#f3efe9] px-1.5 py-0.5 text-[9px] font-semibold text-[#7d6c64]">
+                                          últ. pedido hace {Math.max(0, Math.floor((Date.now() - new Date(s.last_ordered_at).getTime()) / 86_400_000))} d
+                                        </span>
+                                      )}
+                                      {s.last_purchase && (
+                                        <span title="Monto total del último gasto de Fudo con este insumo (no es precio unitario)" className="rounded-full bg-[#eef4fc] px-1.5 py-0.5 text-[9px] font-semibold text-[#4a90d9]">
+                                          últ. compra {money(s.last_purchase.amount)} ({format(new Date(s.last_purchase.date), 'd/M', { locale: es })})
+                                        </span>
+                                      )}
+                                    </p>
+                                  )}
                                 </div>
                                 {inCart ? (
                                   <div className="flex shrink-0 items-center gap-1">
@@ -520,7 +603,26 @@ function PedidosContent() {
                             )
                           })}
                         </div>
-                        {g.supplier_id && (
+                        {g.supplier_id && !canManage && (
+                          // Chef/cocina no le manda WhatsApp al proveedor: propone,
+                          // el pedido queda pendiente y el encargado lo envía.
+                          <div className="border-t border-[#f5f0ea] bg-[#faf8f5] p-3">
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => selectAll(g.items)} className="rounded-xl px-3 py-2 text-[12px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df]">Todo</button>
+                              <button
+                                onClick={() => void sendGroup(g, false)}
+                                disabled={selectedInGroup.length === 0 || sending === key}
+                                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#d4943a] py-2.5 text-[13px] font-bold text-white active:scale-[0.98] disabled:opacity-50"
+                              >
+                                {sending === key ? <Loader2 className="size-4 animate-spin" /> : <ShoppingCart className="size-4" />}
+                                Proponer pedido
+                                {selectedInGroup.length > 0 && <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedInGroup.length}</span>}
+                              </button>
+                            </div>
+                            <p className="mt-1.5 text-center text-[10px] text-[#a39e97]">Le avisa al encargado — él lo envía al proveedor</p>
+                          </div>
+                        )}
+                        {g.supplier_id && canManage && (
                           <div className="border-t border-[#f5f0ea] bg-[#faf8f5] p-3">
                             <div className="flex items-center gap-2">
                               <button onClick={() => selectAll(g.items)} className="rounded-xl px-3 py-2 text-[12px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df]">Todo</button>
@@ -586,6 +688,16 @@ function PedidosContent() {
             <p className="px-1 text-[11px] text-[#a39e97]">
               Cuando llegue el pedido, tocá <strong className="text-[#006d5a]">Llegó</strong> para registrar la recepción y elegir cómo se paga.
             </p>
+            {canManage && (
+              <button
+                onClick={() => void refreshExpenses()}
+                disabled={refreshingExpenses}
+                className="mt-2 flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-[12px] font-semibold text-[#4a90d9] ring-1 ring-[#ebe6df] active:scale-[0.98] disabled:opacity-60"
+              >
+                {refreshingExpenses ? <Loader2 className="size-3.5 animate-spin" /> : <Receipt className="size-3.5" />}
+                Actualizar gastos de Fudo
+              </button>
+            )}
             <div className="mt-2 space-y-2">
               {groupBySupplier(ordered, suppliers).map(({ supplier, list }) => (
                 <section key={supplier?.id ?? 'none'} className="overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
@@ -594,6 +706,12 @@ function PedidosContent() {
                     <p className="flex-1 truncate text-[12px] font-bold uppercase tracking-wider text-[#3d2c24]">{supplier?.name ?? 'Sin proveedor'}</p>
                     <span className="text-[11px] tabular-nums text-[#a39e97]">{list.length}</span>
                   </div>
+                  {canManage && supplier && !supplier.fudo_provider_id && (
+                    <p className="border-b border-[#f5f0ea] bg-[#fdf6ec]/70 px-4 py-2 text-[11px] text-[#8b5e34]">
+                      Este proveedor no está vinculado a Fudo: sus gastos no se pueden sugerir acá.{' '}
+                      <Link href="/proveedores/vincular" className="font-bold underline">Vincular</Link>
+                    </p>
+                  )}
                   <div className="divide-y divide-[#f5f0ea]">
                     {list.map((o) => {
                       const match = matchByOrder.get(`${o.source}-${o.id}`)
@@ -652,7 +770,7 @@ function PedidosContent() {
           ) : (
             <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
               <div className="divide-y divide-[#f5f0ea]">
-                {received.slice(0, 40).map((o) => (
+                {receivedShown.map((o) => (
                   <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.received_by ?? o.created_by ?? o.requested_by ?? null)} supplier={suppliers.find((s) => s.id === o.supplier_id) ?? null} muted>
                     <p className="mt-1 text-[11px] text-[#7d6c64]">
                       {o.received_at ? `Recibido ${format(new Date(o.received_at), "d MMM HH:mm", { locale: es })}` : 'Recibido'}
@@ -680,6 +798,11 @@ function PedidosContent() {
                   </OrderRow>
                 ))}
               </div>
+              {received.length > receivedShown.length && (
+                <p className="border-t border-[#f5f0ea] bg-[#faf8f5] px-4 py-2 text-center text-[10px] text-[#a39e97]">
+                  Últimos {receivedShown.length} de {received.length} recibidos
+                </p>
+              )}
             </div>
           )}
         </FadeIn>
@@ -805,7 +928,7 @@ function PedidosContent() {
           supplier={suppliers.find((s) => s.id === arrivalDialog.supplier_id) ?? null}
           stockItems={stockItems}
           onClose={() => setArrivalDialog(null)}
-          onDone={() => { setArrivalDialog(null); void fetchOrders(); void fetchSugerencias(true) }}
+          onDone={() => { setArrivalDialog(null); void fetchOrders(); void fetchConciliar(); void fetchSugerencias(true) }}
         />
       )}
 
@@ -910,9 +1033,17 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
   const [stockSearch, setStockSearch] = useState('')
   const [receivedQty, setReceivedQty] = useState(order.quantity)
   const [unitCost, setUnitCost] = useState('')
+  const [totalCost, setTotalCost] = useState('')
+  // sin_stock tiene su PROPIO campo de monto: no comparte estado con el
+  // precio unitario del modo con stock (antes un número tipeado en un modo
+  // viajaba al server aunque cambiaras de modo).
+  const [sinStockAmount, setSinStockAmount] = useState('')
+  const [expiresAt, setExpiresAt] = useState('')
   const [note, setNote] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // Referencia: última compra del insumo con precio (recibo previo o costo confiable)
+  const [lastPurchase, setLastPurchase] = useState<{ amount: number; date: string | null; kind: 'recibo' | 'costo' } | null>(null)
 
   const mode: 'lve_stock' | 'sin_stock' = stockItemId ? 'lve_stock' : 'sin_stock'
   const selectedStock = stockItems.find((s) => s.id === stockItemId) ?? null
@@ -920,12 +1051,97 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
     ? stockItems.filter((s) => !(s.fudo_product_id && !s.fudo_ingredient_id) && s.name.toLowerCase().includes(stockSearch.toLowerCase())).slice(0, 6)
     : []
 
+  // Cantidad parseable (acepta coma decimal): "5 kg" → 5
+  const qtyNum = parseQty(receivedQty)
+  const montoSinStock = parseQty(sinStockAmount)
+
+  // Cantidad recibida NORMALIZADA a la unidad del stock ('500 g' en un insumo
+  // en kg → 0.5): el rótulo del precio es "por {unidad del stock}", así que el
+  // cálculo Precio↔Total tiene que trabajar en esa unidad — dividir $10.000
+  // por 500 sellaba $20/kg. Misma regla de unidades que usa el server.
+  function normalizedQtyFrom(raw: string): number | null {
+    const n = parseQty(raw)
+    if (!Number.isFinite(n) || n <= 0) return null
+    if (!selectedStock) return n
+    return convertQty(n, parseTypedUnit(raw) ?? selectedStock.unit, selectedStock.unit)
+  }
+  const typedUnit = parseTypedUnit(receivedQty)
+  const qtyNormalized = normalizedQtyFrom(receivedQty)
+  // Unidad tipeada NO convertible a la del insumo → no autocalcular, avisar
+  const qtyUnitIncompatible = Boolean(
+    selectedStock && typedUnit && Number.isFinite(qtyNum) && qtyNum > 0 && qtyNormalized == null,
+  )
+
+  // Precio por unidad ↔ total pagado: cargás uno, el otro se calcula en vivo
+  function onUnitCostChange(v: string) {
+    setUnitCost(v)
+    const u = parseQty(v)
+    if (Number.isFinite(u) && u > 0 && qtyNormalized != null && qtyNormalized > 0) setTotalCost(String(Math.round(u * qtyNormalized * 100) / 100))
+    else if (!v.trim()) setTotalCost('')
+  }
+  function onTotalCostChange(v: string) {
+    setTotalCost(v)
+    const t = parseQty(v)
+    if (Number.isFinite(t) && t > 0 && qtyNormalized != null && qtyNormalized > 0) setUnitCost(String(Math.round((t / qtyNormalized) * 100) / 100))
+    else if (!v.trim()) setUnitCost('')
+  }
+
+  // Elegir o quitar el insumo cambia de modo: los campos de plata arrancan de
+  // cero para que un monto tipeado en un modo no se cuele en el confirm del otro.
+  function resetMoneyFields() {
+    setUnitCost('')
+    setTotalCost('')
+    setSinStockAmount('')
+  }
+
+  // Chip "última compra": recibo previo con precio del insumo elegido; si no
+  // hay, cae al costo confiable actual del item. Best-effort, jamás bloquea.
+  useEffect(() => {
+    if (!stockItemId) { setLastPurchase(null); return }
+    let alive = true
+    const supabase = createClient()
+    ;(async () => {
+      try {
+        const { data } = await supabase
+          .from('stock_receipts')
+          .select('cost_per_unit, received_date')
+          .eq('stock_item_id', stockItemId)
+          .not('cost_per_unit', 'is', null)
+          .order('received_date', { ascending: false })
+          .limit(1)
+        const r = (data ?? [])[0] as { cost_per_unit: number | null; received_date: string | null } | undefined
+        if (!alive) return
+        if (r?.cost_per_unit && Number(r.cost_per_unit) > 0) {
+          setLastPurchase({ amount: Number(r.cost_per_unit), date: r.received_date, kind: 'recibo' })
+          return
+        }
+        const { data: si, error } = await supabase
+          .from('stock_items')
+          .select('cost_per_unit, cost_source, cost_updated_at')
+          .eq('id', stockItemId)
+          .single()
+        if (!alive) return
+        if (!error && si && esCostoConfiable((si as { cost_source?: string | null }).cost_source, Number(si.cost_per_unit))) {
+          setLastPurchase({ amount: Number(si.cost_per_unit), date: (si as { cost_updated_at?: string | null }).cost_updated_at ?? null, kind: 'costo' })
+        } else {
+          setLastPurchase(null)
+        }
+      } catch { if (alive) setLastPurchase(null) }
+    })()
+    return () => { alive = false }
+  }, [stockItemId])
+
   const canConfirm = !!paymentMethod && (mode === 'sin_stock' || (mode === 'lve_stock' && !!stockItemId && !!receivedQty.trim()))
 
   async function confirm() {
     if (!paymentMethod) return
     setSubmitting(true)
     try {
+      // Cada modo manda SOLO sus campos: el monto de sin_stock viaja como
+      // `amount`, y totalCost solo aplica al modo con stock (el server deriva
+      // el precio unitario con la cantidad normalizada — el total manda).
+      const parsedUnitCost = parseQty(unitCost)
+      const parsedTotalCost = parseQty(totalCost)
       const res = await fetch('/api/kitchen/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -936,8 +1152,11 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
           mode,
           expense: null,
           receivedQty: mode === 'lve_stock' ? receivedQty : null,
-          unitCost: unitCost ? parseFloat(unitCost) : null,
+          unitCost: mode === 'lve_stock' && Number.isFinite(parsedUnitCost) && parsedUnitCost > 0 ? parsedUnitCost : null,
+          totalCost: mode === 'lve_stock' && Number.isFinite(parsedTotalCost) && parsedTotalCost > 0 ? parsedTotalCost : null,
+          amount: mode === 'sin_stock' && Number.isFinite(montoSinStock) && montoSinStock > 0 ? montoSinStock : null,
           stockItemId: mode === 'lve_stock' ? stockItemId : null,
+          expiresAt: mode === 'lve_stock' && expiresAt ? expiresAt : null,
           note: note.trim() || null,
           paymentMethod,
         }),
@@ -945,7 +1164,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
       const json = await res.json()
       if (!res.ok || !json.success) throw new Error(json.error ?? 'No se pudo confirmar')
       if (mode === 'lve_stock') {
-        toast.success(json.fudoSynced ? 'Llegó — stock actualizado' : 'Llegó — stock registrado en LVE')
+        toast.success(json.fudoSynced ? 'Llegó — stock cargado en Fudo' : 'Llegó — stock registrado en LVE')
       } else {
         toast.success('Llegó — pedido cerrado')
       }
@@ -1002,6 +1221,11 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                 </button>
               ))}
             </div>
+            {paymentMethod === 'cuenta_corriente' && (
+              <p className="mt-1.5 text-[10px] text-[#d4943a]">
+                Quedará pendiente en <strong>Pagos</strong> hasta que lo saldes.
+              </p>
+            )}
           </div>
 
           {/* Stock (si hay insumo vinculado) */}
@@ -1013,21 +1237,59 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                   <span className="block truncate text-sm font-semibold text-[#006d5a]">{selectedStock?.name ?? stockItemId}</span>
                   {selectedStock && <span className="block text-[10px] text-[#006d5a]/70">Ahora: {selectedStock.current_qty} {selectedStock.unit}</span>}
                 </span>
-                <button onClick={() => { setStockItemId(null); setStockSearch('') }} className="text-[#a39e97]"><X className="size-4" /></button>
+                <button onClick={() => { setStockItemId(null); setStockSearch(''); resetMoneyFields() }} className="text-[#a39e97]"><X className="size-4" /></button>
               </div>
+              <label className="block">
+                <span className="text-[11px] font-semibold text-[#3d2c24]">Cantidad recibida <span className="text-[#ea504c]">*</span></span>
+                <input
+                  value={receivedQty}
+                  onChange={(e) => {
+                    setReceivedQty(e.target.value)
+                    // cambia la cantidad → el total se recalcula desde el precio
+                    // unitario, con la cantidad normalizada a la unidad del stock
+                    const u = parseQty(unitCost)
+                    const q = normalizedQtyFrom(e.target.value)
+                    if (Number.isFinite(u) && u > 0 && q != null && q > 0) setTotalCost(String(Math.round(u * q * 100) / 100))
+                  }}
+                  placeholder="ej: 5 kg"
+                  className="mt-1 w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm focus:border-[#006d5a] focus:outline-none"
+                />
+                {qtyUnitIncompatible && (
+                  <span className="mt-0.5 block text-[10px] font-semibold text-[#ea504c]">
+                    cantidad en {typedUnit} pero el insumo se mide en {selectedStock?.unit}
+                  </span>
+                )}
+              </label>
+              {/* Precio sin fricción: cargás por unidad O el total del ticket, el otro se calcula solo */}
               <div className="grid grid-cols-2 gap-2">
-                <label className="block">
-                  <span className="text-[11px] font-semibold text-[#3d2c24]">Cantidad <span className="text-[#ea504c]">*</span></span>
-                  <input value={receivedQty} onChange={(e) => setReceivedQty(e.target.value)} placeholder="ej: 5 kg" className="mt-1 w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm focus:border-[#006d5a] focus:outline-none" />
-                </label>
                 <label className="block">
                   <span className="text-[11px] font-semibold text-[#3d2c24]">$ por {selectedStock?.unit ?? 'unidad'}</span>
                   <div className="relative mt-1">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
-                    <input type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
+                    <input type="number" min="0" step="any" value={unitCost} onChange={(e) => onUnitCostChange(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-semibold text-[#3d2c24]">Total pagado ($)</span>
+                  <div className="relative mt-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
+                    <input type="number" min="0" step="any" value={totalCost} onChange={(e) => onTotalCostChange(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
                   </div>
                 </label>
               </div>
+              {lastPurchase && (
+                <p className="text-[10px] font-semibold text-[#4a90d9]">
+                  última compra: {money(lastPurchase.amount)}/{selectedStock?.unit ?? 'u'}
+                  {lastPurchase.date && ` (${format(new Date(lastPurchase.date.length === 10 ? `${lastPurchase.date}T12:00:00` : lastPurchase.date), 'd MMM', { locale: es })})`}
+                  {lastPurchase.kind === 'costo' && <span className="font-normal text-[#a39e97]"> · costo cargado</span>}
+                </p>
+              )}
+              <label className="block">
+                <span className="text-[11px] font-semibold text-[#3d2c24]">Vencimiento <span className="font-normal text-[#a39e97]">(opcional)</span></span>
+                <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} className="mt-1 w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm focus:border-[#006d5a] focus:outline-none" />
+                {expiresAt && <span className="mt-0.5 block text-[10px] text-[#a39e97]">Queda como lote para el radar de vencimientos.</span>}
+              </label>
+              <p className="text-[10px] text-[#a39e97]">Se suma como delta sobre el stock actual de Fudo (no pisa ventas) y queda en el kardex con precio.</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -1039,7 +1301,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                   {filteredStock.length > 0 && (
                     <div className="absolute z-10 mt-1 w-full rounded-xl border border-[#ebe6df] bg-white shadow-lg">
                       {filteredStock.map((s) => (
-                        <button key={s.id} type="button" onClick={() => { setStockItemId(s.id); setStockSearch('') }} className="flex w-full items-center gap-2 px-3 py-2 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-[#f8f5f0]">
+                        <button key={s.id} type="button" onClick={() => { setStockItemId(s.id); setStockSearch(''); resetMoneyFields() }} className="flex w-full items-center gap-2 px-3 py-2 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-[#f8f5f0]">
                           <span className="flex-1 truncate text-sm font-medium text-[#3d2c24]">{s.name}</span>
                           <span className="text-[10px] text-[#a39e97]">{s.current_qty} {s.unit}</span>
                         </button>
@@ -1049,10 +1311,10 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                 </div>
               </div>
               <div>
-                <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Monto <span className="font-normal text-[#a39e97]">(opcional)</span></p>
+                <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Monto <span className="font-normal text-[#a39e97]">(opcional, para el historial de gastos)</span></p>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
-                  <input type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
+                  <input type="number" min="0" step="any" value={sinStockAmount} onChange={(e) => setSinStockAmount(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
                 </div>
               </div>
             </div>

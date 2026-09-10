@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { SupabaseClient } from '@supabase/supabase-js'
+import { costRecipes } from '@/lib/recipes/recipe-cost'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -391,26 +392,23 @@ export async function executeQuery(
         return `No encontré "${recipeName}". Recetas disponibles:\n${list}`
       }
 
-      // Get ingredients with costs
-      const { data: ingredients } = await admin
-        .from('recipe_ingredients')
-        .select('qty_per_portion, stock_items(name, cost_per_unit, unit)')
-        .eq('recipe_id', match.id)
+      // Costo vía costRecipes: canonicaliza unidades (g→kg, ml→l), expande
+      // intermedios nivel-2 y aplica el gating de costo confiable. El cálculo
+      // manual anterior multiplicaba 200 g × $/kg sin convertir: disparate.
+      const rc = (await costRecipes(admin, [match.id])).get(match.id)
 
-      if (!ingredients?.length) return `📋 **${match.name}** no tiene ingredientes vinculados al stock todavía.`
-
-      let totalCost = 0
-      const lines: string[] = []
-
-      for (const ing of ingredients) {
-        const si = (ing as unknown as {
-          stock_items?: { name: string; cost_per_unit: number | null; unit: string | null } | null
-        }).stock_items
-        if (!si) continue
-        const cost = (si.cost_per_unit ?? 0) * (ing.qty_per_portion ?? 0)
-        totalCost += cost
-        lines.push(`- ${si.name}: ${ing.qty_per_portion} ${si.unit} × $${si.cost_per_unit?.toFixed(0) ?? '?'} = **$${cost.toFixed(0)}**`)
+      if (!rc || rc.ingredients === 0) {
+        return `📋 **${match.name}** no tiene ingredientes vinculados al stock todavía.`
       }
+
+      if (!rc.confiable || rc.cost <= 0) {
+        const faltan = rc.missingNames.length > 0
+          ? rc.missingNames.join(', ')
+          : 'sus ingredientes'
+        return `📋 **${match.name}**: sin costo real todavía — faltan precios reales de ${faltan}. El costo aparece cuando esos insumos tengan precio de compra, carga manual o costo de producción.`
+      }
+
+      const totalCost = rc.cost
 
       // Get sale price from menu_items
       const { data: menuItem } = await admin
@@ -423,8 +421,8 @@ export async function executeQuery(
       const salePrice = menuItem?.sale_price ?? 0
       const margin = salePrice > 0 ? ((salePrice - totalCost) / salePrice * 100).toFixed(0) : null
 
-      let result = `💰 **Costo: ${match.name}**\n${lines.join('\n')}\n\n`
-      result += `📦 **Costo total por porción: $${totalCost.toFixed(0)}**`
+      let result = `💰 **Costo: ${match.name}**\n`
+      result += `📦 **Costo por porción: $${totalCost.toFixed(0)}** (${rc.ingredients} ingredientes, precios reales)`
       if (salePrice > 0) {
         result += `\n🏷️ Precio de venta: $${salePrice.toFixed(0)}`
         result += `\n📈 Margen: **${margin}%** ($${(salePrice - totalCost).toFixed(0)} de ganancia)`

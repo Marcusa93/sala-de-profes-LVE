@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import type { StockItem } from '@/lib/hooks/use-stock'
 import { STOCK_CATEGORY_OPTIONS, STOCK_UNITS } from '@/lib/constants'
 import { STOCK_AREAS, areaFromLveCategory, type StockArea } from '@/lib/stock/areas'
+import { esCostoConfiable, etiquetaFuenteCosto } from '@/lib/costos/confiable'
 import type { StockCategoryValue } from '@/types/database'
 
 type Props = {
@@ -28,6 +29,11 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
   const [metaUnit, setMetaUnit] = useState(item.unit ?? 'kg')
   const [metaMin, setMetaMin] = useState(String(item.min_qty ?? 0))
   const [metaArea, setMetaArea] = useState<StockArea>(item.area ?? areaFromLveCategory(item.category))
+  // Costo real: se muestra el vigente solo si su fuente es confiable; el costo
+  // de Fudo NO se precarga (sería consagrar un número no real con un Enter).
+  const costConfiable = esCostoConfiable(item.cost_source, item.cost_per_unit)
+  const initialCost = costConfiable && item.cost_per_unit != null ? String(item.cost_per_unit) : ''
+  const [metaCost, setMetaCost] = useState(initialCost)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -37,6 +43,7 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
     setMetaUnit(item.unit ?? 'kg')
     setMetaMin(String(item.min_qty ?? 0))
     setMetaArea(item.area ?? areaFromLveCategory(item.category))
+    setMetaCost(esCostoConfiable(item.cost_source, item.cost_per_unit) && item.cost_per_unit != null ? String(item.cost_per_unit) : '')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id])
 
@@ -54,6 +61,21 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
       }
       if (metaArea !== (item.area ?? areaFromLveCategory(item.category))) payload.area = metaArea
 
+      // Costo real: mandar SOLO si lo tocaron (así no se re-sella 'manual'
+      // sobre un costo de compra vigente sin querer)
+      const costTrimmed = metaCost.trim().replace(',', '.')
+      if (costTrimmed !== initialCost) {
+        if (costTrimmed === '') {
+          payload.cost_per_unit = null
+        } else {
+          const costValue = Number(costTrimmed)
+          if (!Number.isFinite(costValue) || costValue <= 0) {
+            throw new Error('El costo real debe ser un número mayor a 0')
+          }
+          payload.cost_per_unit = costValue
+        }
+      }
+
       const res = await fetch(`/api/stock/items/${item.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -62,6 +84,7 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'No se pudo guardar la configuración')
 
+      if (data.aviso) toast.warning(data.aviso)
       toast.success('Configuración guardada')
       onSaved()
     } catch (err) {
@@ -138,6 +161,27 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
       </div>
 
       <label className="block space-y-1">
+        <span className={labelCls}>Costo real por {metaUnit}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="shrink-0 text-[11px] text-[#7d6c64]">$</span>
+          <input
+            value={metaCost}
+            onChange={(e) => setMetaCost(e.target.value)}
+            inputMode="decimal"
+            placeholder={costConfiable ? '' : 'sin costo real'}
+            className={`${inputCls} placeholder:text-[#a39e97]`}
+          />
+        </div>
+        <span className="block text-[10px] leading-snug text-[#a39e97]">
+          {costConfiable
+            ? `Fuente actual: ${etiquetaFuenteCosto(item.cost_source)}. Si lo cambiás acá queda como cargado a mano.`
+            : item.cost_per_unit != null && item.cost_per_unit > 0
+              ? `Hay un costo según Fudo (${`$${Math.round(item.cost_per_unit).toLocaleString('es-AR')}`}) que no se usa por no ser real. Cargá el precio de verdad si lo sabés.`
+              : 'Se completa solo al recibir una compra con precio, o cargalo acá si lo sabés.'}
+        </span>
+      </label>
+
+      <label className="block space-y-1">
         <span className={labelCls}>Nota operativa</span>
         <textarea
           value={metaNotes}
@@ -150,7 +194,7 @@ export function MetadataEditor({ item, initialShelfLife, initialCategory, onSave
 
       {(item.fudo_ingredient_id || item.fudo_product_id) && (
         <p className="text-[11px] leading-relaxed text-[#a39e97]">
-          Cantidad, costo y unidad vienen de Fudo. Acá se define lo que Fudo no sabe: mínimo, área y vida útil.
+          Cantidad y unidad vienen de Fudo. Acá se define lo que Fudo no sabe: mínimo, área, vida útil y el costo real.
         </p>
       )}
 

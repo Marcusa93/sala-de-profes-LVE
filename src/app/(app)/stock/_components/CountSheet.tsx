@@ -19,6 +19,7 @@ import {
   type WasteReason,
 } from '@/lib/stock/helpers'
 import { AREA_LABEL, areaFromLveCategory } from '@/lib/stock/areas'
+import { esCostoConfiable } from '@/lib/costos/confiable'
 import { MetadataEditor } from './MetadataEditor'
 
 // ---------------------------------------------------------------------------
@@ -122,7 +123,9 @@ export function CountSheet({ item, open, canWaste, canConfigure, showMoney, fudo
     }
   }
 
-  const value = item && showMoney && item.cost_per_unit ? Math.round(Math.max(item.current_qty, 0) * item.cost_per_unit) : null
+  // Valor y "se tiran $" SOLO con costo confiable (compra/manual/producción)
+  const costoConfiable = Boolean(item && esCostoConfiable(item.cost_source, item.cost_per_unit))
+  const value = item && showMoney && costoConfiable ? Math.round(Math.max(item.current_qty, 0) * (item.cost_per_unit ?? 0)) : null
 
   return (
     <Sheet open={open && Boolean(item)} onOpenChange={(v) => { if (!v) onClose() }}>
@@ -260,9 +263,14 @@ export function CountSheet({ item, open, canWaste, canConfigure, showMoney, fudo
                     </select>
                   </label>
                 </div>
-                {showMoney && item.cost_per_unit && Number(wasteQty.replace(',', '.')) > 0 && (
+                {showMoney && costoConfiable && Number(wasteQty.replace(',', '.')) > 0 && (
                   <p className="text-[12px] font-semibold text-[#ea504c]">
-                    Se tiran ${Math.round(Number(wasteQty.replace(',', '.')) * item.cost_per_unit).toLocaleString('es-AR')}
+                    Se tiran ${Math.round(Number(wasteQty.replace(',', '.')) * (item.cost_per_unit ?? 0)).toLocaleString('es-AR')} (precio real)
+                  </p>
+                )}
+                {showMoney && !costoConfiable && Number(wasteQty.replace(',', '.')) > 0 && (
+                  <p className="text-[11px] text-[#a39e97]">
+                    Sin costo real de este insumo: la merma no se valoriza en $.
                   </p>
                 )}
                 <textarea

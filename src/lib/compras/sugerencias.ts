@@ -27,6 +27,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { canon, toStockUnit } from '@/lib/recipes/recipe-cost'
+import { esCostoConfiable } from '@/lib/costos/confiable'
+import { fetchFudoExpenses, type FudoExpense } from '@/lib/fudo/expenses'
 
 export type SugerenciaCompra = {
   stock_item_id: string
@@ -36,6 +38,7 @@ export type SugerenciaCompra = {
   category: string | null
   current_qty: number
   min_qty: number
+  /** SOLO si la fuente del costo es confiable (compra/manual/produccion); si no, null */
   cost_per_unit: number | null
   daily_consumption: number | null
   days_left: number | null
@@ -50,6 +53,8 @@ export type SugerenciaCompra = {
   is_order_day: boolean
   already_ordered: boolean
   last_ordered_at: string | null
+  /** Última compra REAL (gasto Fudo mono-insumo): monto total del gasto, no precio unitario. */
+  last_purchase: { amount: number; date: string } | null
 }
 
 export type SugerenciasPorProveedor = {
@@ -180,7 +185,8 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
   const todayDow = now.getDay()
 
   const baseSelect = 'id, name, unit, category, current_qty, min_qty, cost_per_unit, supplier_id, is_produced, fudo_skip, fudo_ingredient_id, fudo_product_id, last_ordered_at'
-  let itemsRes: { data: unknown[] | null; error: { message: string } | null } = await admin.from('stock_items').select(`${baseSelect}, area`).eq('is_active', true)
+  let itemsRes: { data: unknown[] | null; error: { message: string } | null } = await admin.from('stock_items').select(`${baseSelect}, area, cost_source`).eq('is_active', true)
+  if (itemsRes.error) itemsRes = await admin.from('stock_items').select(`${baseSelect}, area`).eq('is_active', true)
   if (itemsRes.error) itemsRes = await admin.from('stock_items').select(baseSelect).eq('is_active', true)
   if (itemsRes.error) throw new Error(itemsRes.error.message)
 
@@ -188,13 +194,28 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
     id: string; name: string; unit: string; category: string | null; current_qty: number; min_qty: number
     cost_per_unit: number | null; supplier_id: string | null; is_produced: boolean | null; fudo_skip: boolean | null
     fudo_ingredient_id: string | null; fudo_product_id: string | null; last_ordered_at: string | null; area?: string | null
+    /** Sin la migración de cost_source, undefined → ningún costo cuenta como real */
+    cost_source?: string | null
   }
   const items = (itemsRes.data ?? []) as unknown as ItemRow[]
 
-  const [{ data: suppliers }, consumption, { data: openOrders }] = await Promise.all([
+  const [{ data: suppliers }, consumption, { data: openOrders }, barOrdersRes, gastosFudo] = await Promise.all([
     admin.from('suppliers').select('id, name, phone, contact_name, order_days, lead_time_days').eq('is_active', true),
     computeConsumption(admin),
     admin.from('kitchen_orders').select('stock_item_id, product_name, status').in('status', ['pending', 'ordered']),
+    // Barra también pide: sin esto un insumo pedido desde barra volvía a sugerirse
+    admin.from('bar_orders').select('stock_item_id, product_name, status').in('status', ['pending', 'ordered']),
+    // Última compra real por insumo (gasto Fudo mono-insumo) — best-effort
+    // CON timeout: si Fudo está lento (~4s), las sugerencias salen sin el
+    // chip en vez de colgar /pedidos entero.
+    (async (): Promise<FudoExpense[]> => {
+      try {
+        return await Promise.race([
+          fetchFudoExpenses(new Date(Date.now() - 90 * 86_400_000).toISOString()),
+          new Promise<FudoExpense[]>((resolve) => setTimeout(() => resolve([]), 4000)),
+        ])
+      } catch { return [] }
+    })(),
   ])
 
   type Sup = { id: string; name: string; phone: string | null; contact_name: string | null; order_days: number[] | null; lead_time_days: number | null }
@@ -205,6 +226,35 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
   for (const o of (openOrders ?? []) as { stock_item_id: string | null; product_name: string }[]) {
     if (o.stock_item_id) orderedIds.add(o.stock_item_id)
     orderedNames.add(o.product_name.trim().toLowerCase())
+  }
+  // bar_orders: tolerante a migración pendiente de stock_item_id
+  let barOrders = barOrdersRes.data as { stock_item_id?: string | null; product_name: string }[] | null
+  if (barOrdersRes.error && /stock_item_id/.test(barOrdersRes.error.message)) {
+    const retry = await admin.from('bar_orders').select('product_name, status').in('status', ['pending', 'ordered'])
+    barOrders = retry.data as { stock_item_id?: string | null; product_name: string }[] | null
+  }
+  for (const o of barOrders ?? []) {
+    if (o.stock_item_id) orderedIds.add(o.stock_item_id)
+    if (o.product_name) orderedNames.add(o.product_name.trim().toLowerCase())
+  }
+
+  // Gastos mono-insumo → última compra por stock_item (por fudo_ingredient_id,
+  // con fallback por nombre). Vienen ordenados por fecha desc: el primero gana.
+  const lastPurchaseByItem = new Map<string, { amount: number; date: string }>()
+  {
+    const itemByFudoIng = new Map<string, string>()
+    const itemByName = new Map<string, string>()
+    for (const it of items) {
+      if (it.fudo_ingredient_id) itemByFudoIng.set(String(it.fudo_ingredient_id), it.id)
+      itemByName.set(it.name.trim().toLowerCase(), it.id)
+    }
+    for (const e of gastosFudo) {
+      if (e.ingredientIds.length !== 1 || !(e.amount > 0)) continue
+      const itemId = itemByFudoIng.get(e.ingredientIds[0])
+        ?? (e.ingredientNames[0] ? itemByName.get(e.ingredientNames[0].trim().toLowerCase()) : undefined)
+      if (!itemId || lastPurchaseByItem.has(itemId)) continue
+      lastPurchaseByItem.set(itemId, { amount: e.amount, date: e.date })
+    }
   }
 
   const suggestions: SugerenciaCompra[] = []
@@ -251,6 +301,10 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
             ? `Te quedan ~${Math.round(daysLeft * 10) / 10} días al ritmo actual`
             : 'Reponer'
 
+    // Decisión de producto (Marco): el costo espejado de Fudo NO es real.
+    // Solo se estima plata con fuentes confiables (compra/manual/produccion).
+    const costoReal = esCostoConfiable(it.cost_source, it.cost_per_unit) ? Number(it.cost_per_unit) : null
+
     suggestions.push({
       stock_item_id: it.id,
       name: it.name,
@@ -259,12 +313,12 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
       category: it.category,
       current_qty: qty,
       min_qty: min,
-      cost_per_unit: it.cost_per_unit,
+      cost_per_unit: costoReal,
       daily_consumption: daily ? round2(daily) : null,
       days_left: daysLeft !== null ? Math.round(daysLeft * 10) / 10 : null,
       coverage_days: coverage,
       suggested_qty: suggested,
-      estimated_cost: it.cost_per_unit ? round2(it.cost_per_unit * suggested) : null,
+      estimated_cost: costoReal ? round2(costoReal * suggested) : null,
       reason,
       reason_label: reasonLabel,
       supplier_id: sup?.id ?? null,
@@ -273,6 +327,7 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
       is_order_day: Boolean(sup?.order_days?.includes(todayDow)),
       already_ordered: orderedIds.has(it.id) || orderedNames.has(it.name.trim().toLowerCase()),
       last_ordered_at: it.last_ordered_at,
+      last_purchase: lastPurchaseByItem.get(it.id) ?? null,
     })
   }
 

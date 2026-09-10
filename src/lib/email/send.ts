@@ -15,7 +15,7 @@ const FROM_EMAIL = process.env.EMAIL_FROM ?? 'Sala de Profes <info@laviejaescuel
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function getEmailsByRole(role: string): Promise<string[]> {
+async function getEmailsByRole(role: string, excludeUserId?: string | null): Promise<string[]> {
   const admin = createAdminClient()
   const { data: profiles } = await admin
     .from('profiles')
@@ -28,6 +28,7 @@ async function getEmailsByRole(role: string): Promise<string[]> {
   // Get emails from auth.users via admin API
   const emails: string[] = []
   for (const p of profiles) {
+    if (excludeUserId && p.id === excludeUserId) continue
     const { data } = await admin.auth.admin.getUserById(p.id)
     if (data?.user?.email) emails.push(data.user.email)
   }
@@ -35,7 +36,7 @@ async function getEmailsByRole(role: string): Promise<string[]> {
 }
 
 async function getEmailsByRoles(roles: string[]): Promise<string[]> {
-  const all = await Promise.all(roles.map(getEmailsByRole))
+  const all = await Promise.all(roles.map((r) => getEmailsByRole(r)))
   return [...new Set(all.flat())]
 }
 
@@ -98,8 +99,10 @@ export async function notifyOrderToEncargados(opts: {
   items: { name: string; quantity: string }[]
   urgency: string
   note?: string | null
+  /** Creador del pedido: se excluye del mail (no se autonotifica) */
+  excludeUserId?: string | null
 }) {
-  const emails = await getEmailsByRole('encargado')
+  const emails = await getEmailsByRole('encargado', opts.excludeUserId ?? null)
   const icon = opts.type === 'barra' ? '☕' : '🍳'
   const label = opts.type === 'barra' ? 'Barra' : 'Cocina'
 
