@@ -28,6 +28,8 @@ export async function fetchMonthSales(monthParam?: string | null): Promise<{
   start: Date
   end: Date
   days: Date[]
+  /** true si el mes quedó incompleto: se llegó al tope de páginas o falló una página. */
+  truncado: boolean
 }> {
   const refDate = monthParam ? new Date(monthParam + '-15') : new Date()
   const start = startOfMonth(refDate)
@@ -38,9 +40,12 @@ export async function fetchMonthSales(monthParam?: string | null): Promise<{
   const endStr = format(end, 'yyyy-MM-dd')
 
   const sales: MonthSale[] = []
+  let truncado = false
 
   let page = 1
-  const maxPages = 20
+  // 40×200 = 8.000 ventas: alcanza para el mes más fuerte medido (5.588
+  // líneas) con margen. Si igual se corta, se avisa con truncado=true.
+  const maxPages = 40
   while (page <= maxPages) {
     try {
       const res = await fudo.fetch<{ data?: JsonApiRow[]; included?: JsonApiRow[] }>(
@@ -100,12 +105,16 @@ export async function fetchMonthSales(monthParam?: string | null): Promise<{
       }
 
       if (foundBefore || salesData.length < 200) break
+      // Si el tope llega igual (mes con más de 8.000 ventas), el mes queda incompleto
+      if (page === maxPages) truncado = true
       page++
     } catch (err) {
+      // Una página falló: lo que sigue del mes no se leyó → mes incompleto
       console.error('[month-sales] page fetch error:', err)
+      truncado = true
       break
     }
   }
 
-  return { sales, start, end, days }
+  return { sales, start, end, days, truncado }
 }

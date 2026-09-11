@@ -1,3 +1,5 @@
+import type { VentasAgregadas } from '@/lib/ventas/aggregate'
+
 export type TicketItem = { name: string; qty: number; price: number }
 
 export type Ticket = {
@@ -29,6 +31,20 @@ export type DashboardData = {
   openTakeaway: Ticket[]
   recentSales: Ticket[]
 }
+
+/**
+ * Respuesta de /api/fudo/range-summary: DashboardData compatible + los cortes
+ * nuevos del agregador único (src/lib/ventas/aggregate.ts).
+ */
+export type RangeData = DashboardData &
+  Pick<VentasAgregadas, 'byDay' | 'byDow' | 'byCanal' | 'byCategoria' | 'byProduct' | 'dataHasta' | 'truncado'> & {
+    /** Solo manager con costos=1: Σ gastos de Fudo del período. */
+    comprasFudo?: number
+    /** Solo manager con costos=1: comprasFudo ÷ facturado (0-1). */
+    foodCostReal?: number
+    /** Por qué no se pudo calcular el food cost, si aplica. */
+    costosNota?: string
+  }
 
 export const PIE_COLORS = ['#006d5a', '#8b5e34', '#d4943a', '#4a90d9', '#c67b4b', '#2d7d6a']
 

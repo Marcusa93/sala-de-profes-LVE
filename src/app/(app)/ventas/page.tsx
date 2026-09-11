@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState, useCallback } from 'react'
+import { Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { format, subDays, addDays, isToday } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -56,9 +56,6 @@ function VentasContent() {
     const m = searchParams.get('m')
     return isViewMode(m) ? m : 'dia'
   })
-  const [compareDate, setCompareDate] = useState<Date>(subDays(new Date(), 1))
-  const [compareData, setCompareData] = useState<DashboardData | null>(null)
-  const [loadingCompare, setLoadingCompare] = useState(false)
 
   const isLive = isToday(selectedDate)
   const dateStr = format(selectedDate, 'yyyy-MM-dd')
@@ -83,47 +80,53 @@ function VentasContent() {
     if (!isManager && MANAGER_MODES.includes(viewMode)) setViewMode('dia')
   }, [profileLoading, isManager, viewMode])
 
+  // Hoy se mira EN VIVO contra Fudo (auto-sync). Un día pasado sale de la
+  // tabla local vía range-summary: auto-sync solo ve las últimas ~500 ventas
+  // (3-4 días), así que un día de hace una semana devolvía "Sin ventas" en
+  // silencio. range-summary ya responde con el mismo shape DashboardData
+  // (los campos live vienen vacíos/0 y DayView los oculta si el día es pasado).
+  const fetchDia = useCallback(async (fecha: string, esHoy: boolean): Promise<DashboardData | null> => {
+    // Un !res.ok TIRA (no devuelve null): así Comparar puede mostrar el error
+    // con "Reintentar" en vez de quedar vacío sin explicación.
+    const url = esHoy ? '/api/fudo/auto-sync' : `/api/fudo/range-summary?from=${fecha}&to=${fecha}`
+    const res = await fetch(url, { credentials: 'include' })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(json.error ?? `Error ${res.status}`)
+    return (esHoy ? json.today : json.data) ?? null
+  }, [])
+
   const fetchData = useCallback(async (showSpinner = false) => {
     if (showSpinner) setSyncing(true)
     try {
-      const url = isLive ? '/api/fudo/auto-sync' : `/api/fudo/auto-sync?date=${dateStr}`
-      const res = await fetch(url, { credentials: 'include' })
-      const json = await res.json()
-      if (json.today) {
-        setData(json.today)
-        setLastSync(json.lastSync)
+      const dia = await fetchDia(dateStr, isLive)
+      if (dia) {
+        setData(dia)
+        setLastSync(isLive ? new Date().toISOString() : null)
       }
     } catch { /* ignore */ }
     setLoading(false)
     setSyncing(false)
-  }, [dateStr, isLive])
-
-  const fetchCompare = useCallback(async () => {
-    setLoadingCompare(true)
-    try {
-      const ds = format(compareDate, 'yyyy-MM-dd')
-      const res = await fetch(`/api/fudo/auto-sync?date=${ds}`)
-      const json = await res.json()
-      setCompareData(json.today ?? null)
-    } catch { setCompareData(null) }
-    setLoadingCompare(false)
-  }, [compareDate])
+  }, [dateStr, isLive, fetchDia])
 
   useEffect(() => {
     if (profileLoading) return
     fetchData()
-    if (isLive) {
-      const interval = setInterval(() => fetchData(), REFRESH_INTERVAL)
-      return () => clearInterval(interval)
-    }
-  }, [profileLoading, fetchData, isLive])
+  }, [profileLoading, fetchData])
 
+  // El poll de 5 min solo corre cuando el modo activo lo usa (Día en vivo).
+  // Comparar maneja sus propios datos y el resto de los modos no mira `data`.
+  // Al VOLVER a Día en vivo desde otro modo, refrescar ya: si no, el primer
+  // dato nuevo llegaba recién con el poll (5 min). La primera carga la hace
+  // el efecto de arriba, por eso solo en la transición.
+  const prevViewMode = useRef(viewMode)
   useEffect(() => {
-    if (viewMode === 'comparar') {
-      fetchData()
-      fetchCompare()
-    }
-  }, [viewMode, fetchCompare, fetchData])
+    const venia = prevViewMode.current
+    prevViewMode.current = viewMode
+    if (profileLoading || !isLive || viewMode !== 'dia') return
+    if (venia !== 'dia') fetchData()
+    const interval = setInterval(() => fetchData(), REFRESH_INTERVAL)
+    return () => clearInterval(interval)
+  }, [profileLoading, fetchData, isLive, viewMode])
 
   if (profileLoading || loading) return <LoadingState />
   if (!data) return (
@@ -257,17 +260,10 @@ function VentasContent() {
 
       <AnimatedSwitch id={viewMode}>
         <div className="space-y-4">
+          {/* Comparar maneja sus propias fechas y su loading local: cambiar
+              un día o un período acá no desmonta la pantalla entera. */}
           {viewMode === 'comparar' && (
-            <CompareView
-              data={data}
-              compareData={compareData}
-              selectedDate={selectedDate}
-              compareDate={compareDate}
-              setSelectedDate={(d) => { setSelectedDate(d); setLoading(true) }}
-              setCompareDate={setCompareDate}
-              loadingCompare={loadingCompare}
-              onFetch={() => { fetchData(); fetchCompare() }}
-            />
+            <CompareView fetchDia={fetchDia} isManager={isManager} />
           )}
 
           {viewMode === 'mes' && (

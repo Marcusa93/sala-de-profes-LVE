@@ -46,6 +46,7 @@ export function MonthView({ selectedDate, setSelectedDate }: Props) {
   const [monthSummary, setMonthSummary] = useState<MonthSummary | null>(null)
   const [loadingMonth, setLoadingMonth] = useState(false)
   const [monthError, setMonthError] = useState<string | null>(null)
+  const [monthTruncado, setMonthTruncado] = useState(false)
   const [hourlyByDow, setHourlyByDow] = useState<{ dow: number; hour: number; total: number; tickets: number }[]>([])
   const [dowSelection, setDowSelection] = useState<number[]>([])
   const [hourFrom, setHourFrom] = useState<number | null>(null)
@@ -64,6 +65,7 @@ export function MonthView({ selectedDate, setSelectedDate }: Props) {
       if (!res.ok) throw new Error(json.error ?? `Error ${res.status} al cargar el mes`)
       if (json.dailyData) {
         setMonthData(json.dailyData)
+        setMonthTruncado(Boolean(json.truncado))
         setHourlyByDow(json.hourlyByDow ?? [])
         setMonthSummary({
           totalFacturado: json.totalFacturado ?? 0,
@@ -173,6 +175,13 @@ export function MonthView({ selectedDate, setSelectedDate }: Props) {
   return (
     <FadeIn>
       <div className="space-y-4">
+        {/* Aviso: Fudo devolvió el mes cortado (tope de páginas o una página falló) */}
+        {monthTruncado && (
+          <div className="rounded-xl bg-[#fdf6ec] px-3 py-2 text-[11px] text-[#8b5e34]">
+            Mes incompleto: Fudo no devolvió todas las ventas del período, los totales pueden quedar cortos.
+          </div>
+        )}
+
         {/* KPIs */}
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-xl bg-[#e8f5f1] p-3" style={{ borderLeftWidth: 3, borderLeftColor: '#006d5a' }}>

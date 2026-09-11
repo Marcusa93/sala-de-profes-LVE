@@ -382,10 +382,24 @@ export async function GET() {
       admin
         .from('menu_categories')
         .select('id, name'),
-      admin
-        .from('fudo_sales')
-        .select('fudo_product_id, quantity')
-        .gte('sold_at', salesSince.toISOString()),
+      // Paginado: 14 días son ~2.500 líneas y Supabase corta en 1000 por
+      // default — sin esto las señales de venta quedaban subcontadas ~60%.
+      (async () => {
+        const rows: FudoSaleRow[] = []
+        for (let page = 0; page < 50; page++) {
+          const { data, error } = await admin
+            .from('fudo_sales')
+            .select('fudo_product_id, quantity')
+            .gte('sold_at', salesSince.toISOString())
+            .order('id', { ascending: true })
+            .range(page * 1000, page * 1000 + 999)
+          if (error) return { data: null, error }
+          if (!data || data.length === 0) break
+          rows.push(...(data as FudoSaleRow[]))
+          if (data.length < 1000) break
+        }
+        return { data: rows, error: null }
+      })(),
     ])
 
     if (stockRes.error) throw stockRes.error

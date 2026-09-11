@@ -26,6 +26,11 @@ type Props = {
 export function DayView({ data, selectedDate, isLive }: Props) {
   const [tab, setTab] = useState<'resumen' | 'mesas' | 'cerradas'>('resumen')
 
+  // Un día pasado viene de la tabla local (range-summary): no hay mesas en
+  // curso ni detalle de tickets. Se ocultan las tarjetas live para que no
+  // quede un "$0 en curso" o pestañas vacías que confunden.
+  const activeTab = isLive ? tab : 'resumen'
+
   return (
     <>
       {/* Hero KPI — facturado del día */}
@@ -47,7 +52,11 @@ export function DayView({ data, selectedDate, isLive }: Props) {
               {formatPrice(data.totalFacturado)}
             </p>
             <p className="mt-2 text-[11px] text-white/60">
-              {data.mesasCerradas} mesa{data.mesasCerradas !== 1 ? 's' : ''} cerrada{data.mesasCerradas !== 1 ? 's' : ''} · ticket promedio {formatPrice(data.avgTicket)}
+              {/* Histórico: el registro no tiene mesas, cuenta tickets del canal local */}
+              {isLive
+                ? `${data.mesasCerradas} mesa${data.mesasCerradas !== 1 ? 's' : ''} cerrada${data.mesasCerradas !== 1 ? 's' : ''}`
+                : `${data.mesasCerradas} ticket${data.mesasCerradas !== 1 ? 's' : ''} en salón`}
+              {' · '}ticket promedio {formatPrice(data.avgTicket)}
             </p>
           </div>
 
@@ -76,21 +85,31 @@ export function DayView({ data, selectedDate, isLive }: Props) {
             </div>
           )}
 
-          {/* Sub-KPIs */}
-          <div className="relative mt-3 grid grid-cols-3 gap-2">
-            <div className="rounded-xl bg-white/10 px-3 py-2 backdrop-blur-sm">
-              <span className="text-[9px] font-semibold uppercase tracking-wider text-[#ffd489]">En curso</span>
-              <p className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#ffd489]">{formatPrice(data.totalEnCurso)}</p>
-              <p className="truncate text-[9px] text-white/50">
-                {data.mesasAbiertas} mesa{data.mesasAbiertas !== 1 ? 's' : ''}
-                {(data.takeawayAbiertos ?? 0) > 0 && ` +${data.takeawayAbiertos} TA`}
-              </p>
-            </div>
-            <div className="rounded-xl bg-white/10 px-3 py-2 backdrop-blur-sm">
-              <span className="text-[9px] font-semibold uppercase tracking-wider text-white/60">Total día</span>
-              <p className="mt-0.5 truncate text-[14px] font-bold tabular-nums">{formatPrice(data.totalGeneral)}</p>
-              <p className="truncate text-[9px] text-white/50">cerrado + en curso</p>
-            </div>
+          {/* Sub-KPIs — "En curso" y "Total día" solo tienen sentido en vivo */}
+          <div className={`relative mt-3 grid gap-2 ${isLive ? 'grid-cols-3' : 'grid-cols-2'}`}>
+            {isLive && (
+              <div className="rounded-xl bg-white/10 px-3 py-2 backdrop-blur-sm">
+                <span className="text-[9px] font-semibold uppercase tracking-wider text-[#ffd489]">En curso</span>
+                <p className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#ffd489]">{formatPrice(data.totalEnCurso)}</p>
+                <p className="truncate text-[9px] text-white/50">
+                  {data.mesasAbiertas} mesa{data.mesasAbiertas !== 1 ? 's' : ''}
+                  {(data.takeawayAbiertos ?? 0) > 0 && ` +${data.takeawayAbiertos} TA`}
+                </p>
+              </div>
+            )}
+            {isLive ? (
+              <div className="rounded-xl bg-white/10 px-3 py-2 backdrop-blur-sm">
+                <span className="text-[9px] font-semibold uppercase tracking-wider text-white/60">Total día</span>
+                <p className="mt-0.5 truncate text-[14px] font-bold tabular-nums">{formatPrice(data.totalGeneral)}</p>
+                <p className="truncate text-[9px] text-white/50">cerrado + en curso</p>
+              </div>
+            ) : (
+              <div className="rounded-xl bg-white/10 px-3 py-2 backdrop-blur-sm">
+                <span className="text-[9px] font-semibold uppercase tracking-wider text-white/60">Ticket prom.</span>
+                <p className="mt-0.5 truncate text-[14px] font-bold tabular-nums">{formatPrice(data.avgTicket)}</p>
+                <p className="truncate text-[9px] text-white/50">por ticket</p>
+              </div>
+            )}
             <div className="rounded-xl bg-white/10 px-3 py-2 backdrop-blur-sm">
               <span className="text-[9px] font-semibold uppercase tracking-wider text-white/60">Tickets</span>
               <p className="mt-0.5 truncate text-[14px] font-bold tabular-nums">{data.totalTickets}</p>
@@ -100,7 +119,8 @@ export function DayView({ data, selectedDate, isLive }: Props) {
         </div>
       </FadeIn>
 
-      {/* Tab nav */}
+      {/* Tab nav — solo en vivo: un día pasado no tiene mesas ni detalle de tickets */}
+      {isLive && (
       <div className="flex rounded-full bg-secondary p-0.5 shadow-inner">
         {([
           { key: 'resumen',  label: 'Resumen',                           icon: FileText      },
@@ -126,9 +146,10 @@ export function DayView({ data, selectedDate, isLive }: Props) {
           </button>
         ))}
       </div>
+      )}
 
       {/* RESUMEN */}
-      {tab === 'resumen' && (
+      {activeTab === 'resumen' && (
         <>
           {data.topProducts.length > 0 && (
             <FadeIn>
@@ -139,13 +160,15 @@ export function DayView({ data, selectedDate, isLive }: Props) {
                   </div>
                   <div>
                     <h2 className="text-[15px] font-bold text-[#3d2c24]">Informe del Día</h2>
-                    <p className="text-[11px] text-[#a39e97]">Datos en vivo de Fudo</p>
+                    <p className="text-[11px] text-[#a39e97]">{isLive ? 'Datos en vivo de Fudo' : 'Del registro de ventas'}</p>
                   </div>
                 </div>
                 <div className="rounded-xl bg-white/80 p-4 text-[13px] leading-relaxed text-[#3d2c24]">
                   <p>
                     Facturado (cerradas): <strong className="text-[#006d5a]">{formatPrice(data.totalFacturado)}</strong>.
-                    En curso: <strong className="text-[#d4943a]">{formatPrice(data.totalEnCurso)}</strong> en {data.mesasAbiertas} mesas.
+                    {isLive && (
+                      <> En curso: <strong className="text-[#d4943a]">{formatPrice(data.totalEnCurso)}</strong> en {data.mesasAbiertas} mesas.</>
+                    )}
                   </p>
                   {(() => {
                     const peak = data.byHour.reduce((max, h) => h.revenue > max.revenue ? h : max, data.byHour[0])
@@ -266,7 +289,7 @@ export function DayView({ data, selectedDate, isLive }: Props) {
       )}
 
       {/* MESAS EN CURSO */}
-      {tab === 'mesas' && (
+      {activeTab === 'mesas' && (
         <FadeIn>
           <div className="space-y-2">
             {data.openTables.length === 0 && data.openTakeaway.length === 0 ? (
@@ -356,7 +379,7 @@ export function DayView({ data, selectedDate, isLive }: Props) {
       )}
 
       {/* CERRADAS */}
-      {tab === 'cerradas' && (
+      {activeTab === 'cerradas' && (
         <FadeIn>
           <div className="space-y-2">
             {data.recentSales.length === 0 ? (
@@ -399,7 +422,7 @@ export function DayView({ data, selectedDate, isLive }: Props) {
       )}
 
       {/* Empty fallback */}
-      {data.totalTickets === 0 && tab === 'resumen' && (
+      {data.totalTickets === 0 && activeTab === 'resumen' && (
         <EmptyState
           icon={Receipt}
           title={isLive ? 'Sin ventas hoy' : `Sin ventas el ${format(selectedDate, "d 'de' MMMM", { locale: es })}`}

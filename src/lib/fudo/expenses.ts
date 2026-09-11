@@ -49,12 +49,20 @@ type ExpensesResponse = {
   included?: JsonApiRes[]
 }
 
+export type FudoExpensesMeta = {
+  expenses: FudoExpense[]
+  /** Conteo CRUDO de expenses que devolvió Fudo, ANTES de descartar los que no
+   *  tienen pago válido: es el número que hay que comparar contra el tope de
+   *  paginación para saber si la cobertura puede estar incompleta. */
+  rawCount: number
+}
+
 // Cache en memoria de módulo (30 min), patrón de personal/consumo.
 // Guarda la lista COMPLETA (sin filtrar): cada llamada filtra por su sinceISO,
 // así el cache sirve para cualquier ventana (antes se cacheaba filtrado por un
 // sinceISO con milisegundos → nunca coincidía y el cache no servía de nada).
 const CACHE_TTL_MS = 30 * 60 * 1000
-let cache: { at: number; expenses: FudoExpense[] } | null = null
+let cache: { at: number; expenses: FudoExpense[]; rawCount: number } | null = null
 
 function relArray(rel: JsonApiRes['relationships'], key: string): { id: string; type: string }[] {
   const data = rel?.[key]?.data
@@ -78,8 +86,23 @@ export async function fetchFudoExpenses(
   sinceISO?: string,
   options: { force?: boolean } = {},
 ): Promise<FudoExpense[]> {
+  return (await fetchFudoExpensesConMeta(sinceISO, options)).expenses
+}
+
+/**
+ * Igual que fetchFudoExpenses pero devuelve también rawCount (conteo crudo
+ * de expenses traídos de Fudo, antes de descartar los sin pago válido), para
+ * detectar honestamente cuándo el cache vino lleno.
+ */
+export async function fetchFudoExpensesConMeta(
+  sinceISO?: string,
+  options: { force?: boolean } = {},
+): Promise<FudoExpensesMeta> {
   if (!options.force && cache && Date.now() - cache.at < CACHE_TTL_MS) {
-    return sinceISO ? cache.expenses.filter((e) => e.date >= sinceISO) : cache.expenses
+    return {
+      expenses: sinceISO ? cache.expenses.filter((e) => e.date >= sinceISO) : cache.expenses,
+      rawCount: cache.rawCount,
+    }
   }
 
   const pageSize = 200
@@ -170,7 +193,11 @@ export async function fetchFudoExpenses(
   }
 
   expenses.sort((a, b) => b.date.localeCompare(a.date))
-  cache = { at: Date.now(), expenses }
+  const rawCount = rawExpenses.length
+  cache = { at: Date.now(), expenses, rawCount }
 
-  return sinceISO ? expenses.filter((e) => e.date >= sinceISO) : expenses
+  return {
+    expenses: sinceISO ? expenses.filter((e) => e.date >= sinceISO) : expenses,
+    rawCount,
+  }
 }

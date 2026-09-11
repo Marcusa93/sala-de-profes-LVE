@@ -64,14 +64,22 @@ export async function GET(request: NextRequest) {
       .toISOString().slice(0, 10)
     const sinceUTC = new Date(`${sinceDate}T00:00:00-03:00`).toISOString()
 
-    // 1. Ventas del período
+    // 1. Ventas del período — paginado: hasta 90 días superan por mucho el
+    // tope silencioso de 1000 filas de Supabase
     type SaleRow = { fudo_product_id: string | null; quantity: number }
-    const { data: salesData } = await admin
-      .from('fudo_sales')
-      .select('fudo_product_id, quantity')
-      .gte('sold_at', sinceUTC)
-
-    const sales = (salesData ?? []) as SaleRow[]
+    const sales: SaleRow[] = []
+    for (let page = 0; page < 50; page++) {
+      const { data: salesData, error: salesError } = await admin
+        .from('fudo_sales')
+        .select('fudo_product_id, quantity')
+        .gte('sold_at', sinceUTC)
+        .order('id', { ascending: true })
+        .range(page * 1000, page * 1000 + 999)
+      if (salesError) throw new Error(salesError.message)
+      if (!salesData || salesData.length === 0) break
+      sales.push(...(salesData as SaleRow[]))
+      if (salesData.length < 1000) break
+    }
 
     // Agregar por fudo_product_id
     const unitsByProduct = new Map<string, number>()

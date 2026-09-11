@@ -55,13 +55,16 @@ export function deriveVentasResumen(tickets: SaleTicket[]): VentasResumen {
   for (const ticket of closed) {
     for (const item of ticket.items) {
       if (item.canceled) continue
+      // price es UNITARIO: el revenue de la línea es quantity × price.
+      // (El totalFacturado sigue saliendo de ticket.total, que respeta los
+      // descuentos de ticket; este revenue por producto no los ve.)
       const key = item.productId
       const ex = productMap.get(key)
       if (ex) {
         ex.qty += item.quantity
-        ex.revenue += item.price
+        ex.revenue += item.quantity * item.price
       } else {
-        productMap.set(key, { name: item.productName, qty: item.quantity, revenue: item.price })
+        productMap.set(key, { name: item.productName, qty: item.quantity, revenue: item.quantity * item.price })
       }
     }
   }

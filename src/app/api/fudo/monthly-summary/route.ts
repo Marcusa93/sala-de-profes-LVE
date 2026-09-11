@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
 
     const monthParam = request.nextUrl.searchParams.get('month')
-    const { sales: allSales, start, days } = await fetchMonthSales(monthParam)
+    const { sales: allSales, start, days, truncado } = await fetchMonthSales(monthParam)
 
     // Only count closed sales for totals
     const closedSales = allSales.filter(s => s.state === 'CLOSED')
@@ -54,12 +54,13 @@ export async function GET(request: NextRequest) {
     const productAgg = new Map<string, { qty: number; revenue: number }>()
     for (const sale of closedSales) {
       for (const item of sale.items) {
+        // price es UNITARIO: el revenue de la línea es qty × price
         const ex = productAgg.get(item.name)
         if (ex) {
           ex.qty += item.qty
-          ex.revenue += item.price
+          ex.revenue += item.qty * item.price
         } else {
-          productAgg.set(item.name, { qty: item.qty, revenue: item.price })
+          productAgg.set(item.name, { qty: item.qty, revenue: item.qty * item.price })
         }
       }
     }
@@ -75,6 +76,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       month: format(start, 'yyyy-MM'),
+      truncado,
       totalFacturado,
       totalTickets,
       activeDays,

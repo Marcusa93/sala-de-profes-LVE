@@ -129,14 +129,18 @@ export async function GET(request: NextRequest) {
 
         ticketItems.push({ name, qty, price })
 
-        // Aggregate product sales
+        // Aggregate product sales — el price de Fudo es UNITARIO, así que el
+        // revenue de la línea es qty × price (sumar solo price subestimaba
+        // las líneas con cantidad > 1).
+        // OJO: el totalFacturado del día sigue saliendo de sale.total, que
+        // respeta descuentos de ticket; este revenue por producto no los ve.
         const prodKey = productRef?.id ?? item.id
         const existing = productSales.get(prodKey)
         if (existing) {
           existing.qty += qty
-          existing.revenue += price
+          existing.revenue += qty * price
         } else {
-          productSales.set(prodKey, { name, qty, revenue: price })
+          productSales.set(prodKey, { name, qty, revenue: qty * price })
         }
       }
 

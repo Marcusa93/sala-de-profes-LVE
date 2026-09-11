@@ -15,6 +15,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { costRecipes } from '@/lib/recipes/recipe-cost'
 import { isStockArea, areaFromLveCategory, AREA_LABEL, type StockArea } from '@/lib/stock/areas'
+import { aggregateVentas, type VentasCanal } from '@/lib/ventas/aggregate'
 
 // ---------------------------------------------------------------------------
 // Contrato
@@ -36,12 +37,19 @@ export type StockEstado =
 export type QueryPlan = {
   entity: AskEntity
   area?: StockArea
+  /** Stock: categoría LVE. Ventas: rubro de la carta (menu_categories.name). */
   categoria?: string
   /** el nombre contiene este texto */
   texto?: string
   estado?: StockEstado
   /** ventana temporal en días (ventas, producción, compras) */
   dias?: number
+  /** Sólo ventas: canal de venta (pedidosya se deriva del rubro PEDIDOS YA). */
+  canal?: VentasCanal
+  /** Sólo ventas: día de semana AR (0=domingo … 6=sábado). */
+  dia_semana?: number
+  /** Sólo ventas: correr la misma ventana inmediatamente anterior y comparar. */
+  comparar_con_anterior?: boolean
   /** qué ordenar primero */
   orden?: 'valor' | 'cantidad' | 'margen' | 'peor_margen' | 'reciente' | 'nombre'
   /** Sólo para compras: si el gasto se agrupa por insumo o por proveedor. */
@@ -79,10 +87,13 @@ export function planNeedsManager(plan: QueryPlan): boolean {
 const PLAN_SCHEMA = `{
   "entity": "stock" | "ventas" | "margen" | "produccion" | "pedidos" | "compras",
   "area": "cocina" | "pasteleria" | "barra" | "descartables" | "limpieza" (opcional),
-  "categoria": string (opcional, categoría LVE: carnes, verduras, lacteos, panaderia, bebidas, elaborados, condimentos, frutas, desechables, limpieza, otros),
+  "categoria": string (opcional; para stock es la categoría LVE: carnes, verduras, lacteos, panaderia, bebidas, elaborados, condimentos, frutas, desechables, limpieza, otros; para ventas es el rubro de la carta, ej: cafeteria, pizzas),
   "texto": string (opcional, si pregunta por un insumo o plato puntual),
   "estado": "critico" | "negativo" | "sin_contar" | "sin_proveedor" | "producidos" | "sin_area" | "sin_receta" (opcional),
   "dias": number (opcional, ventana temporal; por defecto 30),
+  "canal": "local" | "takeaway" | "pedidosya" (opcional, sólo ventas: por dónde salió la venta),
+  "dia_semana": number 0-6 (opcional, sólo ventas: 0=domingo … 6=sábado),
+  "comparar_con_anterior": boolean (opcional, sólo ventas: comparar contra la misma ventana inmediatamente anterior),
   "orden": "valor" | "cantidad" | "margen" | "peor_margen" | "reciente" | "nombre" (opcional),
   "agrupar": "insumo" | "proveedor" (opcional, sólo para compras: "a quién le compro" es proveedor, "cuánto gasté en carne" es insumo),
   "limite": number (opcional, por defecto 15)
@@ -103,7 +114,11 @@ const EXAMPLES = `Ejemplos:
 "que tengo que comprar" -> {"entity":"pedidos"}
 "a quien le compro mas" -> {"entity":"compras","dias":30,"agrupar":"proveedor"}
 "cuanto gaste en carne" -> {"entity":"compras","texto":"carne","dias":30}
-"platos sin receta cargada" -> {"entity":"margen","estado":"sin_receta"}`
+"platos sin receta cargada" -> {"entity":"margen","estado":"sin_receta"}
+"cuanto vendi por pedidosya este mes" -> {"entity":"ventas","canal":"pedidosya","dias":30}
+"que se vende mas los sabados" -> {"entity":"ventas","dia_semana":6,"orden":"cantidad"}
+"como vino esta semana vs la anterior" -> {"entity":"ventas","dias":7,"comparar_con_anterior":true}
+"cuanto facturo la cafeteria este mes" -> {"entity":"ventas","categoria":"cafeteria","dias":30}`
 
 const SCOPE_HINT: Record<AskScope, string> = {
   stock: 'La persona está en la pantalla de Stock. Ante la duda, entity="stock".',
@@ -128,10 +143,41 @@ export function rulePlan(question: string, scope: AskScope): QueryPlan {
   else if (has('mes')) plan.dias = 30
   else if (has('año', 'ano')) plan.dias = 365
 
+  // Canal de venta. PRIMERO que la entidad: 'pedidosya' contiene 'pedido' y
+  // sin este orden "¿cuánto vendí por pedidosya?" se iba a la entidad pedidos.
+  const esPedidosYa = has('pedidosya', 'pedidos ya', 'pedidos-ya')
+  if (esPedidosYa) {
+    plan.canal = 'pedidosya'
+    plan.entity = 'ventas'
+  } else if (has('para llevar', 'takeaway', 'take away')) {
+    plan.canal = 'takeaway'
+  } else if (has('en el local', 'en el salon', 'en salon')) {
+    plan.canal = 'local'
+  }
+
+  // Día de semana (palabras completas, nada de substrings cortos: la lección
+  // del listado errado sigue vigente). 'sabado' también matchea 'sabados'.
+  const DIAS_SEMANA: [string, number][] = [
+    ['domingo', 0], ['lunes', 1], ['martes', 2], ['miercoles', 3],
+    ['jueves', 4], ['viernes', 5], ['sabado', 6],
+  ]
+  for (const [nombre, dow] of DIAS_SEMANA) {
+    if (q.includes(nombre)) { plan.dia_semana = dow; break }
+  }
+
+  // Comparación contra la ventana anterior. Solo palabras de comparación
+  // explícitas: "¿cuánto vendí el mes anterior?" es una VENTANA, no una
+  // comparación — 'anterior' a secas no alcanza, tiene que venir con
+  // comparar/vs/contra o un "más/menos que la semana/el mes anterior".
+  if (has('compara', 'comparad', ' vs ', ' vs.', 'versus', 'contra la', 'contra el',
+          'que la semana anterior', 'que el mes anterior', 'que la semana pasada', 'que el mes pasado')) {
+    plan.comparar_con_anterior = true
+  }
+
   // Entidad. OJO con el orden y con las palabras cortas: 'coci' matcheaba
   // "cocina" y mandaba "¿qué me falta en cocina?" a producción.
   const preguntaPorFaltante = has('falta', 'critic', 'quiebre', 'sin stock', 'agotad', 'negativo', 'sin contar')
-  if (has('comprar', 'pedir', 'pedido', 'repone', 'reponer')) plan.entity = 'pedidos'
+  if (!esPedidosYa && has('comprar', 'pedir', 'pedido', 'repone', 'reponer')) plan.entity = 'pedidos'
   else if (preguntaPorFaltante) plan.entity = 'stock'
   else if (has('margen', 'rinde', 'deja ', 'rentab', 'cuesta', 'costo', 'food cost', 'plato')) plan.entity = 'margen'
   else if (has('gast', 'compre', 'compro', 'compra', 'proveedor', 'pague')) plan.entity = 'compras'
@@ -194,6 +240,18 @@ function sanitizePlan(raw: unknown, fallback: QueryPlan): QueryPlan {
   if (typeof r.texto === 'string' && r.texto.trim()) plan.texto = r.texto.trim().slice(0, 60)
   if (estados.includes(r.estado as StockEstado)) plan.estado = r.estado as StockEstado
   if (typeof r.dias === 'number' && r.dias > 0) plan.dias = Math.min(365, Math.round(r.dias))
+  if (r.canal === 'local' || r.canal === 'takeaway' || r.canal === 'pedidosya') plan.canal = r.canal
+  // dia_semana acepta 0-6 o el nombre del día
+  if (typeof r.dia_semana === 'number' && Number.isInteger(r.dia_semana) && r.dia_semana >= 0 && r.dia_semana <= 6) {
+    plan.dia_semana = r.dia_semana
+  } else if (typeof r.dia_semana === 'string') {
+    const nombres = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
+    const limpio = r.dia_semana.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
+    // Acepta singular y plural ("sabado" / "sabados"); ojo: "lunes" ya termina en s
+    const idx = nombres.findIndex((n) => limpio === n || limpio === `${n}s`)
+    if (idx >= 0) plan.dia_semana = idx
+  }
+  if (r.comparar_con_anterior === true) plan.comparar_con_anterior = true
   if (typeof r.orden === 'string' && (ordenes as readonly string[]).includes(r.orden)) plan.orden = r.orden as QueryPlan['orden']
   if (r.agrupar === 'insumo' || r.agrupar === 'proveedor') plan.agrupar = r.agrupar
   if (typeof r.limite === 'number' && r.limite > 0) plan.limite = Math.min(50, Math.round(r.limite))
@@ -348,31 +406,49 @@ async function runStock(admin: SupabaseClient, plan: QueryPlan): Promise<AskResu
   }
 }
 
+const DOW_NOMBRES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
+const CANAL_LABEL: Record<VentasCanal, string> = {
+  local: 'en el local',
+  takeaway: 'para llevar',
+  pedidosya: 'por PedidosYa',
+}
+
+function fechaARHoy(): string {
+  return new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+}
+
+function restarDiasFecha(fecha: string, dias: number): string {
+  const d = new Date(`${fecha}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - dias)
+  return d.toISOString().slice(0, 10)
+}
+
 async function runVentas(admin: SupabaseClient, plan: QueryPlan): Promise<AskResult> {
   const dias = plan.dias ?? 30
-  const desde = sinceISO(dias)
-  type Sale = { fudo_product_id: string | null; quantity: number; raw_payload: { price?: number } | null }
-  const acc = new Map<string, { u: number; $: number }>()
-  for (let from = 0; from < 40_000; from += 1000) {
-    const { data, error } = await admin
-      .from('fudo_sales').select('fudo_product_id, quantity, raw_payload')
-      .gte('sold_at', desde).range(from, from + 999)
-    if (error) throw new Error(error.message)
-    const rows = (data ?? []) as unknown as Sale[]
-    for (const r of rows) {
-      if (!r.fudo_product_id) continue
-      const cur = acc.get(r.fudo_product_id) ?? { u: 0, $: 0 }
-      cur.u += Number(r.quantity)
-      cur.$ += Number(r.quantity) * Number(r.raw_payload?.price ?? 0)
-      acc.set(r.fudo_product_id, cur)
-    }
-    if (rows.length < 1000) break
+  const hoy = fechaARHoy()
+  const from = restarDiasFecha(hoy, dias - 1)
+
+  // Categoría (rubro de la carta): texto → ids de menu_categories
+  let categorias: string[] | undefined
+  let avisoCategoria: string | undefined
+  if (plan.categoria) {
+    const { data: cats } = await admin.from('menu_categories').select('id, name')
+    const t = norm(plan.categoria)
+    const matcheadas = ((cats ?? []) as { id: string | number; name: string }[])
+      .filter((c) => norm(String(c.name)).includes(t))
+      .map((c) => String(c.id))
+    if (matcheadas.length > 0) categorias = matcheadas
+    else avisoCategoria = `No encontré el rubro "${plan.categoria}" en la carta, así que te muestro todo.`
   }
 
-  const { data: menu } = await admin.from('menu_items').select('fudo_product_id, name').not('fudo_product_id', 'is', null)
-  const nameByFudo = new Map((menu ?? []).map((m) => [String(m.fudo_product_id), m.name as string]))
+  const filtroBase = {
+    canal: plan.canal,
+    categorias,
+    dows: plan.dia_semana != null ? [plan.dia_semana] : undefined,
+  }
+  const agg = await aggregateVentas(admin, { from, to: hoy, ...filtroBase })
 
-  let list = [...acc.entries()].map(([id, v]) => ({ producto: nameByFudo.get(id) ?? `Producto ${id}`, unidades: v.u, facturado: v.$ }))
+  let list = agg.byProduct.map((p) => ({ producto: p.nombre, unidades: p.unidades, facturado: p.revenue }))
   const filtroVentas = filtrarPorNombre(list, plan.texto, (r) => r.producto)
   list = filtroVentas.lista
 
@@ -384,15 +460,41 @@ async function runVentas(admin: SupabaseClient, plan: QueryPlan): Promise<AskRes
   const rows = list.slice(0, plan.limite ?? 15).map((r) => ({
     producto: r.producto, unidades: qty(r.unidades), facturado: r.facturado > 0 ? money(r.facturado) : '—',
   }))
+
   const foco = plan.texto ? ` de "${plan.texto}"` : ''
-  const answer = matched === 0
-    ? `No hay ventas${foco} en los últimos ${dias} días.`
-    : `En ${dias} días se vendieron ${qty(totalU)} unidades${foco} por ${money(total$)}.`
+  const conCanal = plan.canal ? ` ${CANAL_LABEL[plan.canal]}` : ''
+  const conDia = plan.dia_semana != null ? ` los ${DOW_NOMBRES[plan.dia_semana]}${plan.dia_semana === 0 || plan.dia_semana === 6 ? 's' : ''}` : ''
+  let answer = matched === 0
+    ? `No hay ventas${foco}${conCanal}${conDia} en los últimos ${dias} días.`
+    : `En ${dias} días se vendieron ${qty(totalU)} unidades${foco}${conCanal}${conDia} por ${money(total$)}.`
+
+  // Comparación contra la MISMA ventana inmediatamente anterior
+  if (plan.comparar_con_anterior) {
+    const prevTo = restarDiasFecha(from, 1)
+    const prevFrom = restarDiasFecha(from, dias)
+    const prev = await aggregateVentas(admin, { from: prevFrom, to: prevTo, ...filtroBase })
+    // Si hay foco por texto, comparar el mismo recorte de productos
+    let prevList = prev.byProduct.map((p) => ({ producto: p.nombre, unidades: p.unidades, facturado: p.revenue }))
+    if (plan.texto && !filtroVentas.aviso) prevList = filtrarPorNombre(prevList, plan.texto, (r) => r.producto).lista
+    const prevU = prevList.reduce((s, r) => s + r.unidades, 0)
+    const prev$ = prevList.reduce((s, r) => s + r.facturado, 0)
+    const delta$ = total$ - prev$
+    const deltaPct = prev$ > 0 ? Math.round((delta$ / prev$) * 100) : null
+    const deltaU = totalU - prevU
+    answer += prev$ > 0 || prevU > 0
+      ? ` Contra los ${dias} días anteriores (${money(prev$)}): ${delta$ >= 0 ? '+' : '−'}${money(Math.abs(delta$))}${deltaPct != null ? ` (${delta$ >= 0 ? '+' : '−'}${Math.abs(deltaPct)}%)` : ''} y ${deltaU >= 0 ? '+' : '−'}${qty(Math.abs(deltaU))} unidades.`
+      : ` La ventana anterior no tiene ventas registradas para comparar.`
+  }
 
   return {
     plan, answer, matched, rows, via: 'reglas',
     href: `/ventas?m=${dias <= 1 ? 'dia' : 'mes'}`,
-    note: [filtroVentas.aviso, 'Facturado según el precio que Fudo guardó en cada venta; alrededor del 10% de las líneas viene sin precio (consumo interno y promos).'].filter(Boolean).join(' '),
+    note: [
+      filtroVentas.aviso,
+      avisoCategoria,
+      'Facturado = cantidad × precio unitario de cada línea en Fudo; las líneas sin precio (consumo interno y promos) quedan afuera.',
+      'El registro de ventas se sincroniza a la madrugada: lo de hoy puede estar incompleto.',
+    ].filter(Boolean).join(' '),
     columns: [
       { key: 'producto', label: 'Producto' },
       { key: 'unidades', label: 'Unidades', align: 'right' },

@@ -64,17 +64,64 @@ export async function importFudoSales(
 
     type JsonApiRow = { type: string; id: string; attributes?: Record<string, unknown>; relationships?: Record<string, { data: unknown }> }
 
+    const relOne = (row: JsonApiRow | undefined, key: string): { id?: string } | null => {
+      const data = row?.relationships?.[key]?.data
+      if (!data || Array.isArray(data)) return null
+      return data as { id?: string }
+    }
+    const relMany = (row: JsonApiRow | undefined, key: string): Array<{ id: string }> => {
+      const data = row?.relationships?.[key]?.data
+      return Array.isArray(data) ? (data as Array<{ id: string }>) : []
+    }
+
+    // Include enriquecido: además de items.product traemos payments (medio de
+    // pago), waiter y table, para poder comparar por mozo/medio de pago más
+    // adelante. Si la API rechaza el include enriquecido, caemos al básico
+    // (los campos nuevos quedan null y el sync no se rompe).
+    const INCLUDE_RICO = 'items.product,payments.paymentMethod,table,waiter'
+    const INCLUDE_BASE = 'items.product'
+    let includeActual = INCLUDE_RICO
+
     let page = 1
     while (page <= 30) {
-      const res = await fudo.fetch<{ data?: JsonApiRow[]; included?: JsonApiRow[] }>(
-        `/sales?include=items.product&sort=-createdAt&page[size]=200&page[number]=${page}`
-      )
+      let res: { data?: JsonApiRow[]; included?: JsonApiRow[] }
+      try {
+        res = await fudo.fetch<{ data?: JsonApiRow[]; included?: JsonApiRow[] }>(
+          `/sales?include=${includeActual}&sort=-createdAt&page[size]=200&page[number]=${page}`
+        )
+      } catch (err) {
+        // Degradar al include básico SOLO si la API lo rechazó (400/422).
+        // Un error transitorio (500/timeout/429 agotado) se propaga como
+        // siempre: si no, una falla pasajera degradaba el sync para siempre
+        // y quedaban datos mixtos (filas sin mozo/medio de pago).
+        const status = (err instanceof Error ? err.message : '').match(/^Fudo API (\d{3}) on /)?.[1]
+        const includeRechazado = status === '400' || status === '422'
+        if (includeActual === INCLUDE_RICO && includeRechazado) {
+          // La API no aceptó el include enriquecido: reintentar con el básico
+          console.error('[sales-sync] include enriquecido rechazado, uso el básico:', err)
+          includeActual = INCLUDE_BASE
+          res = await fudo.fetch<{ data?: JsonApiRow[]; included?: JsonApiRow[] }>(
+            `/sales?include=${includeActual}&sort=-createdAt&page[size]=200&page[number]=${page}`
+          )
+        } else {
+          throw err
+        }
+      }
       const salesData = res.data ?? []
       const included = res.included ?? []
 
       const itemMap = new Map<string, JsonApiRow>()
+      const paymentMap = new Map<string, JsonApiRow>()
+      const paymentMethodName = new Map<string, string>()
+      const tableMap = new Map<string, JsonApiRow>()
+      const personName = new Map<string, string>()
       for (const r of included) {
         if (r.type === 'Item') itemMap.set(r.id, r)
+        else if (r.type === 'Payment') paymentMap.set(r.id, r)
+        else if (r.type === 'PaymentMethod' && typeof r.attributes?.name === 'string') paymentMethodName.set(r.id, r.attributes.name)
+        else if (r.type === 'Table') tableMap.set(r.id, r)
+        // El waiter puede venir tipado como User o Waiter según la versión de la API
+        else if ((r.type === 'User' || r.type === 'Waiter') && typeof r.attributes?.name === 'string') personName.set(r.id, r.attributes.name)
       }
 
       let allBeforeRange = salesData.length > 0
@@ -89,7 +136,30 @@ export async function importFudoSales(
         if (String(sale.attributes?.saleState) !== 'CLOSED') continue
 
         salesCount++
-        const refs = (sale.relationships?.items?.data ?? []) as Array<{ id: string }>
+
+        // Contexto del ticket (viene con el include enriquecido; si el include
+        // básico está activo o el dato no vino, queda null sin romper nada)
+        const paymentRefs = relMany(sale, 'payments')
+        let paymentMethod: string | null = null
+        for (const pRef of paymentRefs) {
+          const payment = paymentMap.get(pRef.id)
+          if (!payment || payment.attributes?.canceled) continue
+          const methodId = relOne(payment, 'paymentMethod')?.id
+          paymentMethod = methodId ? paymentMethodName.get(methodId) ?? String(methodId) : null
+          if (paymentMethod) break
+        }
+        const waiterId = relOne(sale, 'waiter')?.id
+        const waiter = waiterId ? personName.get(waiterId) ?? null : null
+        const tableId = relOne(sale, 'table')?.id
+        const tableRow = tableId ? tableMap.get(tableId) : undefined
+        // Si la Table no vino en included NO guardamos el id interno crudo
+        // como número de mesa: mejor null que "mesa 48213".
+        const table = tableRow?.attributes?.number != null
+          ? String(tableRow.attributes.number)
+          : null
+        const saleTotal = sale.attributes?.total != null ? Number(sale.attributes.total) : null
+
+        const refs = relMany(sale, 'items')
         for (const ref of refs) {
           const item = itemMap.get(ref.id)
           if (!item || item.attributes?.canceled) continue
@@ -107,6 +177,13 @@ export async function importFudoSales(
               price: Number(item.attributes?.price ?? 0),
               sale_type: sale.attributes?.saleType ?? null,
               operation: options.operation ?? 'sales_import',
+              // Campos nuevos (2026-09): para comparar por mozo/medio de pago
+              // en unas semanas. Sin backfill: las filas viejas no los tienen.
+              payment_method: paymentMethod,
+              waiter,
+              table,
+              sale_total: saleTotal,
+              item_total: item.attributes?.total != null ? Number(item.attributes.total) : null,
             },
           })
         }
@@ -132,25 +209,67 @@ export async function importFudoSales(
       return result
     }
 
-    let query = admin
-      .from('fudo_sales')
-      .select('fudo_sale_item_id')
-      .not('fudo_sale_item_id', 'is', null)
+    // Ventana del existingSet con la MISMA semántica AR que el filtro de
+    // arriba: from/to son fechas calendario AR → [fromT00:00-03:00,
+    // (to+1d)T00:00-03:00). Antes se pasaba 'YYYY-MM-DD' crudo y Postgres lo
+    // casteaba a medianoche UTC: con to=hoy, TODA la jornada AR de hoy quedaba
+    // fuera del set y fresh=1 re-insertaba filas ya importadas por el cron.
+    // Sin from (sync manual "lo último"): acotar a la venta más vieja traída
+    // −1 día, para no paginar la tabla entera.
+    const minSoldMs = flatRows.reduce((min, r) => {
+      const t = Date.parse(r.sold_at)
+      return Number.isNaN(t) ? min : Math.min(min, t)
+    }, Infinity)
+    const fromISO = options.from
+      ? new Date(`${options.from}T00:00:00-03:00`).toISOString()
+      : Number.isFinite(minSoldMs) ? new Date(minSoldMs - 86_400_000).toISOString() : null
+    // +24h en ms (AR no tiene DST; setDate dependería del huso del server)
+    const toExclISO = options.to ? new Date(Date.parse(`${options.to}T00:00:00-03:00`) + 86_400_000).toISOString() : null
 
-    if (options.from) query = query.gte('sold_at', options.from)
-    if (options.to) query = query.lte('sold_at', options.to)
+    // Paginado: PostgREST corta en 1000 filas y 2 días de ventas pueden
+    // pasarlo; un set truncado dejaba escapar duplicados al insert.
+    const existingSet = new Set<string>()
+    for (let p = 0; p < 50; p++) {
+      let query = admin
+        .from('fudo_sales')
+        .select('fudo_sale_item_id')
+        .not('fudo_sale_item_id', 'is', null)
+      if (fromISO) query = query.gte('sold_at', fromISO)
+      if (toExclISO) query = query.lt('sold_at', toExclISO)
 
-    const { data: existing, error: existingError } = await query
-    if (existingError) throw existingError
+      const { data: existing, error: existingError } = await query
+        .order('id', { ascending: true })
+        .range(p * 1000, p * 1000 + 999)
+      if (existingError) throw existingError
+      for (const row of existing ?? []) {
+        if (row.fudo_sale_item_id) existingSet.add(String(row.fudo_sale_item_id))
+      }
+      if ((existing ?? []).length < 1000) break
+    }
 
-    const existingSet = new Set((existing ?? []).map((row) => row.fudo_sale_item_id).filter(Boolean))
     const newRows = flatRows.filter((row) => !existingSet.has(row.fudo_sale_item_id))
 
     for (let i = 0; i < newRows.length; i += 50) {
       const batch = newRows.slice(i, i + 50)
       const { error } = await admin.from('fudo_sales').insert(batch)
-      if (error) result.errors.push(error.message)
-      else result.imported += batch.length
+      if (!error) {
+        result.imported += batch.length
+        continue
+      }
+      if (error.code === '23505') {
+        // Duplicado que se escapó del existingSet (índice único parcial
+        // uq_fudo_sales_sale_item). Upsert con ON CONFLICT no sirve acá:
+        // el índice es PARCIAL y PostgREST no le pasa el predicado. En vez
+        // de perder el batch entero, reintentar fila por fila salteando
+        // las repetidas.
+        for (const row of batch) {
+          const { error: rowError } = await admin.from('fudo_sales').insert(row)
+          if (!rowError) result.imported += 1
+          else if (rowError.code !== '23505') result.errors.push(rowError.message)
+        }
+      } else {
+        result.errors.push(error.message)
+      }
     }
 
     await finishFudoSyncEvent(admin, eventId, result.errors.length > 0 ? 'failed' : 'success', {
