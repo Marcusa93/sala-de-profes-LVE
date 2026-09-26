@@ -22,9 +22,10 @@ type Props = {
   assigning: boolean
   filter: string
   onFilter: (f: string) => void
+  supplierNames?: Map<number, string>
 }
 
-export function AssignItemsDialog({ open, onClose, supplier, items, selectedItems, onToggle, onSelectAllCategory, onSave, assigning, filter, onFilter }: Props) {
+export function AssignItemsDialog({ open, onClose, supplier, items, selectedItems, onToggle, onSelectAllCategory, onSave, assigning, filter, onFilter, supplierNames }: Props) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="flex max-h-[80vh] flex-col rounded-2xl border-[#ebe6df] bg-[#fefcf9] sm:max-w-md">
@@ -69,6 +70,9 @@ export function AssignItemsDialog({ open, onClose, supplier, items, selectedItem
           {items.map((item) => {
             const isSelected = selectedItems.has(item.id)
             const sem = getSemaphore(item.current_qty, item.min_qty)
+            const otherSupplierName = item.supplier_id && item.supplier_id !== supplier?.id
+              ? (supplierNames?.get(item.supplier_id) ?? 'otro proveedor')
+              : null
             return (
               <button
                 key={item.id}
@@ -88,7 +92,14 @@ export function AssignItemsDialog({ open, onClose, supplier, items, selectedItem
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium text-[#3d2c24]">{item.name}</p>
-                  <p className="text-[10px] text-[#a39e97]">{item.category}</p>
+                  <p className="text-[10px] text-[#a39e97]">
+                    {item.category}
+                    {otherSupplierName && (
+                      <span className="ml-1.5 rounded-full bg-[#fdf6ec] px-1.5 py-0.5 font-semibold text-[#d4943a]">
+                        {otherSupplierName}
+                      </span>
+                    )}
+                  </p>
                 </div>
                 {sem !== 'green' && (
                   <div className={`size-1.5 shrink-0 rounded-full ${sem === 'red' ? 'bg-[#ea504c]' : 'bg-[#d4943a]'}`} />

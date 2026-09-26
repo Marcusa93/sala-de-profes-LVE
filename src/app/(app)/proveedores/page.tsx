@@ -231,10 +231,15 @@ export default function ProveedoresPage() {
     setAssignDialogOpen(true)
   }
 
+  const supplierNamesMap = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const s of suppliers) map.set(s.id, s.name)
+    return map
+  }, [suppliers])
+
   const assignableItems = useMemo(() => {
     if (!assignSupplier) return []
     return allStockItems
-      .filter((i) => !i.supplier_id || i.supplier_id === assignSupplier.id)
       .sort((a, b) => {
         const aCat = a.category === assignSupplier.category ? 0 : 1
         const bCat = b.category === assignSupplier.category ? 0 : 1
@@ -495,6 +500,7 @@ export default function ProveedoresPage() {
         assigning={assigning}
         filter={assignFilter}
         onFilter={setAssignFilter}
+        supplierNames={supplierNamesMap}
       />
     </div>
   )
