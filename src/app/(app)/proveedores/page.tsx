@@ -43,6 +43,7 @@ export default function ProveedoresPage() {
   const [assignSupplier, setAssignSupplier] = useState<Supplier | null>(null)
   const [allStockItems, setAllStockItems] = useState<LowStockItem[]>([])
   const [selectedItems, setSelectedItems] = useState<Set<string | number>>(new Set())
+  const [initialLinked, setInitialLinked] = useState<Set<string | number>>(new Set())
   const [assigning, setAssigning] = useState(false)
   const [assignFilter, setAssignFilter] = useState('')
 
@@ -225,8 +226,12 @@ export default function ProveedoresPage() {
 
   function openAssignDialog(supplier: Supplier) {
     setAssignSupplier(supplier)
-    const alreadyLinked = allStockItems.filter((i) => i.supplier_id === supplier.id).map((i) => i.id)
-    setSelectedItems(new Set(alreadyLinked))
+    const linked = allStockItems
+      .filter((i) => i.supplier_id === supplier.id)
+      .map((i) => i.id as string | number)
+    const linkedSet = new Set<string | number>(linked)
+    setSelectedItems(new Set<string | number>(linked))
+    setInitialLinked(linkedSet)
     setAssignFilter('')
     setAssignDialogOpen(true)
   }
@@ -280,20 +285,15 @@ export default function ProveedoresPage() {
     if (!assignSupplier) return
     setAssigning(true)
     try {
-      const previouslyLinked = allStockItems
-        .filter((i) => i.supplier_id === assignSupplier.id)
-        .map((i) => i.id as string | number)
+      // Usar snapshot del estado al abrir el diálogo para evitar re-lectura del array mutado
+      const toLink = [...selectedItems].filter((id) => !initialLinked.has(id))
+      const toUnlink = [...initialLinked].filter((id) => !selectedItems.has(id))
 
-      const toUnlink = previouslyLinked.filter((id) => !selectedItems.has(id))
-      const toLink = [...selectedItems].filter((id) => !previouslyLinked.includes(id))
-
-      // Kitchen items tienen IDs string (UUID), bar items tienen IDs number negativo
-      const isBarId = (id: string | number): id is number => typeof id === 'number' && id < 0
-
-      const kitchenUnlink = toUnlink.filter((id): id is string => !isBarId(id))
-      const barUnlink = toUnlink.filter(isBarId).map((id) => -id)
-      const kitchenLink = toLink.filter((id): id is string => !isBarId(id))
-      const barLink = toLink.filter(isBarId).map((id) => -id)
+      // Kitchen items: IDs string (UUID), bar items: IDs number (negativo en allStockItems)
+      const kitchenLink = toLink.filter((id): id is string => typeof id === 'string')
+      const kitchenUnlink = toUnlink.filter((id): id is string => typeof id === 'string')
+      const barLink = toLink.filter((id): id is number => typeof id === 'number').map((id) => -id)
+      const barUnlink = toUnlink.filter((id): id is number => typeof id === 'number').map((id) => -id)
 
       // Cocina: endpoint bulk con admin client (bypasea RLS), pasa UUIDs
       if (kitchenLink.length > 0 || kitchenUnlink.length > 0) {

@@ -15,14 +15,14 @@ type Props = {
   onClose: (open: boolean) => void
   supplier: Supplier | null
   items: LowStockItem[]
-  selectedItems: Set<number>
+  selectedItems: Set<string | number>
   onToggle: (id: string | number) => void
   onSelectAllCategory: (category: string) => void
   onSave: () => void
   assigning: boolean
   filter: string
   onFilter: (f: string) => void
-  supplierNames?: Map<number, string>
+  supplierNames?: Map<string, string>
 }
 
 export function AssignItemsDialog({ open, onClose, supplier, items, selectedItems, onToggle, onSelectAllCategory, onSave, assigning, filter, onFilter, supplierNames }: Props) {
