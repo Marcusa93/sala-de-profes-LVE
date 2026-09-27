@@ -271,19 +271,7 @@ export default function ProveedoresPage() {
         )}
       </div>
 
-      <Link
-        href="/proveedores/vincular"
-        className="flex items-center justify-between gap-3 rounded-2xl bg-[#006d5a] px-4 py-3 text-white shadow-sm transition hover:bg-[#005a4a]"
-      >
-        <div className="flex items-center gap-2.5">
-          <Sparkles className="size-5 shrink-0" />
-          <div>
-            <p className="text-[14px] font-bold leading-tight">Vínculos con proveedores</p>
-            <p className="text-[11px] text-white/80">Qué se le compra a quién, según Fudo · días de pedido</p>
-          </div>
-        </div>
-        <ArrowRight className="size-5 shrink-0" />
-      </Link>
+      <VinculosAviso />
 
       {/* Alert banner */}
       {suppliersWithAlerts.size > 0 && (
@@ -395,5 +383,49 @@ export default function ProveedoresPage() {
         supplier={assignSupplier}
       />
     </div>
+  )
+}
+
+// Aviso de vínculos: grande solo mientras haya algo por revisar; si está todo
+// en orden queda un acceso chico a días de pedido y vínculos.
+function VinculosAviso() {
+  const [r, setR] = useState<{ conflictos: number; sin_proveedor: number; calendario: number } | null>(null)
+  useEffect(() => {
+    let vivo = true
+    fetch('/api/proveedores/vinculos?resumen=1', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => { if (vivo) setR(json) })
+      .catch(() => {})
+    return () => { vivo = false }
+  }, [])
+  if (!r) return null
+  const revisar = r.conflictos + r.sin_proveedor
+  if (revisar === 0 && r.calendario === 0) {
+    return (
+      <Link href="/proveedores/vincular?tab=productos" className="flex items-center justify-end gap-1 text-[12px] font-semibold text-[#006d5a]">
+        Vínculos y días de pedido <ArrowRight className="size-3.5" />
+      </Link>
+    )
+  }
+  return (
+    <Link
+      href={revisar > 0 ? '/proveedores/vincular' : '/proveedores/vincular?tab=calendario'}
+      className="flex items-center justify-between gap-3 rounded-2xl bg-[#006d5a] px-4 py-3 text-white shadow-sm transition hover:bg-[#005a4a]"
+    >
+      <div className="flex items-center gap-2.5">
+        <Sparkles className="size-5 shrink-0" />
+        <div>
+          <p className="text-[14px] font-bold leading-tight">
+            {revisar > 0 ? `${revisar} insumo${revisar === 1 ? '' : 's'} para revisar` : `${r.calendario} proveedores sin días de pedido`}
+          </p>
+          <p className="text-[11px] text-white/80">
+            {revisar > 0
+              ? [r.conflictos > 0 && `${r.conflictos} no coinciden con Fudo`, r.sin_proveedor > 0 && `${r.sin_proveedor} sin proveedor`].filter(Boolean).join(' · ')
+              : 'Fudo sugiere qué días se les compra'}
+          </p>
+        </div>
+      </div>
+      <ArrowRight className="size-5 shrink-0" />
+    </Link>
   )
 }

@@ -20,11 +20,20 @@ export const dynamic = 'force-dynamic'
 const OPS = new Set(['primary', 'add', 'confirm', 'remove'])
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const auth = await requireRole(['socio', 'encargado'])
     if (auth.response) return auth.response
-    return NextResponse.json(await buildVinculosPayload(createAdminClient()))
+    const payload = await buildVinculosPayload(createAdminClient())
+    if (new URL(request.url).searchParams.get('resumen') === '1') {
+      // Para el aviso de /proveedores: solo aparece si hay algo por revisar
+      return NextResponse.json({
+        conflictos: payload.review.conflicts.length,
+        sin_proveedor: payload.review.unlinked.length,
+        calendario: payload.review.calendar.length,
+      })
+    }
+    return NextResponse.json(payload)
   } catch (err) {
     console.error('[GET /api/proveedores/vinculos]', err)
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Error interno' }, { status: 500 })
