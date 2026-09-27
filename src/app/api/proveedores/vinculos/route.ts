@@ -61,9 +61,11 @@ export async function POST(request: Request) {
         }
       }
       const clean = changes.map((c) => ({ item_id: c.item_id, supplier_id: c.supplier_id, op: c.op }))
-      // set_supplier_links no está en los tipos generados
-      const rpc = supabase.rpc as unknown as (fn: string, args: Record<string, unknown>) => Promise<{ data: { applied: number } | null; error: { message: string; code?: string } | null }>
-      const { data, error } = await rpc('set_supplier_links', { p_changes: clean })
+      // set_supplier_links no está en los tipos generados. Ojo: rpc usa `this`,
+      // hay que llamarlo sobre el cliente (sacarlo suelto rompía con
+      // "Cannot read properties of undefined (reading 'rest')").
+      type Rpc = (fn: string, args: Record<string, unknown>) => Promise<{ data: { applied: number } | null; error: { message: string; code?: string } | null }>
+      const { data, error } = await (supabase.rpc as unknown as Rpc).call(supabase, 'set_supplier_links', { p_changes: clean })
       if (error) {
         const status = error.code === '42501' ? 403 : error.code === '22023' ? 400 : 500
         return NextResponse.json({ error: error.message }, { status })
