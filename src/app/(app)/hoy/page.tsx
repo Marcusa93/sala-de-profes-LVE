@@ -42,6 +42,8 @@ type HoyData = {
   producedItems: { id: string; name: string; unit: string; current_qty: number }[]
   countNegative: { id: string; name: string; current_qty: number; unit: string }[]
   countCritical: number
+  /** conteo diario de elaborados: cuántos se contaron hoy */
+  conteoHoy: { contados: number; total: number; ultimo: string | null } | null
 }
 
 // La vista se cachea para que volver desde un paso sea instantáneo,
@@ -95,12 +97,13 @@ export default function HoyPage() {
     }
 
     async function load() {
-      const [purchaseRes, planRes, kitchenRes, barRes, stockRes] = await Promise.all([
+      const [purchaseRes, planRes, kitchenRes, barRes, stockRes, conteoRes] = await Promise.all([
         fetch('/api/ai/purchase-order', { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null),
         fetch('/api/ai/production-plan', { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null),
         supabase.from('kitchen_orders').select('id, product_name, quantity').eq('status', 'ordered').limit(10),
         supabase.from('bar_orders').select('id, product_name, quantity').eq('status', 'ordered').limit(10),
         supabase.from('stock_items').select('id, name, current_qty, min_qty, unit, is_produced').eq('is_active', true),
+        fetch('/api/stock/conteo-texto', { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null),
       ])
 
       const orders = (purchaseRes?.orders ?? []) as PurchaseOrderLite[]
@@ -117,6 +120,7 @@ export default function HoyPage() {
         producedItems: stock.filter(i => i.is_produced).map(({ id, name, unit, current_qty }) => ({ id, name, unit, current_qty })),
         countNegative: stock.filter(i => Number(i.current_qty) < 0).slice(0, 6),
         countCritical: stock.filter(i => isStockCritical(Number(i.current_qty ?? 0), Number(i.min_qty ?? 0))).length,
+        conteoHoy: conteoRes,
       }
 
       setData(fresh)
@@ -378,11 +382,18 @@ export default function HoyPage() {
       key: 'contar',
       title: 'Contar',
       icon: ClipboardList,
-      href: '/stock?from=hoy',
-      cta: 'Ir a Conteo',
-      tone: data.countNegative.length > 0 ? 'urgent' : data.countCritical > 0 ? 'action' : 'ok',
+      href: data.conteoHoy && data.conteoHoy.contados === 0 ? '/cocina/elaborados' : '/stock?from=hoy',
+      cta: data.conteoHoy && data.conteoHoy.contados === 0 ? 'Contar elaborados' : 'Ir a Conteo',
+      tone: data.countNegative.length > 0 || (data.conteoHoy?.contados === 0) ? 'urgent' : data.countCritical > 0 ? 'action' : 'ok',
       body: (
         <div className="space-y-1">
+          {data.conteoHoy && (
+            <p className="text-xs text-[#3d2c24]">
+              {data.conteoHoy.contados > 0
+                ? <>✅ <span className="font-bold">Conteo de hoy hecho</span>: {data.conteoHoy.contados} elaborados contados</>
+                : <>⏳ <span className="font-bold text-[#d4943a]">Falta el conteo de elaborados de hoy</span> — se puede pegar el mensaje de WhatsApp</>}
+            </p>
+          )}
           {data.countNegative.length > 0 && (
             <p className="text-xs text-[#3d2c24]">
               <span className="font-bold text-[#ea504c]">{data.countNegative.length} en negativo</span>

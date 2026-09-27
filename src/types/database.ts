@@ -2793,6 +2793,30 @@ export type Database = {
           },
         ]
       }
+      stock_count_aliases: {
+        Row: {
+          alias: string
+          created_at: string
+          created_by: string | null
+          stock_item_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          alias: string
+          created_at?: string
+          created_by?: string | null
+          stock_item_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          alias?: string
+          created_at?: string
+          created_by?: string | null
+          stock_item_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       stock_items: {
         Row: {
           area: string | null

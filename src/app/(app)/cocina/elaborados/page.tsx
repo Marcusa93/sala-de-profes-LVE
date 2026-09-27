@@ -11,6 +11,7 @@ import { isKitchenRole } from '@/lib/roles'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { LoHiceDialog } from '@/components/produccion/LoHiceDialog'
 import { RecetaEditorDialog } from '@/components/produccion/RecetaEditorDialog'
+import { ConteoWhatsApp } from '@/components/produccion/ConteoWhatsApp'
 import type { Elaborado, ElaboradosPayload } from '@/lib/produccion/elaborados'
 
 // ---------------------------------------------------------------------------
@@ -129,7 +130,14 @@ export default function ElaboradosPage() {
               </div>
             </>
           ) : (
-            <Conteo elaborados={usados.length > 0 ? usados : data.elaborados} onListo={() => void load(true)} />
+            <div className="space-y-4">
+              <EstadoConteoHoy clave={data.elaborados.filter((e) => e.last_counted_at).length} />
+              <ConteoWhatsApp onGuardado={() => void load(true)} />
+              <div>
+                <p className="mb-1.5 px-1 text-[12px] font-semibold text-[#3d2c24]">O contar uno por uno</p>
+                <Conteo elaborados={usados.length > 0 ? usados : data.elaborados} onListo={() => void load(true)} />
+              </div>
+            </div>
           )}
         </>
       )}
@@ -349,4 +357,32 @@ function Dato({ titulo, valor, tono }: { titulo: string; valor: number; tono?: '
 
 function Centro({ children }: { children: React.ReactNode }) {
   return <div className="flex min-h-[60vh] flex-col items-center justify-center">{children}</div>
+}
+
+// "Hoy se contaron X de Y": el conteo de elaborados se hace todos los días
+function EstadoConteoHoy({ clave }: { clave: number }) {
+  const [e, setE] = useState<{ contados: number; total: number; ultimo: string | null } | null>(null)
+  useEffect(() => {
+    let vivo = true
+    fetch('/api/stock/conteo-texto', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (vivo) setE(j) })
+      .catch(() => {})
+    return () => { vivo = false }
+  }, [clave])
+  if (!e) return null
+  const hecho = e.contados > 0
+  return (
+    <div className={cn('flex items-center gap-3 rounded-2xl p-3.5 ring-1', hecho ? 'bg-[#e8f5f1] ring-[#006d5a]/20' : 'bg-[#fef7ed] ring-[#d4943a]/25')}>
+      <Scale className={cn('size-5 shrink-0', hecho ? 'text-[#006d5a]' : 'text-[#d4943a]')} />
+      <div className="min-w-0">
+        <p className="text-[13px] font-semibold text-[#3d2c24]">
+          {hecho ? `Hoy se contaron ${e.contados} de ${e.total} elaborados` : 'Todavía no se contó hoy'}
+        </p>
+        <p className="text-[11px] text-[#7d6c64]">
+          {hecho && e.ultimo ? `Último conteo ${hace(e.ultimo)}` : 'El conteo de elaborados se hace todos los días al cierre.'}
+        </p>
+      </div>
+    </div>
+  )
 }
