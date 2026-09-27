@@ -143,8 +143,9 @@ export default function CargarTurnosPage() {
         setShifts(prev => [...prev, { id: data.id, user_id: userId, shift_date: date, start_time: start, end_time: end }])
       }
       setPickerCell(null)
-    } catch {
-      toast.error('No se pudo guardar el turno')
+    } catch (err) {
+      // Mostrar el motivo real (permisos, datos): antes solo decía "no se pudo"
+      toast.error(`No se pudo guardar el turno${err && typeof err === 'object' && 'message' in err ? `: ${String((err as { message: unknown }).message)}` : ''}`)
     } finally {
       setSavingCell(false)
     }
@@ -159,8 +160,8 @@ export default function CargarTurnosPage() {
       if (error) throw error
       setShifts(prev => prev.filter(s => s.id !== existing.id))
       setPickerCell(null)
-    } catch {
-      toast.error('No se pudo borrar el turno')
+    } catch (err) {
+      toast.error(`No se pudo borrar el turno${err && typeof err === 'object' && 'message' in err ? `: ${String((err as { message: unknown }).message)}` : ''}`)
     } finally {
       setSavingCell(false)
     }
@@ -217,8 +218,8 @@ export default function CargarTurnosPage() {
       toast.success(`${rows.length} turnos copiados ${semanasAtras === 1 ? 'de la semana anterior' : `de la semana del ${format(addDays(weekStart, -7 * semanasAtras), 'd/M')}`}`)
       logAuditClient({ userId: profile.id, userName: profile.first_name ?? null, action: 'copy_week_shifts', module: 'turnos', entityType: 'shift', description: `Copió ${rows.length} turnos a la semana del ${weekStartStr}` })
       await fetchAll()
-    } catch {
-      toast.error('Error al copiar la semana anterior')
+    } catch (err) {
+      toast.error(`Error al copiar los turnos${err && typeof err === 'object' && 'message' in err ? `: ${String((err as { message: unknown }).message)}` : ''}`)
     } finally {
       setCopying(false)
     }
