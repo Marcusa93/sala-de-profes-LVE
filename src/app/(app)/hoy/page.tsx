@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react'
+import { ActivarAvisos } from '@/components/push/ActivarAvisos'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -103,7 +104,7 @@ export default function HoyPage() {
         supabase.from('kitchen_orders').select('id, product_name, quantity').eq('status', 'ordered').limit(10),
         supabase.from('bar_orders').select('id, product_name, quantity').eq('status', 'ordered').limit(10),
         supabase.from('stock_items').select('id, name, current_qty, min_qty, unit, is_produced').eq('is_active', true),
-        fetch('/api/stock/conteo-texto', { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch('/api/stock/conteo-diario', { credentials: 'include' }).then(r => r.ok ? r.json() : null).then(j => j?.estado ?? null).catch(() => null),
       ])
 
       const orders = (purchaseRes?.orders ?? []) as PurchaseOrderLite[]
@@ -382,7 +383,7 @@ export default function HoyPage() {
       key: 'contar',
       title: 'Contar',
       icon: ClipboardList,
-      href: data.conteoHoy && data.conteoHoy.contados === 0 ? '/cocina/elaborados' : '/stock?from=hoy',
+      href: data.conteoHoy && data.conteoHoy.contados === 0 ? '/cocina/elaborados?tab=contar' : '/stock?from=hoy',
       cta: data.conteoHoy && data.conteoHoy.contados === 0 ? 'Contar elaborados' : 'Ir a Conteo',
       tone: data.countNegative.length > 0 || (data.conteoHoy?.contados === 0) ? 'urgent' : data.countCritical > 0 ? 'action' : 'ok',
       body: (
@@ -391,7 +392,7 @@ export default function HoyPage() {
             <p className="text-xs text-[#3d2c24]">
               {data.conteoHoy.contados > 0
                 ? <>✅ <span className="font-bold">Conteo de hoy hecho</span>: {data.conteoHoy.contados} elaborados contados</>
-                : <>⏳ <span className="font-bold text-[#d4943a]">Falta el conteo de elaborados de hoy</span> — se puede pegar el mensaje de WhatsApp</>}
+                : <>⏳ <span className="font-bold text-[#d4943a]">Falta el conteo de elaborados de hoy</span> — al cargarlo le llega el resumen a todos</>}
             </p>
           )}
           {data.countNegative.length > 0 && (
@@ -427,6 +428,8 @@ export default function HoyPage() {
           {loading && <Loader2 className="size-4 animate-spin text-[#a39e97]" />}
         </div>
       </FadeIn>
+
+      <ActivarAvisos />
 
       {/* Preguntar en castellano — cruza stock, pedidos y producción */}
       <FadeIn delay={0.03}>

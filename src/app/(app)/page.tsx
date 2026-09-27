@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { ActivarAvisos } from '@/components/push/ActivarAvisos'
 import { isManagerOrAbove, mustClockIn } from '@/lib/roles'
 import Link from 'next/link'
 import { format } from 'date-fns'
@@ -172,6 +173,8 @@ export default function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-8">
+      {/* Avisos push: socios, encargados y chef (se oculta al activarlos) */}
+      <ActivarAvisos />
       {/* ---------------------------------------------------------------- */}
       {/* El "1 número": Pulso (managers) / Turno de hoy (empleados)       */}
       {/* ---------------------------------------------------------------- */}

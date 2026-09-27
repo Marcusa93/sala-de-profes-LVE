@@ -68,6 +68,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio'],
     target_user_ids: [],
   },
+  conteo_diario_hecho: {
+    label: 'Conteo diario de elaborados',
+    description: 'Cuando alguien carga el conteo del día: qué hay de cada elaborado y el comentario (reemplaza el mensaje del grupo).',
+    enabled: true,
+    target_roles: ['socio', 'encargado', 'chef'],
+    target_user_ids: [],
+  },
   conteo_diario_pendiente: {
     label: 'Falta el conteo diario de elaborados',
     description: 'A las 23 hs, si todavía no se contó ningún elaborado en el día.',

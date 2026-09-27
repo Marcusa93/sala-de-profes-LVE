@@ -108,6 +108,8 @@ export default function NotificacionesConfigPage() {
         Solo vos como socio podés ver y cambiar esto.
       </p>
 
+      <EquipoConAvisos />
+
       {loading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
           <Loader2 className="mr-2 size-5 animate-spin" /> Cargando…
@@ -197,6 +199,43 @@ export default function NotificacionesConfigPage() {
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+// Quién tiene los avisos activados: sin eso las notificaciones no le llegan
+function EquipoConAvisos() {
+  const [equipo, setEquipo] = useState<{ id: string; nombre: string; role: string; dispositivos: number }[] | null>(null)
+  const [verTodos, setVerTodos] = useState(false)
+  useEffect(() => {
+    fetch('/api/push/equipo', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setEquipo(j?.equipo ?? null))
+      .catch(() => {})
+  }, [])
+  if (!equipo) return null
+  const clave = equipo.filter((e) => ['socio', 'encargado', 'chef'].includes(e.role))
+  const lista = verTodos ? equipo : clave
+  const con = lista.filter((e) => e.dispositivos > 0).length
+  return (
+    <div className="mb-4 rounded-2xl bg-white p-3.5 shadow-sm ring-1 ring-[#ebe6df]">
+      <div className="flex items-baseline justify-between">
+        <p className="text-[13px] font-semibold text-[#3d2c24]">Quién tiene los avisos activados</p>
+        <p className="text-[12px] font-semibold tabular-nums text-[#006d5a]">{con} de {lista.length}</p>
+      </div>
+      <p className="mt-0.5 text-[11.5px] text-[#a39e97]">
+        A quien no los tenga no le llega ninguna notificación. Cada uno los activa desde su celular (aparece un aviso en Inicio).
+      </p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {lista.map((e) => (
+          <span key={e.id} className={e.dispositivos > 0 ? 'flex items-center gap-1 rounded-full bg-[#e8f5f1] px-2.5 py-1 text-[11.5px] text-[#006d5a]' : 'flex items-center gap-1 rounded-full bg-[#fef2f2] px-2.5 py-1 text-[11.5px] text-[#ea504c]'}>
+            {e.dispositivos > 0 ? <Bell className="size-3" /> : <BellOff className="size-3" />} {e.nombre || 'Sin nombre'}
+          </span>
+        ))}
+      </div>
+      <button onClick={() => setVerTodos((v) => !v)} className="mt-2 text-[11.5px] font-semibold text-[#006d5a]">
+        {verTodos ? 'Ver solo socios, encargados y chef' : 'Ver todo el equipo'}
+      </button>
     </div>
   )
 }

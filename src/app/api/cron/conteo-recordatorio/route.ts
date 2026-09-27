@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyEvent } from '@/lib/push/notify-event'
-import { estadoConteoHoy } from '@/lib/stock/conteo-texto'
+import { estadoConteoHoy } from '@/lib/stock/conteo-diario'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/conteo-recordatorio — 23:00 Argentina (02:00 UTC)
@@ -22,8 +22,8 @@ export async function GET(request: NextRequest) {
     if (estado.contados > 0) return NextResponse.json({ enviado: false, estado })
     await notifyEvent(admin, 'conteo_diario_pendiente', {
       title: '📋 Falta el conteo de elaborados de hoy',
-      body: 'Pegá el mensaje del conteo en Producción → Elaborados → Contar (o contalos uno por uno).',
-      url: '/cocina/elaborados',
+      body: 'Cargalo en Producción → Elaborados → Contar: al guardarlo le llega el resumen a todos.',
+      url: '/cocina/elaborados?tab=contar',
     })
     return NextResponse.json({ enviado: true, estado })
   } catch (err) {

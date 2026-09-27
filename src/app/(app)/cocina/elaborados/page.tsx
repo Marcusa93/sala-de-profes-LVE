@@ -1,6 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { ActivarAvisos } from '@/components/push/ActivarAvisos'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -11,8 +13,8 @@ import { isKitchenRole } from '@/lib/roles'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { LoHiceDialog } from '@/components/produccion/LoHiceDialog'
 import { RecetaEditorDialog } from '@/components/produccion/RecetaEditorDialog'
-import { ConteoWhatsApp } from '@/components/produccion/ConteoWhatsApp'
 import type { Elaborado, ElaboradosPayload } from '@/lib/produccion/elaborados'
+import type { ConteoDelDia } from '@/lib/stock/conteo-diario'
 
 // ---------------------------------------------------------------------------
 // Elaborados de cocina — todo lo que se prepara, en un lugar
@@ -37,11 +39,20 @@ function necesitaNota(actual: number, nuevo: number, unit: string) {
 type Filtro = 'todos' | 'sin_receta' | 'sin_vida'
 
 export default function ElaboradosPage() {
+  return (
+    <Suspense fallback={<Centro><Loader2 className="size-6 animate-spin text-[#006d5a]" /></Centro>}>
+      <Elaborados />
+    </Suspense>
+  )
+}
+
+function Elaborados() {
   const { profile, loading: profileLoading } = useProfileContext()
   const puedeVer = isKitchenRole(profile?.role)
   const [data, setData] = useState<ElaboradosPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [modo, setModo] = useState<'lista' | 'contar'>('lista')
+  const params = useSearchParams()
+  const [modo, setModo] = useState<'lista' | 'contar'>(params.get('tab') === 'contar' ? 'contar' : 'lista')
   const [filtro, setFiltro] = useState<Filtro>('todos')
   const [loHice, setLoHice] = useState<Elaborado | null>(null)
   const [receta, setReceta] = useState<Elaborado | null>(null)
@@ -86,6 +97,7 @@ export default function ElaboradosPage() {
         </div>
       </div>
 
+      <ActivarAvisos />
       {error && !data && <div className="rounded-2xl bg-[#fef2f2] p-4 text-[13px] text-[#ea504c]">{error}</div>}
       {!data && !error && <div className="space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-24 animate-pulse rounded-2xl bg-[#f3efe9]" />)}</div>}
 
@@ -131,12 +143,8 @@ export default function ElaboradosPage() {
             </>
           ) : (
             <div className="space-y-4">
-              <EstadoConteoHoy clave={data.elaborados.filter((e) => e.last_counted_at).length} />
-              <ConteoWhatsApp onGuardado={() => void load(true)} />
-              <div>
-                <p className="mb-1.5 px-1 text-[12px] font-semibold text-[#3d2c24]">O contar uno por uno</p>
-                <Conteo elaborados={usados.length > 0 ? usados : data.elaborados} onListo={() => void load(true)} />
-              </div>
+              <ConteoDeHoy clave={data.elaborados.filter((e) => e.last_counted_at).length} />
+              <Conteo elaborados={usados.length > 0 ? usados : data.elaborados} onListo={() => void load(true)} />
             </div>
           )}
         </>
@@ -257,6 +265,7 @@ function Conteo({ elaborados, onListo }: { elaborados: Elaborado[]; onListo: () 
   const [notas, setNotas] = useState<Record<string, string>>({})
   const [errores, setErrores] = useState<Record<string, string>>({})
   const [guardando, setGuardando] = useState(false)
+  const [comentario, setComentario] = useState('')
 
   const cargados = elaborados.filter((e) => (valores[e.id] ?? '').trim() !== '')
   const falta = cargados.filter((e) => {
@@ -267,37 +276,44 @@ function Conteo({ elaborados, onListo }: { elaborados: Elaborado[]; onListo: () 
   async function guardar() {
     setGuardando(true)
     setErrores({})
-    let ok = 0
-    const errs: Record<string, string> = {}
-    for (const e of cargados) {
-      const n = parseFloat((valores[e.id] ?? '').replace(',', '.'))
-      try {
-        const res = await fetch('/api/stock/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stockItemId: e.id, newQty: n, reason: 'physical_count', note: (notas[e.id] ?? '').trim() || 'Conteo rápido de elaborados' }),
-        })
-        const json = await res.json().catch(() => ({}))
-        if (!res.ok || json.success === false) throw new Error(json.error ?? 'No se pudo guardar')
-        ok++
-      } catch (err) {
-        errs[e.id] = err instanceof Error ? err.message : 'Error'
+    try {
+      const res = await fetch('/api/stock/conteo-diario', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          comentario: comentario.trim() || null,
+          conteos: cargados.map((e) => ({
+            stock_item_id: e.id,
+            qty: parseFloat((valores[e.id] ?? '').replace(',', '.')),
+            nota: (notas[e.id] ?? '').trim() || null,
+          })),
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok && !json.resultados) throw new Error(json.error ?? 'No se pudo guardar')
+      const errs = Object.fromEntries(((json.resultados ?? []) as { stock_item_id: string; ok: boolean; error?: string }[])
+        .filter((r) => !r.ok).map((r) => [r.stock_item_id, r.error ?? 'Error']))
+      setErrores(errs)
+      if (json.guardados > 0) {
+        toast.success(`Conteo guardado (${json.guardados}): le llegó el aviso al equipo`)
+        setValores((v) => Object.fromEntries(Object.entries(v).filter(([id]) => errs[id])))
+        setNotas({})
+        if (Object.keys(errs).length === 0) setComentario('')
+        onListo()
       }
+      if (Object.keys(errs).length > 0) toast.error(`${Object.keys(errs).length} no se pudo guardar: revisalos`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo guardar')
+    } finally {
+      setGuardando(false)
     }
-    setGuardando(false)
-    setErrores(errs)
-    if (ok > 0) {
-      toast.success(`${ok} elaborado${ok === 1 ? '' : 's'} contado${ok === 1 ? '' : 's'}`)
-      setValores((v) => Object.fromEntries(Object.entries(v).filter(([id]) => errs[id])))
-      onListo()
-    }
-    if (Object.keys(errs).length > 0) toast.error(`${Object.keys(errs).length} no se pudo guardar: revisalos`)
   }
 
   return (
     <div className="space-y-2">
       <p className="px-1 text-[11.5px] text-[#7d6c64]">
         Escribí cuánto hay de cada uno (en su unidad) y guardá todo junto. Lo que no contás, dejalo vacío.
+        Al guardar, a socios y encargados les llega el resumen por notificación.
       </p>
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-[#ebe6df]">
         {elaborados.map((e) => {
@@ -333,6 +349,13 @@ function Conteo({ elaborados, onListo }: { elaborados: Elaborado[]; onListo: () 
           )
         })}
       </div>
+      <textarea
+        value={comentario}
+        onChange={(ev) => setComentario(ev.target.value)}
+        rows={2}
+        placeholder="Comentario del día (opcional): qué se hizo, qué quedó por porcionar…"
+        className="w-full resize-y rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-[13px] text-[#3d2c24] outline-none focus:border-[#006d5a]"
+      />
       <button
         onClick={() => void guardar()}
         disabled={guardando || cargados.length === 0 || falta.length > 0}
@@ -359,30 +382,49 @@ function Centro({ children }: { children: React.ReactNode }) {
   return <div className="flex min-h-[60vh] flex-col items-center justify-center">{children}</div>
 }
 
-// "Hoy se contaron X de Y": el conteo de elaborados se hace todos los días
-function EstadoConteoHoy({ clave }: { clave: number }) {
-  const [e, setE] = useState<{ contados: number; total: number; ultimo: string | null } | null>(null)
+// El conteo de hoy (lo que antes se mandaba al grupo de WhatsApp): quién,
+// a qué hora, el comentario y cuánto había de cada elaborado.
+function ConteoDeHoy({ clave }: { clave: number }) {
+  const [d, setD] = useState<{ estado: { contados: number; total: number; ultimo: string | null }; conteos: ConteoDelDia[] } | null>(null)
+  const [abierto, setAbierto] = useState(false)
   useEffect(() => {
     let vivo = true
-    fetch('/api/stock/conteo-texto', { cache: 'no-store' })
+    fetch('/api/stock/conteo-diario', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (vivo) setE(j) })
+      .then((j) => { if (vivo) setD(j) })
       .catch(() => {})
     return () => { vivo = false }
   }, [clave])
-  if (!e) return null
-  const hecho = e.contados > 0
+  if (!d) return null
+  const hecho = d.estado.contados > 0
+  const ultimo = d.conteos[0]
+  const horaAR = (iso: string) => new Date(iso).toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit' })
   return (
-    <div className={cn('flex items-center gap-3 rounded-2xl p-3.5 ring-1', hecho ? 'bg-[#e8f5f1] ring-[#006d5a]/20' : 'bg-[#fef7ed] ring-[#d4943a]/25')}>
-      <Scale className={cn('size-5 shrink-0', hecho ? 'text-[#006d5a]' : 'text-[#d4943a]')} />
-      <div className="min-w-0">
-        <p className="text-[13px] font-semibold text-[#3d2c24]">
-          {hecho ? `Hoy se contaron ${e.contados} de ${e.total} elaborados` : 'Todavía no se contó hoy'}
-        </p>
-        <p className="text-[11px] text-[#7d6c64]">
-          {hecho && e.ultimo ? `Último conteo ${hace(e.ultimo)}` : 'El conteo de elaborados se hace todos los días al cierre.'}
-        </p>
-      </div>
+    <div className={cn('rounded-2xl p-3.5 ring-1', hecho ? 'bg-[#e8f5f1] ring-[#006d5a]/20' : 'bg-[#fef7ed] ring-[#d4943a]/25')}>
+      <button type="button" onClick={() => ultimo && setAbierto((a) => !a)} className="flex w-full items-center gap-3 text-left">
+        <Scale className={cn('size-5 shrink-0', hecho ? 'text-[#006d5a]' : 'text-[#d4943a]')} />
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-[#3d2c24]">
+            {hecho ? `Conteo de hoy: ${d.estado.contados} elaborados` : 'Todavía no se contó hoy'}
+          </p>
+          <p className="text-[11px] text-[#7d6c64]">
+            {ultimo ? `${ultimo.quien ?? 'Alguien'} · ${horaAR(ultimo.hora)}${abierto ? '' : ' · tocá para ver'}` : 'El conteo de elaborados se hace todos los días al cierre.'}
+          </p>
+        </div>
+      </button>
+      {abierto && ultimo && (
+        <div className="mt-2.5 rounded-xl bg-white/70 px-3 py-2">
+          {ultimo.comentario && <p className="mb-1.5 text-[12px] italic text-[#3d2c24]">“{ultimo.comentario}”</p>}
+          <ul className="space-y-0.5">
+            {ultimo.lineas.map((l) => (
+              <li key={l.stock_item_id} className="flex justify-between gap-2 text-[12px] text-[#3d2c24]">
+                <span className="truncate">{l.name}</span>
+                <span className="shrink-0 font-semibold tabular-nums">{num(l.qty)} {l.unit}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
