@@ -12,9 +12,6 @@ export const metadata: Metadata = {
     statusBarStyle: 'black-translucent',
     title: 'Sala de Profes',
   },
-  other: {
-    'apple-touch-icon': '/icons/apple-touch-icon.png',
-  },
 }
 
 export const viewport: Viewport = {

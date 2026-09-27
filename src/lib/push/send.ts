@@ -31,7 +31,7 @@ export async function sendPushToUser(userId: string, payload: { title: string; b
     title: payload.title,
     body: payload.body,
     icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
+    badge: '/icons/badge-96.png',
     url: payload.url ?? '/',
   })
 
