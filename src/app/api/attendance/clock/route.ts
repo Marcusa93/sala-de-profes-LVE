@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { VENUE } from '@/lib/attendance/venue'
 import { isManagerOrAbove } from '@/lib/roles'
+import { fechaOperativa, cargarDatosCierre, cierrePrevisto } from '@/lib/attendance/jornada'
 
 // ---------------------------------------------------------------------------
 // Haversine — server-safe, no browser APIs
@@ -94,7 +95,8 @@ export async function POST(request: Request) {
 
   // -------------------------------------------------------------------------
   const nowISO = new Date().toISOString()
-  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
+  // Día operativo con corte a las 06:00: la salida a la 01:00 es del mismo día
+  const todayStr = fechaOperativa()
 
   const hdrs = await headers()
   const ip = hdrs.get('x-forwarded-for')?.split(',')[0] ?? hdrs.get('x-real-ip') ?? null
@@ -103,16 +105,29 @@ export async function POST(request: Request) {
   // CLOCK IN
   // -----------------------------------------------------------------------
   if (event_type === 'clock_in') {
-    const { data: existing } = await admin
+    const { data: abiertos } = await admin
       .from('attendance_logs')
-      .select('id')
+      .select('id, user_id, operative_date, clock_in_at')
       .eq('user_id', user.id)
-      .eq('operative_date', todayStr)
       .eq('status', 'open')
-      .maybeSingle()
+      .order('clock_in_at', { ascending: false })
 
-    if (existing) {
-      return NextResponse.json({ error: 'Ya tenés un ingreso abierto hoy' }, { status: 400 })
+    if ((abiertos ?? []).some((a) => a.operative_date === todayStr)) {
+      return NextResponse.json({ error: 'Ya tenés un ingreso abierto hoy: marcá la salida primero' }, { status: 400 })
+    }
+    // Se olvidó de marcar la salida otro día: se cierra a la hora prevista
+    // (su turno o el cierre del local) para no bloquear el ingreso de hoy.
+    if ((abiertos ?? []).length > 0) {
+      const datos = await cargarDatosCierre(admin, abiertos!.map((a) => a.operative_date))
+      for (const a of abiertos!) {
+        const c = cierrePrevisto(a, datos)
+        await admin.from('attendance_logs').update({
+          clock_out_at: c.at.toISOString(),
+          status: 'closed',
+          clock_out_type: 'auto',
+          notes: `Salida no marcada: cerrado a la hora prevista (${c.fuente}) al fichar el ${todayStr}`,
+        }).eq('id', a.id).eq('status', 'open')
+      }
     }
 
     // -----------------------------------------------------------------------

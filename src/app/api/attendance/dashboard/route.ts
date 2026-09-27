@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server'
+import { mustClockIn } from '@/lib/roles'
+import { fechaOperativa } from '@/lib/attendance/jornada'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
@@ -41,10 +43,10 @@ type ShiftRow = {
 }
 
 const TEAM_ROLES = ['encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'] as const
-const AR_TZ = 'America/Argentina/Buenos_Aires'
 
+// Día operativo (corte 06:00): misma regla que al fichar
 function todayAR(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: AR_TZ })
+  return fechaOperativa()
 }
 
 /** timestamp absoluto (UTC) de una hora local AR en una fecha dada */
@@ -86,8 +88,7 @@ export async function GET(request: Request) {
     admin
       .from('profiles')
       .select('id, first_name, last_name, role')
-      .eq('is_active', true)
-      .in('role', [...TEAM_ROLES]),
+      .eq('is_active', true),
     admin
       .from('attendance_logs')
       .select('user_id, operative_date, clock_in_at, clock_out_at, status, clock_out_type, is_suspicious')
@@ -111,7 +112,8 @@ export async function GET(request: Request) {
   const shiftsByUser = new Map<string, ShiftRow[]>()
   for (const s of shifts) shiftsByUser.set(s.user_id, [...(shiftsByUser.get(s.user_id) ?? []), s])
 
-  const employees = (profilesRes.data ?? []).map((p) => {
+  // Quien tiene que fichar (incluye socios que fichan, ej. Ricardo)
+  const employees = (profilesRes.data ?? []).filter((p) => mustClockIn(p) || (TEAM_ROLES as readonly string[]).includes(p.role)).map((p) => {
     const myLogs = (logsByUser.get(p.id) ?? []).sort((a, b) => a.clock_in_at.localeCompare(b.clock_in_at))
     const myShifts = shiftsByUser.get(p.id) ?? []
 

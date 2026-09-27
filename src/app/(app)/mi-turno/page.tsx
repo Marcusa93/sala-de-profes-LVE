@@ -57,12 +57,8 @@ export default function MiTurnoPage() {
   const [geoState, setGeoState] = useState<GeoState>('checking')
   const [geoDistance, setGeoDistance] = useState<number | null>(null)
 
-  const todayStr = useMemo(() =>
-    new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }),
-  [])
-
   // SWR hooks
-  const { record: todayRecord, isLoading: loadingToday, mutate: mutateToday } = useMyAttendance(profile?.id, todayStr)
+  const { record: todayRecord, isLoading: loadingToday, mutate: mutateToday } = useMyAttendance(profile?.id)
   const { history, isLoading: loadingHistory, mutate: mutateHistory } = useAttendanceHistory(profile?.id, historyLimit)
 
   const loading = loadingToday || loadingHistory
@@ -96,7 +92,9 @@ export default function MiTurnoPage() {
     }
     const dist = calculateDistance(result.lat, result.lng, VENUE.lat, VENUE.lng)
     setGeoDistance(dist)
-    setGeoState(dist <= VENUE.radiusM ? 'ok' : 'too_far')
+    // Misma regla que el servidor: se descuenta el margen de error del GPS (hasta 100 m)
+    const margen = Math.min(result.accuracy && result.accuracy > 0 ? result.accuracy : 0, 100)
+    setGeoState(Math.max(0, dist - margen) <= VENUE.radiusM ? 'ok' : 'too_far')
   }, [])
 
   useEffect(() => {
@@ -177,6 +175,8 @@ export default function MiTurnoPage() {
       toast.success(action === 'in' ? '¡Ingreso registrado!' : '¡Egreso registrado!')
 
       logAuditClient({
+        userId: profile?.id ?? null,
+        userName: profile ? `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null : null,
         action: action === 'in' ? 'clock_in' : 'clock_out',
         module: 'asistencia',
         entityType: 'clock_event',
@@ -391,6 +391,14 @@ export default function MiTurnoPage() {
                     <ShieldAlert className="size-3" /> Con advertencias
                   </div>
                 )}
+                {/* Turno cortado (mediodía y noche): se puede volver a marcar ingreso */}
+                <button
+                  onClick={() => handleClock('in')}
+                  disabled={geoBlocked}
+                  className="mt-5 text-[13px] font-semibold text-[#006d5a] underline disabled:text-[#a39e97] disabled:no-underline"
+                >
+                  {geoBlocked ? 'Para volver a fichar tenés que estar en el local' : 'Vuelvo a entrar (turno cortado)'}
+                </button>
               </div>
             </div>
           )}

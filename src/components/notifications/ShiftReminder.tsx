@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { mustClockIn } from '@/lib/roles'
+import { fechaOperativa } from '@/lib/attendance/jornada'
 import Link from 'next/link'
 import { Clock, X } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -16,23 +18,22 @@ export function ShiftReminder() {
 
   useEffect(() => {
     if (!profile) return
-    // Socios don't clock in
-    if (profile.role === 'socio') return
+    // Solo quien tiene que fichar (socios no, salvo excepción en roles.ts)
+    if (!mustClockIn(profile)) return
     // Check session storage — only show once per session
     if (sessionStorage.getItem('shift-reminder-dismissed')) return
 
-    // Check if user has clocked in today
+    // ¿Tiene turno hoy y todavía no fichó? (día operativo, corte 06:00 AR;
+    // antes usaba la fecha UTC y a partir de las 21 h avisaba de más)
     const checkAttendance = async () => {
       const { createClient } = await import('@/lib/supabase/client')
       const supabase = createClient()
-      const today = new Date().toISOString().split('T')[0]
-      const { data } = await supabase
-        .from('attendance_logs')
-        .select('id')
-        .eq('user_id', profile.id)
-        .eq('operative_date', today)
-        .limit(1)
-        .maybeSingle()
+      const today = fechaOperativa()
+      const [{ data: turno }, { data }] = await Promise.all([
+        supabase.from('shifts').select('id').eq('user_id', profile.id).eq('shift_date', today).limit(1).maybeSingle(),
+        supabase.from('attendance_logs').select('id').eq('user_id', profile.id).eq('operative_date', today).limit(1).maybeSingle(),
+      ])
+      if (!turno) { setHasClockedIn(true); return } // sin turno hoy: no molestar
 
       if (!data) {
         // No clock-in today — show reminder after a short delay

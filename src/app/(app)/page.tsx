@@ -78,7 +78,7 @@ export default function DashboardPage() {
   const isEncargado = isManagerOrAbove(profile?.role)
 
   // SWR hooks — cada uno con su cache, dedup y revalidación en background
-  const { record: todayAttendance } = useMyAttendance(profile?.id, todayStr)
+  const { record: todayAttendance } = useMyAttendance(profile?.id)
   const { nextShift } = useNextShift(profile?.id, todayStr)
   const { data: dashData, isLoading: dashLoading, error: dashError, mutate: refreshDash } = useDashboardData(
     profile?.id,
@@ -149,7 +149,7 @@ export default function DashboardPage() {
 
   const employeeActions: HomeAction[] = [
     {
-      href: '/fichaje',
+      href: '/mi-turno',
       icon: LogIn,
       label: 'Fichar',
       description: 'Marcar ingreso o egreso del turno',

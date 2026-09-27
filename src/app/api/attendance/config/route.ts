@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import type { Json } from '@/types/database'
 
 // GET /api/attendance/config
 export async function GET() {
@@ -39,13 +41,25 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: 'updates[] requerido' }, { status: 400 })
   }
 
+  // La tabla solo deja LEER a los usuarios: con el cliente del usuario el
+  // update no hacía nada y respondía "ok". Se escribe con el cliente interno
+  // DESPUÉS de validar el rol (arriba) y el valor.
+  const admin = createAdminClient()
   const errors: string[] = []
   for (const { key, value } of updates) {
-    const { error } = await supabase
+    if (key === 'location') {
+      const v = value as { lat?: unknown; lng?: unknown; radius_meters?: unknown }
+      const ok = typeof v?.lat === 'number' && Math.abs(v.lat) <= 90 && typeof v?.lng === 'number' && Math.abs(v.lng) <= 180
+        && typeof v?.radius_meters === 'number' && v.radius_meters >= 20 && v.radius_meters <= 500
+      if (!ok) { errors.push('Ubicación inválida: latitud, longitud y radio entre 20 y 500 m'); continue }
+    }
+    const { data, error } = await admin
       .from('attendance_config')
-      .update({ value, updated_by: user.id, updated_at: new Date().toISOString() })
+      .update({ value: value as Json, updated_by: user.id, updated_at: new Date().toISOString() })
       .eq('key', key)
+      .select('key')
     if (error) errors.push(`Error al actualizar ${key}: ${error.message}`)
+    else if (!data || data.length === 0) errors.push(`No existe la configuración "${key}"`)
   }
 
   if (errors.length > 0) {

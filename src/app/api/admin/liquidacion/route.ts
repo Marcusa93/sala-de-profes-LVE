@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { format, differenceInMinutes, parseISO } from 'date-fns'
+import { differenceInMinutes, parseISO } from 'date-fns'
+
+// Hora en Argentina (el servidor corre en UTC: format() mostraba 3 h corridas)
+const horaAR = (iso: string) => new Date(iso).toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false })
 
 // ---------------------------------------------------------------------------
 // GET /api/admin/liquidacion?from=2026-03-01&to=2026-03-15
@@ -29,7 +32,7 @@ export async function GET(request: NextRequest) {
     // Fetch all attendance logs in period
     const [logsRes, profilesRes, ratesRes] = await Promise.all([
       admin.from('attendance_logs')
-        .select('user_id, operative_date, clock_in_at, clock_out_at, status, clock_out_type')
+        .select('id, user_id, operative_date, clock_in_at, clock_out_at, status, clock_out_type')
         .gte('operative_date', from)
         .lte('operative_date', to)
         .order('operative_date'),
@@ -54,7 +57,7 @@ export async function GET(request: NextRequest) {
 
     // Aggregate per employee
     const empMap = new Map<string, {
-      days: Map<string, { hours: number; clockIn: string; clockOut: string | null; status: string; clockOutType: string; attendanceId: string }>
+      days: Map<string, { hours: number; clockIn: string; clockOut: string | null; status: string; clockOutType: string; attendanceId: string; tramos: number; revisar: boolean }>
       totalHours: number
       totalDays: number
       missingCheckouts: number
@@ -73,23 +76,41 @@ export async function GET(request: NextRequest) {
       }
       const emp = empMap.get(log.user_id)!
 
+      // Entrada y salida son instantes completos: la diferencia ya cruza la
+      // medianoche sola. Si da negativa es un dato mal cargado → 0 h y a revisar
+      // (antes sumaba 24 h y pagaba un día de más).
       let hours = 0
+      let revisar = false
       if (log.clock_out_at) {
         hours = differenceInMinutes(parseISO(log.clock_out_at), parseISO(log.clock_in_at)) / 60
-        if (hours < 0) hours += 24 // overnight shift
+        if (hours < 0 || hours > 20) { revisar = true; hours = Math.max(0, hours) > 20 ? hours : 0 }
       }
 
-      emp.days.set(log.operative_date, {
-        hours: Math.round(hours * 100) / 100,
-        clockIn: format(parseISO(log.clock_in_at), 'HH:mm'),
-        clockOut: log.clock_out_at ? format(parseISO(log.clock_out_at), 'HH:mm') : null,
-        status: log.status,
-        clockOutType: (log as Record<string, unknown>).clock_out_type as string ?? 'manual',
-        attendanceId: log.id,
-      })
+      // Turno cortado: dos fichajes el mismo día se suman en un solo día
+      const prev = emp.days.get(log.operative_date)
+      const salida = log.clock_out_at ? horaAR(log.clock_out_at) : null
+      emp.days.set(log.operative_date, prev
+        ? {
+            ...prev,
+            hours: Math.round((prev.hours + hours) * 100) / 100,
+            clockOut: salida ?? prev.clockOut,
+            status: log.status === 'open' ? 'open' : prev.status,
+            tramos: prev.tramos + 1,
+            revisar: prev.revisar || revisar,
+          }
+        : {
+            hours: Math.round(hours * 100) / 100,
+            clockIn: horaAR(log.clock_in_at),
+            clockOut: salida,
+            status: log.status,
+            clockOutType: (log as Record<string, unknown>).clock_out_type as string ?? 'manual',
+            attendanceId: log.id,
+            tramos: 1,
+            revisar,
+          })
 
       emp.totalHours += hours
-      emp.totalDays++
+      if (!prev) emp.totalDays++
       if (!log.clock_out_at && log.status === 'open') emp.missingCheckouts++
     }
 

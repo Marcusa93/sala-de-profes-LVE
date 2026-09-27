@@ -172,16 +172,21 @@ export default function CargarTurnosPage() {
     if (!profile) return
     setCopying(true)
     try {
-      const prevStart = format(addDays(weekStart, -7), 'yyyy-MM-dd')
-      const prevEnd = format(addDays(weekStart, -1), 'yyyy-MM-dd')
-      const { data: prevShifts, error } = await supabase
-        .from('shifts')
-        .select('user_id, shift_date, start_time, end_time, shift_role')
-        .gte('shift_date', prevStart)
-        .lte('shift_date', prevEnd)
-      if (error) throw error
-      if (!prevShifts || prevShifts.length === 0) {
-        toast.error('La semana anterior no tiene turnos cargados')
+      // La semana anterior; si está vacía, la última semana con turnos
+      // (hasta 8 semanas atrás): así se puede retomar después de un parate.
+      let semanasAtras = 0
+      let prevShifts: Pick<ShiftInsert, 'user_id' | 'shift_date' | 'start_time' | 'end_time' | 'shift_role'>[] = []
+      for (let k = 1; k <= 8 && prevShifts.length === 0; k++) {
+        const { data, error } = await supabase
+          .from('shifts')
+          .select('user_id, shift_date, start_time, end_time, shift_role')
+          .gte('shift_date', format(addDays(weekStart, -7 * k), 'yyyy-MM-dd'))
+          .lte('shift_date', format(addDays(weekStart, -7 * k + 6), 'yyyy-MM-dd'))
+        if (error) throw error
+        if (data && data.length > 0) { prevShifts = data as typeof prevShifts; semanasAtras = k }
+      }
+      if (prevShifts.length === 0) {
+        toast.error('No hay turnos cargados en las últimas 8 semanas para copiar')
         return
       }
 
@@ -190,7 +195,7 @@ export default function CargarTurnosPage() {
       const rows: ShiftInsert[] = []
       for (const s of prevShifts) {
         if (!activeIds.has(s.user_id)) continue
-        const newDate = format(addDays(new Date(s.shift_date + 'T12:00:00'), 7), 'yyyy-MM-dd')
+        const newDate = format(addDays(new Date(s.shift_date + 'T12:00:00'), 7 * semanasAtras), 'yyyy-MM-dd')
         if (existingKeys.has(`${s.user_id}|${newDate}`)) continue
         rows.push({
           user_id: s.user_id,
@@ -209,7 +214,7 @@ export default function CargarTurnosPage() {
 
       const { error: insErr } = await supabase.from('shifts').insert(rows)
       if (insErr) throw insErr
-      toast.success(`${rows.length} turnos copiados de la semana anterior`)
+      toast.success(`${rows.length} turnos copiados ${semanasAtras === 1 ? 'de la semana anterior' : `de la semana del ${format(addDays(weekStart, -7 * semanasAtras), 'd/M')}`}`)
       logAuditClient({ userId: profile.id, userName: profile.first_name ?? null, action: 'copy_week_shifts', module: 'turnos', entityType: 'shift', description: `Copió ${rows.length} turnos a la semana del ${weekStartStr}` })
       await fetchAll()
     } catch {

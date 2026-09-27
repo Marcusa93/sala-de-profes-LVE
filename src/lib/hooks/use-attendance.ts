@@ -4,6 +4,7 @@ import useSWR from 'swr'
 import { createClient } from '@/lib/supabase/client'
 import { SWR_KEYS } from '@/lib/swr/keys'
 import type { AppRole } from '@/types/database'
+import { fechaOperativa } from '@/lib/attendance/jornada'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,23 +32,39 @@ export type TeamMember = {
 // Today's attendance for a user
 // ---------------------------------------------------------------------------
 
-export function useMyAttendance(userId: string | undefined, date: string) {
+export function useMyAttendance(userId: string | undefined) {
+  // El fichaje "actual": el ingreso abierto (aunque ya haya pasado la
+  // medianoche) o, si no hay, el último del día operativo (corte 06:00).
+  // Antes se buscaba por fecha de calendario y a las 00:01 el ingreso
+  // abierto "desaparecía": no se podía marcar la salida.
+  const dia = fechaOperativa()
   const { data, error, isLoading, mutate } = useSWR(
-    userId ? SWR_KEYS.attendance(userId, date) : null,
+    userId ? SWR_KEYS.attendance(userId, dia) : null,
     async () => {
       const supabase = createClient()
+      const campos = 'id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, clock_in_lat'
+      const { data: abierto, error: e1 } = await supabase
+        .from('attendance_logs')
+        .select(campos)
+        .eq('user_id', userId!)
+        .eq('status', 'open')
+        .order('clock_in_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (e1) throw e1
+      if (abierto) return abierto as AttendanceRecord
       const { data, error } = await supabase
         .from('attendance_logs')
-        .select('id, operative_date, clock_in_at, clock_out_at, status, notes, is_suspicious, clock_in_lat')
+        .select(campos)
         .eq('user_id', userId!)
-        .eq('operative_date', date)
+        .eq('operative_date', dia)
         .order('clock_in_at', { ascending: false })
         .limit(1)
         .maybeSingle()
       if (error) throw error
       return data as AttendanceRecord | null
     },
-    { revalidateOnFocus: true },
+    { revalidateOnFocus: true, refreshInterval: 60_000 },
   )
 
   return { record: data ?? null, error, isLoading, mutate }
