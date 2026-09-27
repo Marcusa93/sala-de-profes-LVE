@@ -5,13 +5,16 @@ import Link from 'next/link'
 import {
   Plus, ChefHat, CheckCircle2, Clock, XCircle, ChevronRight,
   TrendingUp, AlertTriangle, Package, GitBranch, ShieldCheck,
-  Sparkles, RefreshCw, ChevronDown, ChevronUp,
+  Sparkles, RefreshCw, ChevronDown, ChevronUp, Check, Loader2,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { cn } from '@/lib/utils'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { useProduccionOrders } from '@/lib/hooks/use-produccion'
 import { BackToHoy } from '@/components/layout/BackToHoy'
+import { LoHiceDialog } from '@/components/produccion/LoHiceDialog'
+import type { ElaboradosPayload } from '@/lib/produccion/elaborados'
 
 // ---------------------------------------------------------------------------
 // Plan de producción IA — qué producir hoy según ventas × stock × vida útil
@@ -154,6 +157,8 @@ type Sugerencia = {
   cobertura_dias: number
   fuente_demanda: 'ventas_fudo' | 'movimientos_stock'
   reason: string
+  /** con receta de producción: se puede registrar con "Lo hice" */
+  tiene_receta?: boolean
 }
 
 type SugerenciasResponse = {
@@ -181,6 +186,21 @@ function SugerenciasCard() {
   const [data, setData] = useState<SugerenciasResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
+  // "Lo hice": trae el elaborado con su receta y abre el registro rápido
+  const [loHice, setLoHice] = useState<{ payload: ElaboradosPayload; sugerido: number } | null>(null)
+  const [abriendo, setAbriendo] = useState<string | null>(null)
+  async function abrirLoHice(item: Sugerencia) {
+    setAbriendo(item.stock_item_id)
+    try {
+      const res = await fetch(`/api/produccion/elaborados?item=${item.stock_item_id}`, { credentials: 'include' })
+      if (!res.ok) throw new Error()
+      setLoHice({ payload: await res.json(), sugerido: item.sugerido })
+    } catch {
+      toast.error('No se pudo abrir el registro')
+    } finally {
+      setAbriendo(null)
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -245,13 +265,24 @@ function SugerenciasCard() {
                         {item.demanda_maniana > 0 && ` y ~${fmtQty(item.demanda_maniana)} mañana`}
                       </p>
                     </div>
-                    <Link
-                      href={`/cocina/produccion/nueva?receta=${encodeURIComponent(item.recipe_id)}`}
-                      className="flex shrink-0 items-center gap-1 rounded-full bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-bold text-white active:scale-95"
-                    >
-                      <Plus className="size-3" />
-                      {item.sugerido > 0 ? `${fmtQty(item.sugerido)} ${item.unidad}` : 'Producir'}
-                    </Link>
+                    {item.tiene_receta ? (
+                      <button
+                        onClick={() => void abrirLoHice(item)}
+                        disabled={abriendo === item.stock_item_id}
+                        className="flex shrink-0 items-center gap-1 rounded-full bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-bold text-white active:scale-95 disabled:opacity-60"
+                      >
+                        {abriendo === item.stock_item_id ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                        Lo hice{item.sugerido > 0 ? ` · ${fmtQty(item.sugerido)}` : ''}
+                      </button>
+                    ) : (
+                      <Link
+                        href={`/cocina/produccion/nueva?receta=${encodeURIComponent(item.recipe_id)}`}
+                        className="flex shrink-0 items-center gap-1 rounded-full bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-bold text-white active:scale-95"
+                      >
+                        <Plus className="size-3" />
+                        {item.sugerido > 0 ? `${fmtQty(item.sugerido)} ${item.unidad}` : 'Producir'}
+                      </Link>
+                    )}
                   </div>
 
                   {/* Barra de cobertura (horizonte 3 días) */}
@@ -286,10 +317,19 @@ function SugerenciasCard() {
                 {data.sin_control!.slice(0, 8).map((s) => `${s.name} (~${s.demanda_diaria}/día)`).join(' · ')}
                 {data.sin_control!.length > 8 && ` · y ${data.sin_control!.length - 8} más`}
               </p>
-              <p className="mt-1 text-[10px] text-[#a39e97]">Contalos en Stock o producilos con una orden para que el plan los tenga en cuenta.</p>
+              <Link href="/cocina/elaborados" className="mt-1 inline-block text-[10.5px] font-semibold text-[#006d5a] underline">Contarlos o cargar qué llevan →</Link>
             </div>
           )}
         </div>
+      )}
+      {loHice && (
+        <LoHiceDialog
+          elaborado={loHice.payload.elaborados[0]}
+          puedeCerrar={loHice.payload.permisos.cerrar_produccion}
+          sugerido={loHice.sugerido}
+          onClose={() => setLoHice(null)}
+          onDone={() => { setLoHice(null); void load() }}
+        />
       )}
     </div>
   )
@@ -406,6 +446,19 @@ export default function ProduccionPage() {
         <FadeIn>
           <SugerenciasCard />
         </FadeIn>
+        <Link
+          href="/cocina/elaborados"
+          className="flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 ring-1 ring-[#ebe6df] transition hover:bg-[#faf8f5]"
+        >
+          <div className="flex items-center gap-2.5">
+            <ChefHat className="size-4 text-[#006d5a]" />
+            <div>
+              <p className="text-[13px] font-semibold text-[#3d2c24]">Elaborados</p>
+              <p className="text-[11px] text-[#a39e97]">Qué lleva cada uno, conteo rápido y cuánto dura</p>
+            </div>
+          </div>
+          <ChevronRight className="size-4 text-[#a39e97]" />
+        </Link>
 
         {loading ? (
           <LoadingState message="Cargando producciones..." />

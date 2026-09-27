@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { asignarStockALotes } from '@/lib/stock/lotes'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyEvent } from '@/lib/push/notify-event'
 
@@ -70,14 +71,16 @@ export async function GET(request: NextRequest) {
         qty_remaining,
         unit,
         expires_at,
+        produced_at,
+        created_at,
         status,
-        stock_items(name)
+        stock_items(name, current_qty)
       `)
       .not('expires_at', 'is', null)
       .in('status', ['active', 'expired'])
       .gt('qty_remaining', 0)
       .order('expires_at', { ascending: true })
-      .limit(100)
+      .limit(1000)
 
     if (error) {
       // Tolerante a schema faltante (migración de lotes sin aplicar)
@@ -99,7 +102,21 @@ export async function GET(request: NextRequest) {
       action: string
     }
 
-    const alertLots: AlertLot[] = (data ?? [])
+    // qty_remaining nunca se descuenta al vender/usar: se reparte el stock
+    // actual entre los lotes más nuevos y solo se avisa lo que puede quedar.
+    type LotRow = NonNullable<typeof data>[number]
+    const stockPorItem = new Map<string, number>()
+    const lotesPorItem = new Map<string, LotRow[]>()
+    for (const lot of data ?? []) {
+      const si = lot.stock_items as { current_qty?: number } | null
+      stockPorItem.set(lot.stock_item_id as string, Number(si?.current_qty ?? 0))
+      lotesPorItem.set(lot.stock_item_id as string, [...(lotesPorItem.get(lot.stock_item_id as string) ?? []), lot])
+    }
+    const vigentes = [...lotesPorItem.entries()].flatMap(([itemId, ls]) =>
+      asignarStockALotes(ls.map((l) => ({ ...l, stock_item_id: itemId, qty_remaining: Number(l.qty_remaining ?? 0), expires_at: l.expires_at as string | null, produced_at: l.produced_at as string | null, created_at: l.created_at as string | null })), stockPorItem.get(itemId) ?? 0)
+        .filter((l) => l.restante > 0))
+
+    const alertLots: AlertLot[] = vigentes
       .map((lot) => {
         const expiresAt = lot.expires_at ? new Date(lot.expires_at) : null
         if (!expiresAt || Number.isNaN(expiresAt.getTime())) return null
@@ -110,7 +127,7 @@ export async function GET(request: NextRequest) {
           id: lot.id as number,
           name: stockItem?.name ?? 'Sin item',
           lot_code: lot.lot_code as string,
-          qty_remaining: Number(lot.qty_remaining ?? 0),
+          qty_remaining: lot.restante,
           unit: (lot.unit as string) ?? 'unidad',
           expires_at: lot.expires_at as string,
           expires_in_days: days,

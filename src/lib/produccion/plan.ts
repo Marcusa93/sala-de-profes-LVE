@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { PRODUCTION_BATCHES, matchIngredientToStock } from '@/lib/recipes/production-batches'
 import { canon, toStockUnit } from '@/lib/recipes/recipe-cost'
+import { resumenLotes } from '@/lib/stock/lotes'
+import { cargarRecetasProduccion } from '@/lib/produccion/recetas'
 
 // ---------------------------------------------------------------------------
 // "¿Qué producir hoy?" — UN solo cálculo para Hoy y Cocina
@@ -48,6 +50,8 @@ export type SugerenciaItem = {
   tanda_tipica: number | null
   cobertura_dias: number
   vida_util_dias: number | null
+  /** tiene receta de producción cargada: se puede registrar con "Lo hice" */
+  tiene_receta: boolean
   fuente_demanda: 'ventas_fudo' | 'movimientos_stock'
   reason: string
 }
@@ -117,6 +121,7 @@ export async function calcularPlanProduccion(admin: SupabaseClient): Promise<Pla
 
   const itemIds = produced.map((p) => p.id)
   const itemById = new Map(produced.map((p) => [p.id, p]))
+  const recetas = itemIds.length > 0 ? await cargarRecetasProduccion(admin, itemIds) : new Map()
   if (itemIds.length === 0) {
     return { generated_at: new Date().toISOString(), hoy: DOW_LABELS[todayDow], maniana: DOW_LABELS[tomorrowDow], ventana_dias: WINDOW_DAYS, items: [], sin_datos: [], sin_control: [] }
   }
@@ -184,22 +189,19 @@ export async function calcularPlanProduccion(admin: SupabaseClient): Promise<Pla
   // --- 4) Lotes, producción abierta y tanda típica ---
   const nowISO = new Date().toISOString()
   const [{ data: lots }, { data: outputs }, { data: abiertas }] = await Promise.all([
-    admin.from('stock_lots').select('stock_item_id, qty_remaining, expires_at').in('stock_item_id', itemIds).gt('qty_remaining', 0),
+    admin.from('stock_lots').select('stock_item_id, qty_remaining, expires_at, produced_at, created_at').in('stock_item_id', itemIds).gt('qty_remaining', 0),
     admin.from('production_outputs').select('stock_item_id, production_order_id, qty_produced, is_waste, production_orders!inner(status)')
       .in('stock_item_id', itemIds).eq('production_orders.status', 'completed'),
     admin.from('production_outputs').select('stock_item_id, qty_produced, is_waste, production_orders!inner(status)')
       .in('stock_item_id', itemIds).in('production_orders.status', ['draft', 'pending_review', 'in_progress']),
   ])
-  const expiredByItem = new Map<string, number>()
-  const nextExpiryByItem = new Map<string, string>()
-  for (const lot of (lots ?? []) as { stock_item_id: string; qty_remaining: number; expires_at: string | null }[]) {
-    if (lot.expires_at && lot.expires_at < nowISO) {
-      expiredByItem.set(lot.stock_item_id, (expiredByItem.get(lot.stock_item_id) ?? 0) + Number(lot.qty_remaining))
-    } else if (lot.expires_at) {
-      const prev = nextExpiryByItem.get(lot.stock_item_id)
-      if (!prev || lot.expires_at < prev) nextExpiryByItem.set(lot.stock_item_id, lot.expires_at)
-    }
-  }
+  // Lotes: qty_remaining nunca se descuenta al usar; el stock actual se
+  // reparte entre los lotes más nuevos (ver lib/stock/lotes.ts)
+  const lotes = resumenLotes(
+    ((lots ?? []) as { stock_item_id: string; qty_remaining: number; expires_at: string | null; produced_at: string | null; created_at: string | null }[]),
+    new Map(produced.map((p) => [p.id, Number(p.current_qty)])),
+    nowISO,
+  )
   const enCurso = new Map<string, number>()
   for (const o of (abiertas ?? []) as unknown as { stock_item_id: string | null; qty_produced: number; is_waste: boolean | null }[]) {
     if (!o.stock_item_id || o.is_waste) continue
@@ -226,11 +228,12 @@ export async function calcularPlanProduccion(admin: SupabaseClient): Promise<Pla
 
   for (const item of produced) {
     const batch = batchByItem.get(item.id)
-    const nombre = batch?.displayName ?? templateByItem.get(item.id) ?? item.name
+    const receta = recetas.get(item.id)
+    const nombre = batch?.displayName ?? receta?.name ?? templateByItem.get(item.id) ?? item.name
     const dowQty = demandByItem.get(item.id)!
     const total = dowQty.reduce((a, b) => a + b, 0)
     const stockActual = Number(item.current_qty)
-    const seControla = yaProducido.has(item.id) || !!batch || templateByItem.has(item.id) || stockActual > 0
+    const seControla = yaProducido.has(item.id) || !!batch || !!receta || templateByItem.has(item.id) || stockActual > 0
 
     if (total <= 0) {
       if (batch || yaProducido.has(item.id)) sinDatos.push(nombre)
@@ -245,7 +248,7 @@ export async function calcularPlanProduccion(admin: SupabaseClient): Promise<Pla
     const perDow = (dow: number) => dowQty[dow] / Math.max(datesByDow[dow].size, 1)
     const demandaHoy = dowQty[todayDow] > 0 ? perDow(todayDow) : avgDaily
     const demandaManiana = dowQty[tomorrowDow] > 0 ? perDow(tomorrowDow) : avgDaily
-    const vencido = expiredByItem.get(item.id) ?? 0
+    const vencido = lotes.get(item.id)?.vencido ?? 0
     const utilizable = Math.max(0, stockActual - vencido)
     const curso = enCurso.get(item.id) ?? 0
     const cobertura = avgDaily > 0 ? (utilizable + curso) / avgDaily : Infinity
@@ -255,7 +258,7 @@ export async function calcularPlanProduccion(admin: SupabaseClient): Promise<Pla
     const soloHoy = item.shelf_life_days === 1
     const objetivo = demandaHoy + (soloHoy ? 0 : demandaManiana)
     const raw = Math.max(0, objetivo - utilizable - curso)
-    const tanda = tandaByItem.get(item.id) ?? batch?.yieldPerBase ?? 0
+    const tanda = tandaByItem.get(item.id) ?? receta?.rinde ?? batch?.yieldPerBase ?? 0
     let sugerido = Math.ceil(raw)
     if (raw > 0 && tanda > 0) sugerido = round1(Math.max(1, Math.round(raw / tanda)) * tanda)
     if (raw <= 0 && utilizable + curso >= objetivo) continue // cubre hoy y mañana
@@ -274,7 +277,7 @@ export async function calcularPlanProduccion(admin: SupabaseClient): Promise<Pla
       stock_actual: round1(stockActual),
       stock_utilizable: round1(utilizable),
       vencido_qty: round1(vencido),
-      vence_proximo: nextExpiryByItem.get(item.id)?.slice(0, 10) ?? null,
+      vence_proximo: lotes.get(item.id)?.proximo?.slice(0, 10) ?? null,
       en_produccion: round1(curso),
       demanda_hoy: round1(demandaHoy),
       demanda_maniana: round1(demandaManiana),
@@ -283,6 +286,7 @@ export async function calcularPlanProduccion(admin: SupabaseClient): Promise<Pla
       tanda_tipica: tanda > 0 ? round1(tanda) : null,
       cobertura_dias: round1(cobertura),
       vida_util_dias: item.shelf_life_days,
+      tiene_receta: !!receta && receta.ingredientes.length > 0,
       fuente_demanda: fallbackItems.has(item.id) ? 'movimientos_stock' : 'ventas_fudo',
       reason: partes.join(' · '),
     })

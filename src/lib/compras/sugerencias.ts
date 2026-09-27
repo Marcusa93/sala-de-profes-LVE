@@ -26,6 +26,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { cargarRecetasProduccion, expandirAElaborados } from '@/lib/produccion/recetas'
 import { canon, toStockUnit } from '@/lib/recipes/recipe-cost'
 import { esCostoConfiable } from '@/lib/costos/confiable'
 import { fetchFudoExpenses, type FudoExpense } from '@/lib/fudo/expenses'
@@ -154,12 +155,14 @@ export async function computeConsumption(
   // Unidad de cada stock_item (para canonicalizar) + reventa por fudo_product_id
   const { data: items } = await admin
     .from('stock_items')
-    .select('id, unit, fudo_product_id')
+    .select('id, unit, fudo_product_id, is_produced')
     .eq('is_active', true)
   const unitById = new Map<string, string>()
   const itemByProduct = new Map<string, string>()
-  for (const it of (items ?? []) as { id: string; unit: string; fudo_product_id: string | null }[]) {
+  const producidos = new Set<string>()
+  for (const it of (items ?? []) as { id: string; unit: string; fudo_product_id: string | null; is_produced: boolean | null }[]) {
     unitById.set(it.id, it.unit)
+    if (it.is_produced) producidos.add(it.id)
     if (it.fudo_product_id) itemByProduct.set(it.fudo_product_id, it.id)
   }
 
@@ -190,6 +193,21 @@ export async function computeConsumption(
       const qty = toStockUnit(c.qty, c.unit, unitById.get(ri.stock_item_id) ?? 'unidad') * units
       if (!Number.isFinite(qty) || qty <= 0) continue
       byItem.set(ri.stock_item_id, (byItem.get(ri.stock_item_id) ?? 0) + qty)
+    }
+  }
+
+  // Elaborados → sus crudos: lo que se vende como "masa de wrap" o "vacío
+  // deshebrado" también gasta harina o carne. Sin esto, compras no veía los
+  // crudos que solo se usan para elaborar (recetas de producción).
+  const consumoElaborados = new Map([...byItem].filter(([id]) => producidos.has(id)))
+  if (consumoElaborados.size > 0) {
+    const recetas = await cargarRecetasProduccion(admin, [...consumoElaborados.keys()])
+    // recursivo: un elaborado puede llevar otro elaborado
+    const faltantes = new Set<string>()
+    for (const r of recetas.values()) for (const i of r.ingredientes) if (producidos.has(i.stock_item_id) && !recetas.has(i.stock_item_id)) faltantes.add(i.stock_item_id)
+    if (faltantes.size > 0) for (const [k, v] of await cargarRecetasProduccion(admin, [...faltantes])) recetas.set(k, v)
+    for (const [id, qty] of expandirAElaborados(consumoElaborados, recetas)) {
+      byItem.set(id, (byItem.get(id) ?? 0) + qty)
     }
   }
 

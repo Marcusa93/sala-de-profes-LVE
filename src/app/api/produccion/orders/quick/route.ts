@@ -334,14 +334,23 @@ export async function POST(request: NextRequest) {
       }, { status: 201 })
     }
 
+    // Si no se puede cerrar ahora, la producción NO queda como borrador que
+    // nadie ve: pasa a la cola de validación con el motivo, para resolverla.
+    const pasarAValidar = async (motivo: string) => {
+      await admin.from('production_orders')
+        .update({ status: 'pending_review', submitted_at: new Date().toISOString(), review_notes: `No se pudo cerrar: ${motivo}` })
+        .eq('id', orderId!).eq('status', 'draft')
+    }
+
     const { fudo } = await import('@/lib/fudoClient')
     const fudoConnection = await fudo.testConnection()
     if (!fudoConnection.ok) {
+      await pasarAValidar(`Fudo no disponible (${fudoConnection.error})`)
       return NextResponse.json({
         success: false,
         order_id: orderId,
-        status: 'draft',
-        error: `Fudo no está disponible. Producción no cerrada: ${fudoConnection.error}`,
+        status: 'pending_review',
+        error: `Fudo no está disponible. La producción quedó en Validar para cerrarla después: ${fudoConnection.error}`,
       }, { status: 502 })
     }
 
@@ -367,10 +376,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (!rpcResult.success) {
+      await pasarAValidar(rpcResult.error ?? 'error al completar')
       return NextResponse.json({
-        error: rpcResult.error ?? 'Error al completar la orden',
+        error: `${rpcResult.error ?? 'No se pudo completar'}. La producción quedó en Validar para corregirla y cerrarla.`,
         order_id: orderId,
-        status: 'draft',
+        status: 'pending_review',
       }, { status: 400 })
     }
 
