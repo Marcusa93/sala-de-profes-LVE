@@ -163,6 +163,8 @@ type SugerenciasResponse = {
   ventana_dias: number
   items: Sugerencia[]
   sin_datos: string[]
+  /** se usan todos los días pero su stock no se lleva */
+  sin_control?: { stock_item_id: string; name: string; unidad: string; demanda_diaria: number }[]
 }
 
 function coberturaColor(dias: number) {
@@ -276,6 +278,16 @@ function SugerenciasCard() {
             <p className="mt-2 text-[10px] text-[#a39e97]">
               Sin datos de venta todavía: {data.sin_datos.join(' · ')}
             </p>
+          )}
+          {(data.sin_control?.length ?? 0) > 0 && (
+            <div className="mt-3 rounded-xl bg-[#fef7ed] px-3 py-2.5 ring-1 ring-[#d4943a]/20">
+              <p className="text-[11px] font-semibold text-[#3d2c24]">Se usan todos los días pero su stock no se lleva</p>
+              <p className="mt-0.5 text-[10.5px] leading-relaxed text-[#7d6c64]">
+                {data.sin_control!.slice(0, 8).map((s) => `${s.name} (~${s.demanda_diaria}/día)`).join(' · ')}
+                {data.sin_control!.length > 8 && ` · y ${data.sin_control!.length - 8} más`}
+              </p>
+              <p className="mt-1 text-[10px] text-[#a39e97]">Contalos en Stock o producilos con una orden para que el plan los tenga en cuenta.</p>
+            </div>
           )}
         </div>
       )}
