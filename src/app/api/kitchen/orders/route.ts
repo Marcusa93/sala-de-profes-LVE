@@ -315,279 +315,119 @@ export async function POST(request: NextRequest) {
     //                        (nunca pisa ventas) y deja kardex + recibo con precio.
     //   mode 'sin_stock':    sólo cerrar el pedido (ej. se recibió algo que no es stock).
     if (body.action === 'confirm_arrival') {
-      const { orderId, source, mode, expense, receivedQty, unitCost, totalCost, amount, note, paymentMethod, expiresAt } = body as {
-        orderId: number
-        source: 'cocina' | 'barra'
-        mode: 'fudo_expense' | 'lve_stock' | 'sin_stock'
-        expense?: { id: string; amount: number } | null
-        receivedQty?: string | null
-        unitCost?: number | null
-        /** lve_stock: total pagado del ticket — si viene, el precio unitario lo deriva el SERVER con la cantidad normalizada */
-        totalCost?: number | null
-        /** sin_stock: monto del gasto (no es un precio unitario) */
-        amount?: number | null
-        note?: string | null
-        /** efectivo | transferencia | tarjeta | cuenta_corriente */
+      const r = await confirmarLlegada(admin, user, body)
+      return NextResponse.json(r.json, { status: r.status })
+    }
+
+    // ----- LLEGÓ TODO: varios productos del mismo proveedor de una vez -----
+    // Cada producto se confirma con la MISMA lógica que "Llegó" (stock, Fudo,
+    // recibo, pago). Lo que se marca "no llegó" queda en camino. Si viene el
+    // total de la factura y supera lo cargado por producto, la diferencia
+    // queda como gasto del proveedor (para Pagos) sin inventar costos.
+    if (body.action === 'confirm_arrival_batch') {
+      const { items, paymentMethod, invoiceTotal, note } = body as {
+        items: {
+          orderId: number
+          source: 'cocina' | 'barra'
+          llego: boolean
+          receivedQty?: string | null
+          stockItemId?: string | null
+          totalCost?: number | null
+          expiresAt?: string | null
+          note?: string | null
+        }[]
         paymentMethod?: string | null
-        /** solo lve_stock: fecha de vencimiento del lote recibido (YYYY-MM-DD) */
-        expiresAt?: string | null
-      }
-      // cuenta_corriente → queda en cuentas a pagar; el resto → pagado de contado
-      const paymentStatus: 'pagado' | 'a_pagar' = paymentMethod === 'cuenta_corriente' ? 'a_pagar' : 'pagado'
-      if (typeof orderId !== 'number' || !source || !mode) {
-        return NextResponse.json({ success: false, error: 'Faltan datos requeridos' }, { status: 400 })
-      }
-      // sin_stock tiene su propio campo de monto: unitCost/totalCost se ignoran
-      // en ese modo (eran estado compartido del diálogo y llegaban de más).
-      const sinStockAmount = mode === 'sin_stock' && typeof amount === 'number' && amount > 0 ? amount : null
-      // Con monto en juego, el medio de pago es OBLIGATORIO: sin él, el gasto
-      // no deja rastro en cuentas (ni "pagado" ni "a pagar").
-      if (mode === 'fudo_expense' && expense && !paymentMethod) {
-        return NextResponse.json({ success: false, error: 'Elegí el medio de pago: sin él, el monto no queda en cuentas' }, { status: 400 })
-      }
-      if (mode === 'sin_stock' && sinStockAmount != null && !paymentMethod) {
-        return NextResponse.json({ success: false, error: 'Elegí el medio de pago: sin él, el monto no queda en cuentas' }, { status: 400 })
+        invoiceTotal?: number | null
+        note?: string | null
       }
       const { data: profile } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
       if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
-        return NextResponse.json({ success: false, error: 'Solo encargados pueden confirmar recepciones' }, { status: 403 })
+        return NextResponse.json({ success: false, error: 'Solo encargados y socios pueden confirmar recepciones' }, { status: 403 })
       }
-      const table = source === 'barra' ? 'bar_orders' : 'kitchen_orders'
-      const { data: order, error: fetchErr } = await admin
-        .from(table)
-        .select('id, product_name, quantity, status, stock_item_id, supplier_id')
-        .eq('id', orderId)
-        .single()
-      if (fetchErr || !order) return NextResponse.json({ success: false, error: 'Pedido no encontrado' }, { status: 404 })
-      if (order.status === 'received') return NextResponse.json({ success: false, error: 'El pedido ya fue recibido' }, { status: 409 })
-
-      // Un gasto de Fudo explica UN pedido: si ya está vinculado a otro
-      // (cocina o barra), rechazar antes de tocar nada. Tolerante a migración
-      // pendiente de fudo_expense_id (sin la columna no hay nada que chequear).
-      if (mode === 'fudo_expense' && expense) {
-        for (const t of ['kitchen_orders', 'bar_orders'] as const) {
-          const dup = await admin.from(t).select('id').eq('fudo_expense_id', expense.id).limit(1)
-          if (dup.error) continue
-          if ((dup.data ?? []).length > 0) {
-            return NextResponse.json({ success: false, error: 'Ese gasto ya está vinculado a otro pedido' }, { status: 409 })
-          }
-        }
+      if (!Array.isArray(items) || items.length === 0 || items.length > 60) {
+        return NextResponse.json({ success: false, error: 'Entre 1 y 60 productos' }, { status: 400 })
+      }
+      if (!paymentMethod) {
+        return NextResponse.json({ success: false, error: 'Elegí cómo se paga' }, { status: 400 })
+      }
+      const llegan = items.filter((i) => i.llego)
+      if (llegan.length === 0) {
+        return NextResponse.json({ success: false, error: 'Marcá al menos un producto que llegó' }, { status: 400 })
       }
 
-      let stockUpdated = false
-      let fudoSynced = false
-      if (mode === 'lve_stock') {
-        // Manda lo que eligió la persona en el diálogo: puede corregir el
-        // insumo pre-vinculado del pedido (si no, la entrada caía en el item
-        // equivocado, en LVE y en Fudo).
-        const stockItemId = (body.stockItemId as string | undefined)
-          ?? (order as { stock_item_id?: string | null }).stock_item_id
-          ?? null
-        const numericQty = parseFloat(String(receivedQty ?? '').replace(',', '.'))
-        if (!stockItemId || isNaN(numericQty) || numericQty <= 0) {
-          return NextResponse.json({ success: false, error: 'Para cargar stock desde acá hace falta el insumo y la cantidad recibida' }, { status: 400 })
+      const resultados: { orderId: number; ok: boolean; error?: string; stockUpdated?: boolean }[] = []
+      let supplierId: string | null = null
+      let cargadoPorProducto = 0
+      for (const it of llegan) {
+        const total = typeof it.totalCost === 'number' && it.totalCost > 0 ? it.totalCost : null
+        const nota = [note, it.note].map((x) => (x ?? '').trim()).filter(Boolean).join(' — ') || null
+        try {
+          const r = await confirmarLlegada(admin, user, {
+            orderId: it.orderId,
+            source: it.source,
+            mode: it.stockItemId ? 'lve_stock' : 'sin_stock',
+            expense: null,
+            receivedQty: it.stockItemId ? it.receivedQty : null,
+            totalCost: it.stockItemId ? total : null,
+            amount: it.stockItemId ? null : total,
+            stockItemId: it.stockItemId ?? null,
+            expiresAt: it.stockItemId ? it.expiresAt ?? null : null,
+            note: nota,
+            paymentMethod,
+          })
+          const ok = r.status < 300 && r.json.success === true
+          resultados.push({ orderId: it.orderId, ok, error: ok ? undefined : String(r.json.error ?? 'Error'), stockUpdated: Boolean(r.json.stockUpdated) })
+          if (ok && total) cargadoPorProducto += total
+        } catch (err) {
+          resultados.push({ orderId: it.orderId, ok: false, error: err instanceof Error ? err.message : 'Error' })
         }
-        const { data: si } = await admin
-          .from('stock_items')
-          .select('id, name, unit, current_qty, cost_per_unit, supplier_id')
-          .eq('id', stockItemId)
-          .single()
-        if (!si) return NextResponse.json({ success: false, error: 'Insumo no encontrado' }, { status: 404 })
-        const receivedUnit = parseTypedUnit(receivedQty) ?? si.unit
-        const normalized = normalizeToStockUnit(numericQty, receivedUnit, si)
-        if (!normalized.ok) return NextResponse.json({ success: false, error: normalized.error }, { status: 409 })
-        const qty = normalized.qty
-        // El TOTAL pagado manda: si vino, el precio unitario lo deriva el
-        // SERVER con la cantidad YA normalizada (ignorando el unitCost del
-        // cliente). Así el sellado cost_source='compra' nunca depende de la
-        // conversión de unidades del navegador ('500 g' → $/kg reales).
-        const totalNum = typeof totalCost === 'number' && totalCost > 0 ? totalCost : null
-        const costPerUnit = totalNum != null
-          ? Math.round((totalNum / qty) * 10000) / 10000
-          : (typeof unitCost === 'number' && unitCost > 0 ? unitCost : null)
-        // syncToFudo con reason 'reception' escribe por DELTA sobre Fudo y deja kardex
-        const write = await syncToFudo(admin, stockItemId, Math.round((Number(si.current_qty ?? 0) + qty) * 100) / 100, user.id, {
-          reason: 'reception',
-          note: `Recepción: ${order.product_name} (+${qty} ${si.unit})${note ? ` — ${note}` : ''}`,
-          costPerUnit,
-        })
-        if (!write.success) {
-          return NextResponse.json({ success: false, error: write.error ?? 'No se pudo actualizar el stock' }, { status: 502 })
-        }
-        stockUpdated = true
-        fudoSynced = write.fudoSynced
-        // Recibo (precio de compra) — base del historial de precios + cuentas a pagar
-        const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
-        const receiptBase = {
-          stock_item_id: stockItemId,
-          supplier_id: si.supplier_id ?? (order as { supplier_id?: string | null }).supplier_id ?? null,
-          order_source: source,
-          order_id: orderId,
-          qty,
-          unit: si.unit,
-          cost_total: totalNum ?? (costPerUnit != null ? Math.round(costPerUnit * qty * 100) / 100 : null),
-          cost_per_unit: costPerUnit,
-          note: `Pedido: ${order.product_name} (${order.quantity})`,
-          received_by: user.id,
-          received_date: receivedDate,
-        }
-        let { error: lveReceiptErr } = await admin.from('stock_receipts').insert({
-          ...receiptBase,
-          payment_status: paymentStatus,
-          paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
-          paid_by: paymentStatus === 'pagado' ? user.id : null,
-          payment_method: paymentMethod ?? null,
-        })
-        if (lveReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(lveReceiptErr.message)) {
-          ;({ error: lveReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
-        }
-        if (lveReceiptErr) console.warn('[confirm_arrival] lve_stock receipt no registrado:', lveReceiptErr.message)
-
-        // Vencimiento informado → lote para el radar de vencimientos
-        if (expiresAt) {
-          await admin.from('stock_lots').insert({
-            stock_item_id: stockItemId,
-            lot_code: `REC-${receivedDate}-${si.name.slice(0, 12).replace(/\s+/g, '').toUpperCase()}`,
-            qty_original: qty,
-            qty_remaining: qty,
-            unit: si.unit,
-            produced_at: new Date().toISOString(),
-            expires_at: expiresAt,
-            status: 'active',
-            notes: 'Recepción de mercadería',
-            created_by: user.id,
-          }).then(({ error }) => { if (error) console.warn('[confirm_arrival] lote no creado:', error.message) })
+        if (!supplierId) {
+          const table = it.source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+          const { data: o } = await admin.from(table).select('supplier_id').eq('id', it.orderId).maybeSingle()
+          supplierId = (o as { supplier_id?: string | null } | null)?.supplier_id ?? null
         }
       }
 
-      // fudo_expense: la compra ya existe en Fudo — LVE NO toca stock, pero
-      // crea el recibo (historial de precios + cuentas a pagar) y, si el
-      // diálogo dedujo un precio unitario (gasto mono-insumo / cantidad
-      // parseable), lo sella como costo REAL del insumo (cost_source 'compra').
-      if (mode === 'fudo_expense' && paymentMethod) {
-        const supplierId = (order as { supplier_id?: string | null }).supplier_id ?? null
-        const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
-        const feStockItemId = (body.stockItemId as string | undefined)
-          ?? (order as { stock_item_id?: string | null }).stock_item_id
-          ?? null
-        const feUnitCost = typeof unitCost === 'number' && unitCost > 0 ? unitCost : null
-        let feQty = 1
-        let feUnit: string | null = null
-        if (feStockItemId) {
-          const { data: si } = await admin.from('stock_items').select('id, name, unit').eq('id', feStockItemId).single()
-          if (si) {
-            feUnit = si.unit
-            const parsedQty = parseFloat(String(order.quantity ?? '').replace(',', '.'))
-            if (Number.isFinite(parsedQty) && parsedQty > 0) {
-              // Misma normalización que lve_stock: '500 g' en un item en kg
-              // queda 0.5 kg en el recibo. Si la unidad tipeada no es
-              // convertible, el recibo guarda la cantidad EN ESA unidad.
-              const typedUnit = parseTypedUnit(order.quantity)
-              const norm = normalizeToStockUnit(parsedQty, typedUnit ?? si.unit, si)
-              if (norm.ok) {
-                feQty = norm.qty
-              } else {
-                feQty = parsedQty
-                feUnit = typedUnit
-              }
-            }
-            if (feUnitCost != null) {
-              const { error: costErr } = await admin.from('stock_items').update({
-                cost_per_unit: feUnitCost,
-                cost_source: 'compra',
-                cost_updated_at: new Date().toISOString(),
-              }).eq('id', feStockItemId)
-              if (costErr && esErrorColumnaFaltante(costErr.message, ['cost_source', 'cost_updated_at'])) {
-                await admin.from('stock_items').update({ cost_per_unit: feUnitCost }).eq('id', feStockItemId)
-              }
-            }
-          }
-        }
-        const receiptBase = {
-          stock_item_id: feStockItemId,
+      // Resto de la factura sin detallar por producto → gasto del proveedor
+      let resto: number | null = null
+      const factura = typeof invoiceTotal === 'number' && invoiceTotal > 0 ? invoiceTotal : null
+      if (factura && resultados.some((r) => r.ok) && factura - cargadoPorProducto >= 1) {
+        resto = Math.round((factura - cargadoPorProducto) * 100) / 100
+        const paymentStatus = paymentMethod === 'cuenta_corriente' ? 'a_pagar' : 'pagado'
+        const { error: restoErr } = await admin.from('stock_receipts').insert({
+          stock_item_id: null,
           supplier_id: supplierId,
-          order_source: source,
-          order_id: orderId,
-          qty: feQty,
-          unit: feUnit,
-          cost_total: expense?.amount ?? (feUnitCost != null ? Math.round(feUnitCost * feQty * 100) / 100 : null),
-          cost_per_unit: feUnitCost,
-          note: `Pedido: ${order.product_name} (${order.quantity})${expense ? ` — Fudo gasto #${expense.id}` : ''}`,
-          received_by: user.id,
-          received_date: receivedDate,
-        }
-        let { error: feReceiptErr } = await admin.from('stock_receipts').insert({
-          ...receiptBase,
-          payment_status: paymentStatus,
-          paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
-          paid_by: paymentStatus === 'pagado' ? user.id : null,
-          payment_method: paymentMethod,
-        })
-        if (feReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(feReceiptErr.message)) {
-          ;({ error: feReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
-        }
-        if (feReceiptErr) console.warn('[confirm_arrival] fudo_expense receipt no registrado:', feReceiptErr.message)
-      }
-
-      // sin_stock con monto: dejar registro de gasto para cuentas a pagar
-      if (mode === 'sin_stock' && paymentMethod && sinStockAmount != null) {
-        const supplierId = (order as { supplier_id?: string | null }).supplier_id ?? null
-        const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
-        const receiptBase = {
-          stock_item_id: null as string | null,
-          supplier_id: supplierId,
-          order_source: source,
-          order_id: orderId,
+          order_source: llegan[0].source,
+          order_id: null,
           qty: 1,
-          unit: null as string | null,
-          cost_total: sinStockAmount,
-          cost_per_unit: null as number | null,
-          note: `Pedido: ${order.product_name} (${order.quantity})`,
+          unit: null,
+          cost_total: resto,
+          cost_per_unit: null,
+          note: `Factura del proveedor — importe sin detallar por producto${note ? ` — ${note}` : ''}`,
           received_by: user.id,
-          received_date: receivedDate,
-        }
-        let { error: ssReceiptErr } = await admin.from('stock_receipts').insert({
-          ...receiptBase,
+          received_date: new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10),
           payment_status: paymentStatus,
           paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
           paid_by: paymentStatus === 'pagado' ? user.id : null,
           payment_method: paymentMethod,
         })
-        if (ssReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(ssReceiptErr.message)) {
-          ;({ error: ssReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
-        }
-        if (ssReceiptErr) console.warn('[confirm_arrival] sin_stock receipt no registrado:', ssReceiptErr.message)
+        if (restoErr) console.warn('[confirm_arrival_batch] resto de factura no registrado:', restoErr.message)
       }
 
-      const { closeOrderWithExpense } = await import('@/lib/compras/conciliar')
-      const closed = await closeOrderWithExpense(admin, {
-        orderId,
-        source,
-        userId: user.id,
-        expense: mode === 'fudo_expense' ? (expense ?? null) : null,
-        mode,
-        note: note ?? null,
-        receivedQty: receivedQty ?? null,
-      })
-      if (!closed.success) throw new Error(closed.error)
-
+      const okCount = resultados.filter((r) => r.ok).length
       const who = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null
       logAudit(admin, {
         userId: user.id,
         userName: who,
-        action: 'confirm_arrival',
+        action: 'confirm_arrival_batch',
         module: 'pedidos',
-        entityType: table,
-        entityId: String(orderId),
-        description: mode === 'fudo_expense'
-          ? `Llegó pedido #${orderId} (${order.product_name}) — compra cargada en Fudo${expense ? ` ($${expense.amount.toLocaleString('es-AR')}, gasto #${expense.id})` : ''}${paymentMethod ? ` · ${paymentMethod}` : ''}`
-          : mode === 'lve_stock'
-            ? `Llegó pedido #${orderId} (${order.product_name}) — stock cargado desde LVE (${receivedQty})${paymentMethod ? ` · ${paymentMethod}` : ''}`
-            : `Llegó pedido #${orderId} (${order.product_name}) — sin movimiento de stock`,
-        metadata: { orderId, source, mode, expense: expense ?? null, receivedQty: receivedQty ?? null, unitCost: unitCost ?? null, totalCost: totalCost ?? null, amount: sinStockAmount, expiresAt: expiresAt ?? null, note: note ?? null, stockUpdated, paymentMethod: paymentMethod ?? null },
+        entityType: 'supplier',
+        entityId: supplierId ?? undefined,
+        description: `${who ?? 'Alguien'}: llegaron ${okCount} de ${llegan.length} productos juntos${items.length > llegan.length ? ` (${items.length - llegan.length} quedan en camino)` : ''}${factura ? ` · factura $${factura.toLocaleString('es-AR')}` : ''} · ${paymentMethod}`,
+        metadata: { resultados, invoiceTotal: factura, resto, paymentMethod, noLlegaron: items.filter((i) => !i.llego).map((i) => i.orderId) },
       }).catch(() => {})
 
-      return NextResponse.json({ success: true, stockUpdated, fudoSynced, mode })
+      return NextResponse.json({ success: okCount > 0, resultados, recibidos: okCount, fallidos: llegan.length - okCount, resto })
     }
 
     return NextResponse.json({ success: false, error: 'Acción no reconocida' }, { status: 400 })
@@ -598,4 +438,290 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     )
   }
+}
+
+// ---------------------------------------------------------------------------
+// Confirmar la llegada de UN pedido (lo usan "Llegó" y "Llegó todo").
+// Devuelve { status, json } en vez de la respuesta HTTP para poder usarse en
+// lote: cada producto se procesa igual que si se confirmara solo.
+// ---------------------------------------------------------------------------
+
+type Resultado = { status: number; json: Record<string, unknown> }
+const respuesta = (json: Record<string, unknown>, init?: { status?: number }): Resultado => ({ json, status: init?.status ?? 200 })
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, user: { id: string }, body: any): Promise<Resultado> {
+  const { orderId, source, mode, expense, receivedQty, unitCost, totalCost, amount, note, paymentMethod, expiresAt } = body as {
+    orderId: number
+    source: 'cocina' | 'barra'
+    mode: 'fudo_expense' | 'lve_stock' | 'sin_stock'
+    expense?: { id: string; amount: number } | null
+    receivedQty?: string | null
+    unitCost?: number | null
+    /** lve_stock: total pagado del ticket — si viene, el precio unitario lo deriva el SERVER con la cantidad normalizada */
+    totalCost?: number | null
+    /** sin_stock: monto del gasto (no es un precio unitario) */
+    amount?: number | null
+    note?: string | null
+    /** efectivo | transferencia | tarjeta | cuenta_corriente */
+    paymentMethod?: string | null
+    /** solo lve_stock: fecha de vencimiento del lote recibido (YYYY-MM-DD) */
+    expiresAt?: string | null
+  }
+  // cuenta_corriente → queda en cuentas a pagar; el resto → pagado de contado
+  const paymentStatus: 'pagado' | 'a_pagar' = paymentMethod === 'cuenta_corriente' ? 'a_pagar' : 'pagado'
+  if (typeof orderId !== 'number' || !source || !mode) {
+    return respuesta({ success: false, error: 'Faltan datos requeridos' }, { status: 400 })
+  }
+  // sin_stock tiene su propio campo de monto: unitCost/totalCost se ignoran
+  // en ese modo (eran estado compartido del diálogo y llegaban de más).
+  const sinStockAmount = mode === 'sin_stock' && typeof amount === 'number' && amount > 0 ? amount : null
+  // Con monto en juego, el medio de pago es OBLIGATORIO: sin él, el gasto
+  // no deja rastro en cuentas (ni "pagado" ni "a pagar").
+  if (mode === 'fudo_expense' && expense && !paymentMethod) {
+    return respuesta({ success: false, error: 'Elegí el medio de pago: sin él, el monto no queda en cuentas' }, { status: 400 })
+  }
+  if (mode === 'sin_stock' && sinStockAmount != null && !paymentMethod) {
+    return respuesta({ success: false, error: 'Elegí el medio de pago: sin él, el monto no queda en cuentas' }, { status: 400 })
+  }
+  const { data: profile } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
+  if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
+    return respuesta({ success: false, error: 'Solo encargados pueden confirmar recepciones' }, { status: 403 })
+  }
+  const table = source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+  const { data: order, error: fetchErr } = await admin
+    .from(table)
+    .select('id, product_name, quantity, status, stock_item_id, supplier_id')
+    .eq('id', orderId)
+    .single()
+  if (fetchErr || !order) return respuesta({ success: false, error: 'Pedido no encontrado' }, { status: 404 })
+  if (order.status === 'received') return respuesta({ success: false, error: 'El pedido ya fue recibido' }, { status: 409 })
+
+  // Un gasto de Fudo explica UN pedido: si ya está vinculado a otro
+  // (cocina o barra), rechazar antes de tocar nada. Tolerante a migración
+  // pendiente de fudo_expense_id (sin la columna no hay nada que chequear).
+  if (mode === 'fudo_expense' && expense) {
+    for (const t of ['kitchen_orders', 'bar_orders'] as const) {
+      const dup = await admin.from(t).select('id').eq('fudo_expense_id', expense.id).limit(1)
+      if (dup.error) continue
+      if ((dup.data ?? []).length > 0) {
+        return respuesta({ success: false, error: 'Ese gasto ya está vinculado a otro pedido' }, { status: 409 })
+      }
+    }
+  }
+
+  let stockUpdated = false
+  let fudoSynced = false
+  if (mode === 'lve_stock') {
+    // Manda lo que eligió la persona en el diálogo: puede corregir el
+    // insumo pre-vinculado del pedido (si no, la entrada caía en el item
+    // equivocado, en LVE y en Fudo).
+    const stockItemId = (body.stockItemId as string | undefined)
+      ?? (order as { stock_item_id?: string | null }).stock_item_id
+      ?? null
+    const numericQty = parseFloat(String(receivedQty ?? '').replace(',', '.'))
+    if (!stockItemId || isNaN(numericQty) || numericQty <= 0) {
+      return respuesta({ success: false, error: 'Para cargar stock desde acá hace falta el insumo y la cantidad recibida' }, { status: 400 })
+    }
+    const { data: si } = await admin
+      .from('stock_items')
+      .select('id, name, unit, current_qty, cost_per_unit, supplier_id')
+      .eq('id', stockItemId)
+      .single()
+    if (!si) return respuesta({ success: false, error: 'Insumo no encontrado' }, { status: 404 })
+    const receivedUnit = parseTypedUnit(receivedQty) ?? si.unit
+    const normalized = normalizeToStockUnit(numericQty, receivedUnit, si)
+    if (!normalized.ok) return respuesta({ success: false, error: normalized.error }, { status: 409 })
+    const qty = normalized.qty
+    // El TOTAL pagado manda: si vino, el precio unitario lo deriva el
+    // SERVER con la cantidad YA normalizada (ignorando el unitCost del
+    // cliente). Así el sellado cost_source='compra' nunca depende de la
+    // conversión de unidades del navegador ('500 g' → $/kg reales).
+    const totalNum = typeof totalCost === 'number' && totalCost > 0 ? totalCost : null
+    const costPerUnit = totalNum != null
+      ? Math.round((totalNum / qty) * 10000) / 10000
+      : (typeof unitCost === 'number' && unitCost > 0 ? unitCost : null)
+    // syncToFudo con reason 'reception' escribe por DELTA sobre Fudo y deja kardex
+    const write = await syncToFudo(admin, stockItemId, Math.round((Number(si.current_qty ?? 0) + qty) * 100) / 100, user.id, {
+      reason: 'reception',
+      note: `Recepción: ${order.product_name} (+${qty} ${si.unit})${note ? ` — ${note}` : ''}`,
+      costPerUnit,
+    })
+    if (!write.success) {
+      return respuesta({ success: false, error: write.error ?? 'No se pudo actualizar el stock' }, { status: 502 })
+    }
+    stockUpdated = true
+    fudoSynced = write.fudoSynced
+    // Recibo (precio de compra) — base del historial de precios + cuentas a pagar
+    const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+    const receiptBase = {
+      stock_item_id: stockItemId,
+      supplier_id: si.supplier_id ?? (order as { supplier_id?: string | null }).supplier_id ?? null,
+      order_source: source,
+      order_id: orderId,
+      qty,
+      unit: si.unit,
+      cost_total: totalNum ?? (costPerUnit != null ? Math.round(costPerUnit * qty * 100) / 100 : null),
+      cost_per_unit: costPerUnit,
+      note: `Pedido: ${order.product_name} (${order.quantity})`,
+      received_by: user.id,
+      received_date: receivedDate,
+    }
+    let { error: lveReceiptErr } = await admin.from('stock_receipts').insert({
+      ...receiptBase,
+      payment_status: paymentStatus,
+      paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
+      paid_by: paymentStatus === 'pagado' ? user.id : null,
+      payment_method: paymentMethod ?? null,
+    })
+    if (lveReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(lveReceiptErr.message)) {
+      ;({ error: lveReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
+    }
+    if (lveReceiptErr) console.warn('[confirm_arrival] lve_stock receipt no registrado:', lveReceiptErr.message)
+
+    // Vencimiento informado → lote para el radar de vencimientos
+    if (expiresAt) {
+      await admin.from('stock_lots').insert({
+        stock_item_id: stockItemId,
+        lot_code: `REC-${receivedDate}-${si.name.slice(0, 12).replace(/\s+/g, '').toUpperCase()}`,
+        qty_original: qty,
+        qty_remaining: qty,
+        unit: si.unit,
+        produced_at: new Date().toISOString(),
+        expires_at: expiresAt,
+        status: 'active',
+        notes: 'Recepción de mercadería',
+        created_by: user.id,
+      }).then(({ error }) => { if (error) console.warn('[confirm_arrival] lote no creado:', error.message) })
+    }
+  }
+
+  // fudo_expense: la compra ya existe en Fudo — LVE NO toca stock, pero
+  // crea el recibo (historial de precios + cuentas a pagar) y, si el
+  // diálogo dedujo un precio unitario (gasto mono-insumo / cantidad
+  // parseable), lo sella como costo REAL del insumo (cost_source 'compra').
+  if (mode === 'fudo_expense' && paymentMethod) {
+    const supplierId = (order as { supplier_id?: string | null }).supplier_id ?? null
+    const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+    const feStockItemId = (body.stockItemId as string | undefined)
+      ?? (order as { stock_item_id?: string | null }).stock_item_id
+      ?? null
+    const feUnitCost = typeof unitCost === 'number' && unitCost > 0 ? unitCost : null
+    let feQty = 1
+    let feUnit: string | null = null
+    if (feStockItemId) {
+      const { data: si } = await admin.from('stock_items').select('id, name, unit').eq('id', feStockItemId).single()
+      if (si) {
+        feUnit = si.unit
+        const parsedQty = parseFloat(String(order.quantity ?? '').replace(',', '.'))
+        if (Number.isFinite(parsedQty) && parsedQty > 0) {
+          // Misma normalización que lve_stock: '500 g' en un item en kg
+          // queda 0.5 kg en el recibo. Si la unidad tipeada no es
+          // convertible, el recibo guarda la cantidad EN ESA unidad.
+          const typedUnit = parseTypedUnit(order.quantity)
+          const norm = normalizeToStockUnit(parsedQty, typedUnit ?? si.unit, si)
+          if (norm.ok) {
+            feQty = norm.qty
+          } else {
+            feQty = parsedQty
+            feUnit = typedUnit
+          }
+        }
+        if (feUnitCost != null) {
+          const { error: costErr } = await admin.from('stock_items').update({
+            cost_per_unit: feUnitCost,
+            cost_source: 'compra',
+            cost_updated_at: new Date().toISOString(),
+          }).eq('id', feStockItemId)
+          if (costErr && esErrorColumnaFaltante(costErr.message, ['cost_source', 'cost_updated_at'])) {
+            await admin.from('stock_items').update({ cost_per_unit: feUnitCost }).eq('id', feStockItemId)
+          }
+        }
+      }
+    }
+    const receiptBase = {
+      stock_item_id: feStockItemId,
+      supplier_id: supplierId,
+      order_source: source,
+      order_id: orderId,
+      qty: feQty,
+      unit: feUnit,
+      cost_total: expense?.amount ?? (feUnitCost != null ? Math.round(feUnitCost * feQty * 100) / 100 : null),
+      cost_per_unit: feUnitCost,
+      note: `Pedido: ${order.product_name} (${order.quantity})${expense ? ` — Fudo gasto #${expense.id}` : ''}`,
+      received_by: user.id,
+      received_date: receivedDate,
+    }
+    let { error: feReceiptErr } = await admin.from('stock_receipts').insert({
+      ...receiptBase,
+      payment_status: paymentStatus,
+      paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
+      paid_by: paymentStatus === 'pagado' ? user.id : null,
+      payment_method: paymentMethod,
+    })
+    if (feReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(feReceiptErr.message)) {
+      ;({ error: feReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
+    }
+    if (feReceiptErr) console.warn('[confirm_arrival] fudo_expense receipt no registrado:', feReceiptErr.message)
+  }
+
+  // sin_stock con monto: dejar registro de gasto para cuentas a pagar
+  if (mode === 'sin_stock' && paymentMethod && sinStockAmount != null) {
+    const supplierId = (order as { supplier_id?: string | null }).supplier_id ?? null
+    const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+    const receiptBase = {
+      stock_item_id: null as string | null,
+      supplier_id: supplierId,
+      order_source: source,
+      order_id: orderId,
+      qty: 1,
+      unit: null as string | null,
+      cost_total: sinStockAmount,
+      cost_per_unit: null as number | null,
+      note: `Pedido: ${order.product_name} (${order.quantity})`,
+      received_by: user.id,
+      received_date: receivedDate,
+    }
+    let { error: ssReceiptErr } = await admin.from('stock_receipts').insert({
+      ...receiptBase,
+      payment_status: paymentStatus,
+      paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
+      paid_by: paymentStatus === 'pagado' ? user.id : null,
+      payment_method: paymentMethod,
+    })
+    if (ssReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(ssReceiptErr.message)) {
+      ;({ error: ssReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
+    }
+    if (ssReceiptErr) console.warn('[confirm_arrival] sin_stock receipt no registrado:', ssReceiptErr.message)
+  }
+
+  const { closeOrderWithExpense } = await import('@/lib/compras/conciliar')
+  const closed = await closeOrderWithExpense(admin, {
+    orderId,
+    source,
+    userId: user.id,
+    expense: mode === 'fudo_expense' ? (expense ?? null) : null,
+    mode,
+    note: note ?? null,
+    receivedQty: receivedQty ?? null,
+  })
+  if (!closed.success) throw new Error(closed.error)
+
+  const who = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null
+  logAudit(admin, {
+    userId: user.id,
+    userName: who,
+    action: 'confirm_arrival',
+    module: 'pedidos',
+    entityType: table,
+    entityId: String(orderId),
+    description: mode === 'fudo_expense'
+      ? `Llegó pedido #${orderId} (${order.product_name}) — compra cargada en Fudo${expense ? ` ($${expense.amount.toLocaleString('es-AR')}, gasto #${expense.id})` : ''}${paymentMethod ? ` · ${paymentMethod}` : ''}`
+      : mode === 'lve_stock'
+        ? `Llegó pedido #${orderId} (${order.product_name}) — stock cargado desde LVE (${receivedQty})${paymentMethod ? ` · ${paymentMethod}` : ''}`
+        : `Llegó pedido #${orderId} (${order.product_name}) — sin movimiento de stock`,
+    metadata: { orderId, source, mode, expense: expense ?? null, receivedQty: receivedQty ?? null, unitCost: unitCost ?? null, totalCost: totalCost ?? null, amount: sinStockAmount, expiresAt: expiresAt ?? null, note: note ?? null, stockUpdated, paymentMethod: paymentMethod ?? null },
+  }).catch(() => {})
+
+  return respuesta({ success: true, stockUpdated, fudoSynced, mode })
 }

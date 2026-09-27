@@ -22,6 +22,8 @@ import { LoadingState } from '@/components/ui/LoadingState'
 import { BackToHoy } from '@/components/layout/BackToHoy'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
 import type { SugerenciasPayload, SugerenciaCompra } from '@/lib/compras/sugerencias'
+import { PAYMENT_METHODS, money, parseQty, type ConciliarPayload, type Order, type PaymentMethod, type Profile, type StockLite, type Supplier } from './_components/shared'
+import { LlegoTodoDialog } from './_components/LlegoTodoDialog'
 
 // ---------------------------------------------------------------------------
 // /pedidos — el ciclo real, en tres pasos y sin duplicar Fudo
@@ -34,41 +36,6 @@ import type { SugerenciasPayload, SugerenciaCompra } from '@/lib/compras/sugeren
 //             Si la compra no se cargó en Fudo, LVE suma el stock por delta.
 //   RECIBIDOS historial con quién, cuándo, cómo y por cuánto (monto Fudo).
 // ---------------------------------------------------------------------------
-
-type Order = {
-  id: number
-  product_name: string
-  category: string
-  quantity: string
-  urgency: string
-  status: string
-  note: string | null
-  supplier_id: string | null
-  created_by: string | null
-  /** bar_orders guarda el autor en requested_by */
-  requested_by?: string | null
-  created_at: string
-  source: 'barra' | 'cocina'
-  stock_item_id: string | null
-  received_qty: string | null
-  unit_cost: number | null
-  received_at: string | null
-  received_by: string | null
-  ordered_at?: string | null
-  fudo_expense_id?: string | null
-  fudo_amount?: number | null
-  received_mode?: string | null
-  received_note?: string | null
-  payment_method?: string | null
-}
-
-type Supplier = { id: string; name: string; phone: string | null; contact_name: string | null; fudo_provider_id?: string | null }
-type Profile = { id: string; first_name: string; last_name: string }
-type StockLite = { id: string; name: string; unit: string; current_qty: number; fudo_skip?: boolean | null; fudo_ingredient_id?: string | null; fudo_product_id?: string | null }
-
-type ExpenseLite = { id: string; provider: string | null; providerId: string | null; date: string; amount: number; ingredientIds: string[]; ingredientNames: string[] }
-type Match = { order_id: number; source: 'cocina' | 'barra'; strength: 'fuerte' | 'probable'; why: string; expense: ExpenseLite }
-type ConciliarPayload = { matches: Match[]; expenses: ExpenseLite[] }
 
 type Step = 'pedir' | 'camino' | 'recibido' | 'pagos'
 
@@ -90,18 +57,6 @@ type ReceiptPayState = { id: number; method: 'efectivo' | 'transferencia' | 'tar
 const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
 
 function stripNonDigits(s: string): string { return s.replace(/\D/g, '') }
-function money(n: number) { return `$${Math.round(n).toLocaleString('es-AR')}` }
-
-/**
- * Cantidad tipeada → número. Acepta coma decimal ('2,5' → 2.5): antes
- * Number('2,5') daba NaN y el ítem desaparecía del pedido en silencio.
- * Devuelve NaN si no hay número parseable.
- */
-function parseQty(raw: string | undefined | null): number {
-  if (raw == null) return NaN
-  const n = parseFloat(String(raw).trim().replace(',', '.'))
-  return Number.isFinite(n) ? n : NaN
-}
 
 /** Número → cantidad legible con coma decimal (para el mensaje de WhatsApp). */
 function formatQty(n: number): string {
@@ -145,6 +100,7 @@ function PedidosContent() {
   const [sending, setSending] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [arrivalDialog, setArrivalDialog] = useState<Order | null>(null)
+  const [llegoTodo, setLlegoTodo] = useState<{ supplier: Supplier | null; list: Order[] } | null>(null)
   const [correctionDialog, setCorrectionDialog] = useState<Order | null>(null)
   const [assignDialog, setAssignDialog] = useState<Order | null>(null)
   const [newOrderOpen, setNewOrderOpen] = useState(false)
@@ -725,7 +681,7 @@ function PedidosContent() {
         ) : (
           <FadeIn>
             <p className="px-1 text-[11px] text-[#a39e97]">
-              Cuando llegue el pedido, tocá <strong className="text-[#006d5a]">Llegó</strong> para registrar la recepción y elegir cómo se paga.
+              Cuando llegue el pedido, tocá <strong className="text-[#006d5a]">Llegó todo</strong> para recibir todo lo del proveedor de una vez, o <strong className="text-[#006d5a]">Llegó</strong> en cada producto.
             </p>
             {canManage && (
               <button
@@ -744,6 +700,14 @@ function PedidosContent() {
                     <Package className="size-4 text-[#4a90d9]" />
                     <p className="flex-1 truncate text-[12px] font-bold uppercase tracking-wider text-[#3d2c24]">{supplier?.name ?? 'Sin proveedor'}</p>
                     <span className="text-[11px] tabular-nums text-[#a39e97]">{list.length}</span>
+                    {canManage && list.length > 1 && (
+                      <button
+                        onClick={() => setLlegoTodo({ supplier, list })}
+                        className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1 text-[11px] font-semibold text-white active:scale-95"
+                      >
+                        <Check className="size-3" /> Llegó todo
+                      </button>
+                    )}
                   </div>
                   {canManage && supplier && !supplier.fudo_provider_id && (
                     <p className="border-b border-[#f5f0ea] bg-[#fdf6ec]/70 px-4 py-2 text-[11px] text-[#8b5e34]">
@@ -961,6 +925,16 @@ function PedidosContent() {
         />
       )}
 
+      {llegoTodo && (
+        <LlegoTodoDialog
+          supplier={llegoTodo.supplier}
+          orders={llegoTodo.list}
+          stockItems={stockItems}
+          matchByOrder={matchByOrder}
+          onClose={() => setLlegoTodo(null)}
+          onDone={() => { setLlegoTodo(null); void fetchOrders(); void fetchConciliar(); void fetchSugerencias(true) }}
+        />
+      )}
       {arrivalDialog && (
         <ArrivalDialog
           order={arrivalDialog}
@@ -1051,15 +1025,6 @@ function OrderRow({ order, who, supplier, muted, children }: { order: Order; who
 // ---------------------------------------------------------------------------
 // ArrivalDialog — "Llegó": cerrar el ciclo sin duplicar la carga de Fudo
 // ---------------------------------------------------------------------------
-
-type PaymentMethod = 'cuenta_corriente' | 'efectivo' | 'transferencia' | 'tarjeta'
-
-const PAYMENT_METHODS: { key: PaymentMethod; label: string; hint: string }[] = [
-  { key: 'cuenta_corriente', label: 'Cuenta corriente', hint: 'Queda en cuentas por pagar' },
-  { key: 'efectivo', label: 'Efectivo', hint: 'Pagado en el momento' },
-  { key: 'transferencia', label: 'Transferencia', hint: 'Pagado en el momento' },
-  { key: 'tarjeta', label: 'Tarjeta', hint: 'Pagado en el momento' },
-]
 
 function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
   order: Order
