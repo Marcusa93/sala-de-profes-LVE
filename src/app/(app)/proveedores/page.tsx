@@ -42,7 +42,7 @@ export default function ProveedoresPage() {
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [assignSupplier, setAssignSupplier] = useState<Supplier | null>(null)
   const [allStockItems, setAllStockItems] = useState<LowStockItem[]>([])
-  const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set())
+  const [selectedItems, setSelectedItems] = useState<Set<string | number>>(new Set())
   const [assigning, setAssigning] = useState(false)
   const [assignFilter, setAssignFilter] = useState('')
 
@@ -254,7 +254,7 @@ export default function ProveedoresPage() {
     return assignableItems.filter((i) => i.name.toLowerCase().includes(q) || i.category?.toLowerCase().includes(q))
   }, [assignableItems, assignFilter])
 
-  function toggleItem(id: number) {
+  function toggleItem(id: string | number) {
     setSelectedItems((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -269,8 +269,8 @@ export default function ProveedoresPage() {
       const next = new Set(prev)
       const allSelected = categoryItems.every((i) => next.has(i.id))
       for (const item of categoryItems) {
-        if (allSelected) next.delete(item.id)
-        else next.add(item.id)
+        if (allSelected) next.delete(item.id as string | number)
+        else next.add(item.id as string | number)
       }
       return next
     })
@@ -280,28 +280,33 @@ export default function ProveedoresPage() {
     if (!assignSupplier) return
     setAssigning(true)
     try {
-      const previouslyLinked = allStockItems.filter((i) => i.supplier_id === assignSupplier.id).map((i) => i.id)
+      const previouslyLinked = allStockItems
+        .filter((i) => i.supplier_id === assignSupplier.id)
+        .map((i) => i.id as string | number)
+
       const toUnlink = previouslyLinked.filter((id) => !selectedItems.has(id))
       const toLink = [...selectedItems].filter((id) => !previouslyLinked.includes(id))
 
-      const kitchenUnlink = toUnlink.filter((id) => id > 0)
-      const barUnlink = toUnlink.filter((id) => id < 0).map((id) => -id)
-      const kitchenLink = toLink.filter((id) => id > 0)
-      const barLink = toLink.filter((id) => id < 0).map((id) => -id)
+      // Kitchen items tienen IDs string (UUID), bar items tienen IDs number negativo
+      const isBarId = (id: string | number): id is number => typeof id === 'number' && id < 0
 
-      // Cocina: usar API endpoint (admin client, bypasea RLS)
-      const kitchenCalls = [
-        ...kitchenUnlink.map((id) =>
-          fetch(`/api/stock/items/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ supplier_id: null }) })
-        ),
-        ...kitchenLink.map((id) =>
-          fetch(`/api/stock/items/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ supplier_id: assignSupplier.id }) })
-        ),
-      ]
-      const results = await Promise.all(kitchenCalls)
-      const failed = results.filter((r) => !r.ok)
-      if (failed.length > 0) throw new Error(`${failed.length} items no se pudieron actualizar`)
+      const kitchenUnlink = toUnlink.filter((id): id is string => !isBarId(id))
+      const barUnlink = toUnlink.filter(isBarId).map((id) => -id)
+      const kitchenLink = toLink.filter((id): id is string => !isBarId(id))
+      const barLink = toLink.filter(isBarId).map((id) => -id)
 
+      // Cocina: endpoint bulk con admin client (bypasea RLS), pasa UUIDs
+      if (kitchenLink.length > 0 || kitchenUnlink.length > 0) {
+        const res = await fetch('/api/proveedores/vincular', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ supplierId: assignSupplier.id, link: kitchenLink, unlink: kitchenUnlink }),
+        })
+        const json = await res.json()
+        if (!res.ok) throw new Error(json.error ?? 'Error al vincular insumos')
+      }
+
+      // Bar items
       for (const barId of barUnlink) {
         await fetch('/api/kitchen/bar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update_supplier', itemId: barId, supplierId: null }) })
       }
@@ -309,8 +314,10 @@ export default function ProveedoresPage() {
         await fetch('/api/kitchen/bar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update_supplier', itemId: barId, supplierId: assignSupplier.id }) })
       }
 
-      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'link_supplier_stock', module: 'proveedores', entityType: 'supplier', entityId: String(assignSupplier.id), description: `${profile?.first_name ?? 'User'} vinculó ${assignSupplier.name} a ${kitchenLink.length + barLink.length} items` })
-      toast.success(`${kitchenLink.length + barLink.length} vinculados, ${kitchenUnlink.length + barUnlink.length} desvinculados`)
+      const total = kitchenLink.length + barLink.length
+      const totalUnlink = kitchenUnlink.length + barUnlink.length
+      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'link_supplier_stock', module: 'proveedores', entityType: 'supplier', entityId: String(assignSupplier.id), description: `${profile?.first_name ?? 'User'} vinculó ${assignSupplier.name} a ${total} items` })
+      toast.success(`${total} vinculado${total !== 1 ? 's' : ''}, ${totalUnlink} desvinculado${totalUnlink !== 1 ? 's' : ''}`)
       setAssignDialogOpen(false)
       fetchData()
     } catch (err) {

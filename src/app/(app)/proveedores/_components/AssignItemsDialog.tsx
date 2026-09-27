@@ -16,7 +16,7 @@ type Props = {
   supplier: Supplier | null
   items: LowStockItem[]
   selectedItems: Set<number>
-  onToggle: (id: number) => void
+  onToggle: (id: string | number) => void
   onSelectAllCategory: (category: string) => void
   onSave: () => void
   assigning: boolean
