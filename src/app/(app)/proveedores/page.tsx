@@ -232,7 +232,7 @@ export default function ProveedoresPage() {
   }
 
   const supplierNamesMap = useMemo(() => {
-    const map = new Map<number, string>()
+    const map = new Map<string, string>()
     for (const s of suppliers) map.set(s.id, s.name)
     return map
   }, [suppliers])
@@ -280,7 +280,6 @@ export default function ProveedoresPage() {
     if (!assignSupplier) return
     setAssigning(true)
     try {
-      const supabase = createClient()
       const previouslyLinked = allStockItems.filter((i) => i.supplier_id === assignSupplier.id).map((i) => i.id)
       const toUnlink = previouslyLinked.filter((id) => !selectedItems.has(id))
       const toLink = [...selectedItems].filter((id) => !previouslyLinked.includes(id))
@@ -290,8 +289,18 @@ export default function ProveedoresPage() {
       const kitchenLink = toLink.filter((id) => id > 0)
       const barLink = toLink.filter((id) => id < 0).map((id) => -id)
 
-      if (kitchenUnlink.length > 0) await supabase.from('stock_items').update({ supplier_id: null }).in('id', kitchenUnlink)
-      if (kitchenLink.length > 0) await supabase.from('stock_items').update({ supplier_id: assignSupplier.id }).in('id', kitchenLink)
+      // Cocina: usar API endpoint (admin client, bypasea RLS)
+      const kitchenCalls = [
+        ...kitchenUnlink.map((id) =>
+          fetch(`/api/stock/items/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ supplier_id: null }) })
+        ),
+        ...kitchenLink.map((id) =>
+          fetch(`/api/stock/items/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ supplier_id: assignSupplier.id }) })
+        ),
+      ]
+      const results = await Promise.all(kitchenCalls)
+      const failed = results.filter((r) => !r.ok)
+      if (failed.length > 0) throw new Error(`${failed.length} items no se pudieron actualizar`)
 
       for (const barId of barUnlink) {
         await fetch('/api/kitchen/bar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update_supplier', itemId: barId, supplierId: null }) })
@@ -306,7 +315,7 @@ export default function ProveedoresPage() {
       fetchData()
     } catch (err) {
       console.error(err)
-      toast.error('Error al asignar productos')
+      toast.error(err instanceof Error ? err.message : 'Error al asignar productos')
     } finally {
       setAssigning(false)
     }
