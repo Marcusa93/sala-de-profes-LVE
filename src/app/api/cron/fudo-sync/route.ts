@@ -131,6 +131,16 @@ export async function GET(request: NextRequest) {
       reconcile.error = err instanceof Error ? err.message : 'No se pudo conciliar pedidos con gastos de Fudo'
     }
 
+    // ── 3.6) Vínculos insumo↔proveedor desde las compras de Fudo ──
+    // Reusa el cache de gastos que acaba de llenar la conciliación.
+    let supplierLinks: Record<string, unknown> = {}
+    try {
+      const { syncSupplierLinksFromFudo } = await import('@/lib/proveedores/fudo-links')
+      supplierLinks = { ...(await syncSupplierLinksFromFudo(admin)), error: null }
+    } catch (err) {
+      supplierLinks = { error: err instanceof Error ? err.message : 'No se pudieron vincular proveedores' }
+    }
+
     // ── 4) Auditoría de discrepancias (lo menos crítico va último) ──
     let auditSummary: Record<string, unknown> | null = null
     let auditError: string | null = null
@@ -165,6 +175,7 @@ export async function GET(request: NextRequest) {
           sales: { imported: salesImported, errors: salesErrors, from: yesterdayStr },
           snapshot: { saved: snapshotSaved, error: snapshotError },
           reconcile,
+          supplier_links: supplierLinks,
           elapsed_ms: elapsedMs,
         })),
       })

@@ -199,6 +199,29 @@ function PedidosContent() {
     }
   }, [])
 
+  // Asignar proveedor sin salir de Pedidos: el insumo pasa al grupo de ese
+  // proveedor y ya se puede pedir. Mismo camino seguro que /proveedores/vincular.
+  const [linking, setLinking] = useState<string | null>(null)
+  async function linkSupplier(itemId: string, itemName: string, supplierId: string) {
+    setLinking(itemId)
+    try {
+      const res = await fetch('/api/proveedores/vinculos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ changes: [{ item_id: itemId, supplier_id: supplierId, op: 'primary' }] }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error ?? 'No se pudo vincular')
+      toast.success(`${itemName} → ${suppliers.find((x) => x.id === supplierId)?.name ?? 'proveedor'}`)
+      await fetchSugerencias(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo vincular')
+    } finally {
+      setLinking(null)
+    }
+  }
+
+
   const fetchConciliar = useCallback(async (fresh = false) => {
     if (!canManage) return
     try {
@@ -545,7 +568,7 @@ function PedidosContent() {
                       <div className="border-t border-[#f5f0ea]">
                         {!g.supplier_id && (
                           <p className="bg-[#fef2f2]/50 px-4 py-2 text-[11px] text-[#ea504c]">
-                            Sin proveedor no se puede armar el pedido. <Link href="/proveedores/vincular" className="font-bold underline">Vincular proveedores</Link>
+                            Sin proveedor no se puede armar el pedido.{canManage ? ' Asignalo acá abajo o en ' : ' '}<Link href="/proveedores/vincular" className="font-bold underline">Vínculos con proveedores</Link>
                           </p>
                         )}
                         <div className="divide-y divide-[#f5f0ea]">
@@ -567,6 +590,22 @@ function PedidosContent() {
                                     {s.daily_consumption ? <span> · ~{s.daily_consumption} {s.unit}/día</span> : null}
                                     {s.already_ordered && <span className="ml-1 font-bold text-[#006d5a]">· ya pedido</span>}
                                   </p>
+                                  {!g.supplier_id && canManage && (
+                                    <label className="relative mt-1 inline-flex items-center gap-1 rounded-lg bg-[#e8f5f1] px-2 py-1 text-[11px] font-semibold text-[#006d5a]">
+                                      {linking === s.stock_item_id ? <Loader2 className="size-3 animate-spin" /> : <Truck className="size-3" />}
+                                      Asignar proveedor
+                                      <select
+                                        aria-label={`Proveedor de ${s.name}`}
+                                        value=""
+                                        disabled={linking === s.stock_item_id}
+                                        onChange={(e) => e.target.value && void linkSupplier(s.stock_item_id, s.name, e.target.value)}
+                                        className="absolute inset-0 cursor-pointer opacity-0"
+                                      >
+                                        <option value="">Elegí…</option>
+                                        {suppliers.map((sup) => <option key={sup.id} value={sup.id}>{sup.name}</option>)}
+                                      </select>
+                                    </label>
+                                  )}
                                   {/* Lo que el sistema ya sabe: cuándo se pidió y cuánto salió la última compra (monto del gasto Fudo, no precio unitario) */}
                                   {canManage && (s.last_ordered_at || s.last_purchase) && (
                                     <p className="mt-0.5 flex flex-wrap gap-1">

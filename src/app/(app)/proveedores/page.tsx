@@ -42,10 +42,6 @@ export default function ProveedoresPage() {
   const [assignDialogOpen, setAssignDialogOpen] = useState(false)
   const [assignSupplier, setAssignSupplier] = useState<Supplier | null>(null)
   const [allStockItems, setAllStockItems] = useState<LowStockItem[]>([])
-  const [selectedItems, setSelectedItems] = useState<Set<string | number>>(new Set())
-  const [initialLinked, setInitialLinked] = useState<Set<string | number>>(new Set())
-  const [assigning, setAssigning] = useState(false)
-  const [assignFilter, setAssignFilter] = useState('')
 
   const isEncargado = isManagerOrAbove(profile?.role)
 
@@ -53,29 +49,17 @@ export default function ProveedoresPage() {
     setLoading(true)
     try {
       const supabase = createClient()
-      const [suppRes, stockRes, barRes] = await Promise.all([
+      const [suppRes, stockRes] = await Promise.all([
         supabase.from('suppliers').select('*').eq('is_active', true).order('name', { ascending: true }),
-        supabase.from('stock_items').select('id, name, current_qty, min_qty, unit, supplier_id, category').eq('is_active', true),
-        supabase.from('bar_stock_items').select('id, name, current_qty, min_level, unit, supplier_id, category').eq('is_active', true),
+        supabase.from('stock_items').select('id, name, current_qty, min_qty, unit, supplier_id, category, is_produced').eq('is_active', true),
       ])
 
       if (suppRes.error) throw suppRes.error
       setSuppliers(suppRes.data ?? [])
 
-      const kitchenStock = (stockRes.data ?? []) as LowStockItem[]
-      const barStock = (barRes.data ?? []).map((b: { id: number; name: string; current_qty: number; min_level: number; unit: string; supplier_id: string | null; category: string }) => ({
-        id: -b.id,
-        name: `☕ ${b.name}`,
-        current_qty: b.current_qty,
-        min_qty: b.min_level,
-        unit: b.unit,
-        supplier_id: b.supplier_id ? Number(b.supplier_id) : null,
-        category: b.category,
-        _barId: b.id,
-        _isBar: true,
-      })) as (LowStockItem & { _barId?: number; _isBar?: boolean })[]
-
-      const allStock = [...kitchenStock, ...barStock]
+      // Lo producido en cocina no se compra. bar_stock_items es legado: la barra
+      // vive en stock_items (area = 'barra').
+      const allStock = ((stockRes.data ?? []) as (LowStockItem & { is_produced: boolean | null })[]).filter((i) => !i.is_produced)
       setAllStockItems(allStock)
       setLowStockItems(allStock.filter((item) => {
         const sem = getSemaphore(item.current_qty, item.min_qty)
@@ -226,106 +210,7 @@ export default function ProveedoresPage() {
 
   function openAssignDialog(supplier: Supplier) {
     setAssignSupplier(supplier)
-    const linked = allStockItems
-      .filter((i) => i.supplier_id === supplier.id)
-      .map((i) => i.id as string | number)
-    const linkedSet = new Set<string | number>(linked)
-    setSelectedItems(new Set<string | number>(linked))
-    setInitialLinked(linkedSet)
-    setAssignFilter('')
     setAssignDialogOpen(true)
-  }
-
-  const supplierNamesMap = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const s of suppliers) map.set(s.id, s.name)
-    return map
-  }, [suppliers])
-
-  const assignableItems = useMemo(() => {
-    if (!assignSupplier) return []
-    return allStockItems
-      .sort((a, b) => {
-        const aCat = a.category === assignSupplier.category ? 0 : 1
-        const bCat = b.category === assignSupplier.category ? 0 : 1
-        if (aCat !== bCat) return aCat - bCat
-        return a.name.localeCompare(b.name)
-      })
-  }, [allStockItems, assignSupplier])
-
-  const filteredAssignable = useMemo(() => {
-    if (!assignFilter.trim()) return assignableItems
-    const q = assignFilter.toLowerCase()
-    return assignableItems.filter((i) => i.name.toLowerCase().includes(q) || i.category?.toLowerCase().includes(q))
-  }, [assignableItems, assignFilter])
-
-  function toggleItem(id: string | number) {
-    setSelectedItems((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  function selectAllCategory(category: string) {
-    const categoryItems = filteredAssignable.filter((i) => i.category === category)
-    setSelectedItems((prev) => {
-      const next = new Set(prev)
-      const allSelected = categoryItems.every((i) => next.has(i.id))
-      for (const item of categoryItems) {
-        if (allSelected) next.delete(item.id as string | number)
-        else next.add(item.id as string | number)
-      }
-      return next
-    })
-  }
-
-  async function handleAssign() {
-    if (!assignSupplier) return
-    setAssigning(true)
-    try {
-      // Usar snapshot del estado al abrir el diálogo para evitar re-lectura del array mutado
-      const toLink = [...selectedItems].filter((id) => !initialLinked.has(id))
-      const toUnlink = [...initialLinked].filter((id) => !selectedItems.has(id))
-
-      // Kitchen items: IDs string (UUID), bar items: IDs number (negativo en allStockItems)
-      const kitchenLink = toLink.filter((id): id is string => typeof id === 'string')
-      const kitchenUnlink = toUnlink.filter((id): id is string => typeof id === 'string')
-      const barLink = toLink.filter((id): id is number => typeof id === 'number').map((id) => -id)
-      const barUnlink = toUnlink.filter((id): id is number => typeof id === 'number').map((id) => -id)
-
-      // Cocina: endpoint bulk con admin client (bypasea RLS), pasa UUIDs
-      if (kitchenLink.length > 0 || kitchenUnlink.length > 0) {
-        const res = await fetch('/api/proveedores/vincular', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ supplierId: assignSupplier.id, link: kitchenLink, unlink: kitchenUnlink }),
-        })
-        const json = await res.json()
-        if (!res.ok) throw new Error(json.error ?? 'Error al vincular insumos')
-      }
-
-      // Bar items
-      for (const barId of barUnlink) {
-        await fetch('/api/kitchen/bar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update_supplier', itemId: barId, supplierId: null }) })
-      }
-      for (const barId of barLink) {
-        await fetch('/api/kitchen/bar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update_supplier', itemId: barId, supplierId: assignSupplier.id }) })
-      }
-
-      const total = kitchenLink.length + barLink.length
-      const totalUnlink = kitchenUnlink.length + barUnlink.length
-      logAuditClient({ userId: profile?.id ?? null, userName: profile?.first_name ?? null, action: 'link_supplier_stock', module: 'proveedores', entityType: 'supplier', entityId: String(assignSupplier.id), description: `${profile?.first_name ?? 'User'} vinculó ${assignSupplier.name} a ${total} items` })
-      toast.success(`${total} vinculado${total !== 1 ? 's' : ''}, ${totalUnlink} desvinculado${totalUnlink !== 1 ? 's' : ''}`)
-      setAssignDialogOpen(false)
-      fetchData()
-    } catch (err) {
-      console.error(err)
-      toast.error(err instanceof Error ? err.message : 'Error al asignar productos')
-    } finally {
-      setAssigning(false)
-    }
   }
 
   function buildWhatsAppMessage(supplier: Supplier): string {
@@ -393,8 +278,8 @@ export default function ProveedoresPage() {
         <div className="flex items-center gap-2.5">
           <Sparkles className="size-5 shrink-0" />
           <div>
-            <p className="text-[14px] font-bold leading-tight">Vincular proveedores</p>
-            <p className="text-[11px] text-white/80">Insumos sin proveedor asignado, con sugerencia</p>
+            <p className="text-[14px] font-bold leading-tight">Vínculos con proveedores</p>
+            <p className="text-[11px] text-white/80">Qué se le compra a quién, según Fudo · días de pedido</p>
           </div>
         </div>
         <ArrowRight className="size-5 shrink-0" />
@@ -506,17 +391,8 @@ export default function ProveedoresPage() {
 
       <AssignItemsDialog
         open={assignDialogOpen}
-        onClose={setAssignDialogOpen}
+        onClose={(o) => { setAssignDialogOpen(o); if (!o) void fetchData() }}
         supplier={assignSupplier}
-        items={filteredAssignable}
-        selectedItems={selectedItems}
-        onToggle={toggleItem}
-        onSelectAllCategory={selectAllCategory}
-        onSave={handleAssign}
-        assigning={assigning}
-        filter={assignFilter}
-        onFilter={setAssignFilter}
-        supplierNames={supplierNamesMap}
       />
     </div>
   )

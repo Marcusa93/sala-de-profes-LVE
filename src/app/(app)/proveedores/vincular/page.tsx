@@ -1,232 +1,169 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Check, Loader2, Search, Sparkles, X, Truck } from 'lucide-react'
-import { toast } from 'sonner'
-import { FadeIn } from '@/components/ui/motion'
+import { useSearchParams } from 'next/navigation'
+import { ArrowLeft, Loader2, RefreshCw, Truck } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { isManagerOrAbove } from '@/lib/roles'
+import { useProfileContext } from '@/lib/hooks/use-profile'
+import { useVinculos } from '@/lib/hooks/use-vinculos'
+import { AnimatedNumber } from '@/components/ui/motion'
+import { ReviewTab } from './_components/ReviewTab'
+import { ProductsTab } from './_components/ProductsTab'
+import { CalendarTab } from './_components/CalendarTab'
+import { ago } from './_components/shared'
 
 // ---------------------------------------------------------------------------
-// Vincular proveedores — recorrido guiado con sugerencia
+// Vínculos con proveedores
 // ---------------------------------------------------------------------------
-// Fudo no expone un vínculo insumo→proveedor en su API (ni lectura ni
-// escritura), así que este vínculo vive en LVE (stock_items.supplier_id),
-// siempre apuntando a un proveedor real de Fudo (mismo fudo_provider_id).
+// Qué insumo se le compra a quién. La evidencia sale de las compras reales en
+// Fudo (módulo de gastos); encargados y socios confirman, corrigen o agregan.
+// El proveedor principal de cada insumo es el que usan Pedidos y las
+// sugerencias de "qué pedir hoy".
 // ---------------------------------------------------------------------------
 
-type Suggestion = { supplierId: string; supplierName: string; reason: string } | null
+type Tab = 'revisar' | 'productos' | 'calendario'
 
-type Item = {
-  id: string
-  name: string
-  category: string
-  unit: string
-  suggestion: Suggestion
+export default function VinculosPage() {
+  return (
+    <Suspense fallback={<Centered><Loader2 className="size-6 animate-spin text-[#006d5a]" /></Centered>}>
+      <Vinculos />
+    </Suspense>
+  )
 }
 
-type SupplierOption = { id: string; name: string }
+function Vinculos() {
+  const { profile, loading: profileLoading } = useProfileContext()
+  const canManage = isManagerOrAbove(profile?.role)
+  const params = useSearchParams()
+  const { data, loading, error, syncing, syncFudo, apply, saveCalendar } = useVinculos(canManage)
+  // Pestaña: la que eligió la persona, o la del link, o Revisar si hay algo
+  // pendiente (si no, Productos).
+  const [picked, setTab] = useState<Tab | null>((params.get('tab') as Tab) || null)
+  const nothingToReview = !!data && data.review.conflicts.length + data.review.unlinked.length === 0
+  const tab: Tab = picked ?? (nothingToReview ? 'productos' : 'revisar')
 
-export default function VincularProveedoresPage() {
-  const [items, setItems] = useState<Item[]>([])
-  const [suppliers, setSuppliers] = useState<SupplierOption[]>([])
-  const [loading, setLoading] = useState(true)
-  const [savingId, setSavingId] = useState<string | null>(null)
-  const [done, setDone] = useState<Record<string, string>>({}) // itemId -> supplierName
-  const [skipped, setSkipped] = useState<Set<string>>(new Set())
-  const [pickerId, setPickerId] = useState<string | null>(null)
-  const [pickerSearch, setPickerSearch] = useState('')
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('/api/proveedores/sin-vincular')
-        if (!res.ok) throw new Error('No se pudo cargar')
-        const data = await res.json()
-        setItems(data.items ?? [])
-        setSuppliers(data.suppliers ?? [])
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Error al cargar')
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
-
-  const pending = useMemo(
-    () => items.filter((i) => !done[i.id] && !skipped.has(i.id)),
-    [items, done, skipped],
-  )
-
-  const totalToResolve = items.length
-  const resolvedCount = Object.keys(done).length
-  const pct = totalToResolve > 0 ? Math.round((resolvedCount / totalToResolve) * 100) : 0
-
-  const filteredSuppliers = useMemo(() => {
-    const q = pickerSearch.trim().toLowerCase()
-    if (!q) return suppliers
-    return suppliers.filter((s) => s.name.toLowerCase().includes(q))
-  }, [suppliers, pickerSearch])
-
-  async function assign(itemId: string, supplierId: string, supplierName: string) {
-    setSavingId(itemId)
-    try {
-      const res = await fetch(`/api/stock/items/${itemId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ supplier_id: supplierId }),
-      })
-      const data = await res.json()
-      if (!res.ok || !data.success) throw new Error(data.error ?? 'No se pudo guardar')
-      setDone((prev) => ({ ...prev, [itemId]: supplierName }))
-      setPickerId(null)
-      setPickerSearch('')
-      toast.success(`Vinculado a ${supplierName}`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al guardar')
-    } finally {
-      setSavingId(null)
-    }
+  if (profileLoading) return <Centered><Loader2 className="size-6 animate-spin text-[#006d5a]" /></Centered>
+  if (!canManage) {
+    return (
+      <Centered>
+        <Truck className="size-9 text-[#a39e97]" />
+        <p className="mt-3 text-sm font-medium text-[#3d2c24]">Solo para encargados y socios</p>
+      </Centered>
+    )
   }
 
+  const total = data?.items.length ?? 0
+  const linked = data ? new Set(data.links.filter((l) => l.is_primary).map((l) => l.item_id)).size : 0
+  const toReview = data ? data.review.conflicts.length + data.review.unlinked.length : 0
+  const pct = total ? Math.round((linked / total) * 100) : 0
+
+  const TABS: { key: Tab; label: string; count?: number }[] = [
+    { key: 'revisar', label: 'Revisar', count: toReview },
+    { key: 'productos', label: 'Productos' },
+    { key: 'calendario', label: 'Calendario', count: data?.review.calendar.length },
+  ]
+
   return (
-    <div className="mx-auto max-w-2xl px-4 pb-24 pt-4">
-      <div className="mb-4 flex items-center gap-3">
-        <Link href="/proveedores" className="rounded-full p-1.5 hover:bg-black/5">
+    <div className="mx-auto max-w-2xl space-y-4 px-4 pb-28 pt-4">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <Link href="/proveedores" aria-label="Volver" className="-ml-1.5 rounded-full p-1.5 hover:bg-black/5">
           <ArrowLeft className="size-5 text-[#3d2c24]" />
         </Link>
-        <div className="flex items-center gap-2">
-          <Truck className="size-5 text-[#006d5a]" />
-          <h1 className="text-[18px] font-bold text-[#3d2c24]">Vincular proveedores</h1>
+        <div className="min-w-0 flex-1">
+          <h1 className="font-display text-xl font-semibold tracking-tight text-[#3d2c24]">Vínculos con proveedores</h1>
+          <p className="text-[11.5px] text-[#a39e97]">Qué insumo se le compra a quién</p>
         </div>
+        <button
+          onClick={() => syncFudo({ force: true })}
+          disabled={syncing}
+          className="flex shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[11.5px] font-medium text-[#3d2c24] shadow-sm ring-1 ring-[#ebe6df] transition active:scale-95 disabled:opacity-70"
+          title="Leer de nuevo las compras en Fudo"
+        >
+          {syncing
+            ? <><Loader2 className="size-3.5 animate-spin text-[#006d5a]" /> Leyendo Fudo…</>
+            : <>
+                <span className={cn('size-1.5 rounded-full', data?.fudo.ok === false ? 'bg-[#d4943a]' : 'bg-[#006d5a]')} />
+                {data?.fudo.last_sync_at ? `Fudo ${ago(data.fudo.last_sync_at)}` : 'Sync Fudo'}
+                <RefreshCw className="size-3 text-[#a39e97]" />
+              </>}
+        </button>
       </div>
 
-      <p className="mb-4 text-[13px] leading-relaxed text-muted-foreground">
-        Elegí el proveedor real de cada insumo. Cuando hay una coincidencia clara aparece sugerida —
-        confirmá o cambiala. El resto, buscá y elegí. No hace falta terminar todo de una.
-      </p>
-
-      {!loading && totalToResolve > 0 && (
-        <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
-          <div className="mb-2 flex items-center justify-between text-[13px]">
-            <span className="font-semibold text-[#3d2c24]">{resolvedCount} de {totalToResolve} vinculados</span>
-            <span className="text-muted-foreground">{pct}%</span>
-          </div>
-          <div className="h-2 rounded-full bg-[#f5f2ee]">
-            <div className="h-2 rounded-full bg-[#006d5a] transition-all" style={{ width: `${pct}%` }} />
-          </div>
-        </div>
+      {error && !data && (
+        <div className="rounded-2xl bg-[#fef2f2] p-4 text-[13px] text-[#ea504c] ring-1 ring-[#ea504c]/20">{error}</div>
       )}
 
-      {loading ? (
-        <div className="flex items-center justify-center py-16 text-muted-foreground">
-          <Loader2 className="mr-2 size-5 animate-spin" /> Cargando…
+      {loading && !data ? (
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => <div key={i} className="h-24 animate-pulse rounded-2xl bg-[#f3efe9]" />)}
         </div>
-      ) : pending.length === 0 ? (
-        <div className="rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-[#ebe6df]">
-          <Check className="mx-auto mb-2 size-8 text-[#006d5a]" />
-          <p className="text-[14px] text-[#3d2c24]">
-            {totalToResolve === 0 ? 'Todos los insumos vinculados a Fudo ya tienen proveedor.' : 'Terminaste el recorrido de esta sesión.'}
-          </p>
-        </div>
-      ) : (
-        <FadeIn>
-          <div className="space-y-2">
-            {pending.map((item) => {
-              const saving = savingId === item.id
-              const showPicker = pickerId === item.id
-              return (
-                <div key={item.id} className="rounded-2xl bg-white p-3.5 shadow-sm ring-1 ring-[#ebe6df]">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-[14px] font-semibold text-[#3d2c24]">{item.name}</p>
-                      <p className="mt-0.5 text-[11px] text-muted-foreground">{item.category}</p>
-                    </div>
-                    <button
-                      onClick={() => setSkipped((prev) => new Set(prev).add(item.id))}
-                      className="shrink-0 rounded-lg px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-[#faf8f5]"
-                    >
-                      Saltar
-                    </button>
-                  </div>
-
-                  {!showPicker && item.suggestion && (
-                    <div className="mt-2.5 flex items-center justify-between gap-2 rounded-xl bg-[#e8f5f1] px-3 py-2">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <Sparkles className="size-3.5 shrink-0 text-[#006d5a]" />
-                        <span className="truncate text-[12px] font-semibold text-[#006d5a]">{item.suggestion.supplierName}</span>
-                      </div>
-                      <div className="flex shrink-0 gap-1.5">
-                        <button
-                          onClick={() => assign(item.id, item.suggestion!.supplierId, item.suggestion!.supplierName)}
-                          disabled={saving}
-                          className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"
-                        >
-                          {saving ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
-                          Confirmar
-                        </button>
-                        <button
-                          onClick={() => setPickerId(item.id)}
-                          className="rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-medium text-[#3d2c24] ring-1 ring-[#dcefe8]"
-                        >
-                          Cambiar
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {!showPicker && !item.suggestion && (
-                    <button
-                      onClick={() => setPickerId(item.id)}
-                      className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-[#ebe6df] py-2 text-[12px] font-medium text-muted-foreground hover:bg-[#faf8f5]"
-                    >
-                      <Search className="size-3.5" /> Elegir proveedor
-                    </button>
-                  )}
-
-                  {showPicker && (
-                    <div className="mt-2.5 rounded-xl border border-[#ebe6df] bg-[#faf8f5] p-2">
-                      <div className="mb-2 flex items-center gap-2">
-                        <div className="relative flex-1">
-                          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[#a39e97]" />
-                          <input
-                            autoFocus
-                            placeholder="Buscar proveedor…"
-                            value={pickerSearch}
-                            onChange={(e) => setPickerSearch(e.target.value)}
-                            className="w-full rounded-lg border border-[#ebe6df] bg-white py-1.5 pl-8 pr-2 text-[13px] outline-none focus:border-[#006d5a]"
-                          />
-                        </div>
-                        <button
-                          onClick={() => { setPickerId(null); setPickerSearch('') }}
-                          className="rounded-lg p-1.5 text-muted-foreground hover:bg-white"
-                        >
-                          <X className="size-4" />
-                        </button>
-                      </div>
-                      <div className="max-h-48 space-y-0.5 overflow-y-auto">
-                        {filteredSuppliers.map((s) => (
-                          <button
-                            key={s.id}
-                            onClick={() => assign(item.id, s.id, s.name)}
-                            disabled={saving}
-                            className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[13px] text-[#3d2c24] hover:bg-white disabled:opacity-50"
-                          >
-                            {s.name}
-                            {saving && <Loader2 className="size-3.5 animate-spin" />}
-                          </button>
-                        ))}
-                        {filteredSuppliers.length === 0 && (
-                          <p className="py-3 text-center text-[12px] text-muted-foreground">Sin resultados</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+      ) : data && (
+        <>
+          {/* Resumen */}
+          <div className="grid grid-cols-3 gap-2">
+            <Stat label="Con proveedor" tone="green">
+              <AnimatedNumber value={pct} />%
+              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#e8f5f1]">
+                <div className="h-1 rounded-full bg-[#006d5a] transition-all duration-700" style={{ width: `${pct}%` }} />
+              </div>
+            </Stat>
+            <Stat label="A revisar" tone={toReview ? 'amber' : 'muted'}><AnimatedNumber value={toReview} /></Stat>
+            <Stat label="Con varios" tone="muted">
+              <AnimatedNumber value={new Set(data.links.filter((l) => !l.is_primary).map((l) => l.item_id)).size} />
+            </Stat>
           </div>
-        </FadeIn>
+          {data.fudo.ok === false && (
+            <p className="rounded-xl bg-[#fef7ed] px-3 py-2 text-[11.5px] text-[#7d6c64]">
+              Fudo no respondió a tiempo: se muestran los vínculos guardados, sin el ritmo de compra.
+            </p>
+          )}
+
+          {/* Tabs */}
+          <div className="sticky top-0 z-10 -mx-4 bg-[#fefcf9]/90 px-4 py-2 backdrop-blur">
+            <div className="grid grid-cols-3 gap-1 rounded-2xl bg-[#f3efe9] p-1">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setTab(t.key)}
+                  className={cn(
+                    'flex items-center justify-center gap-1.5 rounded-xl py-2 text-[12.5px] font-semibold transition',
+                    tab === t.key ? 'bg-white text-[#3d2c24] shadow-sm' : 'text-[#7d6c64]',
+                  )}
+                >
+                  {t.label}
+                  {!!t.count && (
+                    <span className={cn('rounded-full px-1.5 text-[10px] font-bold', t.key === 'revisar' ? 'bg-[#d4943a] text-white' : 'bg-[#006d5a] text-white')}>
+                      {t.count}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {tab === 'revisar' && <ReviewTab data={data} apply={apply} />}
+          {tab === 'productos' && <ProductsTab data={data} apply={apply} />}
+          {tab === 'calendario' && <CalendarTab data={data} saveCalendar={saveCalendar} />}
+        </>
       )}
+    </div>
+  )
+}
+
+function Centered({ children }: { children: React.ReactNode }) {
+  return <div className="flex min-h-[60vh] flex-col items-center justify-center">{children}</div>
+}
+
+function Stat({ label, tone, children }: { label: string; tone: 'green' | 'amber' | 'muted'; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-[#ebe6df]">
+      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-[#a39e97]">{label}</p>
+      <div className={cn('mt-0.5 text-[20px] font-bold tabular-nums', tone === 'green' ? 'text-[#006d5a]' : tone === 'amber' ? 'text-[#d4943a]' : 'text-[#3d2c24]')}>
+        {children}
+      </div>
     </div>
   )
 }
