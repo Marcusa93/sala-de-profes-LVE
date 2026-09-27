@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRole } from '@/lib/supabase/require-role'
 import { generarSugerenciasCompra, type SugerenciasPayload } from '@/lib/compras/sugerencias'
 import { linksVersion } from '@/lib/proveedores/fudo-links'
+import { asegurarVentasDeHoy } from '@/lib/fudo/ventas-intradia'
 
 // ---------------------------------------------------------------------------
 // GET /api/compras/sugerencias — "qué pedir hoy", un solo motor.
@@ -25,6 +26,8 @@ export async function GET(request: Request) {
     }
 
     const admin = createAdminClient()
+    // Ventas de hoy al día (máx. 6 s de espera; si Fudo tarda, sigue sin ellas)
+    await asegurarVentasDeHoy(admin, { timeoutMs: 6000 })
     const payload = await generarSugerenciasCompra(admin)
     cached = { at: Date.now(), version: linksVersion(), payload }
     return NextResponse.json(payload)

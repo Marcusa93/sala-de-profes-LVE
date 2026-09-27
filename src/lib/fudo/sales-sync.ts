@@ -23,8 +23,20 @@ type FudoSaleRow = {
   raw_payload: Record<string, unknown>
 }
 
+type FudoSubitemRow = {
+  fudo_subitem_id: string
+  fudo_sale_item_id: string
+  fudo_ticket_id: string
+  fudo_product_id: string
+  quantity: number
+  price: number | null
+  sold_at: string
+}
+
 export type FudoSalesImportResult = {
   imported: number
+  /** sub-ítems (opciones elegidas dentro de cada ítem) nuevos guardados */
+  subitems: number
   totalSales: number
   totalItems: number
   errors: string[]
@@ -36,6 +48,7 @@ export async function importFudoSales(
 ): Promise<FudoSalesImportResult> {
   const result: FudoSalesImportResult = {
     imported: 0,
+    subitems: 0,
     totalSales: 0,
     totalItems: 0,
     errors: [],
@@ -60,6 +73,9 @@ export async function importFudoSales(
     // /sales/{id}/items devuelve 404 en la API real de Fudo (verificado
     // 2026-07-14) y además hacía N+1 requests que superaban el timeout.
     const flatRows: FudoSaleRow[] = []
+    // Opciones elegidas dentro de cada ítem (infusión del combo, leche,
+    // packaging de PedidosYa…): alimentan el consumo vía la vista fudo_consumo.
+    const subitemRows: FudoSubitemRow[] = []
     let salesCount = 0
 
     type JsonApiRow = { type: string; id: string; attributes?: Record<string, unknown>; relationships?: Record<string, { data: unknown }> }
@@ -78,8 +94,8 @@ export async function importFudoSales(
     // pago), waiter y table, para poder comparar por mozo/medio de pago más
     // adelante. Si la API rechaza el include enriquecido, caemos al básico
     // (los campos nuevos quedan null y el sync no se rompe).
-    const INCLUDE_RICO = 'items.product,payments.paymentMethod,table,waiter'
-    const INCLUDE_BASE = 'items.product'
+    const INCLUDE_RICO = 'items.product,items.subitems,payments.paymentMethod,table,waiter'
+    const INCLUDE_BASE = 'items.product,items.subitems'
     let includeActual = INCLUDE_RICO
 
     let page = 1
@@ -111,12 +127,14 @@ export async function importFudoSales(
       const included = res.included ?? []
 
       const itemMap = new Map<string, JsonApiRow>()
+      const subitemMap = new Map<string, JsonApiRow>()
       const paymentMap = new Map<string, JsonApiRow>()
       const paymentMethodName = new Map<string, string>()
       const tableMap = new Map<string, JsonApiRow>()
       const personName = new Map<string, string>()
       for (const r of included) {
         if (r.type === 'Item') itemMap.set(r.id, r)
+        else if (r.type === 'Subitem') subitemMap.set(r.id, r)
         else if (r.type === 'Payment') paymentMap.set(r.id, r)
         else if (r.type === 'PaymentMethod' && typeof r.attributes?.name === 'string') paymentMethodName.set(r.id, r.attributes.name)
         else if (r.type === 'Table') tableMap.set(r.id, r)
@@ -164,6 +182,22 @@ export async function importFudoSales(
           const item = itemMap.get(ref.id)
           if (!item || item.attributes?.canceled) continue
           const prodRef = (item.relationships as Record<string, { data: unknown }> | undefined)?.product?.data as { id?: string } | undefined
+          const itemQty = Number(item.attributes?.quantity ?? 1) || 1
+          for (const subRef of relMany(item, 'subitems')) {
+            const sub = subitemMap.get(subRef.id)
+            const subProduct = relOne(sub, 'product')?.id
+            if (!sub || !subProduct || sub.attributes?.canceled) continue
+            subitemRows.push({
+              fudo_subitem_id: sub.id,
+              fudo_sale_item_id: item.id,
+              fudo_ticket_id: sale.id,
+              fudo_product_id: String(subProduct),
+              // La cantidad de la opción es por unidad del ítem
+              quantity: (Number(sub.attributes?.quantity ?? 1) || 1) * itemQty,
+              price: sub.attributes?.price != null ? Number(sub.attributes.price) : null,
+              sold_at: createdAt || new Date().toISOString(),
+            })
+          }
           flatRows.push({
             fudo_sale_item_id: item.id,
             fudo_ticket_id: sale.id,
@@ -194,6 +228,17 @@ export async function importFudoSales(
     }
 
     result.totalSales = salesCount
+
+    // Sub-ítems: idempotente por fudo_subitem_id (se re-guardan sin duplicar
+    // aunque el ítem padre ya estuviera importado — así se completa el histórico).
+    for (let i = 0; i < subitemRows.length; i += 500) {
+      const batch = subitemRows.slice(i, i + 500)
+      const { error, count } = await admin
+        .from('fudo_sale_subitems')
+        .upsert(batch, { onConflict: 'fudo_subitem_id', ignoreDuplicates: true, count: 'exact' })
+      if (error) result.errors.push(`sub-ítems: ${error.message}`)
+      else result.subitems += count ?? 0
+    }
 
     if (salesCount === 0) {
       await finishFudoSyncEvent(admin, eventId, 'success', { responsePayload: result })

@@ -186,7 +186,7 @@ export async function runSalesEngine(
   for (let page = 0; page < 50; page++) {
     const from = page * PAGE
     const { data, error } = await admin
-      .from('fudo_sales')
+      .from('fudo_consumo') // ítems vendidos + opciones elegidas
       .select('fudo_product_id, quantity')
       .gte('sold_at', startISO)
       .lt('sold_at', endISO)

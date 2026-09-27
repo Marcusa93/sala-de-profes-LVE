@@ -1137,6 +1137,39 @@ export type Database = {
           },
         ]
       }
+      fudo_sale_subitems: {
+        Row: {
+          created_at: string
+          fudo_product_id: string
+          fudo_sale_item_id: string
+          fudo_subitem_id: string
+          fudo_ticket_id: string
+          price: number | null
+          quantity: number
+          sold_at: string
+        }
+        Insert: {
+          created_at?: string
+          fudo_product_id: string
+          fudo_sale_item_id: string
+          fudo_subitem_id: string
+          fudo_ticket_id: string
+          price?: number | null
+          quantity?: number
+          sold_at: string
+        }
+        Update: {
+          created_at?: string
+          fudo_product_id?: string
+          fudo_sale_item_id?: string
+          fudo_subitem_id?: string
+          fudo_ticket_id?: string
+          price?: number | null
+          quantity?: number
+          sold_at?: string
+        }
+        Relationships: []
+      }
       fudo_sales: {
         Row: {
           created_at: string
@@ -1588,6 +1621,9 @@ export type Database = {
       menu_items: {
         Row: {
           category: string
+          consumo_modo: string | null
+          consumo_qty: number | null
+          consumo_stock_item_id: string | null
           cost_price: number | null
           created_at: string
           description: string | null
@@ -1598,6 +1634,7 @@ export type Database = {
           menu_category_id: number | null
           name: string
           recipe_id: string | null
+          recipe_link_source: string | null
           requires_preparation: boolean
           sale_price: number | null
           sort_order: number
@@ -1607,6 +1644,9 @@ export type Database = {
         }
         Insert: {
           category: string
+          consumo_modo?: string | null
+          consumo_qty?: number | null
+          consumo_stock_item_id?: string | null
           cost_price?: number | null
           created_at?: string
           description?: string | null
@@ -1617,6 +1657,7 @@ export type Database = {
           menu_category_id?: number | null
           name: string
           recipe_id?: string | null
+          recipe_link_source?: string | null
           requires_preparation?: boolean
           sale_price?: number | null
           sort_order?: number
@@ -1626,6 +1667,9 @@ export type Database = {
         }
         Update: {
           category?: string
+          consumo_modo?: string | null
+          consumo_qty?: number | null
+          consumo_stock_item_id?: string | null
           cost_price?: number | null
           created_at?: string
           description?: string | null
@@ -1636,6 +1680,7 @@ export type Database = {
           menu_category_id?: number | null
           name?: string
           recipe_id?: string | null
+          recipe_link_source?: string | null
           requires_preparation?: boolean
           sale_price?: number | null
           sort_order?: number
@@ -3350,6 +3395,17 @@ export type Database = {
       }
     }
     Views: {
+      fudo_consumo: {
+        Row: {
+          es_subitem: boolean
+          fudo_product_id: string
+          fudo_ticket_id: string
+          id: string
+          quantity: number
+          sold_at: string
+        }
+        Relationships: []
+      }
       v_active_alerts: {
         Row: {
           alert_type: string | null

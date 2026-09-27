@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
-import { ArrowRight, ChevronDown, ClipboardList, Info, Loader2, Percent, UtensilsCrossed } from 'lucide-react'
+import { PlatosSinRecetaCard } from '@/components/ventas/PlatosSinRecetaCard'
+import { ChevronDown, Info, Loader2, Percent, UtensilsCrossed } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn } from '@/components/ui/motion'
 import { formatPrice } from './types'
@@ -276,8 +276,8 @@ export function CartaView() {
               </details>
             )}
 
-            {/* Recetas que faltan (por impacto) */}
-            <RecetasFaltantesSection days={days} />
+            {/* Platos sin receta: se vinculan desde /ventas/vincular (desaparece cuando no queda ninguno) */}
+            <PlatosSinRecetaCard />
           </div>
         </FadeIn>
       )}
@@ -285,156 +285,3 @@ export function CartaView() {
   )
 }
 
-// ---------------------------------------------------------------------------
-// RecetasFaltantesSection — "¿Qué plato cargar receta para no errar?"
-// Lista priorizada por facturación de los platos SIN receta. Cargar los de
-// arriba es lo que más sube la cobertura del Food Cost. Fetch propio al
-// endpoint /api/ventas/recetas-faltantes, siguiendo la ventana de días de
-// CartaView.
-// ---------------------------------------------------------------------------
-
-type RecetaFaltante = {
-  fudo_product_id: string
-  name: string
-  units: number
-  revenue: number
-}
-
-type RecetasFaltantesData = {
-  days: number
-  items: RecetaFaltante[]
-  summary: {
-    revenue_total: number
-    revenue_sin_receta: number
-    revenue_con_receta: number
-    coverage_pct: number | null
-    coverage_top10_pct: number | null
-    top10_revenue: number
-    platos_sin_receta: number
-  }
-}
-
-function RecetasFaltantesSection({ days }: { days: number }) {
-  const [data, setData] = useState<RecetasFaltantesData | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      setLoading(true)
-      try {
-        const res = await fetch(`/api/ventas/recetas-faltantes?days=${days}`, { credentials: 'include' })
-        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? 'No se pudo cargar')
-        const json = await res.json()
-        if (!cancelled) setData(json)
-      } catch {
-        // silencioso: es una sección secundaria; no interrumpe la carta
-        if (!cancelled) setData(null)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-    return () => { cancelled = true }
-  }, [days])
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center rounded-2xl bg-white py-8 text-[12px] text-muted-foreground shadow-sm ring-1 ring-[#ebe6df]">
-        <Loader2 className="mr-2 size-4 animate-spin" /> Buscando recetas que faltan…
-      </div>
-    )
-  }
-  if (!data || data.items.length === 0) return null
-
-  const cov = data.summary.coverage_pct
-  const proj = data.summary.coverage_top10_pct
-  const covPct = cov ?? 0
-  const projPct = proj ?? covPct
-  const gain = proj != null && cov != null ? Math.round((proj - cov) * 10) / 10 : null
-  const maxRevenue = Math.max(...data.items.map(i => i.revenue), 1)
-
-  return (
-    <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-[#ebe6df]">
-      {/* Encabezado */}
-      <div className="border-b border-[#ebe6df] px-4 py-3.5">
-        <div className="flex items-center gap-2">
-          <ClipboardList className="size-4 text-[#d4943a]" />
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
-            Recetas que faltan (por impacto)
-          </span>
-        </div>
-        <p className="mt-1 text-[14px] font-bold text-[#3d2c24]">
-          {data.summary.platos_sin_receta} platos venden sin receta cargada
-        </p>
-
-        {/* Barra de cobertura actual → proyectada */}
-        <div className="mt-3">
-          <div className="flex items-baseline justify-between text-[10px] font-semibold tabular-nums">
-            <span className="text-[#a39e97]">
-              Cobertura actual <span className="text-[#3d2c24]">{cov != null ? `${cov}%` : '—'}</span>
-            </span>
-            {gain != null && gain > 0 && (
-              <span className="text-[#006d5a]">
-                cargando estas 10 → {projPct}%
-              </span>
-            )}
-          </div>
-          <div className="relative mt-1 h-2 overflow-hidden rounded-full bg-secondary">
-            {/* proyección (ámbar de fondo) */}
-            <div
-              className="absolute inset-y-0 left-0 rounded-full bg-[#f0c98a]"
-              style={{ width: `${Math.max(Math.min(projPct, 100), 2)}%` }}
-            />
-            {/* cobertura actual (verde encima) */}
-            <div
-              className="absolute inset-y-0 left-0 rounded-full bg-[#006d5a]"
-              style={{ width: `${Math.max(Math.min(covPct, 100), 2)}%` }}
-            />
-          </div>
-        </div>
-
-        <p className="mt-2.5 flex items-start gap-1.5 text-[11px] leading-snug text-[#a39e97]">
-          <Info className="mt-px size-3 shrink-0" />
-          Cargá primero las de arriba: son las que más distorsionan el Food Cost. Suman{' '}
-          <span className="font-semibold text-[#3d2c24]">{formatPrice(data.summary.revenue_sin_receta)}</span>{' '}
-          de facturación sin costear.
-        </p>
-      </div>
-
-      {/* Lista priorizada */}
-      <div className="divide-y divide-[#f3efe9]">
-        {data.items.map((it, idx) => (
-          <div key={it.fudo_product_id} className="px-4 py-2.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <p className="min-w-0 truncate text-[13px] font-semibold text-[#3d2c24]">
-                <span className="mr-1.5 text-[10px] font-bold tabular-nums text-[#a39e97]">{idx + 1}.</span>
-                {it.name}
-              </p>
-              <span className="shrink-0 rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[#d4943a]">
-                {formatPrice(it.revenue)}
-              </span>
-            </div>
-            <div className="mt-1 flex items-center gap-2">
-              <div className="h-1 flex-1 overflow-hidden rounded-full bg-secondary">
-                <div
-                  className="h-full rounded-full bg-[#d4943a]"
-                  style={{ width: `${Math.max(Math.min((it.revenue / maxRevenue) * 100, 100), 2)}%` }}
-                />
-              </div>
-              <span className="shrink-0 text-[10px] tabular-nums text-[#a39e97]">{it.units} u</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* CTA a recetas */}
-      <Link
-        href="/recetas"
-        className="flex items-center justify-center gap-1.5 border-t border-[#ebe6df] px-4 py-3 text-[12px] font-semibold text-[#006d5a] transition-colors hover:bg-[#e8f5f1]"
-      >
-        Cargar recetas
-        <ArrowRight className="size-3.5" />
-      </Link>
-    </div>
-  )
-}

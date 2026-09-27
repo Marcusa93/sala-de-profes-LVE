@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { asegurarVentasDeHoy } from '@/lib/fudo/ventas-intradia'
 import { notifyEvent } from '@/lib/push/notify-event'
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,9 @@ export async function GET(request: NextRequest) {
 
   try {
     const admin = createAdminClient()
+    // Traer las ventas de hoy antes de resumir: el cron diario las importa
+    // recién a la madrugada y el resumen salía casi vacío.
+    await asegurarVentasDeHoy(admin, { maxAgeMin: 5 })
     const currentHour = arHour()
     const isMorningClose = currentHour < 20
     const shiftLabel = isMorningClose ? 'mañana' : 'tarde/noche'

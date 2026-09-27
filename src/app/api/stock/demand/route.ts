@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
     const fudoIds = (menuItemsViaRecipe ?? []).map(m => m.fudo_product_id as string).filter(Boolean)
     if (fudoIds.length > 0) {
       const { data: fudoSales } = await admin
-        .from('fudo_sales')
+        .from('fudo_consumo') // ítems vendidos + opciones elegidas
         .select('fudo_product_id, quantity')
         .in('fudo_product_id', fudoIds)
         .gte('sold_at', cutoffISO)
@@ -202,7 +202,7 @@ export async function GET(request: NextRequest) {
 
           if (fudoIds.length > 0) {
             const { data: fudoSales } = await admin
-              .from('fudo_sales')
+              .from('fudo_consumo') // ítems vendidos + opciones elegidas
               .select('fudo_product_id, quantity')
               .in('fudo_product_id', fudoIds)
               .gte('sold_at', cutoffISO)
@@ -274,7 +274,7 @@ export async function GET(request: NextRequest) {
       const fudoIds = (menuItemsByName ?? []).map(m => m.fudo_product_id as string).filter(Boolean)
       if (fudoIds.length > 0) {
         const { data: fudoSales } = await admin
-          .from('fudo_sales')
+          .from('fudo_consumo') // ítems vendidos + opciones elegidas
           .select('fudo_product_id, quantity')
           .in('fudo_product_id', fudoIds)
           .gte('sold_at', cutoffISO)

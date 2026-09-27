@@ -123,7 +123,7 @@ export async function GET(request: NextRequest) {
     type SaleRow = { fudo_product_id: string; quantity: number }
     const sales = await fetchAll<SaleRow>((from, to) =>
       admin
-        .from('fudo_sales')
+        .from('fudo_consumo') // ítems vendidos + opciones elegidas
         .select('fudo_product_id, quantity')
         .in('fudo_product_id', fudoIds)
         .gte('sold_at', cutoffISO)

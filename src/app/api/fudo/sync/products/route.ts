@@ -154,8 +154,14 @@ export async function POST() {
       }
     }
 
+    // Platos nuevos → su receta, si el nombre coincide exacto (ej. versión PedidosYa)
+    const platosVinculados = await import('@/lib/ventas/vinculos-recetas')
+      .then(({ autoVincularPlatos }) => autoVincularPlatos(supabase))
+      .catch(() => null)
+
     return NextResponse.json({
       success: true,
+      platosVinculados,
       importedCategories,
       importedProducts,
     })

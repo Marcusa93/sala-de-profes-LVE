@@ -388,7 +388,7 @@ export async function GET() {
         const rows: FudoSaleRow[] = []
         for (let page = 0; page < 50; page++) {
           const { data, error } = await admin
-            .from('fudo_sales')
+            .from('fudo_consumo') // ítems vendidos + opciones elegidas
             .select('fudo_product_id, quantity')
             .gte('sold_at', salesSince.toISOString())
             .order('id', { ascending: true })

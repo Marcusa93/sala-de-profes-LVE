@@ -108,9 +108,10 @@ export async function computeConsumption(
   const activeDates = new Set<string>()
   for (let from = 0; from < 40_000; from += PAGE) {
     const { data, error } = await admin
-      .from('fudo_sales')
+      .from('fudo_consumo') // ítems vendidos + opciones elegidas (combos, extras)
       .select('fudo_product_id, quantity, sold_at')
       .gte('sold_at', since)
+      .order('id', { ascending: true }) // sin orden, el paginado repetía/salteaba filas
       .range(from, from + PAGE - 1)
     if (error) throw new Error(error.message)
     const rows = (data ?? []) as { fudo_product_id: string | null; quantity: number; sold_at: string }[]
@@ -162,10 +163,25 @@ export async function computeConsumption(
     if (it.fudo_product_id) itemByProduct.set(it.fudo_product_id, it.id)
   }
 
+  // Platos u opciones que descuentan directo un insumo con cantidad
+  // (ej. opción "Leche Entera 190 ML" → 0,19 l de leche entera)
+  const { data: directos } = await admin
+    .from('menu_items')
+    .select('fudo_product_id, consumo_stock_item_id, consumo_qty')
+    .eq('consumo_modo', 'insumo')
+    .not('fudo_product_id', 'is', null)
+  const insumoByProduct = new Map<string, { item: string; qty: number }>()
+  for (const d of (directos ?? []) as { fudo_product_id: string; consumo_stock_item_id: string | null; consumo_qty: number | null }[]) {
+    if (d.consumo_stock_item_id && Number(d.consumo_qty) > 0) insumoByProduct.set(d.fudo_product_id, { item: d.consumo_stock_item_id, qty: Number(d.consumo_qty) })
+  }
+
   for (const [productId, units] of soldByProduct) {
     // Venta directa del producto de reventa (gaseosa, budín comprado, etc.)
     const directItem = itemByProduct.get(productId)
     if (directItem) byItem.set(directItem, (byItem.get(directItem) ?? 0) + units)
+
+    const insumo = insumoByProduct.get(productId)
+    if (insumo && !directItem) byItem.set(insumo.item, (byItem.get(insumo.item) ?? 0) + insumo.qty * units)
 
     const recipeId = recipeByProduct.get(productId)
     if (!recipeId) continue

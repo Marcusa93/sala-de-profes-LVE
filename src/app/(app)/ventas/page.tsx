@@ -8,6 +8,7 @@ import { BarChart3, ChevronLeft, ChevronRight, Loader2, RefreshCw, TrendingUp } 
 import Link from 'next/link'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
+import { PlatosSinRecetaCard } from '@/components/ventas/PlatosSinRecetaCard'
 import { AskBar } from '@/components/ai/AskBar'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -184,6 +185,13 @@ function VentasContent() {
               placeholder="Preguntá: qué deja más plata, qué vendí…"
               examples={['¿qué plato deja más plata?', '¿qué platos me dejan poco?', '¿qué vendí más esta semana?', '¿a quién le compro más?']}
             />
+          </div>
+        )}
+
+        {/* Platos que se venden sin descontar insumos (desaparece cuando no queda ninguno) */}
+        {isManager && (
+          <div className="mb-3">
+            <PlatosSinRecetaCard />
           </div>
         )}
 

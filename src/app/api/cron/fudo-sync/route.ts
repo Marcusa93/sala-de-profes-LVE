@@ -131,6 +131,15 @@ export async function GET(request: NextRequest) {
       reconcile.error = err instanceof Error ? err.message : 'No se pudo conciliar pedidos con gastos de Fudo'
     }
 
+    // ── 3.55) Platos nuevos de Fudo → su receta (versiones PedidosYa, etc.) ──
+    let platosVinculados: Record<string, unknown> = {}
+    try {
+      const { autoVincularPlatos } = await import('@/lib/ventas/vinculos-recetas')
+      platosVinculados = { ...(await autoVincularPlatos(admin)), error: null }
+    } catch (err) {
+      platosVinculados = { error: err instanceof Error ? err.message : 'No se pudieron vincular platos' }
+    }
+
     // ── 3.6) Vínculos insumo↔proveedor desde las compras de Fudo ──
     // Reusa el cache de gastos que acaba de llenar la conciliación.
     let supplierLinks: Record<string, unknown> = {}
@@ -176,6 +185,7 @@ export async function GET(request: NextRequest) {
           snapshot: { saved: snapshotSaved, error: snapshotError },
           reconcile,
           supplier_links: supplierLinks,
+          platos_vinculados: platosVinculados,
           elapsed_ms: elapsedMs,
         })),
       })

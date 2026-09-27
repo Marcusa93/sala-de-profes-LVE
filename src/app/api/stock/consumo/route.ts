@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
     const sales: SaleRow[] = []
     for (let page = 0; page < 50; page++) {
       const { data: salesData, error: salesError } = await admin
-        .from('fudo_sales')
+        .from('fudo_consumo') // ítems vendidos + opciones elegidas
         .select('fudo_product_id, quantity')
         .gte('sold_at', sinceUTC)
         .order('id', { ascending: true })
