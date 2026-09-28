@@ -106,16 +106,21 @@ export async function procesarAvisos(admin: SupabaseClient, ahora = new Date()):
     // Creada después de su límite (arranque del sistema o horario agregado a
     // mitad del día): no se avisa un atraso que nadie pudo cumplir.
     if (Date.parse(t.created_at) >= inicio + ATRASO_MIN * 60_000) continue
-    const marcar = async (campo: string) => { await admin.from('protocolo_tareas').update({ [campo]: ahora.toISOString() }).eq('id', t.id).is(campo, null) }
+    // Reserva el aviso ANTES de mandarlo: si dos procesos corren a la vez
+    // (reloj + app abierta), solo uno lo consigue y el aviso sale una vez.
+    const reservar = async (campo: string): Promise<boolean> => {
+      const { data } = await admin.from('protocolo_tareas').update({ [campo]: ahora.toISOString() }).eq('id', t.id).is(campo, null).select('id')
+      return (data ?? []).length > 0
+    }
 
     if (t0 >= inicio + ATRASO_MIN * 60_000) {
-      if (!t.atraso_at) {
+      if (!t.atraso_at && await reservar('atraso_at')) {
         await avisar([...(await getEncargados()), ...(await socios(admin)), ...(t.asignado_a ? [t.asignado_a] : [])], {
           title: `⚠️ No se hizo: ${n} (${t.hora})`,
           body: t.estado === 'asignada' ? 'Estaba asignada y no se completó. Hacela y subí la foto.' : 'Nadie la asignó. Asignala ahora.',
           url,
         })
-        await marcar('atraso_at'); cont.atraso++
+        cont.atraso++
       }
       continue
     }
@@ -123,15 +128,17 @@ export async function procesarAvisos(admin: SupabaseClient, ahora = new Date()):
 
     if (t.estado === 'pendiente') {
       if (!t.avisado_at) {
-        await avisar(await getEncargados(), { title: `🧽 Es la hora: ${n} (${t.hora})`, body: 'Asigná a alguien del turno (o a vos) para hacerla y subir la foto.', url })
-        await marcar('avisado_at'); cont.aviso++
-      } else if (!t.reaviso_at && t0 >= inicio + REAVISO_MIN * 60_000) {
+        if (await reservar('avisado_at')) {
+          await avisar(await getEncargados(), { title: `🧽 Es la hora: ${n} (${t.hora})`, body: 'Asigná a alguien del turno (o a vos) para hacerla y subir la foto.', url })
+          cont.aviso++
+        }
+      } else if (!t.reaviso_at && t0 >= inicio + REAVISO_MIN * 60_000 && await reservar('reaviso_at')) {
         await avisar(await getEncargados(), { title: `⏰ Sigue sin asignar: ${n} (${t.hora})`, body: 'Asignala ahora: se tiene que hacer y registrar con foto.', url })
-        await marcar('reaviso_at'); cont.reaviso++
+        cont.reaviso++
       }
-    } else if (t.estado === 'asignada' && t.asignado_at && !t.recordatorio_at && t0 >= Date.parse(t.asignado_at) + RECORDATORIO_MIN * 60_000) {
+    } else if (t.estado === 'asignada' && t.asignado_at && !t.recordatorio_at && t0 >= Date.parse(t.asignado_at) + RECORDATORIO_MIN * 60_000 && await reservar('recordatorio_at')) {
       await avisar([t.asignado_a!, ...(t.asignado_por ? [t.asignado_por] : [])], { title: `⏰ Falta completar: ${n} (${t.hora})`, body: 'Marcá los pasos y subí la foto cuando termines.', url })
-      await marcar('recordatorio_at'); cont.recordatorio++
+      cont.recordatorio++
     }
   }
   return cont
