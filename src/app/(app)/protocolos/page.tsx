@@ -13,17 +13,18 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 // Protocolos con horario — hoy: limpieza del baño, 4 veces por día
 // ---------------------------------------------------------------------------
 // Cada horario es una tarea: el encargado la asigna a alguien del turno (o a
-// sí mismo) y esa persona la cierra marcando todos los pasos + foto.
+// sí mismo) y esa persona la cierra marcando todos los pasos + las fotos
+// (baño: una general y otra de la basura).
 // ---------------------------------------------------------------------------
 
 type Visible = 'programada' | 'sin_asignar' | 'asignada' | 'atrasada' | 'hecha' | 'hecha_tarde'
 type TareaUI = {
   id: string; fecha: string; hora: string; estado: 'pendiente' | 'asignada' | 'hecha'; visible: Visible
   asignado_a: string | null; asignado_nombre: string | null; hecho_nombre: string | null
-  hecho_at: string | null; foto_url: string | null; nota: string | null
+  hecho_at: string | null; foto_url: string | null; fotos_urls?: string[]; nota: string | null
 }
 type ProtocoloUI = {
-  id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; requiere_foto: boolean; activo: boolean
+  id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean
   tareas: TareaUI[]
   historial: { fecha: string; hechas: number; total: number; tareas: TareaUI[] }[]
 }
@@ -47,6 +48,7 @@ const CHIP: Record<Visible, { txt: string; cls: string }> = {
 
 const ROL: Record<string, string> = { socio: 'Socio', encargado: 'Encargado', chef: 'Chef', cocina: 'Cocina', barista: 'Barista', runner: 'Runner', bacha: 'Bacha' }
 const hhmm = (iso: string) => format(new Date(iso), 'HH:mm')
+const urlsDe = (t: TareaUI) => (t.fotos_urls?.length ? t.fotos_urls : t.foto_url ? [t.foto_url] : [])
 
 /** Achica la foto en el celular antes de subirla (máx. 1600 px, JPEG). */
 async function comprimir(file: File): Promise<Blob> {
@@ -69,7 +71,7 @@ export default function ProtocolosPage() {
   const [asignando, setAsignando] = useState<{ p: ProtocoloUI; t: TareaUI } | null>(null)
   const [completando, setCompletando] = useState<{ p: ProtocoloUI; t: TareaUI } | null>(null)
   const [configurando, setConfigurando] = useState<ProtocoloUI | null>(null)
-  const [foto, setFoto] = useState<string | null>(null)
+  const [fotos, setFotos] = useState<string[] | null>(null)
 
   if (isLoading && !data) return <div className="flex justify-center py-20"><Loader2 className="size-6 animate-spin text-[#a39e97]" /></div>
   if (error || !data) return <p className="py-20 text-center text-sm text-[#ea504c]">{error?.message ?? 'No se pudo cargar'}</p>
@@ -78,7 +80,7 @@ export default function ProtocolosPage() {
     <div className="mx-auto max-w-2xl space-y-5 pb-28">
       <div>
         <h1 className="font-display text-3xl font-bold leading-[1.05] tracking-tight text-[#3d2c24]">Protocolos</h1>
-        <p className="section-label mt-1.5">Se asignan, se hacen y se registran con foto</p>
+        <p className="section-label mt-1.5">Se asignan, se hacen y se registran con fotos</p>
       </div>
 
       {data.protocolos.filter((p) => p.activo || data.yo.puede_configurar).map((p) => (
@@ -89,7 +91,7 @@ export default function ProtocolosPage() {
           onAsignar={(t) => setAsignando({ p, t })}
           onCompletar={(t) => setCompletando({ p, t })}
           onConfigurar={() => setConfigurando(p)}
-          onFoto={setFoto}
+          onFoto={setFotos}
         />
       ))}
 
@@ -115,10 +117,12 @@ export default function ProtocolosPage() {
       {configurando && (
         <ConfigDialog p={configurando} onClose={() => setConfigurando(null)} onDone={() => { setConfigurando(null); void mutate() }} />
       )}
-      {foto && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 p-4" onClick={() => setFoto(null)}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={foto} alt="Foto del protocolo" className="max-h-full max-w-full rounded-xl" />
+      {fotos && (
+        <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-3 overflow-y-auto bg-black/85 p-4" onClick={() => setFotos(null)}>
+          {fotos.map((f) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={f} src={f} alt="Foto del protocolo" className={cn('max-w-full rounded-xl object-contain', fotos.length > 1 ? 'max-h-[44svh]' : 'max-h-full')} />
+          ))}
           <button className="absolute right-4 top-4 rounded-full bg-white/15 p-2 text-white" aria-label="Cerrar"><X className="size-5" /></button>
         </div>
       )}
@@ -128,7 +132,7 @@ export default function ProtocolosPage() {
 
 function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
   p: ProtocoloUI; yo: Datos['yo']
-  onAsignar: (t: TareaUI) => void; onCompletar: (t: TareaUI) => void; onConfigurar: () => void; onFoto: (url: string) => void
+  onAsignar: (t: TareaUI) => void; onCompletar: (t: TareaUI) => void; onConfigurar: () => void; onFoto: (urls: string[]) => void
 }) {
   const [verHistorial, setVerHistorial] = useState(false)
   const hechas = p.tareas.filter((t) => t.estado === 'hecha').length
@@ -143,7 +147,7 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
           </p>
         </div>
         {yo.puede_configurar && (
-          <button onClick={onConfigurar} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-medium text-[#7d6c64] hover:bg-[#f3efe9]"><Settings2 className="size-3.5" /> Ajustar</button>
+          <button onClick={onConfigurar} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-medium text-[#7d6c64] hover:bg-[#f3efe9]"><Settings2 className="size-3.5" /> Horarios</button>
         )}
       </div>
 
@@ -169,13 +173,15 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
                   </p>
                   {hecha && t.nota && <p className="mt-0.5 text-[11.5px] italic text-[#7d6c64]">“{t.nota}”</p>}
                 </div>
-                {hecha && t.foto_url && (
-                  <button onClick={() => onFoto(t.foto_url!)} className="shrink-0 overflow-hidden rounded-lg ring-1 ring-[#ebe6df]" aria-label="Ver foto">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={t.foto_url} alt="" className="size-12 object-cover" />
+                {hecha && urlsDe(t).length > 0 && (
+                  <button onClick={() => onFoto(urlsDe(t))} className="flex shrink-0 gap-1" aria-label="Ver fotos">
+                    {urlsDe(t).map((u) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={u} src={u} alt="" className="size-12 rounded-lg object-cover ring-1 ring-[#ebe6df]" />
+                    ))}
                   </button>
                 )}
-                {hecha && !t.foto_url && <Check className="size-5 shrink-0 text-[#006d5a]" />}
+                {hecha && urlsDe(t).length === 0 && <Check className="size-5 shrink-0 text-[#006d5a]" />}
               </div>
               {!hecha && (yo.puede_asignar || puedeCompletar) && (
                 <div className="mt-2.5 flex gap-2">
@@ -209,10 +215,11 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
                   <span className="w-24 shrink-0 capitalize text-[#7d6c64]">{format(new Date(`${d.fecha}T12:00:00`), 'EEE d/M', { locale: es })}</span>
                   <span className={cn('w-14 shrink-0 font-bold tabular-nums', d.hechas === d.total ? 'text-[#006d5a]' : 'text-[#ea504c]')}>{d.hechas}/{d.total}</span>
                   <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                    {d.tareas.map((t) => t.foto_url
-                      ? <button key={t.id} onClick={() => onFoto(t.foto_url!)} className="shrink-0" aria-label={`Foto ${t.hora}`}>
+                    {d.tareas.map((t) => urlsDe(t).length > 0
+                      ? <button key={t.id} onClick={() => onFoto(urlsDe(t))} className="relative shrink-0" aria-label={`Fotos ${t.hora}`}>
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={t.foto_url} alt="" className="size-8 rounded object-cover" />
+                          <img src={urlsDe(t)[0]} alt="" className="size-8 rounded object-cover" />
+                          {urlsDe(t).length > 1 && <span className="absolute -right-1 -top-1 rounded-full bg-[#3d2c24] px-1 text-[9px] font-bold text-white">{urlsDe(t).length}</span>}
                         </button>
                       : <span key={t.id} title={t.hora} className="flex size-8 shrink-0 items-center justify-center rounded bg-[#fef2f2] text-[10px] font-semibold text-[#ea504c]">{t.hora}</span>)}
                   </div>
@@ -290,20 +297,13 @@ function AsignarDialog({ tarea, protocolo, personal, equipo, yoId, onClose, onDo
 
 function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI; protocolo: ProtocoloUI; onClose: () => void; onDone: () => void }) {
   const [ok, setOk] = useState<Set<string>>(new Set())
-  const [foto, setFoto] = useState<Blob | null>(null)
-  const [preview, setPreview] = useState<string | null>(null)
+  const etiquetas = protocolo.requiere_foto ? (protocolo.fotos?.length ? protocolo.fotos : ['Foto']) : []
+  const [fotos, setFotos] = useState<(Blob | null)[]>(() => etiquetas.map(() => null))
   const [nota, setNota] = useState('')
   const [enviando, setEnviando] = useState(false)
-  const input = useRef<HTMLInputElement>(null)
   const todos = protocolo.pasos.every((p) => ok.has(p))
-  const puede = todos && (!protocolo.requiere_foto || !!foto) && !enviando
-
-  async function elegirFoto(f: File | undefined) {
-    if (!f) return
-    const b = await comprimir(f)
-    setFoto(b)
-    setPreview((old) => { if (old) URL.revokeObjectURL(old); return URL.createObjectURL(b) })
-  }
+  const faltaFoto = etiquetas.find((_, i) => !fotos[i])
+  const puede = todos && !faltaFoto && !enviando
 
   async function enviar() {
     setEnviando(true)
@@ -312,11 +312,11 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
       fd.set('accion', 'completar')
       fd.set('pasos', JSON.stringify(protocolo.pasos.filter((p) => ok.has(p))))
       fd.set('nota', nota)
-      if (foto) fd.set('foto', foto, 'foto.jpg')
+      fotos.forEach((f, i) => { if (f) fd.set(`foto_${i}`, f, `foto-${i + 1}.jpg`) })
       const r = await fetch(`/api/protocolos/tareas/${tarea.id}`, { method: 'POST', body: fd })
       const j = await r.json().catch(() => null)
       if (!r.ok) throw new Error(j?.error ?? 'No se pudo registrar')
-      toast.success('¡Listo! Quedó registrado con foto')
+      toast.success(etiquetas.length > 1 ? '¡Listo! Quedó registrado con las fotos' : '¡Listo! Quedó registrado')
       onDone()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'No se pudo registrar')
@@ -328,7 +328,7 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
     <Dialog open onOpenChange={(o) => { if (!o && !enviando) onClose() }}>
       <DialogContent className="max-h-[90svh] overflow-y-auto">
         <DialogHeader><DialogTitle>{protocolo.nombre} · {tarea.hora}</DialogTitle></DialogHeader>
-        <p className="-mt-2 text-[12.5px] text-[#7d6c64]">Marcá cada paso{protocolo.requiere_foto ? ' y sacá una foto de cómo quedó' : ''}. Sin todo completo no se puede cerrar.</p>
+        <p className="-mt-2 text-[12.5px] text-[#7d6c64]">Marcá cada paso{etiquetas.length === 1 ? ' y sacá la foto' : etiquetas.length > 1 ? ` y sacá las ${etiquetas.length} fotos` : ''}. Sin todo completo no se puede cerrar.</p>
 
         <ul className="space-y-1.5">
           {protocolo.pasos.map((p) => {
@@ -347,20 +347,11 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
           })}
         </ul>
 
-        {protocolo.requiere_foto && (
-          <div>
-            <input ref={input} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => void elegirFoto(e.target.files?.[0])} />
-            {preview ? (
-              <div className="relative">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={preview} alt="Foto" className="max-h-60 w-full rounded-xl object-cover" />
-                <button onClick={() => input.current?.click()} className="absolute bottom-2 right-2 rounded-lg bg-black/60 px-2.5 py-1 text-[12px] font-semibold text-white">Sacar otra</button>
-              </div>
-            ) : (
-              <button onClick={() => input.current?.click()} className="flex w-full flex-col items-center gap-1.5 rounded-xl border-2 border-dashed border-[#d6d0c8] py-6 text-[13px] font-semibold text-[#5c4a42]">
-                <Camera className="size-6 text-[#a39e97]" /> Sacar foto del baño
-              </button>
-            )}
+        {etiquetas.length > 0 && (
+          <div className={cn('grid gap-2', etiquetas.length > 1 && 'grid-cols-2')}>
+            {etiquetas.map((e, i) => (
+              <FotoSlot key={e + i} etiqueta={e} onFoto={(b) => setFotos((x) => x.map((y, j) => (j === i ? b : y)))} />
+            ))}
           </div>
         )}
 
@@ -369,7 +360,7 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
         <DialogFooter>
           <button onClick={() => void enviar()} disabled={!puede} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-bold text-white disabled:opacity-40">
             {enviando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : protocolo.requiere_foto && !foto ? 'Falta la foto' : 'Registrar limpieza'}
+            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : faltaFoto ? `Falta: ${faltaFoto.split(' (')[0].toLowerCase()}` : 'Registrar'}
           </button>
         </DialogFooter>
       </DialogContent>
@@ -377,9 +368,39 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
   )
 }
 
+/** Un espacio para sacar una foto: abre la cámara, la achica y muestra cómo quedó. */
+function FotoSlot({ etiqueta, onFoto }: { etiqueta: string; onFoto: (b: Blob) => void }) {
+  const input = useRef<HTMLInputElement>(null)
+  const [preview, setPreview] = useState<string | null>(null)
+  async function elegir(f: File | undefined) {
+    if (!f) return
+    const b = await comprimir(f)
+    onFoto(b)
+    setPreview((old) => { if (old) URL.revokeObjectURL(old); return URL.createObjectURL(b) })
+  }
+  return (
+    <div>
+      <input ref={input} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => void elegir(e.target.files?.[0])} />
+      {preview ? (
+        <button onClick={() => input.current?.click()} className="relative block w-full">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={preview} alt={etiqueta} className="h-36 w-full rounded-xl object-cover" />
+          <span className="absolute inset-x-1.5 bottom-1.5 rounded-lg bg-black/60 px-2 py-1 text-[11px] font-semibold text-white"><Check className="mr-1 inline size-3" />{etiqueta.split(' (')[0]} · cambiar</span>
+        </button>
+      ) : (
+        <button onClick={() => input.current?.click()} className="flex h-36 w-full flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-[#d6d0c8] px-2 text-center text-[12.5px] font-semibold leading-tight text-[#5c4a42]">
+          <Camera className="size-6 text-[#a39e97]" /> {etiqueta}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => void; onDone: () => void }) {
   const [horarios, setHorarios] = useState<string[]>(p.horarios)
   const [pasos, setPasos] = useState<string[]>(p.pasos)
+  const [fotosCfg, setFotosCfg] = useState<string[]>(p.fotos?.length ? p.fotos : ['Foto general'])
+  const [nuevaFoto, setNuevaFoto] = useState('')
   const [activo, setActivo] = useState(p.activo)
   const [nuevaHora, setNuevaHora] = useState('')
   const [nuevoPaso, setNuevoPaso] = useState('')
@@ -388,7 +409,7 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
   async function guardar() {
     setGuardando(true)
     try {
-      const r = await fetch(`/api/protocolos/config/${p.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ horarios, pasos, activo }) })
+      const r = await fetch(`/api/protocolos/config/${p.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ horarios, pasos, fotos: fotosCfg, activo }) })
       const j = await r.json().catch(() => null)
       if (!r.ok) throw new Error(j?.error ?? 'No se pudo guardar')
       toast.success('Protocolo actualizado')
@@ -402,7 +423,7 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
   return (
     <Dialog open onOpenChange={(o) => { if (!o && !guardando) onClose() }}>
       <DialogContent className="max-h-[90svh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Ajustar: {p.nombre}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{p.nombre}: horarios y pasos</DialogTitle></DialogHeader>
 
         <div>
           <p className="mb-1.5 text-[12.5px] font-semibold text-[#3d2c24]">Horarios del día</p>
@@ -435,6 +456,24 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
             <input value={nuevoPaso} onChange={(e) => setNuevoPaso(e.target.value)} maxLength={120} placeholder="Nuevo paso" className="flex-1 rounded-lg border border-[#ebe6df] px-2.5 py-1.5 text-[13px]" />
             <button disabled={!nuevoPaso.trim()} onClick={() => { setPasos((x) => [...x, nuevoPaso.trim()]); setNuevoPaso('') }} className="flex items-center gap-1 rounded-lg bg-[#3d2c24] px-3 text-[12.5px] font-semibold text-white disabled:opacity-40"><Plus className="size-3.5" /> Agregar</button>
           </div>
+        </div>
+
+        <div>
+          <p className="mb-1.5 text-[12.5px] font-semibold text-[#3d2c24]">Fotos que se piden (todas obligatorias)</p>
+          <ul className="space-y-1">
+            {fotosCfg.map((f, i) => (
+              <li key={i} className="flex items-center gap-2 rounded-lg bg-[#fcfbf9] px-2.5 py-1.5 text-[12.5px] ring-1 ring-[#f0ebe4]">
+                <Camera className="size-3.5 text-[#a39e97]" /><span className="flex-1">{f}</span>
+                {fotosCfg.length > 1 && <button onClick={() => setFotosCfg((x) => x.filter((_, j) => j !== i))} aria-label="Quitar foto"><Trash2 className="size-3.5 text-[#a39e97]" /></button>}
+              </li>
+            ))}
+          </ul>
+          {fotosCfg.length < 4 && (
+            <div className="mt-2 flex gap-2">
+              <input value={nuevaFoto} onChange={(e) => setNuevaFoto(e.target.value)} maxLength={80} placeholder="Ej: Foto del lavamanos" className="flex-1 rounded-lg border border-[#ebe6df] px-2.5 py-1.5 text-[13px]" />
+              <button disabled={!nuevaFoto.trim()} onClick={() => { setFotosCfg((x) => [...x, nuevaFoto.trim()]); setNuevaFoto('') }} className="flex items-center gap-1 rounded-lg bg-[#3d2c24] px-3 text-[12.5px] font-semibold text-white disabled:opacity-40"><Plus className="size-3.5" /> Agregar</button>
+            </div>
+          )}
         </div>
 
         <label className="flex items-center gap-2 text-[13px] text-[#3d2c24]">

@@ -17,12 +17,12 @@ export const REAVISO_MIN = 15
 export const RECORDATORIO_MIN = 30
 export const ATRASO_MIN = 60
 
-export type Protocolo = { id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; requiere_foto: boolean; activo: boolean }
+export type Protocolo = { id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean }
 export type Tarea = {
   id: string; protocolo_id: string; fecha: string; hora: string
   estado: 'pendiente' | 'asignada' | 'hecha'
   asignado_a: string | null; asignado_por: string | null; asignado_at: string | null
-  hecho_por: string | null; hecho_at: string | null; foto_path: string | null; pasos_ok: string[] | null; nota: string | null
+  hecho_por: string | null; hecho_at: string | null; foto_path: string | null; fotos: string[] | null; pasos_ok: string[] | null; nota: string | null
   avisado_at: string | null; reaviso_at: string | null; recordatorio_at: string | null; atraso_at: string | null
   created_at: string
 }
@@ -117,7 +117,7 @@ export async function procesarAvisos(admin: SupabaseClient, ahora = new Date()):
       if (!t.atraso_at && await reservar('atraso_at')) {
         await avisar([...(await getEncargados()), ...(await socios(admin)), ...(t.asignado_a ? [t.asignado_a] : [])], {
           title: `⚠️ No se hizo: ${n} (${t.hora})`,
-          body: t.estado === 'asignada' ? 'Estaba asignada y no se completó. Hacela y subí la foto.' : 'Nadie la asignó. Asignala ahora.',
+          body: t.estado === 'asignada' ? 'Estaba asignada y no se completó. Hacela y subí las fotos.' : 'Nadie la asignó. Asignala ahora.',
           url,
         })
         cont.atraso++
@@ -129,15 +129,15 @@ export async function procesarAvisos(admin: SupabaseClient, ahora = new Date()):
     if (t.estado === 'pendiente') {
       if (!t.avisado_at) {
         if (await reservar('avisado_at')) {
-          await avisar(await getEncargados(), { title: `🧽 Es la hora: ${n} (${t.hora})`, body: 'Asigná a alguien del turno (o a vos) para hacerla y subir la foto.', url })
+          await avisar(await getEncargados(), { title: `🧽 Es la hora: ${n} (${t.hora})`, body: 'Asigná a alguien del turno (o a vos) para hacerla y subir las fotos.', url })
           cont.aviso++
         }
       } else if (!t.reaviso_at && t0 >= inicio + REAVISO_MIN * 60_000 && await reservar('reaviso_at')) {
-        await avisar(await getEncargados(), { title: `⏰ Sigue sin asignar: ${n} (${t.hora})`, body: 'Asignala ahora: se tiene que hacer y registrar con foto.', url })
+        await avisar(await getEncargados(), { title: `⏰ Sigue sin asignar: ${n} (${t.hora})`, body: 'Asignala ahora: se tiene que hacer y registrar con fotos.', url })
         cont.reaviso++
       }
     } else if (t.estado === 'asignada' && t.asignado_at && !t.recordatorio_at && t0 >= Date.parse(t.asignado_at) + RECORDATORIO_MIN * 60_000 && await reservar('recordatorio_at')) {
-      await avisar([t.asignado_a!, ...(t.asignado_por ? [t.asignado_por] : [])], { title: `⏰ Falta completar: ${n} (${t.hora})`, body: 'Marcá los pasos y subí la foto cuando termines.', url })
+      await avisar([t.asignado_a!, ...(t.asignado_por ? [t.asignado_por] : [])], { title: `⏰ Falta completar: ${n} (${t.hora})`, body: 'Marcá los pasos y subí las fotos cuando termines.', url })
       cont.recordatorio++
     }
   }

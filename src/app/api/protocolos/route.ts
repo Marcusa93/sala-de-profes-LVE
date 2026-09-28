@@ -36,10 +36,10 @@ export async function GET() {
   const todas = (tareas ?? []) as Tarea[]
 
   // Fotos: links firmados (bucket privado), solo las de los últimos 7 días
-  const conFoto = todas.filter((t) => t.foto_path)
+  const rutas = [...new Set(todas.flatMap((t) => t.fotos ?? (t.foto_path ? [t.foto_path] : [])))]
   const urls = new Map<string, string>()
-  if (conFoto.length > 0) {
-    const { data: firmadas } = await admin.storage.from('protocolos').createSignedUrls(conFoto.map((t) => t.foto_path!), 3600)
+  if (rutas.length > 0) {
+    const { data: firmadas } = await admin.storage.from('protocolos').createSignedUrls(rutas, 3600)
     for (const f of firmadas ?? []) if (f.path && f.signedUrl) urls.set(f.path, f.signedUrl)
   }
   const ahora = new Date()
@@ -49,6 +49,7 @@ export async function GET() {
     asignado_nombre: t.asignado_a ? nombre.get(t.asignado_a) ?? null : null,
     hecho_nombre: t.hecho_por ? nombre.get(t.hecho_por) ?? null : null,
     foto_url: t.foto_path ? urls.get(t.foto_path) ?? null : null,
+    fotos_urls: (t.fotos ?? (t.foto_path ? [t.foto_path] : [])).map((r) => urls.get(r)).filter((u): u is string => !!u),
   })
 
   const lista = ((protocolos ?? []) as Protocolo[]).map((p) => {

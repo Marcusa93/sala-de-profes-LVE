@@ -4,7 +4,7 @@ import { requireRole } from '@/lib/supabase/require-role'
 import { logAudit } from '@/lib/audit'
 import { fechaOperativa } from '@/lib/attendance/jornada'
 
-// PUT /api/protocolos/config/[id] { horarios?, pasos?, activo? } — encargado/socio.
+// PUT /api/protocolos/config/[id] { horarios?, pasos?, fotos?, activo? } — encargado/socio.
 // Los horarios nuevos aplican desde hoy: se crean las tareas que falten y se
 // borran las de horarios quitados que todavía no se asignaron ni hicieron.
 export const dynamic = 'force-dynamic'
@@ -18,7 +18,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     if (auth.response) return auth.response
     const { id } = await params
     if (!UUID.test(id)) return NextResponse.json({ error: 'Protocolo inválido' }, { status: 400 })
-    const body = await request.json().catch(() => null) as { horarios?: string[]; pasos?: string[]; activo?: boolean } | null
+    const body = await request.json().catch(() => null) as { horarios?: string[]; pasos?: string[]; fotos?: string[]; activo?: boolean } | null
     if (!body) return NextResponse.json({ error: 'Pedido inválido' }, { status: 400 })
 
     const cambios: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -31,6 +31,11 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       const p = (body.pasos ?? []).map((x) => String(x).trim().slice(0, 120)).filter(Boolean)
       if (p.length === 0 || p.length > 20) return NextResponse.json({ error: 'Tiene que haber entre 1 y 20 pasos' }, { status: 400 })
       cambios.pasos = p
+    }
+    if (body.fotos !== undefined) {
+      const f = (body.fotos ?? []).map((x) => String(x).trim().slice(0, 80)).filter(Boolean)
+      if (f.length === 0 || f.length > 4) return NextResponse.json({ error: 'Tiene que haber entre 1 y 4 fotos' }, { status: 400 })
+      cambios.fotos = f
     }
     if (body.activo !== undefined) cambios.activo = Boolean(body.activo)
 

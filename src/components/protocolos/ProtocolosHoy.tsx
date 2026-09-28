@@ -27,7 +27,7 @@ export function ProtocolosHoy() {
             <div className="min-w-0 flex-1">
               <p className="text-[13.5px] font-semibold text-[#3d2c24]">{p.nombre}: {hechas} de {p.tareas.length}</p>
               <p className={cn('text-[12px]', atrasadas ? 'font-semibold text-[#ea504c]' : 'text-[#7d6c64]')}>
-                {atrasadas ? `${atrasadas} atrasada${atrasadas > 1 ? 's' : ''} sin hacer` : sinAsignar ? 'Hay una para asignar ahora' : hechas === p.tareas.length ? 'Todo hecho con foto' : 'Al día'}
+                {atrasadas ? `${atrasadas} atrasada${atrasadas > 1 ? 's' : ''} sin hacer` : sinAsignar ? 'Hay una para asignar ahora' : hechas === p.tareas.length ? 'Todo hecho con fotos' : 'Al día'}
               </p>
             </div>
             <ChevronRight className="size-4 text-[#a39e97]" />

@@ -9,9 +9,9 @@ import type { Tarea } from '@/lib/protocolos/protocolos'
 // ---------------------------------------------------------------------------
 // POST /api/protocolos/tareas/[id]
 //   JSON { accion: 'asignar', user_id }      → encargado/socio asigna (o se asigna)
-//   FormData accion=completar, foto, pasos (JSON), nota
+//   FormData accion=completar, foto_0…foto_N, pasos (JSON), nota
 //        → quien la tiene asignada (o encargado/socio) la completa: TODOS los
-//          pasos marcados y foto obligatoria.
+//          pasos marcados y TODAS las fotos del protocolo (baño: general + basura).
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
@@ -29,9 +29,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!UUID.test(id)) return NextResponse.json({ error: 'Tarea inválida' }, { status: 400 })
     const admin = createAdminClient()
 
-    const { data: tarea } = await admin.from('protocolo_tareas').select('*, protocolos(nombre, pasos, requiere_foto)').eq('id', id).maybeSingle()
+    const { data: tarea } = await admin.from('protocolo_tareas').select('*, protocolos(nombre, pasos, fotos, requiere_foto)').eq('id', id).maybeSingle()
     if (!tarea) return NextResponse.json({ error: 'Tarea no encontrada' }, { status: 404 })
-    const t = tarea as Tarea & { protocolos: { nombre: string; pasos: string[]; requiere_foto: boolean } }
+    const t = tarea as Tarea & { protocolos: { nombre: string; pasos: string[]; fotos: string[]; requiere_foto: boolean } }
     const { data: yo } = await admin.from('profiles').select('first_name, last_name').eq('id', auth.user.id).maybeSingle()
     const quien = [yo?.first_name, yo?.last_name].filter(Boolean).join(' ') || 'Alguien'
 
@@ -54,7 +54,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (persona.id !== auth.user.id) {
         await sendPushToUser(persona.id, {
           title: `🧽 Te toca: ${t.protocolos.nombre} (${t.hora})`,
-          body: `Te lo asignó ${quien.split(' ')[0]}. Al terminar, marcá los pasos y subí la foto.`,
+          body: `Te lo asignó ${quien.split(' ')[0]}. Al terminar, marcá los pasos y subí las fotos.`,
           url: '/protocolos',
         }).catch(() => {})
       }
@@ -74,28 +74,35 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const faltan = t.protocolos.pasos.filter((p) => !pasos.includes(p))
     if (faltan.length > 0) return NextResponse.json({ error: `Faltan pasos: ${faltan.join(', ')}` }, { status: 400 })
 
-    const foto = form.get('foto')
-    let fotoPath: string | null = null
-    if (t.protocolos.requiere_foto) {
-      if (!(foto instanceof File) || foto.size === 0) return NextResponse.json({ error: 'La foto es obligatoria' }, { status: 400 })
-      if (!foto.type.startsWith('image/')) return NextResponse.json({ error: 'El archivo tiene que ser una foto' }, { status: 400 })
-      if (foto.size > MAX_FOTO) return NextResponse.json({ error: 'La foto es muy pesada (máx. 5 MB)' }, { status: 400 })
-      fotoPath = `${t.fecha}/${t.id}.jpg`
-      const { error: upErr } = await admin.storage.from('protocolos').upload(fotoPath, Buffer.from(await foto.arrayBuffer()), { contentType: foto.type, upsert: true })
-      if (upErr) throw new Error(`No se pudo guardar la foto: ${upErr.message}`)
+    const etiquetas = t.protocolos.requiere_foto ? (t.protocolos.fotos?.length ? t.protocolos.fotos : ['Foto']) : []
+    const archivos: File[] = []
+    for (let i = 0; i < etiquetas.length; i++) {
+      const f = form.get(`foto_${i}`) ?? (i === 0 ? form.get('foto') : null)
+      if (!(f instanceof File) || f.size === 0) return NextResponse.json({ error: `Falta: ${etiquetas[i]}` }, { status: 400 })
+      if (!f.type.startsWith('image/')) return NextResponse.json({ error: `${etiquetas[i]}: tiene que ser una foto` }, { status: 400 })
+      if (f.size > MAX_FOTO) return NextResponse.json({ error: `${etiquetas[i]}: la foto es muy pesada (máx. 5 MB)` }, { status: 400 })
+      archivos.push(f)
     }
+    const fotos: string[] = []
+    for (let i = 0; i < archivos.length; i++) {
+      const ruta = `${t.fecha}/${t.id}-${i + 1}.jpg`
+      const { error: upErr } = await admin.storage.from('protocolos').upload(ruta, Buffer.from(await archivos[i].arrayBuffer()), { contentType: archivos[i].type, upsert: true })
+      if (upErr) throw new Error(`No se pudo guardar ${etiquetas[i].toLowerCase()}: ${upErr.message}`)
+      fotos.push(ruta)
+    }
+    const fotoPath = fotos[0] ?? null
 
     const nota = String(form.get('nota') ?? '').trim().slice(0, 500) || null
     const ahora = new Date().toISOString()
     const { error } = await admin.from('protocolo_tareas').update({
-      estado: 'hecha', hecho_por: auth.user.id, hecho_at: ahora, foto_path: fotoPath, pasos_ok: pasos, nota,
+      estado: 'hecha', hecho_por: auth.user.id, hecho_at: ahora, foto_path: fotoPath, fotos: fotos.length ? fotos : null, pasos_ok: pasos, nota,
       ...(t.asignado_a ? {} : { asignado_a: auth.user.id, asignado_por: auth.user.id, asignado_at: ahora }),
     }).eq('id', id).neq('estado', 'hecha')
     if (error) throw error
 
     // Aviso a quien la asignó: quedó hecha
     if (t.asignado_por && t.asignado_por !== auth.user.id) {
-      await sendPushToUser(t.asignado_por, { title: `✅ Hecho: ${t.protocolos.nombre} (${t.hora})`, body: `${quien} la completó con foto.`, url: '/protocolos' }).catch(() => {})
+      await sendPushToUser(t.asignado_por, { title: `✅ Hecho: ${t.protocolos.nombre} (${t.hora})`, body: `${quien} la completó con ${fotos.length === 1 ? 'foto' : `${fotos.length} fotos`}.`, url: '/protocolos' }).catch(() => {})
     }
     void logAudit(admin, { userId: auth.user.id, userName: quien, action: 'protocolo_completar', module: 'equipo', entityType: 'protocolo_tarea', entityId: id, description: `${quien} completó "${t.protocolos.nombre}" (${t.hora})` })
     return NextResponse.json({ success: true })

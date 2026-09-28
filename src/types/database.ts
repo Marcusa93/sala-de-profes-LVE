@@ -2281,6 +2281,7 @@ export type Database = {
           hecho_por: string | null
           hecho_at: string | null
           foto_path: string | null
+          fotos: string[] | null
           pasos_ok: string[] | null
           nota: string | null
           avisado_at: string | null
@@ -2301,6 +2302,7 @@ export type Database = {
           hecho_por?: string | null
           hecho_at?: string | null
           foto_path?: string | null
+          fotos?: string[] | null
           pasos_ok?: string[] | null
           nota?: string | null
           avisado_at?: string | null
@@ -2321,6 +2323,7 @@ export type Database = {
           hecho_por?: string | null
           hecho_at?: string | null
           foto_path?: string | null
+          fotos?: string[] | null
           pasos_ok?: string[] | null
           nota?: string | null
           avisado_at?: string | null
@@ -2346,6 +2349,7 @@ export type Database = {
           descripcion: string | null
           horarios: string[]
           pasos: string[]
+          fotos: string[]
           requiere_foto: boolean
           activo: boolean
           created_at: string
@@ -2357,6 +2361,7 @@ export type Database = {
           descripcion?: string | null
           horarios?: string[]
           pasos?: string[]
+          fotos?: string[]
           requiere_foto?: boolean
           activo?: boolean
           created_at?: string
@@ -2368,6 +2373,7 @@ export type Database = {
           descripcion?: string | null
           horarios?: string[]
           pasos?: string[]
+          fotos?: string[]
           requiere_foto?: boolean
           activo?: boolean
           created_at?: string
