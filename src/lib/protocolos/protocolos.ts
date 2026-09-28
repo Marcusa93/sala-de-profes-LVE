@@ -24,6 +24,7 @@ export type Tarea = {
   asignado_a: string | null; asignado_por: string | null; asignado_at: string | null
   hecho_por: string | null; hecho_at: string | null; foto_path: string | null; pasos_ok: string[] | null; nota: string | null
   avisado_at: string | null; reaviso_at: string | null; recordatorio_at: string | null; atraso_at: string | null
+  created_at: string
 }
 
 /** Cómo se ve una tarea ahora */
@@ -102,6 +103,9 @@ export async function procesarAvisos(admin: SupabaseClient, ahora = new Date()):
   for (const t of (tareas ?? []) as Tarea[]) {
     const n = nombre.get(t.protocolo_id) ?? 'Protocolo'
     const inicio = instanteDe(t.fecha, t.hora).getTime()
+    // Creada después de su límite (arranque del sistema o horario agregado a
+    // mitad del día): no se avisa un atraso que nadie pudo cumplir.
+    if (Date.parse(t.created_at) >= inicio + ATRASO_MIN * 60_000) continue
     const marcar = async (campo: string) => { await admin.from('protocolo_tareas').update({ [campo]: ahora.toISOString() }).eq('id', t.id).is(campo, null) }
 
     if (t0 >= inicio + ATRASO_MIN * 60_000) {
