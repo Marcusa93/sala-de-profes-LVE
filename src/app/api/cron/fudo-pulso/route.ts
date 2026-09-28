@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
     await paso('menu', async () => {
       const r = await sincronizarMenu(admin)
       await actualizarSalud(admin, { ultimo_menu_at: new Date().toISOString() })
-      return { productos: r.importedProducts, cambiados: r.cambiados, nuevos: r.nuevos }
+      return { productos: r.importedProducts, cambiados: r.cambiados, nuevos: r.nuevos, borrados_en_fudo: r.borradosEnFudo }
     })
   }
 

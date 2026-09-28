@@ -122,6 +122,9 @@ export async function armarPanelSalud(admin: SupabaseClient) {
   const fudoSinApp = incidentes.filter((i) => i.code === 'missing_stock_controlled_product_in_lve')
     .map((i) => ({ fudo_id: i.fudo_id, nombre: i.title.replace(/^.*?:\s*/, '') }))
 
+  // ---- En la app pero no en Fudo ----
+  const enAppNoFudo = await armarEnAppNoFudo(admin)
+
   // ---- El resto, agrupado ----
   const yaMostrados = new Set(['fudo_ingredient_missing', 'fudo_product_missing', 'fudo_ingredient_not_found', 'ingredient_stock_null', 'ingredient_stockControl_false', 'missing_stock_controlled_product_in_lve'])
   const grupos = new Map<string, Incidente[]>()
@@ -148,5 +151,60 @@ export async function armarPanelSalud(admin: SupabaseClient) {
     sin_control: sinControl,
     fudo_sin_app: fudoSinApp,
     otros,
+    en_app_no_fudo: enAppNoFudo,
+  }
+}
+
+const normPlato = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/\b(peya|pedidos ya)\b/g, '').replace(/[^a-z0-9ñ ]/g, ' ').replace(/\s+/g, ' ').trim()
+
+/**
+ * Lo que está activo en la app y no existe en Fudo, separado por tipo:
+ *   carta_vieja        → platos cargados a mano antes de conectar Fudo
+ *   insumos_sin_vinculo → insumos sin ingrediente/producto de Fudo
+ *   solo_app           → insumos marcados a propósito como "solo en la app"
+ * (Los insumos cuyo ingrediente Fudo borró van en "vínculos rotos", y los
+ * platos que Fudo borró se desactivan solos en la sincronización diaria.)
+ */
+async function armarEnAppNoFudo(admin: SupabaseClient) {
+  const desde60 = new Date(Date.now() - 60 * 86_400_000).toISOString()
+  const [{ data: menu }, { data: insumos }] = await Promise.all([
+    admin.from('menu_items').select('id, name, is_active, fudo_product_id, recipe_id, created_at').eq('is_active', true),
+    admin.from('stock_items').select('id, name, unit, current_qty, fudo_ingredient_id, fudo_product_id, fudo_skip').eq('is_active', true)
+      .is('fudo_ingredient_id', null).is('fudo_product_id', null),
+  ])
+  type M = { id: string; name: string; fudo_product_id: string | null; recipe_id: string | null; created_at: string }
+  const platos = (menu ?? []) as M[]
+  const conFudo = platos.filter((m) => m.fudo_product_id)
+  const cartaVieja = platos.filter((m) => !m.fudo_product_id).map((m) => {
+    const gemelo = conFudo.find((f) => normPlato(f.name) === normPlato(m.name))
+    return {
+      id: m.id,
+      nombre: m.name,
+      creado: m.created_at.slice(0, 10),
+      gemelo: gemelo?.name ?? null,
+      // Su receta no la usa ningún plato de Fudo: puede que en Fudo se llame distinto
+      receta_huerfana: !!m.recipe_id && !conFudo.some((f) => f.recipe_id === m.recipe_id),
+    }
+  }).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+
+  type I = { id: string; name: string; unit: string; current_qty: number; fudo_skip: boolean | null }
+  const lista = (insumos ?? []) as I[]
+  const ids = lista.map((i) => i.id)
+  const [{ data: usos }, { data: movs }] = ids.length
+    ? await Promise.all([
+      admin.from('recipe_ingredients').select('stock_item_id').in('stock_item_id', ids),
+      admin.from('stock_movements').select('stock_item_id').in('stock_item_id', ids).gte('created_at', desde60),
+    ])
+    : [{ data: [] }, { data: [] }]
+  const cuenta = (arr: { stock_item_id: string }[] | null) => (arr ?? []).reduce((m, r) => m.set(r.stock_item_id, (m.get(r.stock_item_id) ?? 0) + 1), new Map<string, number>())
+  const recetas = cuenta(usos as { stock_item_id: string }[] | null)
+  const movimientos = cuenta(movs as { stock_item_id: string }[] | null)
+  const fila = (i: I) => ({ id: i.id, nombre: i.name, unidad: i.unit, stock: Number(i.current_qty), recetas: recetas.get(i.id) ?? 0, movimientos_60d: movimientos.get(i.id) ?? 0 })
+
+  return {
+    carta_vieja: cartaVieja,
+    insumos_sin_vinculo: lista.filter((i) => !i.fudo_skip).map(fila).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')),
+    solo_app: lista.filter((i) => i.fudo_skip).map(fila).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')),
   }
 }

@@ -25,7 +25,13 @@ type Datos = {
   sin_control: SinControl[]
   fudo_sin_app: { fudo_id: string | null; nombre: string }[]
   otros: { code: string; etiqueta: string; cantidad: number; ejemplos: { titulo: string; detalle: string | null }[] }[]
+  en_app_no_fudo: {
+    carta_vieja: { id: string; nombre: string; creado: string; gemelo: string | null; receta_huerfana: boolean }[]
+    insumos_sin_vinculo: InsumoLocal[]
+    solo_app: InsumoLocal[]
+  }
 }
+type InsumoLocal = { id: string; nombre: string; unidad: string; stock: number; recetas: number; movimientos_60d: number }
 
 const fetcher = async (url: string) => {
   const r = await fetch(url)
@@ -166,6 +172,8 @@ export default function SaludFudoPage() {
         </Plegable>
       )}
 
+      <EnAppNoEnFudo d={data.en_app_no_fudo} ocupado={ocupado} correr={correr} />
+
       <PlatosSinVinculo />
 
       {/* Productos de Fudo con stock que la app no usa */}
@@ -221,6 +229,79 @@ function PlatosSinVinculo() {
       </ul>
       <p className="mt-2 flex items-center gap-1 text-[12.5px] font-semibold text-[#d4943a]">Vincular ahora <ChevronRight className="size-3.5" /></p>
     </Link>
+  )
+}
+
+type Correr = (clave: string, body: Record<string, unknown>, ok: (j: Record<string, unknown>) => string) => Promise<void>
+
+/** Lo que está activo en la app y no existe en Fudo, separado por tipo. */
+function EnAppNoEnFudo({ d, ocupado, correr }: { d: Datos['en_app_no_fudo']; ocupado: string | null; correr: Correr }) {
+  const total = d.carta_vieja.length + d.insumos_sin_vinculo.length + d.solo_app.length
+  if (total === 0) return null
+  const conGemelo = d.carta_vieja.filter((p) => p.gemelo).length
+  return (
+    <section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
+      <h2 className="flex items-center gap-2 text-[15px] font-bold text-[#3d2c24]"><Trash2 className="size-4 text-[#7d6c64]" /> En la app pero no en Fudo</h2>
+      <p className="mt-0.5 text-[12px] leading-snug text-[#7d6c64]">Cosas activas en la app que Fudo no tiene. Desactivar no borra la historia y se puede revertir. Los platos que Fudo borre de ahora en más se desactivan solos cada día.</p>
+
+      {d.carta_vieja.length > 0 && (
+        <div className="mt-3 rounded-xl bg-[#fcfbf9] p-3 ring-1 ring-[#f0ebe4]">
+          <p className="text-[13.5px] font-semibold text-[#3d2c24]">🍽️ Carta vieja cargada a mano ({d.carta_vieja.length} platos)</p>
+          <p className="mt-0.5 text-[11.5px] leading-snug text-[#7d6c64]">
+            Se cargaron el {d.carta_vieja[0].creado.split('-').reverse().join('/')} antes de conectar Fudo. Las ventas no los usan (usan los platos de Fudo){conGemelo > 0 && <>; {conGemelo} tienen el mismo plato en Fudo</>}. Las recetas no se borran.
+          </p>
+          <Plegable titulo="Ver cuáles son">
+            {d.carta_vieja.map((p) => (
+              <li key={p.id} className="text-[12.5px] text-[#3d2c24]">
+                {p.nombre}
+                {p.gemelo && <span className="text-[#7d6c64]"> — en Fudo: {p.gemelo}</span>}
+                {p.receta_huerfana && <span className="text-[#b0762a]"> — su receta no la usa ningún plato de Fudo (revisar nombre)</span>}
+              </li>
+            ))}
+          </Plegable>
+          <div className="mt-2">
+            <Boton destacado onClick={() => { if (confirm(`¿Desactivar los ${d.carta_vieja.length} platos de la carta vieja? No están en Fudo y las ventas no los usan.`)) void correr('carta', { accion: 'desactivar_platos', ids: d.carta_vieja.map((p) => p.id) }, (j) => `${j.desactivados} platos desactivados`) }} cargando={ocupado === 'carta'} disabled={!!ocupado}>
+              <PowerOff className="size-3.5" /> Desactivar los {d.carta_vieja.length}
+            </Boton>
+          </div>
+        </div>
+      )}
+
+      {d.insumos_sin_vinculo.length > 0 && (
+        <div className="mt-3 rounded-xl bg-[#fcfbf9] p-3 ring-1 ring-[#f0ebe4]">
+          <p className="text-[13.5px] font-semibold text-[#3d2c24]">📦 Insumos sin vínculo a Fudo ({d.insumos_sin_vinculo.length})</p>
+          <p className="mt-0.5 text-[11.5px] text-[#7d6c64]">No están en Fudo ni marcados como «solo app». Si no se usan, desactivalos.</p>
+          <ul className="mt-2 space-y-1.5">
+            {d.insumos_sin_vinculo.map((i) => <FilaInsumoLocal key={i.id} i={i} ocupado={ocupado} correr={correr} />)}
+          </ul>
+        </div>
+      )}
+
+      {d.solo_app.length > 0 && (
+        <Plegable titulo={`Solo en la app a propósito (${d.solo_app.length})`} ayuda="Marcados para llevarse solo acá (descartables, etc.). Si alguno ya no se usa, desactivalo.">
+          {d.solo_app.map((i) => <FilaInsumoLocal key={i.id} i={i} ocupado={ocupado} correr={correr} />)}
+        </Plegable>
+      )}
+    </section>
+  )
+}
+
+function FilaInsumoLocal({ i, ocupado, correr }: { i: InsumoLocal; ocupado: string | null; correr: Correr }) {
+  const sinUso = i.recetas === 0 && i.movimientos_60d === 0
+  return (
+    <li className="flex items-center gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-[12.5px] font-semibold text-[#3d2c24]">{i.nombre}</p>
+        <p className="text-[11px] text-[#7d6c64]">
+          Stock {num(i.stock)} {i.unidad} · {i.recetas > 0 ? `en ${i.recetas} receta${i.recetas === 1 ? '' : 's'}` : 'sin recetas'} · {i.movimientos_60d > 0 ? `${i.movimientos_60d} movimientos en 60 días` : 'sin movimientos en 60 días'}
+        </p>
+      </div>
+      {i.recetas === 0 && (
+        <Boton destacado={sinUso} suave={!sinUso} onClick={() => void correr(i.id + 'x', { accion: 'desactivar', stock_item_id: i.id }, () => `${i.nombre} desactivado`)} cargando={ocupado === i.id + 'x'} disabled={!!ocupado}>
+          <PowerOff className="size-3.5" /> Desactivar
+        </Boton>
+      )}
+    </li>
   )
 }
 

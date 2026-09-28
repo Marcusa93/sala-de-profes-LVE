@@ -71,6 +71,17 @@ export async function POST(request: Request) {
         void auditar(`Unió "${r.duplicado}" en "${r.bueno}" (${r.recetas} receta${r.recetas === 1 ? '' : 's'})`, body.duplicado!, r as unknown as Record<string, unknown>)
         return NextResponse.json({ success: true, ...r })
       }
+      case 'desactivar_platos': {
+        // Solo platos que NO están en Fudo (carta vieja cargada a mano)
+        const ids = Array.isArray((body as { ids?: unknown }).ids) ? ((body as { ids: unknown[] }).ids).map(String).filter((x) => UUID.test(x)).slice(0, 500) : []
+        if (ids.length === 0) return NextResponse.json({ error: 'No hay platos para desactivar' }, { status: 400 })
+        const { data, error } = await admin.from('menu_items').update({ is_active: false, updated_at: new Date().toISOString() })
+          .in('id', ids).is('fudo_product_id', null).eq('is_active', true).select('name')
+        if (error) throw error
+        const nombres = (data ?? []).map((d: { name: string }) => d.name)
+        void auditar(`Desactivó ${nombres.length} plato${nombres.length === 1 ? '' : 's'} de la carta vieja (no están en Fudo)`, ids[0], { platos: nombres })
+        return NextResponse.json({ success: true, desactivados: nombres.length })
+      }
       case 'solo_app':
       case 'desactivar': {
         if (!UUID.test(String(body.stock_item_id))) return NextResponse.json({ error: 'Pedido inválido' }, { status: 400 })

@@ -9,7 +9,7 @@ import { fudo } from '@/lib/fudoClient'
 // Lo usan el botón de /admin/fudo y el pulso diario (precios al día solos).
 // ---------------------------------------------------------------------------
 
-export type MenuSyncResult = { importedCategories: number; importedProducts: number; cambiados: number; nuevos: number; platosVinculados: unknown }
+export type MenuSyncResult = { importedCategories: number; importedProducts: number; cambiados: number; nuevos: number; borradosEnFudo: string[]; platosVinculados: unknown }
 
 const igual = (a: unknown, b: unknown) => (a == null && b == null) || String(a) === String(b)
 
@@ -90,10 +90,46 @@ export async function sincronizarMenu(supabase: SupabaseClient): Promise<MenuSyn
     }
   }
 
+  const borradosEnFudo = await desactivarBorradosEnFudo(supabase, new Set(fudoProducts.map((p) => String(p.id))))
+
   // Platos nuevos → su receta, si el nombre coincide exacto (ej. versión PedidosYa)
   const platosVinculados = await import('@/lib/ventas/vinculos-recetas')
     .then(({ autoVincularPlatos }) => autoVincularPlatos(supabase))
     .catch(() => null)
 
-  return { importedCategories, importedProducts, cambiados, nuevos, platosVinculados }
+  return { importedCategories, importedProducts, cambiados, nuevos, borradosEnFudo, platosVinculados }
+}
+
+const normNombre = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/\b(peya|pedidos ya)\b/g, '').replace(/[^a-z0-9ñ ]/g, ' ').replace(/\s+/g, ' ').trim()
+
+/**
+ * Platos que Fudo borró (a veces los borra y los vuelve a crear con otro
+ * número): se desactivan en la app para que no queden viejos. Si el viejo
+ * sabía qué descontar y el plato nuevo con el mismo nombre todavía no, le
+ * pasa ese vínculo. Con tope de seguridad: si "desaparece" más del 15% del
+ * menú, se asume una lectura incompleta de Fudo y no se toca nada.
+ */
+async function desactivarBorradosEnFudo(supabase: SupabaseClient, idsEnFudo: Set<string>): Promise<string[]> {
+  if (idsEnFudo.size < 50) return []
+  const { data } = await supabase.from('menu_items')
+    .select('id, name, fudo_product_id, recipe_id, consumo_modo, consumo_stock_item_id, consumo_qty, is_active')
+    .not('fudo_product_id', 'is', null).eq('is_active', true)
+  type Row = { id: string; name: string; fudo_product_id: string; recipe_id: string | null; consumo_modo: string | null; consumo_stock_item_id: string | null; consumo_qty: number | null }
+  const activos = (data ?? []) as Row[]
+  const borrados = activos.filter((m) => !idsEnFudo.has(String(m.fudo_product_id)))
+  if (borrados.length === 0 || borrados.length > activos.length * 0.15) return []
+
+  for (const b of borrados) {
+    if (b.consumo_modo) {
+      const gemelo = activos.find((m) => m.id !== b.id && idsEnFudo.has(String(m.fudo_product_id)) && normNombre(m.name) === normNombre(b.name) && !m.consumo_modo && !m.recipe_id)
+      if (gemelo) {
+        await supabase.from('menu_items').update({
+          recipe_id: b.recipe_id, consumo_modo: b.consumo_modo, consumo_stock_item_id: b.consumo_stock_item_id, consumo_qty: b.consumo_qty, recipe_link_source: 'auto_nombre',
+        }).eq('id', gemelo.id)
+      }
+    }
+    await supabase.from('menu_items').update({ is_active: false }).eq('id', b.id)
+  }
+  return borrados.map((b) => b.name)
 }
