@@ -2268,6 +2268,113 @@ export type Database = {
         }
         Relationships: []
       }
+      protocolo_tareas: {
+        Row: {
+          id: string
+          protocolo_id: string
+          fecha: string
+          hora: string
+          estado: string
+          asignado_a: string | null
+          asignado_por: string | null
+          asignado_at: string | null
+          hecho_por: string | null
+          hecho_at: string | null
+          foto_path: string | null
+          pasos_ok: string[] | null
+          nota: string | null
+          avisado_at: string | null
+          reaviso_at: string | null
+          recordatorio_at: string | null
+          atraso_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          protocolo_id: string
+          fecha: string
+          hora: string
+          estado?: string
+          asignado_a?: string | null
+          asignado_por?: string | null
+          asignado_at?: string | null
+          hecho_por?: string | null
+          hecho_at?: string | null
+          foto_path?: string | null
+          pasos_ok?: string[] | null
+          nota?: string | null
+          avisado_at?: string | null
+          reaviso_at?: string | null
+          recordatorio_at?: string | null
+          atraso_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          protocolo_id?: string
+          fecha?: string
+          hora?: string
+          estado?: string
+          asignado_a?: string | null
+          asignado_por?: string | null
+          asignado_at?: string | null
+          hecho_por?: string | null
+          hecho_at?: string | null
+          foto_path?: string | null
+          pasos_ok?: string[] | null
+          nota?: string | null
+          avisado_at?: string | null
+          reaviso_at?: string | null
+          recordatorio_at?: string | null
+          atraso_at?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "protocolo_tareas_protocolo_id_fkey"
+            columns: ["protocolo_id"]
+            isOneToOne: false
+            referencedRelation: "protocolos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      protocolos: {
+        Row: {
+          id: string
+          nombre: string
+          descripcion: string | null
+          horarios: string[]
+          pasos: string[]
+          requiere_foto: boolean
+          activo: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          nombre: string
+          descripcion?: string | null
+          horarios?: string[]
+          pasos?: string[]
+          requiere_foto?: boolean
+          activo?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          nombre?: string
+          descripcion?: string | null
+          horarios?: string[]
+          pasos?: string[]
+          requiere_foto?: boolean
+          activo?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       push_subscriptions: {
         Row: {
           created_at: string

@@ -9,6 +9,7 @@ import { FloatingChat } from '@/components/chat/FloatingChat'
 import { ForcePasswordChange } from '@/components/auth/ForcePasswordChange'
 import { AnnouncementPopup } from '@/components/notifications/AnnouncementPopup'
 import { KitchenAlarms } from '@/components/kitchen/KitchenAlarms'
+import { ProtocoloAlarma } from '@/components/protocolos/ProtocoloAlarma'
 import { InstallPrompt } from '@/components/pwa/InstallPrompt'
 import { PushSubscriber } from '@/components/pwa/PushSubscriber'
 import { PushPrompt } from '@/components/push/PushPrompt'
@@ -43,6 +44,7 @@ export default async function AppLayout({
           <ForcePasswordChange />
           <AnnouncementPopup />
           <KitchenAlarms />
+          <ProtocoloAlarma />
           <InstallPrompt />
           <PushSubscriber />
           <PushPrompt />

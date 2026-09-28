@@ -28,6 +28,7 @@ import {
   ClipboardCheck,
   Hammer,
   ScanFace,
+  Sparkles,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
@@ -121,6 +122,7 @@ const SOCIO_MORE: ExpandableNavItem = {
       items: [
         { label: 'Ventas', href: '/ventas', icon: BarChart3, description: 'Facturación y tickets sincronizados desde Fudo' },
         { label: 'Reportes', href: '/admin/reportes', icon: BookOpen, description: 'Food cost, márgenes y ventas por período' },
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Limpieza del baño: asignar, foto y registro' },
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Tareas y control del servicio' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Control de roturas, faltantes y reposición' },
@@ -156,6 +158,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
       label: 'Operación',
       items: [
         { label: 'Reportes', href: '/admin/reportes', icon: BookOpen, description: 'Food cost, márgenes y ventas por período' },
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Limpieza del baño: asignar, foto y registro' },
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Servicio y tareas del salón' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Faltantes, roturas y reposición' },

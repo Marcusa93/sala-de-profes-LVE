@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import { ActivarAvisos } from '@/components/push/ActivarAvisos'
+import { ProtocolosHoy } from '@/components/protocolos/ProtocolosHoy'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -430,6 +431,8 @@ export default function HoyPage() {
       </FadeIn>
 
       <ActivarAvisos />
+
+      <ProtocolosHoy />
 
       {/* Preguntar en castellano — cruza stock, pedidos y producción */}
       <FadeIn delay={0.03}>

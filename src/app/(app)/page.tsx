@@ -173,7 +173,7 @@ export default function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-8">
-      {/* Avisos push: socios, encargados y chef (se oculta al activarlos) */}
+      {/* Avisos push: todo el equipo (se oculta al activarlos) */}
       <ActivarAvisos />
       {/* ---------------------------------------------------------------- */}
       {/* El "1 número": Pulso (managers) / Turno de hoy (empleados)       */}

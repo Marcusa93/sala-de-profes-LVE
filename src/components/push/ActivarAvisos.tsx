@@ -8,13 +8,13 @@ import { canUsePushApi, ensurePushSubscription } from '@/lib/push/client'
 
 // ---------------------------------------------------------------------------
 // Aviso fijo para activar las notificaciones, para quien DEBE recibirlas
-// (socios, encargados, chef): conteo diario, recordatorios, pedidos…
+// (todo el equipo): conteo diario, protocolos (limpieza del baño), pedidos…
 // A diferencia del pop-up general (que se descarta por 5 días), este queda
 // visible hasta que se activan en ESTE dispositivo. Medido: 0 de 4 encargados
 // y 5 de 10 socios las tenían activadas.
 // ---------------------------------------------------------------------------
 
-const ROLES = new Set(['socio', 'encargado', 'chef'])
+const ROLES = new Set(['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'])
 
 type Estado = 'cargando' | 'activas' | 'pedir' | 'ios_instalar' | 'bloqueadas' | 'sin_soporte'
 
@@ -70,7 +70,7 @@ export function ActivarAvisos() {
         <p className="text-[13px] font-semibold">Activá los avisos en este celular</p>
         {estado === 'pedir' && (
           <>
-            <p className="mt-0.5 text-[11.5px] text-white/75">Así te llegan el conteo diario, los recordatorios y los pedidos, sin tener que mirar el grupo.</p>
+            <p className="mt-0.5 text-[11.5px] text-white/75">Así te llegan los avisos de limpieza del baño, el conteo diario y los pedidos, sin tener que mirar el grupo.</p>
             <button onClick={() => void activar()} disabled={activando} className="mt-2 flex items-center gap-1.5 rounded-lg bg-[#f0c98a] px-3 py-1.5 text-[12.5px] font-semibold text-[#3d2c24] disabled:opacity-60">
               {activando ? <Loader2 className="size-3.5 animate-spin" /> : <Bell className="size-3.5" />} Activar avisos
             </button>
