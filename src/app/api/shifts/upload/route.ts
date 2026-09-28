@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { logAudit } from '@/lib/audit'
 import * as XLSX from 'xlsx'
 import { startOfWeek, addDays, format } from 'date-fns'
+import { DIAS, ROLES_SECCION, buscarEmpleado, leerHorario, normalizar } from '@/lib/turnos/planilla'
 
 // ---------------------------------------------------------------------------
 // POST /api/shifts/upload — Upload Excel/CSV file with shifts
@@ -15,51 +16,14 @@ import { startOfWeek, addDays, format } from 'date-fns'
 //   Sebastian| 15:30 A 00  | 14:00 A 00  | ... | 15:30 A 00
 //   BARISTAS
 //   Patricia | 07 A 16     | 07 A 16     | ... | 16:30 A 00
+//   (horarios y nombres: ver lib/turnos/planilla.ts)
 //
 // FORMAT B — Row per shift:
 //   Nombre | Fecha | Inicio | Fin | Rol
 // ---------------------------------------------------------------------------
 
-const ROLE_MAP: Record<string, string> = {
-  runners: 'runner',
-  runner: 'runner',
-  baristas: 'barista',
-  barista: 'barista',
-  cocina: 'cocina',
-  cocinero: 'cocina',
-  bacha: 'cocina',
-  bachero: 'cocina',
-  encargado: 'encargado',
-  encargados: 'encargado',
-  chef: 'chef',
-  socio: 'socio',
-  socios: 'socio',
-  mozo: 'runner',
-  mozos: 'runner',
-}
-
-const DAY_NAMES = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo']
-
-// Parse "07 A 16", "15:30 A 00", "08 A 14", "16:30 A 01"
-function parseTimeRange(val: string): { start: string; end: string } | null {
-  if (!val) return null
-  const s = val.trim().toUpperCase()
-  if (s === 'DESCANSO' || s === 'FRANCO' || s === 'LIBRE' || s === '-' || s === 'X') return null
-
-  // Match: "HH:MM A HH:MM" or "HH A HH" or combinations
-  const match = s.match(/^(\d{1,2}(?::\d{2})?)\s*A\s*(\d{1,2}(?::\d{2})?)$/)
-  if (!match) return null
-
-  const normalize = (t: string): string => {
-    if (t.includes(':')) {
-      const [h, m] = t.split(':')
-      return `${h.padStart(2, '0')}:${m}`
-    }
-    return `${t.padStart(2, '0')}:00`
-  }
-
-  return { start: normalize(match[1]), end: normalize(match[2]) }
-}
+const ROLE_MAP = ROLES_SECCION
+const DAY_NAMES = DIAS
 
 // Detect if this is a weekly grid format
 function isWeeklyGrid(headers: string[]): boolean {
@@ -199,7 +163,7 @@ async function processWeeklyGrid(
   const skipped: string[] = []
 
   // Check if first header cell is also a role (e.g. "RUNNERS")
-  const firstHeaderRole = ROLE_MAP[headers[0].toLowerCase().replace(/[^a-záéíóúñ]/g, '')] ?? ''
+  const firstHeaderRole = ROLE_MAP[normalizar(headers[0]).replace(/[^a-z]/g, '')] ?? ''
   let currentRole = firstHeaderRole
 
   for (let i = 1; i < rows.length; i++) {
@@ -210,37 +174,33 @@ async function processWeeklyGrid(
     if (!firstCell) continue
 
     // Check if this is a section header (RUNNERS, BARISTAS, COCINA, etc.)
-    const roleKey = firstCell.toLowerCase().replace(/[^a-záéíóúñ]/g, '')
-    if (ROLE_MAP[roleKey] && (!row[1] || String(row[1] ?? '').trim() === '')) {
+    const roleKey = normalizar(firstCell).replace(/[^a-z]/g, '')
+    const restoVacio = row.slice(1).every((c) => String(c ?? '').trim() === '')
+    if (ROLE_MAP[roleKey] && restoVacio) {
       currentRole = ROLE_MAP[roleKey]
       continue
     }
 
     // This is an employee row
-    const nameLower = firstCell.toLowerCase()
-    const match = employees.find(e => {
-      const fn = (e.first_name ?? '').toLowerCase()
-      const ln = (e.last_name ?? '').toLowerCase()
-      if (fn === nameLower) return true
-      if (nameLower.includes(fn) && fn.length > 2) return true
-      if (`${fn} ${ln}`.includes(nameLower)) return true
-      return false
-    })
-
-    if (!match) {
-      errors.push(`Fila ${i + 1}: no se encontró empleado "${firstCell}"`)
+    const quien = buscarEmpleado(firstCell, employees)
+    if ('error' in quien) {
+      errors.push(`Fila ${i + 1}: ${quien.error}`)
       continue
     }
+    const match = quien.ok as { id: string; first_name: string; last_name: string; role: string }
 
     const shiftRole = currentRole || match.role
 
     // Process each day column
     for (const { dayIndex, colIndex } of dayColumns) {
       const cellValue = String(row[colIndex] ?? '').trim()
-      if (!cellValue) continue
-
-      const timeRange = parseTimeRange(cellValue)
-      if (!timeRange) continue // Descanso or invalid
+      const timeRange = leerHorario(cellValue)
+      if (timeRange === 'descanso') continue
+      if (!timeRange) {
+        // Antes se ignoraba en silencio y el turno no se cargaba
+        errors.push(`Fila ${i + 1} (${firstCell}), ${headers[colIndex]}: no se entiende "${cellValue}" — escribilo como 7 a 16 o 15:30 a 00`)
+        continue
+      }
 
       const date = format(addDays(weekMonday, dayIndex), 'yyyy-MM-dd')
 
@@ -384,22 +344,14 @@ async function processRowPerShift(
       continue
     }
 
-    const nameLower = nameVal.toLowerCase()
-    const match = employees.find(e => {
-      const fn = (e.first_name ?? '').toLowerCase()
-      const ln = (e.last_name ?? '').toLowerCase()
-      if (fn === nameLower) return true
-      if (`${fn} ${ln}`.includes(nameLower)) return true
-      if (nameLower.includes(fn) && fn.length > 2) return true
-      return false
-    })
-
-    if (!match) {
-      errors.push(`Fila ${i + 1}: no se encontró "${nameVal}"`)
+    const quien = buscarEmpleado(nameVal, employees)
+    if ('error' in quien) {
+      errors.push(`Fila ${i + 1}: ${quien.error}`)
       continue
     }
+    const match = quien.ok as { id: string; first_name: string; last_name: string; role: string }
 
-    const roleRaw = roleCol >= 0 ? String(row[roleCol] ?? '').trim().toLowerCase() : ''
+    const roleRaw = roleCol >= 0 ? normalizar(String(row[roleCol] ?? '')).replace(/[^a-z]/g, '') : ''
     const role = ROLE_MAP[roleRaw] || match.role
 
     const { data: existing } = await admin
