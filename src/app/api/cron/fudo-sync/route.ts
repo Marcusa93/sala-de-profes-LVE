@@ -15,6 +15,7 @@ import { notifyEvent } from '@/lib/push/notify-event'
 // 3) Guarda el snapshot diario de stock (stock_snapshots, tipo 'daily') —
 //    la base del cálculo de mermas: ayer + entradas − ventas − hoy
 // 4) Audita discrepancias y loguea a audit_trail
+// Si falla, pg_cron la vuelve a llamar a las 04:45 AR con ?si_fallo=1.
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
@@ -33,6 +34,15 @@ export async function GET(request: NextRequest) {
 
   const startTime = Date.now()
   const admin = createAdminClient()
+
+  // Segunda pasada (pg_cron, 04:45 AR): solo corre si la de las 03:00 falló
+  // o no llegó a terminar. Antes, si Fudo estaba caído a esa hora, se perdía
+  // el día entero (foto de stock, auditoría) hasta 24 h después.
+  if (request.nextUrl.searchParams.get('si_fallo') === '1') {
+    const desde = new Date(Date.now() - 4 * 3_600_000).toISOString()
+    const { data: ok } = await admin.from('audit_trail').select('id').eq('action', 'fudo_cron_sync').gte('created_at', desde).limit(1)
+    if (ok && ok.length > 0) return NextResponse.json({ skipped: true, reason: 'La corrida de las 03:00 ya salió bien' })
+  }
 
   try {
     // Fechas en Argentina: a las 03:00 AR el día operativo cerrado es "ayer"

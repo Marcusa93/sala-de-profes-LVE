@@ -21,8 +21,10 @@ type IncludedResource = {
 
 export async function GET(request: NextRequest) {
   try {
-    // Auth check — internal calls pass x-internal header to skip
-    const isInternal = request.headers.get('x-internal-call') === 'true'
+    // Auth: usuario con sesión, o llamada interna con el secreto del servidor.
+    // (Antes bastaba mandar "x-internal-call: true" para ver las ventas sin usuario.)
+    const secreto = process.env.CRON_SECRET
+    const isInternal = !!secreto && request.headers.get('x-internal-call') === secreto
     if (!isInternal) {
       const supabase = await createClient()
       const { data: { user } } = await supabase.auth.getUser()

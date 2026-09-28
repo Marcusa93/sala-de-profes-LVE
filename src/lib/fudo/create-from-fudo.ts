@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getFudoToken } from '@/lib/fudoClient'
+import { fudoHttp } from '@/lib/fudoClient'
 import { readFudoStock, type FudoIngredient } from '@/lib/fudo/stock-sync'
 import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
@@ -52,23 +52,16 @@ function asNullableNumber(value: unknown): number | null {
 
 /** Lee todos los ingredientes de Fudo con su unidad (include=unit, paginado) */
 export async function readFudoIngredientsWithUnit(): Promise<FudoIngredientWithUnit[]> {
-  const token = await getFudoToken()
   const all: FudoIngredientWithUnit[] = []
   let page = 1
 
-  while (page <= 10) {
-    const res = await fetch(
+  while (page <= 50) {
+    // fudoHttp ya reintenta (con tope) si Fudo limita pedidos
+    const res = await fudoHttp(
       `https://api.fu.do/v1alpha1/ingredients?include=unit&page[size]=200&page[number]=${page}`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
     )
 
-    if (!res.ok) {
-      if (res.status === 429) {
-        await new Promise(r => setTimeout(r, 2000))
-        continue
-      }
-      throw new Error(`Fudo API error: ${res.status}`)
-    }
+    if (!res.ok) throw new Error(`Fudo API error: ${res.status}`)
 
     const data = await res.json()
     const items = data.data ?? []

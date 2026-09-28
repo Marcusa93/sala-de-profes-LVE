@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getFudoToken } from '@/lib/fudoClient'
+import { fudoHttp } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
 // GET /api/salon — Open tables with items and delay semaphore
@@ -15,14 +15,11 @@ export async function GET() {
     const userSupabase = await createClient()
     const { data: { user } } = await userSupabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
-
-    const token = await getFudoToken()
     const admin = createAdminClient()
 
     // Get open sales with items + table + product
-    const res = await fetch(
+    const res = await fudoHttp(
       'https://api.fu.do/v1alpha1/sales?include=items.product,table&sort=-createdAt&page[size]=50',
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
     )
     if (!res.ok) throw new Error(`Fudo API: ${res.status}`)
     const data = await res.json()
@@ -168,10 +165,8 @@ export async function POST(request: NextRequest) {
 
     if (allServed) {
       // Get all items for this sale from Fudo
-      const token = await getFudoToken()
-      const res = await fetch(
+      const res = await fudoHttp(
         `https://api.fu.do/v1alpha1/sales/${saleId}?include=items`,
-        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
       )
       if (res.ok) {
         const data = await res.json()

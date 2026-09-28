@@ -274,11 +274,13 @@ export async function POST(
 
     // Sync affected stock items to Fudo
     const movements = (result.movements ?? []) as { stock_item_id: number; change: number; movement_id?: string | null }[]
-    let fudoSummary: { synced: number; errors: string[] } | null = null
+    let fudoSummary: { synced: number; errors: string[]; encolados: string[] } | null = null
+    const warnings: string[] = []
     if (movements.length > 0) {
       try {
         const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
         fudoSummary = await syncProductionToFudo(admin, movements, user.id)
+        if (fudoSummary.encolados.length > 0) warnings.push(`${fudoSummary.encolados.length === 1 ? 'Un insumo no entró' : `${fudoSummary.encolados.length} insumos no entraron`} a Fudo todavía (queda registrado y se reintenta solo): ${fudoSummary.encolados.map((e) => e.split(':')[0]).join(', ')}`)
         if (fudoSummary.errors.length > 0) {
           const realignment = await realignStockFromFudo(admin)
           return NextResponse.json({
@@ -345,6 +347,7 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
+      warnings,
       order_id: result.order_id,
       total_input_qty: result.total_input_qty,
       total_output_qty: result.total_output_qty,

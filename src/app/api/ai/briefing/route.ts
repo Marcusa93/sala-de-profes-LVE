@@ -36,7 +36,7 @@ export async function GET() {
     try {
       const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3007'
       const ventasRes = await fetch(`${baseUrl}/api/fudo/auto-sync`, {
-        headers: { 'x-internal-call': 'true' },
+        headers: { 'x-internal-call': process.env.CRON_SECRET ?? '' },
       })
       if (ventasRes.ok) {
         const ventasJson = await ventasRes.json()

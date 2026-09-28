@@ -88,6 +88,7 @@ export function LoHiceDialog({ elaborado, puedeCerrar, sugerido, onClose, onDone
       toast.success(json.status === 'pending_review'
         ? `${num(qty)} ${elaborado.unit} de ${elaborado.name}: enviado a validar`
         : `${num(qty)} ${elaborado.unit} de ${elaborado.name} registrados`)
+      for (const w of (json?.warnings ?? []) as string[]) if (w.includes('Fudo')) toast.info(w)
       onDone()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'No se pudo registrar')

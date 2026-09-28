@@ -394,12 +394,13 @@ export async function POST(request: NextRequest) {
     const totalCost = rpcResult.total_cost ?? costSummary?.total_cost ?? null
 
     const movements = rpcResult.movements ?? []
-    let fudoSummary: { synced: number; errors: string[] } | null = null
+    let fudoSummary: { synced: number; errors: string[]; encolados: string[] } | null = null
 
     if (movements.length > 0) {
       try {
         const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
         fudoSummary = await syncProductionToFudo(admin, movements, user.id)
+        if (fudoSummary.encolados.length > 0) warnings.push(`${fudoSummary.encolados.length === 1 ? 'Un insumo no entró' : `${fudoSummary.encolados.length} insumos no entraron`} a Fudo todavía (queda registrado y se reintenta solo): ${fudoSummary.encolados.map((e) => e.split(':')[0]).join(', ')}`)
         if (fudoSummary.errors.length > 0) {
           const realignment = await realignStockFromFudo(admin)
           return NextResponse.json({

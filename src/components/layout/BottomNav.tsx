@@ -29,6 +29,7 @@ import {
   Hammer,
   ScanFace,
   Sparkles,
+  Wifi,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
@@ -132,6 +133,7 @@ const SOCIO_MORE: ExpandableNavItem = {
       label: 'Administración',
       items: [
         { label: 'Fudo', href: '/admin/fudo', icon: RefreshCw, description: 'Sincronización y configuración de Fudo' },
+        { label: 'Salud de Fudo', href: '/admin/fudo/salud', icon: Wifi, description: 'Conexión, pendientes y vínculos para arreglar' },
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Datos de proveedores y condiciones' },
         { label: 'Importar recetas', href: '/admin/fudo/importar', icon: ClipboardCheck, description: 'Subir el export de Fudo para sincronizar recetas' },
         { label: 'Expedientes', href: '/expedientes', icon: FolderOpen, description: 'Seguimiento de temas administrativos' },
@@ -168,6 +170,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
       label: 'Inventario',
       items: [
         { label: 'Proveedores', href: '/proveedores', icon: Truck, description: 'Contactos y condiciones de compra' },
+        { label: 'Salud de Fudo', href: '/admin/fudo/salud', icon: Wifi, description: 'Conexión, pendientes y vínculos para arreglar' },
       ],
     },
   ],

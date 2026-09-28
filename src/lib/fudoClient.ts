@@ -22,23 +22,44 @@ const FUDO_API_SECRET = process.env.FUDO_API_SECRET ?? ''
 
 let cachedToken: string | null = null
 let tokenExpiresAt = 0
+let tokenEnCurso: Promise<string> | null = null
 
-async function getToken(): Promise<string> {
-  if (cachedToken && Date.now() / 1000 < tokenExpiresAt - 300) {
-    return cachedToken
-  }
+/** Tiempo máximo por consulta a Fudo: si no responde, se corta y se informa. */
+const FUDO_TIMEOUT_MS = 20_000
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-  // Primary: login/password via auth.fu.do/authenticate
-  if (FUDO_LOGIN && FUDO_PASSWORD) {
-    const res = await fetch(FUDO_AUTH_URL, {
+function conTiempoMaximo(ms: number, init?: RequestInit): RequestInit {
+  return { ...init, signal: init?.signal ?? AbortSignal.timeout(ms) }
+}
+
+function esTimeout(err: unknown) {
+  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+}
+
+async function postAuth(url: string, body: unknown): Promise<Response> {
+  try {
+    return await fetch(url, conTiempoMaximo(15_000, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ login: FUDO_LOGIN, password: FUDO_PASSWORD }),
-    })
+      body: JSON.stringify(body),
+    }))
+  } catch (err) {
+    if (esTimeout(err)) throw new Error('Fudo no respondió al iniciar sesión (15 s)')
+    throw err
+  }
+}
+
+async function login(): Promise<string> {
+  // Primary: login/password via auth.fu.do/authenticate
+  if (FUDO_LOGIN && FUDO_PASSWORD) {
+    let res = await postAuth(FUDO_AUTH_URL, { login: FUDO_LOGIN, password: FUDO_PASSWORD })
 
     if (res.status === 429) {
-      const retryAfter = parseInt(res.headers.get('retry-after') ?? '60')
-      throw new Error(`Fudo rate limited. Reintentar en ${retryAfter}s`)
+      // Un reintento corto; si sigue limitado, se informa
+      const retryAfter = parseInt(res.headers.get('retry-after') ?? '5') || 5
+      await esperar(Math.min(retryAfter, 10) * 1000)
+      res = await postAuth(FUDO_AUTH_URL, { login: FUDO_LOGIN, password: FUDO_PASSWORD })
+      if (res.status === 429) throw new Error(`Fudo rate limited. Reintentar en ${retryAfter}s`)
     }
 
     if (!res.ok) {
@@ -55,11 +76,7 @@ async function getToken(): Promise<string> {
 
   // Fallback: apiKey/apiSecret via old endpoint
   if (FUDO_API_KEY && FUDO_API_SECRET) {
-    const res = await fetch('https://auth.fu.do/api', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ apiKey: FUDO_API_KEY, apiSecret: FUDO_API_SECRET }),
-    })
+    const res = await postAuth('https://auth.fu.do/api', { apiKey: FUDO_API_KEY, apiSecret: FUDO_API_SECRET })
 
     if (!res.ok) {
       const body = await res.text().catch(() => '')
@@ -73,6 +90,55 @@ async function getToken(): Promise<string> {
   }
 
   throw new Error('Faltan credenciales de Fudo (FUDO_LOGIN/FUDO_PASSWORD o FUDO_API_KEY/FUDO_API_SECRET)')
+}
+
+async function getToken(): Promise<string> {
+  if (cachedToken && Date.now() / 1000 < tokenExpiresAt - 300) {
+    return cachedToken
+  }
+  // Varias consultas en paralelo comparten UN solo inicio de sesión
+  tokenEnCurso ??= login().finally(() => { tokenEnCurso = null })
+  return tokenEnCurso
+}
+
+function invalidarToken() {
+  cachedToken = null
+  tokenExpiresAt = 0
+}
+
+/**
+ * fetch a Fudo con el token puesto, tiempo máximo, UN reintento si Fudo
+ * rechaza el token (401) y hasta 3 si limita pedidos (429). Devuelve la
+ * respuesta tal cual para que cada llamador maneje sus códigos (404, etc.).
+ */
+export async function fudoHttp(url: string, init: RequestInit = {}, timeoutMs = FUDO_TIMEOUT_MS): Promise<Response> {
+  let renovado = false
+  let limitados = 0
+  while (true) {
+    const token = await getToken()
+    let res: Response
+    try {
+      res = await fetch(url, conTiempoMaximo(timeoutMs, {
+        ...init,
+        headers: { 'Accept': 'application/json', ...init.headers, 'Authorization': `Bearer ${token}` },
+      }))
+    } catch (err) {
+      if (esTimeout(err)) throw new Error(`Fudo no respondió en ${Math.round(timeoutMs / 1000)} s (${url.replace(FUDO_API_URL, '')})`)
+      throw err
+    }
+    if (res.status === 401 && !renovado) {
+      renovado = true
+      invalidarToken()
+      continue
+    }
+    if (res.status === 429 && limitados < 3) {
+      limitados++
+      const retryAfter = Math.min(parseInt(res.headers.get('retry-after') ?? '2') || 2, 15)
+      await esperar(retryAfter * 1000 * limitados)
+      continue
+    }
+    return res
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -102,33 +168,12 @@ function flattenResource(resource: JsonApiResource) {
 // Fetch with auth + auto-retry on 401
 // ---------------------------------------------------------------------------
 
-async function fudoFetch<T = unknown>(path: string, options?: RequestInit, attempt = 0): Promise<T> {
-  const token = await getToken()
-
-  const res = await fetch(`${FUDO_API_URL}${path}`, {
-    ...options,
-    headers: {
-      'Accept': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      ...options?.headers,
-    },
-  })
-
+async function fudoFetch<T = unknown>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fudoHttp(`${FUDO_API_URL}${path}`, options)
   if (!res.ok) {
-    if (res.status === 401 && cachedToken) {
-      cachedToken = null
-      tokenExpiresAt = 0
-      return fudoFetch<T>(path, options, attempt)
-    }
-    if (res.status === 429 && attempt < 2) {
-      const retryAfter = Math.min(parseInt(res.headers.get('retry-after') ?? '2') || 2, 15)
-      await new Promise((r) => setTimeout(r, retryAfter * 1000))
-      return fudoFetch<T>(path, options, attempt + 1)
-    }
     const body = await res.text().catch(() => '')
     throw new Error(`Fudo API ${res.status} on ${path}: ${body}`)
   }
-
   return res.json() as Promise<T>
 }
 

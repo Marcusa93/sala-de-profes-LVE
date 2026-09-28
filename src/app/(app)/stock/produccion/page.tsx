@@ -211,6 +211,7 @@ export default function ProduccionDashboardPage() {
       toast.success((synced !== null
         ? `Producción validada · Fudo ${synced} item${synced !== 1 ? 's' : ''}`
         : 'Producción validada') + costMsg)
+      for (const w of (json?.warnings ?? []) as string[]) if (w.includes('Fudo')) toast.info(w)
       await load()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al validar producción')

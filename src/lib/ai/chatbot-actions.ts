@@ -1775,7 +1775,9 @@ export async function executeAction(
             result.errors.push(`Producción cerrada en LVE, pero Fudo no confirmó el stock: ${fudoResult.errors.join('; ')}. Re-sincronicé LVE desde Fudo cuando fue posible; revisá la orden ${order.id}.`)
             return result
           }
-          fudoTag = fudoResult.synced > 0 ? ` (Fudo ✓ ${fudoResult.synced} items)` : ' (Fudo: sin items vinculados)'
+          fudoTag = fudoResult.encolados.length > 0
+            ? ` (Fudo ✓ ${fudoResult.synced} items; ${fudoResult.encolados.length} pendientes, se reintentan solos)`
+            : fudoResult.synced > 0 ? ` (Fudo ✓ ${fudoResult.synced} items)` : ' (Fudo: sin items vinculados)'
         } catch (err) {
           const { syncFromFudo } = await import('@/lib/fudo/stock-sync')
           await syncFromFudo(admin).catch(() => null)

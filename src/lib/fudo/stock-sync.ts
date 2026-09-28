@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { SupabaseClient } from '@supabase/supabase-js'
-import { getFudoToken } from '@/lib/fudoClient'
+import { fudoHttp } from '@/lib/fudoClient'
 import {
   createFudoSyncEvent,
   finishFudoSyncEvent,
@@ -161,15 +161,13 @@ const MOVEMENT_NEW_COLUMNS = ['production_order_id', 'fudo_synced', 'cost_per_un
 // ---------------------------------------------------------------------------
 
 export async function readFudoStock(): Promise<FudoIngredient[]> {
-  const token = await getFudoToken()
   const allIngredients: FudoIngredient[] = []
   let page = 1
   let rateLimitRetries = 0
 
-  while (page <= 10) {
-    const res = await fetch(
+  while (page <= 50) {
+    const res = await fudoHttp(
       `https://api.fu.do/v1alpha1/ingredients?include=ingredientCategory,unit&page[size]=200&page[number]=${page}`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
     )
 
     if (!res.ok) {
@@ -222,10 +220,7 @@ export async function readFudoStock(): Promise<FudoIngredient[]> {
 
 /** Stock actual de UN ingrediente en Fudo (para escrituras por delta). */
 export async function readFudoIngredientStock(fudoIngredientId: string): Promise<number | null> {
-  const token = await getFudoToken()
-  const res = await fetch(`https://api.fu.do/v1alpha1/ingredients/${fudoIngredientId}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-  })
+  const res = await fudoHttp(`https://api.fu.do/v1alpha1/ingredients/${fudoIngredientId}`)
   if (!res.ok) throw new Error(`Fudo ${res.status} al leer ingrediente #${fudoIngredientId}`)
   const data = await res.json()
   return asNullableNumber(data.data?.attributes?.stock)
@@ -233,10 +228,7 @@ export async function readFudoIngredientStock(fudoIngredientId: string): Promise
 
 /** Stock actual de UN producto en Fudo (para escrituras por delta). */
 export async function readFudoProductStock(fudoProductId: string): Promise<number | null> {
-  const token = await getFudoToken()
-  const res = await fetch(`https://api.fu.do/v1alpha1/products/${fudoProductId}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-  })
+  const res = await fudoHttp(`https://api.fu.do/v1alpha1/products/${fudoProductId}`)
   if (!res.ok) throw new Error(`Fudo ${res.status} al leer producto #${fudoProductId}`)
   const data = await res.json()
   return asNullableNumber(data.data?.attributes?.stock)
@@ -272,12 +264,9 @@ export async function writeFudoStock(
     : null
 
   try {
-    const token = await getFudoToken()
-
-    const res = await fetch(`https://api.fu.do/v1alpha1/ingredients/${fudoIngredientId}`, {
+    const res = await fudoHttp(`https://api.fu.do/v1alpha1/ingredients/${fudoIngredientId}`, {
       method: 'PATCH',
       headers: {
-        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -517,7 +506,9 @@ export async function writeFudoStockDelta(
     await recordFudoIncident(context.admin, {
       source: 'write_stock',
       code: 'fudo_read_before_write_failed',
-      severity: 'critical',
+      // 'high': el movimiento queda en la cola de reintentos; una lectura
+      // fallida puntual no debe bloquear el conteo de todo el stock.
+      severity: 'high',
       entityType: context.entityType ?? 'stock_item',
       entityId: context.entityId ?? context.stockItemId,
       stockItemId: context.stockItemId,
@@ -656,9 +647,13 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       .neq('fudo_skip', true)
   }
   const stockItems = (stockItemsRes.data ?? null) as LveStockRow[] | null
+  const { deltasPendientes } = await import('@/lib/fudo/reintentos')
+  const pendientesFudo = await deltasPendientes(admin).catch(() => new Map<string, number>())
 
   if (!stockItems) {
-    await finishFudoSyncEvent(admin, eventId, 'success', {
+    // No se pudo leer LVE: no es un éxito (antes quedaba marcado como tal)
+    await finishFudoSyncEvent(admin, eventId, stockItemsRes.error ? 'failed' : 'success', {
+      errorMessage: stockItemsRes.error?.message,
       responsePayload: { synced: result.synced, total: result.total, errors: result.errors },
     })
     return result
@@ -785,8 +780,12 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
     const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
     let hasChanges = false
 
-    if (fudoQty !== null && Math.abs(si.current_qty - fudoQty) >= 0.01) {
-      update.current_qty = fudoQty
+    // Lo que todavía está en la cola hacia Fudo se suma: si no, el espejo
+    // borraría de LVE una producción/recepción que Fudo aún no recibió.
+    const pendiente = pendientesFudo.get(String(si.id)) ?? 0
+    const objetivo = fudoQty !== null ? Math.round((fudoQty + pendiente) * 1000) / 1000 : null
+    if (objetivo !== null && Math.abs(si.current_qty - objetivo) >= 0.01) {
+      update.current_qty = objetivo
       hasChanges = true
     }
 
@@ -969,7 +968,7 @@ export async function syncToFudo(
   newQty: number,
   userId?: string,
   options: StockWriteOptions = {},
-): Promise<{ success: boolean; fudoSynced: boolean; error?: string; movementId?: string | null }> {
+): Promise<{ success: boolean; fudoSynced: boolean; error?: string; movementId?: string | null; fudoPendiente?: boolean }> {
   // 1. Get the stock_item to find fudo link
   const { data: item } = await admin
     .from('stock_items')
@@ -1017,6 +1016,8 @@ export async function syncToFudo(
   // 2. Fudo-linked stock must write to Fudo first. If Fudo fails, local stock stays unchanged.
   //    Conteos y ajustes → absoluto. Merma y recepción → delta sobre Fudo actual.
   let finalQty = newQty
+  // Movimiento (merma/recepción) que Fudo no aceptó: queda en LVE y en la cola
+  let pendienteFudo: { delta: number; error: string } | null = null
   if (fudoLink && !skipFudo) {
     const isDeltaReason = writeReason === 'waste' || writeReason === 'reception'
     const baseContext = {
@@ -1063,7 +1064,12 @@ export async function syncToFudo(
       })
     }
 
-    if (!fudoResult.success) {
+    if (!fudoResult.success && isDeltaReason) {
+      // La mercadería llegó (o se tiró) de verdad: se registra en LVE y el
+      // movimiento se reintenta solo hacia Fudo (ver lib/fudo/reintentos.ts).
+      console.error(`[FudoSync] Write failed for ${item.name} (queda en cola): ${fudoResult.error}`)
+      pendienteFudo = { delta: effectiveDelta, error: fudoResult.error ?? 'Fudo no aceptó el movimiento' }
+    } else if (!fudoResult.success) {
       console.error(`[FudoSync] Write failed for ${item.name}: ${fudoResult.error}`)
       await admin.from('audit_trail').insert({
         user_id: userId ?? null,
@@ -1146,10 +1152,33 @@ export async function syncToFudo(
       reason: writeReason,
       note,
       created_by: userId ?? null,
-      fudo_synced: Boolean(fudoLink && !skipFudo),
+      fudo_synced: Boolean(fudoLink && !skipFudo && !pendienteFudo),
       cost_per_unit: options.costPerUnit ?? item.cost_per_unit ?? null,
     })
     : null
+
+  if (pendienteFudo) {
+    const { encolarDeltaStock } = await import('@/lib/fudo/reintentos')
+    await encolarDeltaStock(admin, {
+      stockItemId,
+      delta: pendienteFudo.delta,
+      origen: writeReason === 'waste' ? 'merma' : 'recepcion',
+      error: pendienteFudo.error,
+      nota: note,
+      movimientoIds: movementId ? [movementId] : [],
+      userId: userId ?? null,
+    })
+    await admin.from('audit_trail').insert({
+      user_id: userId ?? null,
+      action: 'fudo_sync_pendiente',
+      module: 'stock',
+      entity_type: 'stock_item',
+      entity_id: stockItemId,
+      description: `${item.name}: ${item.current_qty} → ${finalQty} en LVE; Fudo falló y quedó en cola de reintentos (${pendienteFudo.error})`,
+      metadata: { fudo_id: fudoLink, delta: pendienteFudo.delta, reason: writeReason, note, movement_id: movementId },
+    })
+    return { success: true, fudoSynced: false, fudoPendiente: true, movementId }
+  }
 
   if (fudoLink && !skipFudo) {
     await admin.from('audit_trail').insert({
@@ -1209,8 +1238,10 @@ export async function syncProductionToFudo(
   admin: SupabaseClient,
   movements: { stock_item_id: number | string; change: number; movement_id?: string | null }[],
   userId?: string,
-): Promise<{ synced: number; errors: string[] }> {
-  const result = { synced: 0, errors: [] as string[] }
+): Promise<{ synced: number; errors: string[]; encolados: string[] }> {
+  // errors → no se puede mandar nunca (sin vínculo); encolados → Fudo falló y
+  // se reintenta solo. En ambos casos la producción queda registrada en LVE.
+  const result = { synced: 0, errors: [] as string[], encolados: [] as string[] }
 
   // Delta neto por item (un insumo puede aparecer más de una vez)
   const deltaByItem = new Map<string, number>()
@@ -1283,14 +1314,23 @@ export async function syncProductionToFudo(
         },
       })
     } else {
-      result.errors.push(`${item.name}: ${fudoResult.error}`)
+      result.encolados.push(`${item.name}: ${fudoResult.error}`)
+      const { encolarDeltaStock } = await import('@/lib/fudo/reintentos')
+      await encolarDeltaStock(admin, {
+        stockItemId: itemId,
+        delta,
+        origen: 'produccion',
+        error: fudoResult.error ?? 'Fudo no aceptó el movimiento',
+        movimientoIds: movementIdsByItem.get(itemId) ?? [],
+        userId: userId ?? null,
+      })
       await admin.from('audit_trail').insert({
         user_id: userId ?? null,
         action: 'fudo_sync_error',
         module: 'stock',
         entity_type: 'stock_item',
         entity_id: String(itemId),
-        description: `Error sync producción ${item.name} con Fudo: ${fudoResult.error}`,
+        description: `Producción de ${item.name} no entró a Fudo (queda en cola de reintentos): ${fudoResult.error}`,
         metadata: {
           fudo_ingredient_id: item.fudo_ingredient_id,
           fudo_product_id: item.fudo_product_id,

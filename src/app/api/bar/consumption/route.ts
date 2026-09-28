@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { fudoHttp } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
 // GET /api/bar/consumption
@@ -29,25 +30,16 @@ export async function GET() {
 
     // 2. Get today's sales from Fudo
     let todaySales: { productId: string; qty: number }[] = []
+    let fudoError: string | null = null
     try {
-      const authRes = await fetch('https://auth.fu.do/authenticate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          login: process.env.FUDO_LOGIN,
-          password: process.env.FUDO_PASSWORD,
-        }),
-      })
-      const { token } = await authRes.json()
-
       // Fetch sales with items
       let allItems: { productId: string; qty: number }[] = []
       let page = 1
       while (page <= 5) {
-        const res = await fetch(
+        const res = await fudoHttp(
           `https://api.fu.do/v1alpha1/sales?include=items&sort=-createdAt&page[size]=100&page[number]=${page}`,
-          { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
         )
+        if (!res.ok) throw new Error(`Fudo ${res.status}`)
         const d = await res.json()
         const sales = d.data || []
         const included = d.included || []
@@ -91,7 +83,9 @@ export async function GET() {
       todaySales = allItems
     } catch (err) {
       console.error('[bar/consumption] Fudo error:', err)
-      // Continue with empty sales — will show 0 consumption
+      // Se sigue sin ventas, pero avisando que Fudo no respondió (antes
+      // mostraba "0 consumo" como si no se hubiera vendido nada)
+      fudoError = err instanceof Error ? err.message : 'Fudo no respondió'
     }
 
     // 3. Calculate consumption per bar_stock_item
@@ -162,6 +156,7 @@ export async function GET() {
       consumption: [...withConsumption, ...withoutConsumption],
       totalProducts: todaySales.length,
       mappedProducts: new Set(todaySales.filter(s => recipes.some(r => r.fudo_product_id === s.productId)).map(s => s.productId)).size,
+      fudo_error: fudoError,
     })
   } catch (error) {
     console.error('[bar/consumption]', error)

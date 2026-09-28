@@ -75,6 +75,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio', 'encargado', 'chef'],
     target_user_ids: [],
   },
+  fudo_problema: {
+    label: 'Problemas con Fudo',
+    description: 'Cuando Fudo no responde hace más de 30 minutos (y cuando vuelve), o cuando algo lleva una hora sin poder entrar a Fudo.',
+    enabled: true,
+    target_roles: ['socio'],
+    target_user_ids: [],
+  },
   conteo_diario_pendiente: {
     label: 'Falta el conteo diario de elaborados',
     description: 'A las 23 hs, si todavía no se contó ningún elaborado en el día.',

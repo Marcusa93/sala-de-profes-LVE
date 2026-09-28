@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { format, subDays, parseISO, differenceInMinutes } from 'date-fns'
 import { es } from 'date-fns/locale/es'
-import { getFudoToken } from '@/lib/fudoClient'
+import { fudoHttp } from '@/lib/fudoClient'
 
 // ---------------------------------------------------------------------------
 // GET /api/salon/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -44,7 +44,6 @@ export async function GET(request: NextRequest) {
     }
 
     // 2. Get Fudo sales with items for the period
-    const token = await getFudoToken()
     const saleIds = [...new Set(servedItems.map(s => s.fudo_sale_id))]
 
     // Fetch sales in batches
@@ -54,9 +53,8 @@ export async function GET(request: NextRequest) {
       const batch = saleIds.slice(i, i + 10)
       for (const saleId of batch) {
         try {
-          const res = await fetch(
+          const res = await fudoHttp(
             `https://api.fu.do/v1alpha1/sales/${saleId}?include=items.product`,
-            { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
           )
           if (!res.ok) continue
           const data = await res.json()

@@ -794,6 +794,7 @@ export default function NuevaProduccionPage() {
           ? `Producción validada · Fudo ${synced} item${synced !== 1 ? 's' : ''}${costo}`
           : `Producción validada y aplicada${costo}`)
       }
+      for (const w of (json?.warnings ?? []) as string[]) if (w.includes('Fudo')) toast.info(w)
 
       // Success — navigate to validation queue
       router.push('/stock/produccion')

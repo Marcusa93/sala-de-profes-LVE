@@ -193,7 +193,7 @@ export async function resolveMissingFudoIncidents(
 ) {
   const { data, error } = await admin
     .from('fudo_sync_incidents')
-    .select('id, code, entity_type, entity_id, stock_item_id, fudo_type, fudo_id')
+    .select('id, incident_key, source, code, entity_type, entity_id, stock_item_id, fudo_type, fudo_id')
     .eq('source', source)
     .eq('status', 'open')
 
@@ -202,8 +202,10 @@ export async function resolveMissingFudoIncidents(
     return
   }
 
+  // Comparar por la clave guardada. Antes se recalculaba sin `source`, nunca
+  // coincidía y la auditoría cerraba TODOS sus incidentes al terminar.
   const staleIds = (data ?? [])
-    .filter((row) => !activeKeys.has(incidentKey(row)))
+    .filter((row) => !activeKeys.has(row.incident_key ?? incidentKey(row)))
     .map((row) => row.id)
 
   if (staleIds.length === 0) return

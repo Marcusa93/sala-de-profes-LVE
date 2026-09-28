@@ -97,7 +97,13 @@ export async function PATCH(
             })
             fudoSynced = true
           } catch (fudoErr) {
-            console.warn('[PATCH receipt] Fudo payment post failed:', fudoErr instanceof Error ? fudoErr.message : fudoErr)
+            // Antes solo quedaba en el log: ahora se reintenta solo hasta que entre
+            console.warn('[PATCH receipt] Fudo payment post failed (queda en cola):', fudoErr instanceof Error ? fudoErr.message : fudoErr)
+            const { encolarPagoGasto } = await import('@/lib/fudo/reintentos')
+            await encolarPagoGasto(admin, {
+              fudoExpenseId, monto: receipt.cost_total, receiptId,
+              error: fudoErr instanceof Error ? fudoErr.message : 'Fudo no aceptó el pago', userId: user.id,
+            })
           }
         }
       }
@@ -118,6 +124,9 @@ export async function PATCH(
         .update({ payment_status: 'a_pagar', paid_at: null, paid_by: null })
         .eq('id', receiptId)
       if (upErr) throw upErr
+      // Si el pago estaba esperando para entrar a Fudo, ya no hay que mandarlo
+      const { cancelarPagoPendiente } = await import('@/lib/fudo/reintentos')
+      await cancelarPagoPendiente(admin, receiptId)
 
       let fudoPaymentLinked = false
       if (receipt.order_id && receipt.order_source) {
@@ -222,10 +231,15 @@ export async function DELETE(
           deltaOverride: -receipt.qty,
           note: `Anulación de recibo #${receiptId}: -${receipt.qty} ${si.unit}`,
         })
-        // No abortamos si Fudo falla — registramos y seguimos con la eliminación
+        // Si Fudo falla, la reversión queda en la cola de reintentos (no se pierde)
+        if (!write.success) {
+          // Antes se borraba igual y el stock quedaba mal en los dos lados sin
+          // registro para corregirlo. Ahora no se borra hasta poder revertir.
+          console.warn('[DELETE receipt] Stock reversal failed:', write.error)
+          return NextResponse.json({ error: `No se pudo revertir el stock (${write.error ?? 'error'}). El recibo NO se borró.` }, { status: 409 })
+        }
         stockReversed = true
         fudoReversed = write.fudoSynced
-        if (!write.success) console.warn('[DELETE receipt] Stock reversal failed:', write.error)
       }
     }
 

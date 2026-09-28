@@ -1137,6 +1137,110 @@ export type Database = {
           },
         ]
       }
+      fudo_reintentos: {
+        Row: {
+          id: string
+          tipo: string
+          stock_item_id: string | null
+          delta: number | null
+          payload: Json
+          origen: string
+          nota: string | null
+          stock_movement_ids: string[]
+          estado: string
+          intentos: number
+          ultimo_error: string | null
+          proximo_intento_at: string
+          alertado_at: string | null
+          created_by: string | null
+          created_at: string
+          updated_at: string
+          hecho_at: string | null
+        }
+        Insert: {
+          id?: string
+          tipo: string
+          stock_item_id?: string | null
+          delta?: number | null
+          payload?: Json
+          origen: string
+          nota?: string | null
+          stock_movement_ids?: string[]
+          estado?: string
+          intentos?: number
+          ultimo_error?: string | null
+          proximo_intento_at?: string
+          alertado_at?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+          hecho_at?: string | null
+        }
+        Update: {
+          id?: string
+          tipo?: string
+          stock_item_id?: string | null
+          delta?: number | null
+          payload?: Json
+          origen?: string
+          nota?: string | null
+          stock_movement_ids?: string[]
+          estado?: string
+          intentos?: number
+          ultimo_error?: string | null
+          proximo_intento_at?: string
+          alertado_at?: string | null
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+          hecho_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fudo_reintentos_stock_item_id_fkey"
+            columns: ["stock_item_id"]
+            isOneToOne: false
+            referencedRelation: "stock_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fudo_salud: {
+        Row: {
+          id: number
+          ultimo_ok_at: string | null
+          ultimo_error_at: string | null
+          ultimo_error: string | null
+          fallas_seguidas: number
+          caida_avisada_at: string | null
+          ultima_lectura_stock_at: string | null
+          ultimo_menu_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          ultimo_ok_at?: string | null
+          ultimo_error_at?: string | null
+          ultimo_error?: string | null
+          fallas_seguidas?: number
+          caida_avisada_at?: string | null
+          ultima_lectura_stock_at?: string | null
+          ultimo_menu_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          ultimo_ok_at?: string | null
+          ultimo_error_at?: string | null
+          ultimo_error?: string | null
+          fallas_seguidas?: number
+          caida_avisada_at?: string | null
+          ultima_lectura_stock_at?: string | null
+          ultimo_menu_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       fudo_sale_subitems: {
         Row: {
           created_at: string

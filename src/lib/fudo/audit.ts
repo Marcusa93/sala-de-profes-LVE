@@ -315,9 +315,17 @@ export async function runFudoAudit(admin: SupabaseClient): Promise<FudoAuditRepo
       .filter((id): id is string => Boolean(id)),
   )
 
+  // Los platos del menú (Cortado, Wraps…) tienen control de stock en Fudo por
+  // su receta: ya están en LVE como menu_items, no son insumos sin vincular.
+  const menuProductIds = new Set(
+    menuRows
+      .map((item) => item.fudo_product_id)
+      .filter((id): id is string => Boolean(id))
+      .map(String),
+  )
   const missingStockControlledProducts = fudoProducts
     .filter((product) => product.active && product.stockControl === true)
-    .filter((product) => !appProductIds.has(String(product.id)))
+    .filter((product) => !appProductIds.has(String(product.id)) && !menuProductIds.has(String(product.id)))
     .map((product) => ({
       id: String(product.id),
       name: product.name ?? null,

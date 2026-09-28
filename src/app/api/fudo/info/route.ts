@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import { fudo } from '@/lib/fudoClient'
+import { requireRole } from '@/lib/supabase/require-role'
 
 export async function GET() {
+  // Mesas, salones y medios de pago de Fudo: solo socios y encargados
+  const auth = await requireRole(['socio', 'encargado'])
+  if (auth.response) return auth.response
   try {
     const [rooms, tables, paymentMethods] = await Promise.all([
       fudo.getRooms(),
