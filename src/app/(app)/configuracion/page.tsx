@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RoleBadge } from '@/components/ui/RoleBadge'
-import { isSocio } from '@/lib/roles'
+import { isSocio, isManagerOrAbove } from '@/lib/roles'
 import { PushDeviceToggle } from '@/components/push/PushDeviceToggle'
 
 // ---------------------------------------------------------------------------
@@ -348,7 +348,7 @@ export default function ConfiguracionPage() {
       </form>
 
       {/* Admin section — solo socio */}
-      {isSocio(profile?.role) && (
+      {isManagerOrAbove(profile?.role) && (
         <div className="card-elevated-lg overflow-hidden">
           <div className="px-4 pt-4 pb-2">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-[#a39e97]">Administración</h2>

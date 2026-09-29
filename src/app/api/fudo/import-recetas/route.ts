@@ -147,8 +147,8 @@ export async function POST(request: NextRequest) {
     .eq('id', user.id)
     .single()
 
-  if (!profile || profile.role !== 'socio') {
-    return NextResponse.json({ success: false, error: 'Sólo un socio puede importar recetas' }, { status: 403 })
+  if (!profile || (profile.role !== 'socio' && profile.role !== 'encargado')) {
+    return NextResponse.json({ success: false, error: 'Solo encargados pueden importar recetas' }, { status: 403 })
   }
 
   const userName = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'Socio'
