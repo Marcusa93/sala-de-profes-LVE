@@ -26,13 +26,20 @@ import {
 import { ROLE_OPTIONS } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
 
+const ENCARGADO_ROLES: AppRole[] = ['chef', 'cocina', 'barista', 'runner', 'bacha']
+
 type CreateUserDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: () => void
+  callerRole?: AppRole | null
 }
 
-export function CreateUserDialog({ open, onOpenChange, onCreated }: CreateUserDialogProps) {
+export function CreateUserDialog({ open, onOpenChange, onCreated, callerRole }: CreateUserDialogProps) {
+  const availableRoles = callerRole === 'encargado'
+    ? ROLE_OPTIONS.filter((o) => ENCARGADO_ROLES.includes(o.value))
+    : ROLE_OPTIONS
+
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
     email: '',
@@ -167,7 +174,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: CreateUserDi
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ROLE_OPTIONS.map((opt) => (
+                  {availableRoles.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>

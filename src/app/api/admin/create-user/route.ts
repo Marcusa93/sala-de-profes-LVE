@@ -21,6 +21,8 @@ import type { AppRole } from '@/types/database'
 // ---------------------------------------------------------------------------
 
 const VALID_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha']
+// Encargado puede crear empleados, no puede crear otro encargado ni socio
+const ENCARGADO_ALLOWED_ROLES: AppRole[] = ['chef', 'cocina', 'barista', 'runner', 'bacha']
 
 export async function POST(request: NextRequest) {
   try {
@@ -74,6 +76,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: `Rol inválido. Debe ser uno de: ${VALID_ROLES.join(', ')}` },
         { status: 400 },
+      )
+    }
+
+    if (callerProfile.role === 'encargado' && !ENCARGADO_ALLOWED_ROLES.includes(role)) {
+      return NextResponse.json(
+        { error: 'Los encargados solo pueden crear empleados (cocina, chef, barista, runner, bachero)' },
+        { status: 403 },
       )
     }
 

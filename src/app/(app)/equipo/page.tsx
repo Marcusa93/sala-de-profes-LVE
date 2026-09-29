@@ -601,6 +601,7 @@ export default function EquipoPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={() => mutateProfiles()}
+        callerRole={profile?.role as import('@/types/database').AppRole | undefined}
       />
       <EditUserDialog
         open={!!editUser}
