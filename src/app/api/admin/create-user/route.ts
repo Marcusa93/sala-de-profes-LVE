@@ -20,7 +20,7 @@ import type { AppRole } from '@/types/database'
 // }
 // ---------------------------------------------------------------------------
 
-const VALID_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner']
+const VALID_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha']
 
 export async function POST(request: NextRequest) {
   try {

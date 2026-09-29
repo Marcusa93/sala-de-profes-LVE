@@ -79,7 +79,7 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     label: 'Problemas con Fudo',
     description: 'Cuando Fudo no responde hace más de 30 minutos (y cuando vuelve), o cuando algo lleva una hora sin poder entrar a Fudo.',
     enabled: true,
-    target_roles: ['socio'],
+    target_roles: ['socio', 'encargado'],
     target_user_ids: [],
   },
   conteo_diario_pendiente: {
