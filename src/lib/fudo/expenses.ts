@@ -201,3 +201,63 @@ export async function fetchFudoExpensesConMeta(
     rawCount,
   }
 }
+
+/**
+ * Crea un gasto en Fudo al confirmar la llegada de un pedido en modo lve_stock.
+ * Devuelve { id, amount } si tuvo éxito, null si Fudo falla (no corta el flujo
+ * de recepción — el stock ya fue actualizado).
+ */
+export async function createFudoExpenseForReceipt(params: {
+  fudoProviderId: string
+  fudoIngredientId?: string | null
+  qty: number
+  costTotal: number
+  costPerUnit: number | null
+  receivedDate: string
+}): Promise<{ id: string; amount: number } | null> {
+  const { fudoProviderId, fudoIngredientId, qty, costTotal, costPerUnit, receivedDate } = params
+  try {
+    const expRes = await fudoFetch<{ data?: { id?: string } }>('/expenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: {
+          type: 'Expense',
+          attributes: { amount: costTotal, date: receivedDate },
+          relationships: { provider: { data: { type: 'Provider', id: fudoProviderId } } },
+        },
+      }),
+    })
+    const expenseId = expRes?.data?.id
+    if (!expenseId) return null
+
+    // Ítem del ingrediente (si está vinculado)
+    if (fudoIngredientId && costPerUnit != null && qty > 0) {
+      try {
+        await fudoFetch('/expense-items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            data: {
+              type: 'ExpenseItem',
+              attributes: { price: costPerUnit, quantity: qty },
+              relationships: {
+                expense: { data: { type: 'Expense', id: expenseId } },
+                ingredient: { data: { type: 'Ingredient', id: fudoIngredientId } },
+              },
+            },
+          }),
+        })
+      } catch (itemErr) {
+        console.warn('[createFudoExpenseForReceipt] expense-item error:', itemErr instanceof Error ? itemErr.message : itemErr)
+      }
+    }
+
+    // Invalidar cache para que conciliación vea el nuevo gasto
+    cache = null
+    return { id: expenseId, amount: costTotal }
+  } catch (err) {
+    console.warn('[createFudoExpenseForReceipt] error:', err instanceof Error ? err.message : err)
+    return null
+  }
+}

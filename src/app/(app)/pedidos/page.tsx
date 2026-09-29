@@ -7,7 +7,7 @@ import { es } from 'date-fns/locale/es'
 import Link from 'next/link'
 import {
   ShoppingCart, Truck, Check, X, MessageCircle, Plus, Loader2, Package, AlertTriangle,
-  CalendarClock, ChevronDown, ChevronUp, Trash2, Search, Receipt, Wallet, ChevronRight, Pencil,
+  CalendarClock, ChevronDown, ChevronUp, Trash2, Search, Receipt, Wallet, ChevronRight, Pencil, Download,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -836,6 +836,15 @@ function PedidosContent() {
               </div>
             )}
 
+            <div className="mb-2 flex justify-end">
+              <a
+                href={`/api/stock/receipts/export?from=${new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10)}&to=${new Date().toISOString().slice(0, 10)}`}
+                download
+                className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-[12px] font-semibold text-[#4a90d9] ring-1 ring-[#ebe6df] active:scale-[0.98]"
+              >
+                <Download className="size-3.5" /> Exportar
+              </a>
+            </div>
             {receipts.length === 0 ? (
               <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-10 text-center ring-1 ring-[#ebe6df]">
                 <Wallet className="size-8 text-[#ebe6df]" />

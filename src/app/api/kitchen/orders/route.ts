@@ -512,6 +512,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
 
   let stockUpdated = false
   let fudoSynced = false
+  let lveExpense: { id: string; amount: number } | null = null
   if (mode === 'lve_stock') {
     // Manda lo que eligió la persona en el diálogo: puede corregir el
     // insumo pre-vinculado del pedido (si no, la entrada caía en el item
@@ -525,7 +526,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     }
     const { data: si } = await admin
       .from('stock_items')
-      .select('id, name, unit, current_qty, cost_per_unit, supplier_id')
+      .select('id, name, unit, current_qty, cost_per_unit, supplier_id, fudo_ingredient_id')
       .eq('id', stockItemId)
       .single()
     if (!si) return respuesta({ success: false, error: 'Insumo no encontrado' }, { status: 404 })
@@ -578,6 +579,27 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
       ;({ error: lveReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
     }
     if (lveReceiptErr) console.warn('[confirm_arrival] lve_stock receipt no registrado:', lveReceiptErr.message)
+
+    // Crear gasto en Fudo si el proveedor y el monto están disponibles
+    const effectiveSupplierId = si.supplier_id ?? (order as { supplier_id?: string | null }).supplier_id ?? null
+    if (totalNum != null && effectiveSupplierId) {
+      const { data: suppRow } = await admin
+        .from('suppliers')
+        .select('fudo_provider_id')
+        .eq('id', effectiveSupplierId)
+        .single()
+      if (suppRow?.fudo_provider_id) {
+        const { createFudoExpenseForReceipt } = await import('@/lib/fudo/expenses')
+        lveExpense = await createFudoExpenseForReceipt({
+          fudoProviderId: suppRow.fudo_provider_id,
+          fudoIngredientId: si.fudo_ingredient_id ?? null,
+          qty,
+          costTotal: totalNum,
+          costPerUnit,
+          receivedDate,
+        })
+      }
+    }
 
     // Vencimiento informado → lote para el radar de vencimientos
     if (expiresAt) {
@@ -700,7 +722,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     orderId,
     source,
     userId: user.id,
-    expense: mode === 'fudo_expense' ? (expense ?? null) : null,
+    expense: mode === 'fudo_expense' ? (expense ?? null) : mode === 'lve_stock' ? (lveExpense ?? null) : null,
     mode,
     note: note ?? null,
     receivedQty: receivedQty ?? null,
