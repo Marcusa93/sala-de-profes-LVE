@@ -180,10 +180,10 @@ export default function ConfiguracionPage() {
 
   function handleLogout() {
     setLoggingOut(true)
+    // A /login recién con la sesión cerrada (si no, el middleware devuelve al inicio)
     void signOutBrowserSession().finally(() => {
       window.location.href = '/login'
     })
-    setTimeout(() => { window.location.href = '/login' }, 1500)
   }
 
   // -------------------------------------------------------------------------
