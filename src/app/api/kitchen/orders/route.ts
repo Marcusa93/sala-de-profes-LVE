@@ -568,17 +568,19 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
       received_by: user.id,
       received_date: receivedDate,
     }
-    let { error: lveReceiptErr } = await admin.from('stock_receipts').insert({
+    let lveReceiptId: number | null = null
+    let { data: receiptInserted, error: lveReceiptErr } = await admin.from('stock_receipts').insert({
       ...receiptBase,
       payment_status: paymentStatus,
       paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
       paid_by: paymentStatus === 'pagado' ? user.id : null,
       payment_method: paymentMethod ?? null,
-    })
+    }).select('id').single()
     if (lveReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(lveReceiptErr.message)) {
-      ;({ error: lveReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
+      ;({ data: receiptInserted, error: lveReceiptErr } = await admin.from('stock_receipts').insert(receiptBase).select('id').single())
     }
     if (lveReceiptErr) console.warn('[confirm_arrival] lve_stock receipt no registrado:', lveReceiptErr.message)
+    lveReceiptId = (receiptInserted as { id?: number } | null)?.id ?? null
 
     // Crear gasto en Fudo si el proveedor y el monto están disponibles.
     // Usa receiptBase.cost_total que ya tiene el fallback unitCost × qty,
@@ -601,6 +603,30 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
           costPerUnit,
           receivedDate,
         })
+      }
+    }
+
+    // Si el gasto se creó en Fudo y el pago fue de contado, imputar el payment
+    if (lveExpense && paymentStatus === 'pagado') {
+      const { fudoFetch } = await import('@/lib/fudoClient')
+      try {
+        await fudoFetch(`/expenses/${lveExpense.id}/payments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: lveExpense.amount, canceled: false } } }),
+        })
+      } catch (payErr) {
+        console.warn('[confirm_arrival] Fudo payment post failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
+        if (lveReceiptId) {
+          const { encolarPagoGasto } = await import('@/lib/fudo/reintentos')
+          await encolarPagoGasto(admin, {
+            fudoExpenseId: lveExpense.id,
+            monto: lveExpense.amount,
+            receiptId: lveReceiptId,
+            error: payErr instanceof Error ? payErr.message : 'Fudo no aceptó el pago',
+            userId: user.id,
+          })
+        }
       }
     }
 
