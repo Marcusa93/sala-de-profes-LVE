@@ -95,7 +95,9 @@ export function CreateUserDialog({ open, onOpenChange, onCreated, callerRole }: 
         throw new Error(data.error || 'Error al crear usuario')
       }
 
-      toast.success(`Usuario ${form.firstName} ${form.lastName} creado`)
+      toast.success(data.reactivated
+        ? `${form.firstName} ${form.lastName} ya tenía cuenta desactivada: quedó reactivado con la contraseña nueva`
+        : `Usuario ${form.firstName} ${form.lastName} creado`)
       resetForm()
       onOpenChange(false)
       onCreated()

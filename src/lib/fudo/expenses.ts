@@ -231,8 +231,12 @@ export async function createFudoExpenseForReceipt(params: {
     const expenseId = expRes?.data?.id
     if (!expenseId) return null
 
-    // Ítem del ingrediente (si está vinculado)
-    if (fudoIngredientId && costPerUnit != null && qty > 0) {
+    // Ítem del ingrediente: DESACTIVADO. En Fudo, un gasto con insumo suma
+    // stock; «Llegó» ya sumó ese stock (delta en Fudo), así que agregarlo
+    // acá contaría la compra dos veces. El gasto queda con monto y proveedor.
+    // Para activarlo hay que sacar primero la suma de stock de «Llegó».
+    const AGREGAR_INSUMO_AL_GASTO = false
+    if (AGREGAR_INSUMO_AL_GASTO && fudoIngredientId && costPerUnit != null && qty > 0) {
       try {
         await fudoFetch('/expense-items', {
           method: 'POST',
