@@ -580,9 +580,12 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     }
     if (lveReceiptErr) console.warn('[confirm_arrival] lve_stock receipt no registrado:', lveReceiptErr.message)
 
-    // Crear gasto en Fudo si el proveedor y el monto están disponibles
+    // Crear gasto en Fudo si el proveedor y el monto están disponibles.
+    // Usa receiptBase.cost_total que ya tiene el fallback unitCost × qty,
+    // por si el encargado cargó solo el precio unitario y no el total.
     const effectiveSupplierId = si.supplier_id ?? (order as { supplier_id?: string | null }).supplier_id ?? null
-    if (totalNum != null && effectiveSupplierId) {
+    const receiptCostTotal = receiptBase.cost_total
+    if (receiptCostTotal != null && receiptCostTotal > 0 && effectiveSupplierId) {
       const { data: suppRow } = await admin
         .from('suppliers')
         .select('fudo_provider_id')
@@ -594,7 +597,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
           fudoProviderId: suppRow.fudo_provider_id,
           fudoIngredientId: si.fudo_ingredient_id ?? null,
           qty,
-          costTotal: totalNum,
+          costTotal: receiptCostTotal,
           costPerUnit,
           receivedDate,
         })
