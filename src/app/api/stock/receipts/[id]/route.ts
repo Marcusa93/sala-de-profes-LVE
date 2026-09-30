@@ -90,10 +90,12 @@ export async function PATCH(
         const fudoExpenseId = (order as { fudo_expense_id?: string | null } | null)?.fudo_expense_id ?? null
         if (fudoExpenseId) {
           try {
-            await fudoFetch(`/expenses/${fudoExpenseId}/payments`, {
+            await fudoFetch('/payments', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: receipt.cost_total, canceled: false } } }),
+              body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: receipt.cost_total },
+                relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
+                  expense: { data: { type: 'Expense', id: fudoExpenseId } } } } }),
             })
             fudoSynced = true
           } catch (fudoErr) {

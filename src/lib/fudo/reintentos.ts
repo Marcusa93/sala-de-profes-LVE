@@ -110,10 +110,12 @@ async function reintentarUno(admin: SupabaseClient, r: Reintento): Promise<{ ok:
     const { fudo_expense_id, monto } = r.payload as { fudo_expense_id?: string; monto?: number }
     if (!fudo_expense_id || !monto) return { ok: false, descartar: 'Datos del pago incompletos' }
     try {
-      await fudoFetch(`/expenses/${fudo_expense_id}/payments`, {
+      await fudoFetch('/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: monto, canceled: false } } }),
+        body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: monto },
+          relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
+            expense: { data: { type: 'Expense', id: fudo_expense_id } } } } }),
       })
       return { ok: true }
     } catch (err) {

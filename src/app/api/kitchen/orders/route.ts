@@ -610,10 +610,12 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     if (lveExpense && paymentStatus === 'pagado') {
       const { fudoFetch } = await import('@/lib/fudoClient')
       try {
-        await fudoFetch(`/expenses/${lveExpense.id}/payments`, {
+        await fudoFetch('/payments', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: lveExpense.amount, canceled: false } } }),
+          body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: lveExpense.amount },
+            relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
+              expense: { data: { type: 'Expense', id: lveExpense.id } } } } }),
         })
       } catch (payErr) {
         console.warn('[confirm_arrival] Fudo payment post failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
