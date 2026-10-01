@@ -19,6 +19,7 @@ import {
   Pencil,
   Loader2,
   Search,
+  UserCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Link from 'next/link'
@@ -86,6 +87,7 @@ export default function EquipoPage() {
   const [egresoOriginal, setEgresoOriginal] = useState('')
   const [egresoReason, setEgresoReason] = useState('')
   const [savingEgreso, setSavingEgreso] = useState(false)
+  const [marcandoId, setMarcandoId] = useState<string | null>(null)
 
   const isManager = profile?.role === 'socio' || profile?.role === 'encargado'
 
@@ -180,6 +182,27 @@ export default function EquipoPage() {
       errorToast('No se pudo guardar el egreso', err)
     } finally {
       setSavingEgreso(false)
+    }
+  }
+
+  // El encargado marca "Llegó" a quien está trabajando y no fichó
+  const handleLlego = async (userId: string, nombre: string) => {
+    if (marcandoId) return
+    setMarcandoId(userId)
+    try {
+      const res = await fetch('/api/admin/marcar-ingreso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success(`Entrada de ${nombre} marcada. Si llegó antes, corregí la hora con el lápiz.`)
+      mutateAttendance()
+    } catch (err) {
+      errorToast('No se pudo marcar la entrada', err)
+    } finally {
+      setMarcandoId(null)
     }
   }
 
@@ -434,6 +457,17 @@ export default function EquipoPage() {
                         <StatusIcon className="size-3" />
                         {status.label}
                       </span>
+                      {isManager && isToday && !ea.attendance && ea.hasShiftToday && (
+                        <button
+                          onClick={() => handleLlego(ea.profile.id, ea.profile.first_name ?? '')}
+                          disabled={!!marcandoId}
+                          className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                          title="Marcarle la entrada"
+                        >
+                          {marcandoId === ea.profile.id ? <Loader2 className="size-3 animate-spin" /> : <UserCheck className="size-3.5" />}
+                          Llegó
+                        </button>
+                      )}
                       {isManager && ea.attendance && (
                         <button
                           onClick={() => {

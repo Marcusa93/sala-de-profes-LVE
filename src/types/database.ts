@@ -2769,6 +2769,8 @@ export type Database = {
       }
       shifts: {
         Row: {
+          aviso_encargado_at: string | null
+          aviso_ingreso_at: string | null
           color: string
           created_at: string
           created_by: string
@@ -2783,6 +2785,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          aviso_encargado_at?: string | null
+          aviso_ingreso_at?: string | null
           color?: string
           created_at?: string
           created_by: string
@@ -2797,6 +2801,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          aviso_encargado_at?: string | null
+          aviso_ingreso_at?: string | null
           color?: string
           created_at?: string
           created_by?: string
