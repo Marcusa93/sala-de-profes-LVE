@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendPushToUser } from './send'
 import type { AppRole } from '@/types/database'
+import { idsConRolEnTurno } from '@/lib/turnos/rol-del-turno'
 
 // ---------------------------------------------------------------------------
 // Notificaciones push por evento — configurable por el administrador (socio)
@@ -169,6 +170,9 @@ export async function notifyEvent(
       .in('role', cfg.target_roles)
       .eq('is_active', true)
     for (const p of profiles ?? []) targetIds.add(p.id)
+    // Y a quien trabaja ahora con ese rol según su turno (un runner que hoy
+    // hace de encargado recibe los avisos de encargado)
+    for (const id of await idsConRolEnTurno(admin, cfg.target_roles)) targetIds.add(id)
   }
 
   if (options?.excludeUserId) targetIds.delete(options.excludeUserId)

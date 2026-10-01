@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRole } from '@/lib/supabase/require-role'
-import { isManagerOrAbove } from '@/lib/roles'
+import { esEncargadoAhora } from '@/lib/turnos/rol-del-turno'
 import { logAudit } from '@/lib/audit'
 import { sendPushToUser } from '@/lib/push/send'
-import type { Tarea } from '@/lib/protocolos/protocolos'
+import { candidatosPara, personalDeTurno, type Tarea } from '@/lib/protocolos/protocolos'
 
 // ---------------------------------------------------------------------------
 // POST /api/protocolos/tareas/[id]
-//   JSON { accion: 'asignar', user_id }      → encargado/socio asigna (o se asigna)
+//   JSON { accion: 'asignar', user_id }      → encargado/socio (o quien trabaja hoy
+//        de encargado) asigna a alguien que esté en turno a esa hora
 //   FormData accion=completar, foto_0…foto_N, pasos (JSON), nota
 //        → quien la tiene asignada (o encargado/socio) la completa: TODOS los
 //          pasos marcados y TODAS las fotos del protocolo (baño: general + basura).
@@ -41,10 +42,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!esForm) {
       const body = await request.json().catch(() => null) as { accion?: string; user_id?: string } | null
       if (body?.accion !== 'asignar' || !UUID.test(String(body.user_id))) return NextResponse.json({ error: 'Pedido inválido' }, { status: 400 })
-      if (!isManagerOrAbove(auth.user.role)) return NextResponse.json({ error: 'Solo el encargado o un socio asigna' }, { status: 403 })
+      if (!(await esEncargadoAhora(admin, auth.user))) return NextResponse.json({ error: 'Solo el encargado de turno o un socio asigna' }, { status: 403 })
       if (t.estado === 'hecha') return NextResponse.json({ error: 'Ya está hecha' }, { status: 409 })
       const { data: persona } = await admin.from('profiles').select('id, first_name, last_name, is_active').eq('id', body.user_id!).maybeSingle()
       if (!persona?.is_active) return NextResponse.json({ error: 'Esa persona no está activa' }, { status: 400 })
+      // Solo a quien esté trabajando a esa hora (turno cargado o fichado ahora)
+      const candidatos = candidatosPara(await personalDeTurno(admin, t.fecha), t)
+      if (!candidatos.some((c) => c.id === persona.id)) {
+        const primer = persona.first_name || 'Esa persona'
+        return NextResponse.json({ error: `${primer} no está en turno a las ${t.hora}: solo se asigna a quien trabaja a esa hora` }, { status: 400 })
+      }
 
       const { error } = await admin.from('protocolo_tareas').update({
         estado: 'asignada', asignado_a: persona.id, asignado_por: auth.user.id, asignado_at: new Date().toISOString(), recordatorio_at: null,
@@ -65,7 +72,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     // ---- COMPLETAR (con foto) ----
     const form = await request.formData()
     if (form.get('accion') !== 'completar') return NextResponse.json({ error: 'Pedido inválido' }, { status: 400 })
-    const esManager = isManagerOrAbove(auth.user.role)
+    const esManager = await esEncargadoAhora(admin, auth.user)
     if (t.estado === 'hecha') return NextResponse.json({ error: 'Ya está hecha' }, { status: 409 })
     if (t.asignado_a !== auth.user.id && !esManager) return NextResponse.json({ error: 'Esta tarea no está asignada a vos' }, { status: 403 })
 

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { fechaOperativa, instanteDe } from '@/lib/attendance/jornada'
 import { sendPushToUser } from '@/lib/push/send'
+import { turnoEnCurso, turnosDelDia } from '@/lib/turnos/rol-del-turno'
 
 // ---------------------------------------------------------------------------
 // Protocolos con horario (limpieza del baño, etc.)
@@ -48,29 +49,64 @@ export async function asegurarTareasDelDia(admin: SupabaseClient, fecha = fechaO
   await admin.from('protocolo_tareas').upsert(filas, { onConflict: 'protocolo_id,fecha,hora', ignoreDuplicates: true })
 }
 
-export type Persona = { id: string; nombre: string; role: string; presente: boolean }
+export type Persona = {
+  id: string; nombre: string
+  /** Rol con el que trabaja hoy: el de su turno (o el del perfil si fichó sin turno cargado) */
+  role: string
+  presente: boolean
+  turnos: { rol: string; inicio: number; fin: number; desde: string; hasta: string }[]
+}
+/** Persona habilitada para una tarea: con el rol y el horario del turno que la cubre. */
+export type Candidato = { id: string; nombre: string; role: string; presente: boolean; turno: string | null }
 
-/** Quién está trabajando ahora: fichado (presente) o con turno hoy. */
-export async function personalDeTurno(admin: SupabaseClient, fecha = fechaOperativa()): Promise<Persona[]> {
-  const [{ data: abiertos }, { data: turnos }, { data: perfiles }] = await Promise.all([
+/** Quién trabaja hoy: fichado ahora o con turno cargado (con el rol de cada turno). */
+export async function personalDeTurno(admin: SupabaseClient, fecha = fechaOperativa(), ahora = new Date()): Promise<Persona[]> {
+  const [{ data: abiertos }, turnos, { data: perfiles }] = await Promise.all([
     admin.from('attendance_logs').select('user_id').eq('status', 'open'),
-    admin.from('shifts').select('user_id').eq('shift_date', fecha),
+    turnosDelDia(admin, fecha),
     admin.from('profiles').select('id, first_name, last_name, role').eq('is_active', true),
   ])
   const presentes = new Set((abiertos ?? []).map((a: { user_id: string }) => a.user_id))
-  const conTurno = new Set((turnos ?? []).map((t: { user_id: string }) => t.user_id))
   return ((perfiles ?? []) as { id: string; first_name: string | null; last_name: string | null; role: string }[])
-    .filter((p) => presentes.has(p.id) || conTurno.has(p.id))
-    .map((p) => ({ id: p.id, nombre: [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Sin nombre', role: p.role, presente: presentes.has(p.id) }))
+    .map((p) => {
+      const suyos = turnos.filter((t) => t.user_id === p.id).sort((a, b) => a.inicio - b.inicio)
+      const actual = suyos.find((t) => turnoEnCurso(t, ahora.getTime())) ?? suyos[0]
+      return {
+        id: p.id,
+        nombre: [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Sin nombre',
+        role: actual?.rol ?? p.role,
+        presente: presentes.has(p.id),
+        turnos: suyos.map(({ rol, inicio, fin, desde, hasta }) => ({ rol, inicio, fin, desde, hasta })),
+      }
+    })
+    .filter((p) => p.presente || p.turnos.length > 0)
     .sort((a, b) => Number(b.presente) - Number(a.presente) || a.nombre.localeCompare(b.nombre, 'es'))
 }
 
-/** A quién avisar para asignar: encargados fichados → con turno hoy → todos los encargados. */
+/**
+ * Quiénes pueden hacer la tarea de ese horario: los que tienen un turno que se
+ * superpone con su plazo (hora → hora + 60'), o los que están fichados si la
+ * tarea es de ahora. Nadie fuera de turno.
+ */
+export function candidatosPara(personal: Persona[], t: Pick<Tarea, 'fecha' | 'hora'>, ahora = new Date()): Candidato[] {
+  const inicio = instanteDe(t.fecha, t.hora).getTime()
+  const limite = inicio + ATRASO_MIN * 60_000
+  const esDeAhora = ahora.getTime() >= inicio - ATRASO_MIN * 60_000 && ahora.getTime() < limite
+  const out: Candidato[] = []
+  for (const p of personal) {
+    const turno = p.turnos.find((x) => x.inicio < limite && x.fin > inicio)
+    if (!turno && !(p.presente && esDeAhora)) continue
+    out.push({ id: p.id, nombre: p.nombre, role: turno?.rol ?? p.role, presente: p.presente, turno: turno ? `${turno.desde}–${turno.hasta}` : null })
+  }
+  return out
+}
+
+/** A quién avisar para asignar: encargados de turno fichados → con turno de encargado hoy → todos los encargados. */
 async function encargadosDeTurno(admin: SupabaseClient, fecha: string): Promise<string[]> {
   const personal = await personalDeTurno(admin, fecha)
   const fichados = personal.filter((p) => p.presente && p.role === 'encargado').map((p) => p.id)
   if (fichados.length > 0) return fichados
-  const conTurno = personal.filter((p) => p.role === 'encargado').map((p) => p.id)
+  const conTurno = personal.filter((p) => p.turnos.some((t) => t.rol === 'encargado')).map((p) => p.id)
   if (conTurno.length > 0) return conTurno
   const { data } = await admin.from('profiles').select('id').eq('is_active', true).eq('role', 'encargado')
   return (data ?? []).map((p: { id: string }) => p.id)

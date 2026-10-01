@@ -12,8 +12,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 // ---------------------------------------------------------------------------
 // Protocolos con horario — hoy: limpieza del baño, 4 veces por día
 // ---------------------------------------------------------------------------
-// Cada horario es una tarea: el encargado la asigna a alguien del turno (o a
-// sí mismo) y esa persona la cierra marcando todos los pasos + las fotos
+// Cada horario es una tarea: el encargado la asigna a alguien que esté en
+// turno a esa hora (o a sí mismo) y esa persona la cierra marcando todos los pasos + las fotos
 // (baño: una general y otra de la basura).
 // ---------------------------------------------------------------------------
 
@@ -22,14 +22,16 @@ type TareaUI = {
   id: string; fecha: string; hora: string; estado: 'pendiente' | 'asignada' | 'hecha'; visible: Visible
   asignado_a: string | null; asignado_nombre: string | null; hecho_nombre: string | null
   hecho_at: string | null; foto_url: string | null; fotos_urls?: string[]; nota: string | null
+  candidatos: Candidato[]
 }
 type ProtocoloUI = {
   id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean
   tareas: TareaUI[]
   historial: { fecha: string; hechas: number; total: number; tareas: TareaUI[] }[]
 }
-type Persona = { id: string; nombre: string; role: string; presente: boolean }
-type Datos = { hoy: string; protocolos: ProtocoloUI[]; personal: Persona[]; equipo: Persona[]; yo: { id: string; puede_asignar: boolean; puede_configurar: boolean } }
+/** Quien está en turno a la hora de la tarea, con el rol de ese turno */
+type Candidato = { id: string; nombre: string; role: string; presente: boolean; turno: string | null }
+type Datos = { hoy: string; protocolos: ProtocoloUI[]; yo: { id: string; puede_asignar: boolean; puede_configurar: boolean } }
 
 const fetcher = async (url: string) => {
   const r = await fetch(url)
@@ -99,8 +101,6 @@ export default function ProtocolosPage() {
         <AsignarDialog
           tarea={asignando.t}
           protocolo={asignando.p}
-          personal={data.personal}
-          equipo={data.equipo}
           yoId={data.yo.id}
           onClose={() => setAsignando(null)}
           onDone={() => { setAsignando(null); void mutate() }}
@@ -233,18 +233,17 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
   )
 }
 
-function AsignarDialog({ tarea, protocolo, personal, equipo, yoId, onClose, onDone }: {
-  tarea: TareaUI; protocolo: ProtocoloUI; personal: Persona[]; equipo: Persona[]; yoId: string; onClose: () => void; onDone: () => void
+function AsignarDialog({ tarea, protocolo, yoId, onClose, onDone }: {
+  tarea: TareaUI; protocolo: ProtocoloUI; yoId: string; onClose: () => void; onDone: () => void
 }) {
   const [enviando, setEnviando] = useState<string | null>(null)
-  const [verTodos, setVerTodos] = useState(personal.length === 0)
-  // Yo primero, después los presentes, después el resto con turno hoy
+  // Yo primero, después los fichados, después el resto con turno a esa hora
   const lista = useMemo(() => {
-    const yo = personal.find((p) => p.id === yoId)
-    return [...(yo ? [yo] : []), ...personal.filter((p) => p.id !== yoId)]
-  }, [personal, yoId])
+    const yo = tarea.candidatos.find((p) => p.id === yoId)
+    return [...(yo ? [yo] : []), ...tarea.candidatos.filter((p) => p.id !== yoId)]
+  }, [tarea.candidatos, yoId])
 
-  async function asignar(p: Persona) {
+  async function asignar(p: Candidato) {
     setEnviando(p.id)
     try {
       const r = await fetch(`/api/protocolos/tareas/${tarea.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accion: 'asignar', user_id: p.id }) })
@@ -262,33 +261,27 @@ function AsignarDialog({ tarea, protocolo, personal, equipo, yoId, onClose, onDo
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
       <DialogContent className="max-h-[85svh] overflow-y-auto">
         <DialogHeader><DialogTitle>{protocolo.nombre} · {tarea.hora}</DialogTitle></DialogHeader>
-        <p className="-mt-2 text-[12.5px] text-[#7d6c64]">¿Quién lo hace? Arriba están los que están fichados ahora.</p>
-        {personal.length === 0 && <p className="rounded-lg bg-[#fdf6ec] px-3 py-2 text-[12px] text-[#b0762a]">No hay nadie fichado ni con turno cargado hoy: elegí del equipo.</p>}
+        <p className="-mt-2 text-[12.5px] text-[#7d6c64]">¿Quién lo hace? Solo aparecen los que están en turno a esa hora.</p>
+        {lista.length === 0 && (
+          <p className="rounded-lg bg-[#fdf6ec] px-3 py-2 text-[12px] text-[#b0762a]">
+            No hay nadie con turno a las {tarea.hora}. Cargá el turno en Equipo → Turnos para poder asignarla.
+          </p>
+        )}
         <ul className="space-y-1.5">
-          {[...lista, ...(verTodos ? equipo.filter((p) => p.id !== yoId) : [])].map((p) => (
+          {lista.map((p) => (
             <li key={p.id}>
               <button disabled={!!enviando} onClick={() => void asignar(p)} className={cn('flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left ring-1 ring-[#ebe6df] disabled:opacity-60', tarea.asignado_a === p.id ? 'bg-[#eef3fb]' : 'bg-white hover:bg-[#fcfbf9]')}>
                 <span className={cn('size-2 shrink-0 rounded-full', p.presente ? 'bg-[#16a34a]' : 'bg-[#d6d0c8]')} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13.5px] font-semibold text-[#3d2c24]">{p.id === yoId ? `Yo (${p.nombre.split(' ')[0]})` : p.nombre}</span>
-                  <span className="block text-[11.5px] text-[#7d6c64]">{ROL[p.role] ?? p.role} · {p.presente ? 'fichado ahora' : personal.some((x) => x.id === p.id) ? 'tiene turno hoy' : 'sin turno hoy'}</span>
+                  <span className="block text-[11.5px] text-[#7d6c64]">
+                    {ROL[p.role] ?? p.role}{p.turno ? ` · turno ${p.turno}` : ''}{p.presente ? ' · fichado ahora' : ''}
+                  </span>
                 </span>
                 {enviando === p.id ? <Loader2 className="size-4 animate-spin text-[#a39e97]" /> : tarea.asignado_a === p.id ? <Check className="size-4 text-[#3b6ab5]" /> : null}
               </button>
             </li>
           ))}
-          {!verTodos && equipo.length > 0 && (
-            <li>
-              <button onClick={() => setVerTodos(true)} className="w-full py-2 text-center text-[12.5px] font-semibold text-[#7d6c64]">Ver resto del equipo ({equipo.length})</button>
-            </li>
-          )}
-          {!lista.some((p) => p.id === yoId) && (
-            <li>
-              <button disabled={!!enviando} onClick={() => void asignar({ id: yoId, nombre: 'Yo', role: '', presente: false })} className="flex w-full items-center gap-3 rounded-xl bg-white px-3 py-2.5 text-left text-[13.5px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df]">
-                <UserPlus className="size-4 text-[#7d6c64]" /> Lo hago yo
-              </button>
-            </li>
-          )}
         </ul>
       </DialogContent>
     </Dialog>
