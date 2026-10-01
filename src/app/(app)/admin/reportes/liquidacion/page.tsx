@@ -24,7 +24,12 @@ type DayDetail = {
   status: string
   clockOutType: string
   attendanceId?: string
+  /** Rol del turno de ese día ('mixto' si hizo dos turnos con roles distintos) */
+  role: string
+  pay: number
 }
+
+type RolePay = { role: string; hours: number; hourlyRate: number; pay: number }
 
 type Employee = {
   id: string
@@ -37,8 +42,11 @@ type Employee = {
   avgHoursPerDay: number
   missingCheckouts: number
   totalPay: number
+  byRole: RolePay[]
   days: DayDetail[]
 }
+
+const rolLabel = (r: string) => (r === 'mixto' ? 'Mixto' : ROLES[r as AppRole]?.label ?? r)
 
 type Summary = {
   totalEmployees: number
@@ -122,19 +130,22 @@ export default function LiquidacionPage() {
 
     // Per employee
     csv += `DETALLE POR EMPLEADO\n`
-    csv += `Nombre,Rol,Tarifa/h,Días,Horas,Promedio/día,Sin egreso,Total a pagar\n`
+    csv += `Nombre,Rol del turno,Tarifa/h,Horas,Subtotal\n`
     for (const e of employees) {
-      csv += `"${e.firstName} ${e.lastName}",${ROLES[e.role as AppRole]?.label ?? e.role},$${e.hourlyRate},${e.totalDays},${e.totalHours},${e.avgHoursPerDay},${e.missingCheckouts},"${formatMoney(e.totalPay)}"\n`
+      for (const r of e.byRole) {
+        csv += `"${e.firstName} ${e.lastName}",${rolLabel(r.role)},$${r.hourlyRate},${r.hours},"${formatMoney(r.pay)}"\n`
+      }
+      csv += `"${e.firstName} ${e.lastName}",TOTAL (${e.totalDays} días; sin egreso: ${e.missingCheckouts}),,${e.totalHours},"${formatMoney(e.totalPay)}"\n`
     }
 
     // Day by day for each employee
     csv += `\nDETALLE DÍA POR DÍA\n`
-    csv += `Nombre,Fecha,Día,Ingreso,Egreso,Tipo egreso,Horas\n`
+    csv += `Nombre,Fecha,Día,Rol del turno,Ingreso,Egreso,Tipo egreso,Horas,A pagar\n`
     for (const e of employees) {
       for (const d of e.days) {
         const dayName = format(new Date(d.date + 'T12:00:00'), 'EEEE', { locale: es })
         const typeLabel = d.clockOutType === 'auto' ? 'Automático' : d.clockOutType === 'edited' ? 'Editado' : 'Manual'
-        csv += `"${e.firstName} ${e.lastName}",${d.date},"${dayName}",${d.clockIn},${d.clockOut ?? '-'},${typeLabel},${d.hours}\n`
+        csv += `"${e.firstName} ${e.lastName}",${d.date},"${dayName}",${rolLabel(d.role)},${d.clockIn},${d.clockOut ?? '-'},${typeLabel},${d.hours},"${formatMoney(d.pay)}"\n`
       }
     }
 
@@ -305,7 +316,10 @@ export default function LiquidacionPage() {
                         {emp.firstName} {emp.lastName}
                       </p>
                       <p className="text-[11px] text-[#a39e97]">
-                        {roleConfig?.emoji} {roleConfig?.label} · {formatMoney(emp.hourlyRate)}/h · {emp.totalDays} día{emp.totalDays !== 1 ? 's' : ''}
+                        {emp.byRole.length > 1
+                          ? emp.byRole.map((r) => `${rolLabel(r.role)} ${r.hours}h`).join(' · ')
+                          : <>{roleConfig?.emoji} {rolLabel(emp.byRole[0]?.role ?? emp.role)} · {formatMoney(emp.byRole[0]?.hourlyRate ?? emp.hourlyRate)}/h</>}
+                        {' · '}{emp.totalDays} día{emp.totalDays !== 1 ? 's' : ''}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -342,6 +356,7 @@ export default function LiquidacionPage() {
                           <thead>
                             <tr className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">
                               <th className="pb-2 text-left">Fecha</th>
+                              <th className="pb-2 text-left">Rol</th>
                               <th className="pb-2 text-center">Ingreso</th>
                               <th className="pb-2 text-center">Egreso</th>
                               <th className="pb-2 text-right">Horas</th>
@@ -355,6 +370,7 @@ export default function LiquidacionPage() {
                                   <td className="py-1.5 capitalize text-[#3d2c24]">
                                     {format(new Date(d.date + 'T12:00:00'), 'EEE d MMM', { locale: es })}
                                   </td>
+                                  <td className={`py-1.5 ${d.role !== emp.role ? 'font-semibold text-[#b0762a]' : 'text-[#7d6c64]'}`}>{rolLabel(d.role)}</td>
                                   <td className="py-1.5 text-center tabular-nums text-[#3d2c24]">{d.clockIn}</td>
                                   <td className={`py-1.5 text-center tabular-nums ${!d.clockOut ? 'text-[#ea504c] font-semibold' : 'text-[#3d2c24]'}`}>
                                     {d.clockOut ?? '—'}{typeIcon}
@@ -375,10 +391,16 @@ export default function LiquidacionPage() {
                             })}
                           </tbody>
                           <tfoot>
-                            <tr className="border-t-2 border-[#ebe6df]">
-                              <td colSpan={3} className="py-2 text-sm font-bold text-[#3d2c24]">
-                                {emp.totalHours}h × {formatMoney(emp.hourlyRate)}
-                              </td>
+                            {emp.byRole.map((r, i) => (
+                              <tr key={r.role} className={i === 0 ? 'border-t-2 border-[#ebe6df]' : ''}>
+                                <td colSpan={4} className="pt-2 text-[12px] text-[#5c4a42]">
+                                  {rolLabel(r.role)}: {r.hours}h × {formatMoney(r.hourlyRate)}
+                                </td>
+                                <td className="pt-2 text-right text-[12px] tabular-nums text-[#5c4a42]">{formatMoney(r.pay)}</td>
+                              </tr>
+                            ))}
+                            <tr>
+                              <td colSpan={4} className="py-2 text-sm font-bold text-[#3d2c24]">Total</td>
                               <td className="py-2 text-right text-sm font-bold text-[#006d5a]">
                                 {formatMoney(emp.totalPay)}
                               </td>
