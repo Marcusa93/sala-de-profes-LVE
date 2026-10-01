@@ -555,9 +555,12 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     fudoSynced = write.fudoSynced
     // Recibo (precio de compra) — base del historial de precios + cuentas a pagar
     const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+    // El proveedor del PEDIDO toma prioridad (el encargado lo asignó explícitamente);
+    // el proveedor del insumo es solo el default para órdenes nuevas, no para el recibo.
+    const effectiveSupplierId = (order as { supplier_id?: string | null }).supplier_id ?? si.supplier_id ?? null
     const receiptBase = {
       stock_item_id: stockItemId,
-      supplier_id: si.supplier_id ?? (order as { supplier_id?: string | null }).supplier_id ?? null,
+      supplier_id: effectiveSupplierId,
       order_source: source,
       order_id: orderId,
       qty,
@@ -569,23 +572,19 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
       received_date: receivedDate,
     }
     let lveReceiptId: number | null = null
-    let { data: receiptInserted, error: lveReceiptErr } = await admin.from('stock_receipts').insert({
+    const { data: receiptInserted, error: lveReceiptErr } = await admin.from('stock_receipts').insert({
       ...receiptBase,
       payment_status: paymentStatus,
       paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
       paid_by: paymentStatus === 'pagado' ? user.id : null,
       payment_method: paymentMethod ?? null,
     }).select('id').single()
-    if (lveReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(lveReceiptErr.message)) {
-      ;({ data: receiptInserted, error: lveReceiptErr } = await admin.from('stock_receipts').insert(receiptBase).select('id').single())
-    }
     if (lveReceiptErr) console.warn('[confirm_arrival] lve_stock receipt no registrado:', lveReceiptErr.message)
     lveReceiptId = (receiptInserted as { id?: number } | null)?.id ?? null
 
     // Crear gasto en Fudo si el proveedor y el monto están disponibles.
     // Usa receiptBase.cost_total que ya tiene el fallback unitCost × qty,
     // por si el encargado cargó solo el precio unitario y no el total.
-    const effectiveSupplierId = si.supplier_id ?? (order as { supplier_id?: string | null }).supplier_id ?? null
     const receiptCostTotal = receiptBase.cost_total
     if (receiptCostTotal != null && receiptCostTotal > 0 && effectiveSupplierId) {
       const { data: suppRow } = await admin
