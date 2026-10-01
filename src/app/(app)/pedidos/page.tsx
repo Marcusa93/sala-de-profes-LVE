@@ -51,6 +51,8 @@ type ReceiptRow = {
   paid_at: string | null
   payment_method: string | null
   supplier_name: string
+  order_id: number | null
+  fudo_expense_id: string | null
 }
 type ReceiptPayState = { id: number; method: 'efectivo' | 'transferencia' | 'tarjeta' | null }
 
@@ -111,6 +113,7 @@ function PedidosContent() {
   const [receiptsLoading, setReceiptsLoading] = useState(false)
   const [receiptPayState, setReceiptPayState] = useState<ReceiptPayState | null>(null)
   const [receiptConfirming, setReceiptConfirming] = useState(false)
+  const [receiptSupplierEdit, setReceiptSupplierEdit] = useState<number | null>(null)
 
   const fetchOrders = useCallback(async () => {
     const supabase = createClient()
@@ -191,14 +194,33 @@ function PedidosContent() {
     const supabase = createClient()
     const { data, error } = await supabase
       .from('stock_receipts')
-      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, suppliers:supplier_id(name)')
+      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, order_id, suppliers:supplier_id(name)')
       .eq('payment_status', 'a_pagar')
       .not('cost_total', 'is', null)
       .order('received_date', { ascending: false })
       .limit(300)
     if (!error && data) {
-      setReceipts(((data) as unknown as (Omit<ReceiptRow, 'supplier_name'> & { suppliers: { name: string } | null })[])
-        .map((r) => ({ ...r, supplier_name: r.suppliers?.name ?? 'Sin proveedor' })))
+      type RawReceipt = Omit<ReceiptRow, 'supplier_name' | 'fudo_expense_id'> & { suppliers: { name: string } | null; order_id: number | null }
+      const rows = (data as unknown as RawReceipt[]).map((r) => ({
+        ...r,
+        supplier_name: r.suppliers?.name ?? 'Sin proveedor',
+        fudo_expense_id: null as string | null,
+      }))
+      // Segunda query: obtener fudo_expense_id de kitchen_orders para los order_id presentes
+      const orderIds = rows.map((r) => r.order_id).filter((id): id is number => id !== null)
+      if (orderIds.length > 0) {
+        const { data: koData } = await supabase
+          .from('kitchen_orders')
+          .select('id, fudo_expense_id')
+          .in('id', orderIds)
+        const fudoMap = new Map<number, string | null>(
+          ((koData ?? []) as { id: number; fudo_expense_id: string | null }[]).map((ko) => [ko.id, ko.fudo_expense_id ?? null]),
+        )
+        for (const row of rows) {
+          if (row.order_id !== null) row.fudo_expense_id = fudoMap.get(row.order_id) ?? null
+        }
+      }
+      setReceipts(rows)
     }
     setReceiptsLoading(false)
   }, [])
@@ -359,6 +381,24 @@ function PedidosContent() {
       toast.error(err instanceof Error ? err.message : 'Error al marcar pagado')
     } finally {
       setReceiptConfirming(false)
+    }
+  }
+
+  async function changeReceiptSupplier(receiptId: number, supplierId: string) {
+    try {
+      const res = await fetch(`/api/stock/receipts/${receiptId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supplier_id: supplierId }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Error al cambiar proveedor')
+      const supplierName = suppliers.find((s) => s.id === supplierId)?.name ?? supplierId
+      setReceipts((prev) => prev.map((r) => r.id === receiptId ? { ...r, supplier_id: supplierId, supplier_name: supplierName } : r))
+      setReceiptSupplierEdit(null)
+      toast.success(`Proveedor actualizado a ${supplierName}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al cambiar proveedor')
     }
   }
 
@@ -863,6 +903,7 @@ function PedidosContent() {
                     <div className="divide-y divide-[#f5f0ea]">
                       {group.receipts.map((r) => {
                         const isPaying = receiptPayState?.id === r.id
+                        const isEditingSupplier = receiptSupplierEdit === r.id
                         return (
                           <div key={r.id} className="px-4 py-2.5">
                             <div className="flex items-center gap-3">
@@ -872,6 +913,38 @@ function PedidosContent() {
                                   {format(new Date(`${r.received_date}T12:00:00`), 'd MMM', { locale: es })}
                                   {' · '}{r.qty} {r.unit ?? 'u'}
                                 </p>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                                  {r.fudo_expense_id ? (
+                                    <span className="rounded-full bg-[#e8f5f1] px-1.5 py-0.5 text-[10px] font-bold text-[#006d5a]">Fudo ✓</span>
+                                  ) : r.supplier_id ? (
+                                    <span className="rounded-full bg-[#fdf6ec] px-1.5 py-0.5 text-[10px] font-bold text-[#d4943a]">sin gasto Fudo</span>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={() => setReceiptSupplierEdit(isEditingSupplier ? null : r.id)}
+                                    className="text-[10px] font-medium text-[#7d6c64] underline underline-offset-2"
+                                  >
+                                    cambiar proveedor
+                                  </button>
+                                </div>
+                                {isEditingSupplier && (
+                                  <div className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto rounded-xl border border-[#ebe6df] bg-white p-1">
+                                    {suppliers.map((s) => (
+                                      <button
+                                        key={s.id}
+                                        type="button"
+                                        onClick={() => void changeReceiptSupplier(r.id, s.id)}
+                                        className={cn(
+                                          'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-[#f8f5f0]',
+                                          r.supplier_id === s.id ? 'font-bold text-[#006d5a]' : 'text-[#3d2c24]',
+                                        )}
+                                      >
+                                        <Package className="size-3 shrink-0 text-[#006d5a]" />
+                                        {s.name}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                               <span className="shrink-0 text-xs font-bold tabular-nums text-[#3d2c24]">
                                 {money(Number(r.cost_total) || 0)}
@@ -1199,7 +1272,21 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
           {/* Producto */}
           <div className="rounded-xl bg-[#f3efe9] px-3 py-2.5">
             <p className="text-sm font-semibold text-[#3d2c24]">{order.product_name}</p>
-            <p className="text-[11px] text-[#7d6c64]">Pedido: <b>{order.quantity}</b>{supplier ? ` · ${supplier.name}` : ''}</p>
+            <p className="text-[11px] text-[#7d6c64]">Pedido: <b>{order.quantity}</b></p>
+          </div>
+
+          {/* Proveedor */}
+          <div className="flex items-center gap-2 rounded-xl bg-[#faf8f5] px-3 py-2">
+            {supplier ? (
+              <>
+                <span className="text-[12px] text-[#7d6c64]">Proveedor: <span className="font-bold text-[#3d2c24]">{supplier.name}</span></span>
+                {supplier.fudo_provider_id && (
+                  <span className="rounded-full bg-[#e8f5f1] px-1.5 py-0.5 text-[10px] font-bold text-[#006d5a]">Fudo ✓</span>
+                )}
+              </>
+            ) : (
+              <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[10px] font-semibold text-[#d4943a]">Sin proveedor asignado</span>
+            )}
           </div>
 
           {/* Medio de pago — PRIMERA PREGUNTA */}

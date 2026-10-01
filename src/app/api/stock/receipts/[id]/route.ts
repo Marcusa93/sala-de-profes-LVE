@@ -148,6 +148,7 @@ export async function PATCH(
     const newNote = typeof body.note === 'string' ? body.note.trim() || null : undefined
     const newPaymentMethod = typeof body.payment_method === 'string' ? body.payment_method || null : undefined
     const newPaymentStatus = body.payment_status === 'a_pagar' ? 'a_pagar' : undefined
+    const newSupplierId = typeof body.supplier_id === 'string' ? body.supplier_id : undefined
 
     // Si cambia la cantidad y hay insumo vinculado → aplicar delta al stock
     let fudoSynced = false
@@ -181,6 +182,7 @@ export async function PATCH(
     }
     if (newNote !== undefined) update.note = newNote
     if (newPaymentMethod !== undefined) update.payment_method = newPaymentMethod
+    if (newSupplierId !== undefined) update.supplier_id = newSupplierId
     if (newPaymentStatus !== undefined) {
       update.payment_status = newPaymentStatus
       update.paid_at = null

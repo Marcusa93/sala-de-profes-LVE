@@ -110,6 +110,18 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
       <DialogContent className="max-w-md rounded-2xl">
         <DialogHeader>
           <DialogTitle className="text-base">Llegó el pedido de {supplier?.name ?? 'proveedor'}</DialogTitle>
+          <div className="mt-1 flex items-center gap-2">
+            {supplier ? (
+              <>
+                <span className="text-[12px] text-[#7d6c64]">Proveedor: <span className="font-bold text-[#3d2c24]">{supplier.name}</span></span>
+                {supplier.fudo_provider_id && (
+                  <span className="rounded-full bg-[#e8f5f1] px-1.5 py-0.5 text-[10px] font-bold text-[#006d5a]">Fudo ✓</span>
+                )}
+              </>
+            ) : (
+              <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[10px] font-semibold text-[#d4943a]">Sin proveedor asignado</span>
+            )}
+          </div>
         </DialogHeader>
         <div className="max-h-[75vh] space-y-4 overflow-y-auto pr-0.5">
           {/* Medio de pago — una sola vez para todo */}
