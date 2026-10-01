@@ -81,6 +81,9 @@ export default function EquipoPage() {
   // Edit egreso
   const [editingEgresoId, setEditingEgresoId] = useState<string | null>(null)
   const [egresoTime, setEgresoTime] = useState('')
+  const [ingresoTime, setIngresoTime] = useState('')
+  const [ingresoOriginal, setIngresoOriginal] = useState('')
+  const [egresoOriginal, setEgresoOriginal] = useState('')
   const [egresoReason, setEgresoReason] = useState('')
   const [savingEgreso, setSavingEgreso] = useState(false)
 
@@ -142,27 +145,33 @@ export default function EquipoPage() {
   const loading = tab === 'asistencia' ? loadingAttendance : loadingProfiles
 
   const handleSaveEgreso = async (attendanceId: string, operativeDate: string) => {
-    if (!egresoTime || savingEgreso) return
+    const cambiaIngreso = !!ingresoTime && ingresoTime !== ingresoOriginal
+    const cambiaEgreso = !!egresoTime && egresoTime !== egresoOriginal
+    if ((!cambiaEgreso && !cambiaIngreso) || savingEgreso) return
     setSavingEgreso(true)
     try {
-      const [h] = egresoTime.split(':').map(Number)
-      const baseDate = h < 6
-        ? format(addDays(new Date(operativeDate + 'T12:00:00'), 1), 'yyyy-MM-dd')
-        : operativeDate
-      const clockOutIso = `${baseDate}T${egresoTime}:00-03:00`
+      // Hora del día operativo → instante (antes de las 06 es el día siguiente)
+      const aIso = (hhmm: string) => {
+        const [h] = hhmm.split(':').map(Number)
+        const baseDate = h < 6
+          ? format(addDays(new Date(operativeDate + 'T12:00:00'), 1), 'yyyy-MM-dd')
+          : operativeDate
+        return `${baseDate}T${hhmm}:00-03:00`
+      }
 
       const res = await fetch('/api/admin/extend-shift', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           attendance_id: attendanceId,
-          new_clock_out: clockOutIso,
-          reason: egresoReason.trim() || 'Ajuste de egreso por encargado',
+          ...(cambiaEgreso ? { new_clock_out: aIso(egresoTime) } : {}),
+          ...(cambiaIngreso ? { new_clock_in: aIso(ingresoTime) } : {}),
+          reason: egresoReason.trim() || 'Corrección del encargado',
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Error')
-      toast.success('Egreso actualizado')
+      toast.success('Fichaje corregido')
       setEditingEgresoId(null)
       setEgresoTime('')
       setEgresoReason('')
@@ -432,16 +441,19 @@ export default function EquipoPage() {
                               setEditingEgresoId(null)
                             } else {
                               setEditingEgresoId(ea.attendance!.id)
-                              setEgresoTime(
-                                ea.attendance!.clock_out_at
-                                  ? format(new Date(ea.attendance!.clock_out_at), 'HH:mm')
-                                  : '',
-                              )
+                              const egreso = ea.attendance!.clock_out_at
+                                ? format(new Date(ea.attendance!.clock_out_at), 'HH:mm')
+                                : ''
+                              setEgresoTime(egreso)
+                              setEgresoOriginal(egreso)
+                              const ingreso = format(new Date(ea.attendance!.clock_in_at), 'HH:mm')
+                              setIngresoTime(ingreso)
+                              setIngresoOriginal(ingreso)
                               setEgresoReason('')
                             }
                           }}
                           className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9] hover:text-[#3d2c24]"
-                          title="Editar egreso"
+                          title="Corregir fichaje"
                         >
                           <Pencil className="size-3.5" />
                         </button>
@@ -450,14 +462,25 @@ export default function EquipoPage() {
                   </div>
                   {editingEgresoId === ea.attendance?.id && ea.attendance && (
                     <div className="mx-3 mb-3 rounded-lg bg-[#faf8f5] p-3 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs font-medium text-[#3d2c24]">Egreso:</label>
-                        <input
-                          type="time"
-                          value={egresoTime}
-                          onChange={(e) => setEgresoTime(e.target.value)}
-                          className="rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                        />
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="space-y-1">
+                          <span className="block text-xs font-medium text-[#3d2c24]">Entrada</span>
+                          <input
+                            type="time"
+                            value={ingresoTime}
+                            onChange={(e) => setIngresoTime(e.target.value)}
+                            className="w-full rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="block text-xs font-medium text-[#3d2c24]">Salida</span>
+                          <input
+                            type="time"
+                            value={egresoTime}
+                            onChange={(e) => setEgresoTime(e.target.value)}
+                            className="w-full rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                          />
+                        </label>
                       </div>
                       <input
                         value={egresoReason}
@@ -479,7 +502,7 @@ export default function EquipoPage() {
                               format(selectedDate, 'yyyy-MM-dd'),
                             )
                           }}
-                          disabled={!egresoTime || savingEgreso}
+                          disabled={((!egresoTime || egresoTime === egresoOriginal) && (!ingresoTime || ingresoTime === ingresoOriginal)) || savingEgreso}
                           className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-[#006d5a] py-2 text-xs font-semibold text-white disabled:opacity-50"
                         >
                           {savingEgreso ? <Loader2 className="size-3 animate-spin" /> : null}

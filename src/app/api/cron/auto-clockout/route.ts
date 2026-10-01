@@ -5,9 +5,10 @@ import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/auto-clockout
-// Lo llama el cron de Vercel una vez por día (16:00 Argentina: el plan solo
-// permite crons diarios). Cierra los fichajes que quedaron abiertos cuando ya
-// pasó su hora prevista de salida (turno o cierre del local).
+// Lo llama el reloj de la base cada 15 minutos (pg_cron, ver
+// supabase/manual/fichajes_reloj.sql) y, de respaldo, el cron diario de
+// Vercel. Cierra los fichajes que quedaron abiertos cuando ya pasó su hora
+// prevista de salida (turno; sin turno, cierre del local con máximo 9 h).
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
