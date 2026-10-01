@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { logAudit } from '@/lib/audit'
+import { ENCARGADO_MANAGED_ROLES } from '@/lib/roles'
 import type { AppRole } from '@/types/database'
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/create-user
 // ---------------------------------------------------------------------------
 // Crea un usuario nuevo en Supabase Auth + perfil en profiles.
-// Socios y encargados (el encargado solo crea empleados).
+// Socios y encargados (el encargado crea de encargado para abajo, no socios).
 //
 // Si el email ya tiene cuenta:
 //   · cuenta desactivada (alguien que vuelve a trabajar) → se REACTIVA con
@@ -21,8 +22,6 @@ import type { AppRole } from '@/types/database'
 // ---------------------------------------------------------------------------
 
 const VALID_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha']
-// Encargado puede crear empleados, no puede crear otro encargado ni socio
-const ENCARGADO_ALLOWED_ROLES: AppRole[] = ['chef', 'cocina', 'barista', 'runner', 'bacha']
 
 export async function POST(request: NextRequest) {
   const adminClient = createAdminClient()
@@ -94,8 +93,8 @@ export async function POST(request: NextRequest) {
       return fallar(`Rol inválido. Debe ser uno de: ${VALID_ROLES.join(', ')}`, 400)
     }
 
-    if (callerProfile.role === 'encargado' && !ENCARGADO_ALLOWED_ROLES.includes(role)) {
-      return fallar('Los encargados solo pueden crear empleados (cocina, chef, barista, runner, bachero)', 403)
+    if (callerProfile.role === 'encargado' && !ENCARGADO_MANAGED_ROLES.includes(role)) {
+      return fallar('Los encargados no pueden crear socios: eso lo hace un socio', 403)
     }
 
     if (password.length < 6) {
@@ -137,9 +136,9 @@ export async function POST(request: NextRequest) {
         const quien = [perfil.first_name, perfil.last_name].filter(Boolean).join(' ')
         return fallar(`Ese email ya es de ${quien} (${perfil.role}), que está activo en la app`, 409)
       }
-      // Un encargado no puede reactivar a un socio o encargado
-      if (callerProfile.role === 'encargado' && perfil && !ENCARGADO_ALLOWED_ROLES.includes(perfil.role as AppRole)) {
-        return fallar('Ese email es de un socio o encargado desactivado: lo tiene que reactivar un socio', 403)
+      // Un encargado no puede reactivar a un socio
+      if (callerProfile.role === 'encargado' && perfil && !ENCARGADO_MANAGED_ROLES.includes(perfil.role as AppRole)) {
+        return fallar('Ese email es de un socio desactivado: lo tiene que reactivar un socio', 403)
       }
 
       // Reactivar: contraseña nueva + datos nuevos
