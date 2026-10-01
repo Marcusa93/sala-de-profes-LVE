@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
         .eq('id', log.user_id)
         .single()
       const empName = profile ? `${profile.first_name} ${profile.last_name}` : '?'
-      const hora = cierre.at.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit' })
+      const hora = cierre.at.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false })
 
       const { error } = await admin
         .from('attendance_logs')
