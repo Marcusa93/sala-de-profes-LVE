@@ -24,9 +24,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ROLE_OPTIONS } from '@/lib/constants'
+import { ENCARGADO_MANAGED_ROLES } from '@/lib/roles'
 import type { AppRole } from '@/types/database'
-
-const ENCARGADO_ROLES: AppRole[] = ['chef', 'cocina', 'barista', 'runner', 'bacha']
 
 type CreateUserDialogProps = {
   open: boolean
@@ -37,7 +36,7 @@ type CreateUserDialogProps = {
 
 export function CreateUserDialog({ open, onOpenChange, onCreated, callerRole }: CreateUserDialogProps) {
   const availableRoles = callerRole === 'encargado'
-    ? ROLE_OPTIONS.filter((o) => ENCARGADO_ROLES.includes(o.value))
+    ? ROLE_OPTIONS.filter((o) => ENCARGADO_MANAGED_ROLES.includes(o.value))
     : ROLE_OPTIONS
 
   const [saving, setSaving] = useState(false)
