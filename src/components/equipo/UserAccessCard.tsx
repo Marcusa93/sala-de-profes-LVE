@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react'
+import { Copy, Eye, EyeOff, KeyRound, Loader2, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 
 // ---------------------------------------------------------------------------
@@ -20,6 +20,9 @@ export function UserAccessCard({ userId }: { userId: string }) {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [tempPassword, setTempPassword] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -82,6 +85,28 @@ export function UserAccessCard({ userId }: { userId: string }) {
     }
   }
 
+  async function handleReset() {
+    setResetting(true)
+    try {
+      const res = await fetch('/api/admin/user-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, resetPassword: true }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(d.error ?? 'No se pudo generar la contraseña temporal')
+        return
+      }
+      setTempPassword(d.tempPassword)
+      setConfirmReset(false)
+    } catch {
+      toast.error('Error de conexión: no se generó la contraseña')
+    } finally {
+      setResetting(false)
+    }
+  }
+
   return (
     <div className="rounded-2xl bg-white px-5 py-5 shadow-sm ring-1 ring-[#ebe6df] space-y-4">
       <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-[#a39e97]">
@@ -139,6 +164,67 @@ export function UserAccessCard({ userId }: { userId: string }) {
             {saving && <Loader2 className="size-4 animate-spin" />}
             {saving ? 'Guardando…' : 'Guardar acceso'}
           </button>
+
+          <div className="border-t border-[#ebe6df]" />
+
+          {tempPassword ? (
+            <div className="rounded-xl border border-[#c3e0d8] bg-[#f0f7f5] p-3 space-y-2">
+              <p className="text-xs font-semibold text-[#006d5a]">Contraseña temporal generada</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded-lg border border-[#ebe6df] bg-white px-3 py-2 text-sm font-mono tracking-wider text-[#3d2c24]">
+                  {tempPassword}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => { void navigator.clipboard.writeText(tempPassword); toast.success('Copiado') }}
+                  className="rounded-lg border border-[#ebe6df] bg-white p-2 text-[#7d6c64] hover:bg-[#faf8f5]"
+                  aria-label="Copiar contraseña"
+                >
+                  <Copy className="size-4" />
+                </button>
+              </div>
+              <p className="text-[11px] text-[#7d6c64]">Pasásela en persona. El empleado va a tener que cambiarla cuando entre.</p>
+              <button
+                type="button"
+                onClick={() => setTempPassword(null)}
+                className="text-[11px] text-[#a39e97] underline underline-offset-2"
+              >
+                Listo, ya la anoté
+              </button>
+            </div>
+          ) : confirmReset ? (
+            <div className="rounded-xl border border-[#f0d0c0] bg-[#fdf5f0] p-3 space-y-2">
+              <p className="text-xs text-[#7d6c64]">¿Generar una contraseña temporal? El empleado va a tener que cambiarla cuando entre.</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  disabled={resetting}
+                  className="flex items-center gap-1.5 rounded-lg bg-[#c0392b] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a93226] disabled:opacity-60"
+                >
+                  {resetting && <Loader2 className="size-3 animate-spin" />}
+                  {resetting ? 'Generando…' : 'Sí, generar'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmReset(false)}
+                  disabled={resetting}
+                  className="rounded-lg border border-[#ebe6df] px-3 py-1.5 text-xs text-[#7d6c64] hover:bg-[#faf8f5]"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmReset(true)}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#ebe6df] px-4 py-2.5 text-sm font-medium text-[#7d6c64] transition hover:bg-[#faf8f5]"
+            >
+              <RotateCcw className="size-3.5" />
+              Generar contraseña temporal
+            </button>
+          )}
         </>
       )}
     </div>

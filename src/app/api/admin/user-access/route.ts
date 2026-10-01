@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -21,6 +22,12 @@ import type { AppRole } from '@/types/database'
 // ---------------------------------------------------------------------------
 
 type Admin = ReturnType<typeof createAdminClient>
+
+function generarPasswordTemporal(): string {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789' // sin ambiguos: 0,o,1,i,l
+  const bytes = randomBytes(8)
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('')
+}
 
 /** Valida quién llama y si puede tocar el acceso de userId. */
 async function autorizar(admin: Admin, userId: string | null) {
@@ -70,11 +77,34 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const admin = createAdminClient()
-  const body = await request.json().catch(() => null) as { userId?: string; email?: string; password?: string } | null
+  const body = await request.json().catch(() => null) as { userId?: string; email?: string; password?: string; resetPassword?: boolean } | null
   if (!body) return NextResponse.json({ error: 'Body inválido' }, { status: 400 })
 
   const auth = await autorizar(admin, typeof body.userId === 'string' ? body.userId : null)
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+
+  if (body.resetPassword === true) {
+    const tempPassword = generarPasswordTemporal()
+    const { error: updErr } = await admin.auth.admin.updateUserById(auth.target.id, {
+      password: tempPassword,
+      user_metadata: { must_change_password: true },
+    })
+    if (updErr) {
+      return NextResponse.json({ error: `No se pudo resetear la contraseña: ${updErr.message}` }, { status: 500 })
+    }
+    const nombre = `${auth.target.first_name} ${auth.target.last_name}`.trim()
+    void logAudit(admin, {
+      userId: auth.callerId,
+      userName: auth.callerName,
+      action: 'reset_user_password',
+      module: 'equipo',
+      entityType: 'profile',
+      entityId: auth.target.id,
+      description: `${auth.callerName ?? 'Alguien'} generó una contraseña temporal para ${nombre}`,
+      metadata: { temporal: true, must_change_password: true },
+    })
+    return NextResponse.json({ success: true, tempPassword })
+  }
 
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   const password = typeof body.password === 'string' ? body.password : ''
