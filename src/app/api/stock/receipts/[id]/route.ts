@@ -39,12 +39,13 @@ type ReceiptRow = {
   order_id: number | null
   order_source: string | null
   received_date: string | null
+  fudo_expense_id: string | null
 }
 
 async function loadReceipt(admin: ReturnType<typeof createAdminClient>, receiptId: number): Promise<ReceiptRow | null> {
   const { data } = await admin
     .from('stock_receipts')
-    .select('id, stock_item_id, qty, unit, cost_total, cost_per_unit, note, payment_status, payment_method, supplier_id, order_id, order_source, received_date')
+    .select('id, stock_item_id, qty, unit, cost_total, cost_per_unit, note, payment_status, payment_method, supplier_id, order_id, order_source, received_date, fudo_expense_id')
     .eq('id', receiptId)
     .maybeSingle()
   return (data as ReceiptRow | null) ?? null
@@ -82,12 +83,16 @@ export async function PATCH(
       const { error: upErr } = await admin.from('stock_receipts').update(update).eq('id', receiptId)
       if (upErr) throw upErr
 
-      // Intentar imputar en Fudo si el pedido vinculado tiene fudo_expense_id
+      // Intentar imputar en Fudo: primero el fudo_expense_id del recibo (directo),
+      // luego fallback al pedido vinculado (para recibos creados antes de esta columna).
       let fudoSynced = false
-      if (receipt.order_id && receipt.order_source && receipt.cost_total && receipt.cost_total > 0) {
-        const table = receipt.order_source === 'barra' ? 'bar_orders' : 'kitchen_orders'
-        const { data: order } = await admin.from(table).select('fudo_expense_id').eq('id', receipt.order_id).maybeSingle()
-        const fudoExpenseId = (order as { fudo_expense_id?: string | null } | null)?.fudo_expense_id ?? null
+      if (receipt.cost_total && receipt.cost_total > 0) {
+        let fudoExpenseId = receipt.fudo_expense_id ?? null
+        if (!fudoExpenseId && receipt.order_id && receipt.order_source) {
+          const table = receipt.order_source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+          const { data: order } = await admin.from(table).select('fudo_expense_id').eq('id', receipt.order_id).maybeSingle()
+          fudoExpenseId = (order as { fudo_expense_id?: string | null } | null)?.fudo_expense_id ?? null
+        }
         if (fudoExpenseId) {
           try {
             await fudoFetch('/payments', {
@@ -99,7 +104,6 @@ export async function PATCH(
             })
             fudoSynced = true
           } catch (fudoErr) {
-            // Antes solo quedaba en el log: ahora se reintenta solo hasta que entre
             console.warn('[PATCH receipt] Fudo payment post failed (queda en cola):', fudoErr instanceof Error ? fudoErr.message : fudoErr)
             const { encolarPagoGasto } = await import('@/lib/fudo/reintentos')
             await encolarPagoGasto(admin, {
@@ -130,8 +134,8 @@ export async function PATCH(
       const { cancelarPagoPendiente } = await import('@/lib/fudo/reintentos')
       await cancelarPagoPendiente(admin, receiptId)
 
-      let fudoPaymentLinked = false
-      if (receipt.order_id && receipt.order_source) {
+      let fudoPaymentLinked = Boolean(receipt.fudo_expense_id)
+      if (!fudoPaymentLinked && receipt.order_id && receipt.order_source) {
         const table = receipt.order_source === 'barra' ? 'bar_orders' : 'kitchen_orders'
         const { data: order } = await admin.from(table).select('fudo_expense_id').eq('id', receipt.order_id).maybeSingle()
         fudoPaymentLinked = Boolean((order as { fudo_expense_id?: string | null } | null)?.fudo_expense_id)

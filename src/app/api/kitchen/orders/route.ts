@@ -394,7 +394,8 @@ export async function POST(request: NextRequest) {
       if (factura && resultados.some((r) => r.ok) && factura - cargadoPorProducto >= 1) {
         resto = Math.round((factura - cargadoPorProducto) * 100) / 100
         const paymentStatus = paymentMethod === 'cuenta_corriente' ? 'a_pagar' : 'pagado'
-        const { error: restoErr } = await admin.from('stock_receipts').insert({
+        const restoDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+        const { data: restoInserted, error: restoErr } = await admin.from('stock_receipts').insert({
           stock_item_id: null,
           supplier_id: supplierId,
           order_source: llegan[0].source,
@@ -405,13 +406,66 @@ export async function POST(request: NextRequest) {
           cost_per_unit: null,
           note: `Factura del proveedor — importe sin detallar por producto${note ? ` — ${note}` : ''}`,
           received_by: user.id,
-          received_date: new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10),
+          received_date: restoDate,
           payment_status: paymentStatus,
           paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
           paid_by: paymentStatus === 'pagado' ? user.id : null,
           payment_method: paymentMethod,
-        })
+        }).select('id').single()
         if (restoErr) console.warn('[confirm_arrival_batch] resto de factura no registrado:', restoErr.message)
+
+        const restoReceiptId = (restoInserted as { id?: number } | null)?.id ?? null
+
+        // Crear gasto en Fudo para el resto de la factura
+        if (restoReceiptId && supplierId && resto > 0) {
+          const { data: restoSupp } = await admin.from('suppliers').select('fudo_provider_id').eq('id', supplierId).single()
+          if (restoSupp?.fudo_provider_id) {
+            const { createFudoExpenseForReceipt } = await import('@/lib/fudo/expenses')
+            const restoExpense = await createFudoExpenseForReceipt({
+              fudoProviderId: restoSupp.fudo_provider_id,
+              qty: 1,
+              costTotal: resto,
+              costPerUnit: null,
+              receivedDate: restoDate,
+            })
+            if (restoExpense) {
+              await admin.from('stock_receipts').update({ fudo_expense_id: restoExpense.id }).eq('id', restoReceiptId)
+              if (paymentStatus === 'pagado') {
+                const { fudoFetch } = await import('@/lib/fudoClient')
+                try {
+                  await fudoFetch('/payments', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: restoExpense.amount },
+                      relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
+                        expense: { data: { type: 'Expense', id: restoExpense.id } } } } }),
+                  })
+                } catch (payErr) {
+                  console.warn('[confirm_arrival_batch] resto Fudo payment failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
+                  const { encolarPagoGasto } = await import('@/lib/fudo/reintentos')
+                  await encolarPagoGasto(admin, {
+                    fudoExpenseId: restoExpense.id,
+                    monto: restoExpense.amount,
+                    receiptId: restoReceiptId,
+                    error: payErr instanceof Error ? payErr.message : 'Fudo no aceptó el pago',
+                    userId: user.id,
+                  })
+                }
+              }
+            } else {
+              const { encolarCrearGasto } = await import('@/lib/fudo/reintentos')
+              await encolarCrearGasto(admin, {
+                fudoProviderId: restoSupp.fudo_provider_id,
+                amount: resto,
+                date: restoDate,
+                receiptId: restoReceiptId,
+                thenPay: paymentStatus === 'pagado',
+                error: 'Fudo no respondió al crear el gasto (resto de factura)',
+                userId: user.id,
+              })
+            }
+          }
+        }
       }
 
       const okCount = resultados.filter((r) => r.ok).length
@@ -586,6 +640,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     // Usa receiptBase.cost_total que ya tiene el fallback unitCost × qty,
     // por si el encargado cargó solo el precio unitario y no el total.
     const receiptCostTotal = receiptBase.cost_total
+    let lveExpenseFudoProviderId: string | null = null
     if (receiptCostTotal != null && receiptCostTotal > 0 && effectiveSupplierId) {
       const { data: suppRow } = await admin
         .from('suppliers')
@@ -593,6 +648,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
         .eq('id', effectiveSupplierId)
         .single()
       if (suppRow?.fudo_provider_id) {
+        lveExpenseFudoProviderId = suppRow.fudo_provider_id
         const { createFudoExpenseForReceipt } = await import('@/lib/fudo/expenses')
         lveExpense = await createFudoExpenseForReceipt({
           fudoProviderId: suppRow.fudo_provider_id,
@@ -603,6 +659,22 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
           receivedDate,
         })
       }
+    }
+
+    // Guardar fudo_expense_id en el recibo, o encolar para reintento si Fudo falló
+    if (lveExpense && lveReceiptId) {
+      await admin.from('stock_receipts').update({ fudo_expense_id: lveExpense.id }).eq('id', lveReceiptId)
+    } else if (!lveExpense && lveExpenseFudoProviderId && receiptCostTotal != null && receiptCostTotal > 0 && lveReceiptId) {
+      const { encolarCrearGasto } = await import('@/lib/fudo/reintentos')
+      await encolarCrearGasto(admin, {
+        fudoProviderId: lveExpenseFudoProviderId,
+        amount: receiptCostTotal,
+        date: receivedDate,
+        receiptId: lveReceiptId,
+        thenPay: paymentStatus === 'pagado',
+        error: 'Fudo no respondió al crear el gasto (lve_stock)',
+        userId: user.id,
+      })
     }
 
     // Si el gasto se creó en Fudo y el pago fue de contado, imputar el payment
@@ -719,11 +791,11 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
 
   // sin_stock con monto: dejar registro de gasto para cuentas a pagar
   if (mode === 'sin_stock' && paymentMethod && sinStockAmount != null) {
-    const supplierId = (order as { supplier_id?: string | null }).supplier_id ?? null
+    const sinStockSupplierId = (order as { supplier_id?: string | null }).supplier_id ?? null
     const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
-    const receiptBase = {
+    const { data: ssReceiptInserted, error: ssReceiptErr } = await admin.from('stock_receipts').insert({
       stock_item_id: null as string | null,
-      supplier_id: supplierId,
+      supplier_id: sinStockSupplierId,
       order_source: source,
       order_id: orderId,
       qty: 1,
@@ -733,18 +805,66 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
       note: `Pedido: ${order.product_name} (${order.quantity})`,
       received_by: user.id,
       received_date: receivedDate,
-    }
-    let { error: ssReceiptErr } = await admin.from('stock_receipts').insert({
-      ...receiptBase,
       payment_status: paymentStatus,
       paid_at: paymentStatus === 'pagado' ? new Date().toISOString() : null,
       paid_by: paymentStatus === 'pagado' ? user.id : null,
       payment_method: paymentMethod,
-    })
-    if (ssReceiptErr && /payment_method|payment_status|paid_at|paid_by/.test(ssReceiptErr.message)) {
-      ;({ error: ssReceiptErr } = await admin.from('stock_receipts').insert(receiptBase))
-    }
+    }).select('id').single()
     if (ssReceiptErr) console.warn('[confirm_arrival] sin_stock receipt no registrado:', ssReceiptErr.message)
+
+    const ssReceiptId = (ssReceiptInserted as { id?: number } | null)?.id ?? null
+
+    // Crear gasto en Fudo si el proveedor tiene fudo_provider_id
+    if (ssReceiptId && sinStockSupplierId && sinStockAmount > 0) {
+      const { data: sinStockSupp } = await admin.from('suppliers').select('fudo_provider_id').eq('id', sinStockSupplierId).single()
+      if (sinStockSupp?.fudo_provider_id) {
+        const { createFudoExpenseForReceipt } = await import('@/lib/fudo/expenses')
+        const sinStockFudoExpense = await createFudoExpenseForReceipt({
+          fudoProviderId: sinStockSupp.fudo_provider_id,
+          qty: 1,
+          costTotal: sinStockAmount,
+          costPerUnit: null,
+          receivedDate,
+        })
+        if (sinStockFudoExpense) {
+          lveExpense = sinStockFudoExpense
+          await admin.from('stock_receipts').update({ fudo_expense_id: sinStockFudoExpense.id }).eq('id', ssReceiptId)
+          if (paymentStatus === 'pagado') {
+            const { fudoFetch: ff } = await import('@/lib/fudoClient')
+            try {
+              await ff('/payments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: sinStockFudoExpense.amount },
+                  relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
+                    expense: { data: { type: 'Expense', id: sinStockFudoExpense.id } } } } }),
+              })
+            } catch (payErr) {
+              console.warn('[confirm_arrival] sin_stock Fudo payment post failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
+              const { encolarPagoGasto } = await import('@/lib/fudo/reintentos')
+              await encolarPagoGasto(admin, {
+                fudoExpenseId: sinStockFudoExpense.id,
+                monto: sinStockFudoExpense.amount,
+                receiptId: ssReceiptId,
+                error: payErr instanceof Error ? payErr.message : 'Fudo no aceptó el pago',
+                userId: user.id,
+              })
+            }
+          }
+        } else {
+          const { encolarCrearGasto } = await import('@/lib/fudo/reintentos')
+          await encolarCrearGasto(admin, {
+            fudoProviderId: sinStockSupp.fudo_provider_id,
+            amount: sinStockAmount,
+            date: receivedDate,
+            receiptId: ssReceiptId,
+            thenPay: paymentStatus === 'pagado',
+            error: 'Fudo no respondió al crear el gasto (sin_stock)',
+            userId: user.id,
+          })
+        }
+      }
+    }
   }
 
   const { closeOrderWithExpense } = await import('@/lib/compras/conciliar')
@@ -752,7 +872,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     orderId,
     source,
     userId: user.id,
-    expense: mode === 'fudo_expense' ? (expense ?? null) : mode === 'lve_stock' ? (lveExpense ?? null) : null,
+    expense: mode === 'fudo_expense' ? (expense ?? null) : (mode === 'lve_stock' || mode === 'sin_stock') ? (lveExpense ?? null) : null,
     mode,
     note: note ?? null,
     receivedQty: receivedQty ?? null,
