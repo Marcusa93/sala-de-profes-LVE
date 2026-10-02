@@ -88,6 +88,7 @@ export default function EquipoPage() {
   const [egresoReason, setEgresoReason] = useState('')
   const [savingEgreso, setSavingEgreso] = useState(false)
   const [marcandoId, setMarcandoId] = useState<string | null>(null)
+  const [anulandoId, setAnulandoId] = useState<string | null>(null)
 
   const isManager = profile?.role === 'socio' || profile?.role === 'encargado'
 
@@ -203,6 +204,29 @@ export default function EquipoPage() {
       errorToast('No se pudo marcar la entrada', err)
     } finally {
       setMarcandoId(null)
+    }
+  }
+
+  // Deshace una entrada marcada por error ("Llegó" sin querer)
+  const handleAnular = async (attendanceId: string, nombre: string) => {
+    if (anulandoId) return
+    if (!window.confirm(`¿Anular la entrada de ${nombre}? Se borra como si no hubiera fichado hoy.`)) return
+    setAnulandoId(attendanceId)
+    try {
+      const res = await fetch('/api/admin/anular-ingreso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attendance_id: attendanceId, reason: egresoReason.trim() || 'Marcada por error' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success(`Entrada de ${nombre} anulada`)
+      setEditingEgresoId(null)
+      mutateAttendance()
+    } catch (err) {
+      errorToast('No se pudo anular la entrada', err)
+    } finally {
+      setAnulandoId(null)
     }
   }
 
@@ -543,6 +567,16 @@ export default function EquipoPage() {
                           Guardar
                         </button>
                       </div>
+                      {isToday && !ea.attendance.clock_out_at && (
+                        <button
+                          onClick={() => handleAnular(ea.attendance!.id, ea.profile.first_name ?? '')}
+                          disabled={!!anulandoId}
+                          className="flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-semibold text-[#ea504c] hover:bg-[#fef2f2] disabled:opacity-50"
+                        >
+                          {anulandoId === ea.attendance.id ? <Loader2 className="size-3 animate-spin" /> : null}
+                          Anular entrada (marcada por error)
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

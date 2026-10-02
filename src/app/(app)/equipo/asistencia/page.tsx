@@ -13,6 +13,8 @@ import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
 import { ROLES } from '@/lib/constants'
 import { cn } from '@/lib/utils'
+import { errorToast } from '@/lib/toast-helpers'
+import { fechaOperativa } from '@/lib/attendance/jornada'
 import type { AttendanceDashboardRow } from '@/types/database'
 import type { AppRole } from '@/types/database'
 
@@ -56,13 +58,18 @@ function EmployeeRow({
   history,
   loadingHistory,
   onToggle,
+  anulandoId,
+  onAnular,
 }: {
   emp: AttendanceDashboardRow
   isExpanded: boolean
   history: HistoryRecord[] | null
   loadingHistory: boolean
   onToggle: () => void
+  anulandoId: string | null
+  onAnular: (recordId: string) => void
 }) {
+  const hoyOperativo = fechaOperativa()
   const roleConfig = ROLES[emp.role as AppRole] ?? { label: emp.role, color: '#a39e97', bg: '#f3efe9', emoji: '👤' }
   const hoursStr = emp.total_hours > 0
     ? `${Math.floor(emp.total_hours)}h ${Math.round((emp.total_hours % 1) * 60)}m`
@@ -220,6 +227,19 @@ function EmployeeRow({
                       </div>
                     )}
 
+                    {/* Entrada de hoy sin salida: se puede anular si fue un error */}
+                    {isSinEgreso && !r.clock_out_at && r.operative_date === hoyOperativo && (
+                      <button
+                        onClick={() => onAnular(r.id)}
+                        disabled={!!anulandoId}
+                        className="flex shrink-0 items-center gap-1 rounded-md border border-[#ea504c]/30 bg-white px-2 py-0.5 text-[10px] font-semibold text-[#ea504c] hover:bg-[#fef2f2] disabled:opacity-50"
+                        title="Borrar esta entrada: fue marcada por error"
+                      >
+                        {anulandoId === r.id && <Loader2 className="size-3 animate-spin" />}
+                        Anular
+                      </button>
+                    )}
+
                     {/* Status badge */}
                     <div className="shrink-0">
                       {r.is_suspicious ? (
@@ -259,6 +279,7 @@ export default function EquipoAsistenciaPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [historyCache, setHistoryCache] = useState<Record<string, HistoryRecord[]>>({})
   const [loadingHistoryFor, setLoadingHistoryFor] = useState<string | null>(null)
+  const [anulandoId, setAnulandoId] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -295,6 +316,29 @@ export default function EquipoAsistenciaPage() {
       setHistoryCache(prev => ({ ...prev, [empId]: [] }))
     } finally {
       setLoadingHistoryFor(null)
+    }
+  }
+
+  // Deshace una entrada marcada por error ("Llegó" sin querer)
+  async function anularIngreso(emp: AttendanceDashboardRow, recordId: string) {
+    if (anulandoId) return
+    if (!window.confirm(`¿Anular la entrada de ${emp.first_name}? Se borra como si no hubiera fichado hoy.`)) return
+    setAnulandoId(recordId)
+    try {
+      const res = await fetch('/api/admin/anular-ingreso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attendance_id: recordId, reason: 'Marcada por error' }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success(`Entrada de ${emp.first_name} anulada`)
+      setHistoryCache(prev => ({ ...prev, [emp.employee_id]: (prev[emp.employee_id] ?? []).filter(r => r.id !== recordId) }))
+      fetchData()
+    } catch (err) {
+      errorToast('No se pudo anular la entrada', err)
+    } finally {
+      setAnulandoId(null)
     }
   }
 
@@ -380,6 +424,8 @@ export default function EquipoAsistenciaPage() {
                 history={historyCache[emp.employee_id] ?? null}
                 loadingHistory={loadingHistoryFor === emp.employee_id}
                 onToggle={() => toggleEmployee(emp.employee_id)}
+                anulandoId={anulandoId}
+                onAnular={(recordId) => anularIngreso(emp, recordId)}
               />
             ))}
             {sorted.length === 0 && (
