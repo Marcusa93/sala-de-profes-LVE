@@ -621,6 +621,12 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     const costPerUnit = totalNum != null
       ? Math.round((totalNum / qty) * 10000) / 10000
       : (typeof unitCost === 'number' && unitCost > 0 ? unitCost : null)
+    if (costPerUnit != null && costPerUnit > 2_000_000) {
+      return respuesta({
+        success: false,
+        error: `El precio unitario ($${Math.round(costPerUnit).toLocaleString('es-AR')}/${si.unit}) parece un error de carga. Verificá el monto antes de continuar.`,
+      }, { status: 422 })
+    }
     // syncToFudo con reason 'reception' escribe por DELTA sobre Fudo y deja kardex
     const write = await syncToFudo(admin, stockItemId, Math.round((Number(si.current_qty ?? 0) + qty) * 100) / 100, user.id, {
       reason: 'reception',

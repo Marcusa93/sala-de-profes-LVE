@@ -122,7 +122,7 @@ function PedidosContent() {
       supabase.from('kitchen_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }).limit(120),
       supabase.from('suppliers').select('id, name, phone, contact_name, fudo_provider_id').eq('is_active', true).order('name'),
       supabase.from('profiles').select('id, first_name, last_name').eq('is_active', true),
-      supabase.from('stock_items').select('id, name, unit, current_qty, fudo_skip, fudo_ingredient_id, fudo_product_id').eq('is_active', true).order('name'),
+      supabase.from('stock_items').select('id, name, unit, current_qty, cost_per_unit, fudo_skip, fudo_ingredient_id, fudo_product_id').eq('is_active', true).order('name'),
     ])
     const bar = (barRes.data ?? []).map((o) => ({ ...(o as Record<string, unknown>), source: 'barra' as const })) as unknown as Order[]
     const kitchen = (kitchenRes.data ?? []).map((o) => ({ ...(o as Record<string, unknown>), source: 'cocina' as const })) as unknown as Order[]

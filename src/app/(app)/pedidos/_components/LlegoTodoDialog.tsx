@@ -208,6 +208,23 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
                             placeholder="0"
                             className="mt-0.5 w-full rounded-lg border border-[#ebe6df] bg-white px-2 py-1.5 text-[13px] focus:border-[#006d5a] focus:outline-none"
                           />
+                          {(() => {
+                            const costoRef = si?.cost_per_unit
+                            const totalN = parseQty(f.total)
+                            const qtyN = parseQty(f.qty)
+                            const totalEsperado = costoRef && costoRef > 0 && qtyN > 0 ? costoRef * qtyN : null
+                            const sospechoso = totalEsperado != null && totalN > 0 && totalN > totalEsperado * 5
+                            return (
+                              <>
+                                {costoRef && costoRef > 0 && (
+                                  <span className="mt-0.5 block text-[10px] text-[#a39e97]">Últ. compra: {money(costoRef)}/{si?.unit}</span>
+                                )}
+                                {sospechoso && (
+                                  <span className="mt-0.5 block text-[10.5px] font-semibold text-[#ea504c]">⚠ Parece alto (esperado ~{money(totalEsperado!)})</span>
+                                )}
+                              </>
+                            )
+                          })()}
                         </label>
                         {!f.abierto ? (
                           <button type="button" onClick={() => set(i, { abierto: true })} className="col-span-2 text-left text-[11px] font-medium text-[#7d6c64] underline decoration-dotted">
