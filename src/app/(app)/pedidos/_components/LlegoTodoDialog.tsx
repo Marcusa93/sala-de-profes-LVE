@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import { Check, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
+import { createClient } from '@/lib/supabase/client'
 import { PAYMENT_METHODS, money, parseQty, type Match, type Order, type PaymentMethod, type StockLite, type Supplier } from './shared'
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,22 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
   })))
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
   const [factura, setFactura] = useState('')
+
+  // Pre-seleccionar el medio de pago del último recibo de este proveedor
+  useEffect(() => {
+    if (!supplier?.id) return
+    const supabase = createClient()
+    void supabase.from('stock_receipts')
+      .select('payment_method')
+      .eq('supplier_id', supplier.id)
+      .not('payment_method', 'is', null)
+      .order('received_date', { ascending: false })
+      .limit(1)
+      .single()
+      .then(({ data }) => {
+        if (data?.payment_method) setPaymentMethod(data.payment_method as PaymentMethod)
+      })
+  }, [supplier?.id])
   const [nota, setNota] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [errores, setErrores] = useState<Record<number, string>>({})

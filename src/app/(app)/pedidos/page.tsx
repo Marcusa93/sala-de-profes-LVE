@@ -1217,6 +1217,27 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
     return () => { alive = false }
   }, [stockItemId])
 
+  // Pre-seleccionar el medio de pago del último recibo de este proveedor
+  useEffect(() => {
+    if (!supplier?.id) return
+    let alive = true
+    const supabase = createClient()
+    ;(async () => {
+      try {
+        const { data } = await supabase
+          .from('stock_receipts')
+          .select('payment_method')
+          .eq('supplier_id', supplier.id)
+          .not('payment_method', 'is', null)
+          .order('received_date', { ascending: false })
+          .limit(1)
+        const m = ((data ?? [])[0] as { payment_method: string | null } | undefined)?.payment_method as PaymentMethod | null
+        if (alive && m) setPaymentMethod(m)
+      } catch { /* best-effort */ }
+    })()
+    return () => { alive = false }
+  }, [supplier?.id])
+
   const canConfirm = !!paymentMethod && (mode === 'sin_stock' || (mode === 'lve_stock' && !!stockItemId && !!receivedQty.trim()))
 
   async function confirm() {
