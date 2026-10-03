@@ -203,6 +203,43 @@ export async function fetchFudoExpensesConMeta(
 }
 
 /**
+ * Registra un egreso de caja en Fudo al pagar una compra en efectivo.
+ * Solo para efectivo — transferencia y tarjeta no tocan el arqueo de caja.
+ * Best-effort: si Fudo falla, no corta el flujo principal.
+ */
+export async function createFudoCashMovement(params: {
+  amount: number
+  comment?: string
+}): Promise<{ id: string } | null> {
+  const { amount, comment } = params
+  try {
+    const res = await fudoFetch<{ data?: { id?: string } }>('/cash-movements', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: {
+          type: 'CashMovement',
+          attributes: {
+            amount,
+            movementType: 'outcome',
+            ...(comment ? { comment } : {}),
+          },
+          relationships: {
+            cashRegister: { data: { type: 'CashRegister', id: '1' } },
+            paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
+          },
+        },
+      }),
+    })
+    const id = res?.data?.id
+    return id ? { id } : null
+  } catch (err) {
+    console.warn('[createFudoCashMovement] error:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/**
  * Crea un gasto en Fudo al confirmar la llegada de un pedido en modo lve_stock.
  * Devuelve { id, amount } si tuvo éxito, null si Fudo falla (no corta el flujo
  * de recepción — el stock ya fue actualizado).
