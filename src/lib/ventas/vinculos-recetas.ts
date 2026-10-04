@@ -26,12 +26,14 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // ---------------------------------------------------------------------------
 
 const CANAL = /\b(peya|pedidos ?ya|take ?away|delivery|rappi)\b/g
-const STOP = new Set(['de', 'la', 'el', 'los', 'las', 'con', 'y', 'en', 'al', 'a', 'x', 'entrada', 'entradas', 'porcion'])
+const STOP = new Set(['de', 'la', 'el', 'los', 'las', 'con', 'y', 'en', 'al', 'a', 'x', 'entrada', 'entradas', 'porcion',
+  'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'])
 // Variantes de escritura que aparecen en la carta de Fudo
 const SINONIMO: Record<string, string> = {
   mozzarella: 'muzza', muzzarella: 'muzza', mozarella: 'muzza', mozza: 'muzza', muza: 'muzza', muzarella: 'muzza',
   calabreza: 'calabresa', caesar: 'cesar', sanguche: 'sandwich', sanguchito: 'sandwich', ciabata: 'ciabatta',
   jyq: 'jq', fugaza: 'fugazza',
+  mila: 'milanesa', napo: 'napolitana',
 }
 const TAMANIO = /(\d+(?:[.,]\d+)?)\s*(ml|cc|cm3|g|gr|grs|kg|l|lt|lts|litro|litros)\b/
 
