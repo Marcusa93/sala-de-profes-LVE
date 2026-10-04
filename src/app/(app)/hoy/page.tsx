@@ -291,8 +291,8 @@ export default function HoyPage() {
   const GreetingHeader = (
     <FadeIn>
       <div className="flex items-start justify-between">
-        <div>
-          <h1 className="font-display text-3xl font-bold leading-[1.05] tracking-tight text-[#3d2c24]">
+        <div className="min-w-0">
+          <h1 className="font-display text-2xl font-bold leading-[1.05] tracking-tight text-[#3d2c24] sm:text-3xl">
             {getGreeting(profile?.first_name ?? null)}
           </h1>
           <p className={`mt-1 flex items-center gap-1.5 text-sm font-medium ${turno.ok ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
@@ -656,10 +656,7 @@ export default function HoyPage() {
         {visibleSteps.map((step, idx) => {
           const style = TONE_STYLES[step.tone]
           const Icon = step.icon
-          // Para cocina, el número del paso es el absoluto (3 = Producir, 4 = Contar)
-          const stepNumber = isKitchenOnly
-            ? steps.findIndex(s => s.key === step.key) + 1
-            : idx + 1
+          const stepNumber = idx + 1
           return (
             <StaggerItem key={step.key}>
               <div className={`relative overflow-hidden rounded-2xl bg-white p-4 pl-5 shadow-sm ring-1 ${style.ring}`}>

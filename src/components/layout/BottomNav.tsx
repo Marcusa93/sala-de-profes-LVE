@@ -89,10 +89,10 @@ const COCINA_NAV: NavItem[] = [
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
-// Barista: la tolva es su herramienta de cada turno
+// Barista: Hoy como ancla del turno (vista de barra) + Tolva en el Más
 const BARISTA_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
-  { label: 'Tolva', href: '/tolva', icon: Coffee },
+  { label: 'Hoy', href: '/hoy', icon: CalendarDays },
   { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
@@ -222,7 +222,7 @@ const COCINA_MORE: ExpandableNavItem = {
   ],
 }
 
-// BARISTA — vajilla y herramientas
+// BARISTA — tolva, vajilla y herramientas
 const BARISTA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
@@ -230,6 +230,7 @@ const BARISTA_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Tolva', href: '/tolva', icon: Coffee, description: 'Control de la tolva del día' },
         { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },

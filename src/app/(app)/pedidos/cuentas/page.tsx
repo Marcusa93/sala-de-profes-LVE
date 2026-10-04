@@ -452,7 +452,7 @@ export default function CuentasPage() {
                         {editState?.id === r.id && (
                           <div className="mt-2 border-t border-[#f5f0ea] pt-2 space-y-1.5">
                             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Editar recibo</p>
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="grid gap-1.5 sm:grid-cols-2">
                               <label className="block">
                                 <span className="text-[10px] font-semibold text-[#7d6c64]">Monto ($)</span>
                                 <input
@@ -462,7 +462,7 @@ export default function CuentasPage() {
                                   className="mt-0.5 w-full rounded-lg border border-[#ebe6df] bg-white px-2 py-1.5 text-xs focus:border-[#006d5a] focus:outline-none"
                                 />
                               </label>
-                              <label className="col-span-2 block">
+                              <label className="block">
                                 <span className="text-[10px] font-semibold text-[#7d6c64]">Nota</span>
                                 <input
                                   value={editState.note}
