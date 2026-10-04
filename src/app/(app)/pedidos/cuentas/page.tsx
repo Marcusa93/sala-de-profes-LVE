@@ -10,7 +10,7 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   ArrowLeft, Wallet, ChevronDown, ChevronUp, Check,
-  Loader2, Package, AlertTriangle, X, Phone,
+  Loader2, Package, AlertTriangle, X, Phone, Pencil,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -64,6 +64,8 @@ export default function CuentasPage() {
   const [payingAll, setPayingAll] = useState<string | null>(null)
   const [undoing, setUndoing] = useState<number | null>(null)
   const [showPaid, setShowPaid] = useState(false)
+  const [editState, setEditState] = useState<{ id: number; costTotal: string; note: string } | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
 
   const canManage = isManagerOrAbove(profile?.role)
 
@@ -167,6 +169,31 @@ export default function CuentasPage() {
       toast.error(err instanceof Error ? err.message : 'Error al actualizar el pago')
     } finally {
       setUndoing(null)
+    }
+  }
+
+  async function saveEdit() {
+    if (!editState) return
+    setSavingEdit(true)
+    try {
+      const cost = parseFloat(editState.costTotal.replace(',', '.'))
+      const res = await fetch(`/api/stock/receipts/${editState.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(Number.isFinite(cost) && cost > 0 ? { cost_total: cost } : {}),
+          note: editState.note.trim() || null,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Error al guardar')
+      toast.success('Recibo actualizado')
+      setEditState(null)
+      fetchData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al guardar')
+    } finally {
+      setSavingEdit(false)
     }
   }
 
@@ -362,7 +389,16 @@ export default function CuentasPage() {
                           <span className="shrink-0 text-xs font-bold tabular-nums text-[#3d2c24]">
                             {fmtMoney(Number(r.cost_total) || 0)}
                           </span>
-                          {!isPaying && (
+                          {!isPaying && editState?.id !== r.id && (
+                            <button
+                              onClick={() => setEditState({ id: r.id, costTotal: String(r.cost_total ?? ''), note: r.note ?? '' })}
+                              className="flex shrink-0 items-center justify-center rounded-lg border border-[#ebe6df] p-1.5 text-[#a39e97] hover:bg-[#faf8f5]"
+                              title="Editar monto o nota"
+                            >
+                              <Pencil className="size-3.5" />
+                            </button>
+                          )}
+                          {!isPaying && editState?.id !== r.id && (
                             <button
                               onClick={() => setPayState({ id: r.id, method: null })}
                               className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-semibold text-white transition-all active:scale-95"
@@ -371,9 +407,9 @@ export default function CuentasPage() {
                               Pagar
                             </button>
                           )}
-                          {isPaying && (
+                          {(isPaying || editState?.id === r.id) && (
                             <button
-                              onClick={() => setPayState(null)}
+                              onClick={() => { setPayState(null); setEditState(null) }}
                               className="flex shrink-0 items-center justify-center rounded-lg bg-[#f3efe9] p-1.5 text-[#a39e97]"
                             >
                               <X className="size-3.5" />
@@ -409,6 +445,47 @@ export default function CuentasPage() {
                               >
                                 {confirming ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
                                 OK
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {editState?.id === r.id && (
+                          <div className="mt-2 border-t border-[#f5f0ea] pt-2 space-y-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Editar recibo</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <label className="block">
+                                <span className="text-[10px] font-semibold text-[#7d6c64]">Monto ($)</span>
+                                <input
+                                  type="number"
+                                  value={editState.costTotal}
+                                  onChange={(e) => setEditState((es) => es ? { ...es, costTotal: e.target.value } : null)}
+                                  className="mt-0.5 w-full rounded-lg border border-[#ebe6df] bg-white px-2 py-1.5 text-xs focus:border-[#006d5a] focus:outline-none"
+                                />
+                              </label>
+                              <label className="col-span-2 block">
+                                <span className="text-[10px] font-semibold text-[#7d6c64]">Nota</span>
+                                <input
+                                  value={editState.note}
+                                  onChange={(e) => setEditState((es) => es ? { ...es, note: e.target.value } : null)}
+                                  placeholder="Opcional"
+                                  className="mt-0.5 w-full rounded-lg border border-[#ebe6df] bg-white px-2 py-1.5 text-xs focus:border-[#006d5a] focus:outline-none"
+                                />
+                              </label>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => void saveEdit()}
+                                disabled={savingEdit}
+                                className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-60"
+                              >
+                                {savingEdit ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                                Guardar
+                              </button>
+                              <button
+                                onClick={() => setEditState(null)}
+                                className="rounded-lg border border-[#ebe6df] px-3 py-1.5 text-[11px] text-[#7d6c64]"
+                              >
+                                Cancelar
                               </button>
                             </div>
                           </div>

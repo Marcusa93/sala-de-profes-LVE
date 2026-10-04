@@ -234,7 +234,18 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
                             return (
                               <>
                                 {costoRef && costoRef > 0 && (
-                                  <span className="mt-0.5 block text-[10px] text-[#a39e97]">Últ. compra: {money(costoRef)}/{si?.unit}</span>
+                                  <div className="mt-0.5 flex items-center gap-1.5">
+                                    <span className="text-[10px] text-[#a39e97]">Últ. compra: {money(costoRef)}/{si?.unit}</span>
+                                    {totalEsperado != null && !(totalN > 0) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => set(i, { total: String(Math.round(totalEsperado * 100) / 100) })}
+                                        className="text-[10px] font-semibold text-[#4a90d9] underline decoration-dotted underline-offset-2"
+                                      >
+                                        Usar
+                                      </button>
+                                    )}
+                                  </div>
                                 )}
                                 {sospechoso && (
                                   <span className="mt-0.5 block text-[10.5px] font-semibold text-[#ea504c]">⚠ Parece alto (esperado ~{money(totalEsperado!)})</span>

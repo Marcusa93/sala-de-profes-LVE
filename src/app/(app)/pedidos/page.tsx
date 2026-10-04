@@ -7,7 +7,7 @@ import { es } from 'date-fns/locale/es'
 import Link from 'next/link'
 import {
   ShoppingCart, Truck, Check, X, MessageCircle, Plus, Loader2, Package, AlertTriangle,
-  CalendarClock, ChevronDown, ChevronUp, Trash2, Search, Receipt, Wallet, ChevronRight, Pencil, Download,
+  CalendarClock, ChevronDown, ChevronUp, Trash2, Search, Receipt, Wallet, ChevronRight, Pencil, Download, BarChart3,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -876,7 +876,13 @@ function PedidosContent() {
               </div>
             )}
 
-            <div className="mb-2 flex justify-end">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <Link
+                href="/pedidos/gastos"
+                className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-[12px] font-semibold text-[#006d5a] ring-1 ring-[#ebe6df] active:scale-[0.98]"
+              >
+                <BarChart3 className="size-3.5" /> Historial
+              </Link>
               <a
                 href={`/api/stock/receipts/export?from=${new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10)}&to=${new Date().toISOString().slice(0, 10)}`}
                 download
@@ -1129,7 +1135,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
   const [submitting, setSubmitting] = useState(false)
   // Referencia: última compra del insumo con precio (recibo previo o costo confiable)
-  const [lastPurchase, setLastPurchase] = useState<{ amount: number; date: string | null; kind: 'recibo' | 'costo' } | null>(null)
+  const [lastPurchase, setLastPurchase] = useState<{ amount: number; date: string | null; kind: 'recibo' | 'costo'; lastQty?: number | null } | null>(null)
 
   const mode: 'lve_stock' | 'sin_stock' = stockItemId ? 'lve_stock' : 'sin_stock'
   const selectedStock = stockItems.find((s) => s.id === stockItemId) ?? null
@@ -1190,15 +1196,15 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
       try {
         const { data } = await supabase
           .from('stock_receipts')
-          .select('cost_per_unit, received_date')
+          .select('cost_per_unit, received_date, qty')
           .eq('stock_item_id', stockItemId)
           .not('cost_per_unit', 'is', null)
           .order('received_date', { ascending: false })
           .limit(1)
-        const r = (data ?? [])[0] as { cost_per_unit: number | null; received_date: string | null } | undefined
+        const r = (data ?? [])[0] as { cost_per_unit: number | null; received_date: string | null; qty: number | null } | undefined
         if (!alive) return
         if (r?.cost_per_unit && Number(r.cost_per_unit) > 0) {
-          setLastPurchase({ amount: Number(r.cost_per_unit), date: r.received_date, kind: 'recibo' })
+          setLastPurchase({ amount: Number(r.cost_per_unit), date: r.received_date, kind: 'recibo', lastQty: r.qty ?? null })
           return
         }
         const { data: si, error } = await supabase
@@ -1399,11 +1405,27 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                 </label>
               </div>
               {lastPurchase && (
-                <p className="text-[10px] font-semibold text-[#4a90d9]">
-                  última compra: {money(lastPurchase.amount)}/{selectedStock?.unit ?? 'u'}
-                  {lastPurchase.date && ` (${format(new Date(lastPurchase.date.length === 10 ? `${lastPurchase.date}T12:00:00` : lastPurchase.date), 'd MMM', { locale: es })})`}
-                  {lastPurchase.kind === 'costo' && <span className="font-normal text-[#a39e97]"> · costo cargado</span>}
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-semibold text-[#4a90d9]">
+                    última compra: {money(lastPurchase.amount)}/{selectedStock?.unit ?? 'u'}
+                    {lastPurchase.date && ` (${format(new Date(lastPurchase.date.length === 10 ? `${lastPurchase.date}T12:00:00` : lastPurchase.date), 'd MMM', { locale: es })})`}
+                    {lastPurchase.kind === 'costo' && <span className="font-normal text-[#a39e97]"> · costo cargado</span>}
+                  </p>
+                  {lastPurchase.kind === 'recibo' && lastPurchase.lastQty != null && lastPurchase.lastQty > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const q = lastPurchase.lastQty!
+                        setReceivedQty(String(q))
+                        setUnitCost(String(Math.round(lastPurchase.amount * 100) / 100))
+                        setTotalCost(String(Math.round(lastPurchase.amount * q * 100) / 100))
+                      }}
+                      className="shrink-0 text-[10px] font-semibold text-[#4a90d9] underline decoration-dotted underline-offset-2"
+                    >
+                      Usar igual
+                    </button>
+                  )}
+                </div>
               )}
               <label className="block">
                 <span className="text-[11px] font-semibold text-[#3d2c24]">Vencimiento <span className="font-normal text-[#a39e97]">(opcional)</span></span>
