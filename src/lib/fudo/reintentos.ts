@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { fudoFetch } from '@/lib/fudoClient'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { writeFudoStockDelta } from '@/lib/fudo/stock-sync'
+import { parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
 // Cola de reintentos hacia Fudo
@@ -100,6 +101,8 @@ export async function encolarCrearGasto(admin: SupabaseClient, input: {
   thenPay: boolean
   error: string
   userId?: string | null
+  /** Categoría y comprobante: el gasto reintentado sale igual que el original */
+  gasto?: DatosGasto | null
 }): Promise<void> {
   const { error } = await admin.from('fudo_reintentos').insert({
     tipo: 'crear_gasto',
@@ -109,6 +112,7 @@ export async function encolarCrearGasto(admin: SupabaseClient, input: {
       date: input.date,
       receipt_id: String(input.receiptId),
       then_pay: input.thenPay,
+      ...(input.gasto ? { gasto: input.gasto } : {}),
     },
     origen: 'crear_gasto',
     ultimo_error: input.error.slice(0, 500),
@@ -156,20 +160,13 @@ async function reintentarUno(admin: SupabaseClient, r: Reintento): Promise<{ ok:
   }
 
   if (r.tipo === 'crear_gasto') {
-    const { fudo_provider_id, amount, date, receipt_id, then_pay } = r.payload as {
-      fudo_provider_id?: string; amount?: number; date?: string; receipt_id?: string; then_pay?: boolean
+    const { fudo_provider_id, amount, date, receipt_id, then_pay, gasto } = r.payload as {
+      fudo_provider_id?: string; amount?: number; date?: string; receipt_id?: string; then_pay?: boolean; gasto?: unknown
     }
     if (!fudo_provider_id || !amount || !date || !receipt_id) return { ok: false, descartar: 'Datos del gasto incompletos' }
     try {
-      const expRes = await fudoFetch<{ data?: { id?: string } }>('/expenses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          data: { type: 'Expense', attributes: { amount, date },
-            relationships: { provider: { data: { type: 'Provider', id: fudo_provider_id } } } },
-        }),
-      })
-      const expenseId = expRes?.data?.id
+      const { postFudoExpense } = await import('@/lib/fudo/expenses')
+      const expenseId = await postFudoExpense({ fudoProviderId: fudo_provider_id, amount, date, gasto: parseDatosGasto(gasto) })
       if (!expenseId) return { ok: false, error: 'Fudo no devolvió ID de gasto' }
       // Guardar el ID en el recibo para que el PATCH de pago lo encuentre directamente
       await admin.from('stock_receipts').update({ fudo_expense_id: expenseId }).eq('id', Number(receipt_id))

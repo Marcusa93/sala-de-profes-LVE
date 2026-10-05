@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
 import { createClient } from '@/lib/supabase/client'
 import { PAYMENT_METHODS, money, parseQty, type Match, type Order, type PaymentMethod, type StockLite, type Supplier } from './shared'
+import { DatosGastoFields, useDatosGasto } from './DatosGastoFields'
 
 // ---------------------------------------------------------------------------
 // LlegoTodoDialog — recibir todo lo de un proveedor de una vez
@@ -66,7 +67,10 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
   const sumaProductos = llegan.reduce((a, f) => { const n = parseQty(f.total); return a + (Number.isFinite(n) && n > 0 ? n : 0) }, 0)
   const facturaNum = parseQty(factura)
   const faltaCantidad = llegan.some((f) => f.order.stock_item_id && !(parseQty(f.qty) > 0))
-  const puede = !!paymentMethod && llegan.length > 0 && !faltaCantidad && !enviando
+  // Categoría del gasto: obligatoria cuando la compra tiene monto
+  const datosGasto = useDatosGasto(supplier?.id)
+  const hayMonto = sumaProductos > 0 || (Number.isFinite(facturaNum) && facturaNum > 0)
+  const puede = !!paymentMethod && llegan.length > 0 && !faltaCantidad && !enviando && !(hayMonto && datosGasto.falta)
 
   async function confirmar() {
     if (!paymentMethod) return
@@ -81,6 +85,7 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
           paymentMethod,
           invoiceTotal: Number.isFinite(facturaNum) && facturaNum > 0 ? facturaNum : null,
           note: nota.trim() || null,
+          gasto: datosGasto.datos,
           items: filas.map((f) => {
             const t = parseQty(f.total)
             return {
@@ -281,6 +286,8 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
               })}
             </div>
           </div>
+
+          <DatosGastoFields campos={datosGasto.campos} />
 
           {/* Factura y nota general */}
           <div className="space-y-2 rounded-xl bg-[#faf8f5] p-3">

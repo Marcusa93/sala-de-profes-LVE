@@ -1,4 +1,5 @@
 import { fudoFetch } from '@/lib/fudoClient'
+import { descripcionGasto, type CategoriaGasto, type ComprobanteTipo, type DatosGasto } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
 // Fudo Expenses (módulo de GASTOS) — precio de compra REAL
@@ -206,6 +207,105 @@ export async function fetchFudoExpensesConMeta(
 // movimientos de caja son solo retiros e ingresos de dinero. (Hasta el 03/10
 // se creaba un egreso en /cash-movements por cada pago en efectivo.)
 
+// ---------------------------------------------------------------------------
+// Categorías de gasto y tipos de comprobante de Fudo
+// ---------------------------------------------------------------------------
+const META_TTL_MS = 30 * 60 * 1000
+let categoriasCache: { at: number; list: CategoriaGasto[] } | null = null
+let tiposCache: { at: number; map: Map<ComprobanteTipo, string> } | null = null
+
+/** Categorías de gasto activas de Fudo (las mismas que se ven en Fudo). */
+export async function fetchFudoExpenseCategories(): Promise<CategoriaGasto[]> {
+  if (categoriasCache && Date.now() - categoriasCache.at < META_TTL_MS) return categoriasCache.list
+  const list: CategoriaGasto[] = []
+  for (let page = 1; page <= 10; page++) {
+    const res = await fudoFetch<{ data?: JsonApiRes[] }>(`/expense-categories?page[size]=200&page[number]=${page}&sort=name`)
+    const data = Array.isArray(res.data) ? res.data : []
+    for (const c of data) {
+      const a = c.attributes ?? {}
+      if (a.active === false || typeof a.name !== 'string') continue
+      list.push({ id: c.id, name: a.name })
+    }
+    if (data.length < 200) break
+  }
+  categoriasCache = { at: Date.now(), list }
+  return list
+}
+
+/**
+ * Id del tipo de comprobante (ReceiptType) en Fudo. La API no tiene un listado
+ * de tipos: se toman de los gastos ya cargados en Fudo. Si ese tipo nunca se
+ * usó, no se manda (el gasto igual lleva número y descripción).
+ */
+async function receiptTypeId(tipo: ComprobanteTipo | null): Promise<string | null> {
+  if (!tipo || tipo === 'sin_comprobante') return null
+  if (!tiposCache || Date.now() - tiposCache.at >= META_TTL_MS) {
+    const map = new Map<ComprobanteTipo, string>()
+    try {
+      const res = await fudoFetch<ExpensesResponse>('/expenses?include=receiptType&page[size]=200&sort=-id')
+      for (const inc of res.included ?? []) {
+        if (inc.type !== 'ReceiptType') continue
+        const nombre = String(inc.attributes?.name ?? inc.attributes?.description ?? '').toLowerCase()
+        const letra = nombre.match(/factura\s*([abc])\b/)?.[1]
+        const key: ComprobanteTipo | null = letra ? (`factura_${letra}` as ComprobanteTipo) : /ticket/.test(nombre) ? 'ticket' : null
+        if (key && !map.has(key)) map.set(key, inc.id)
+      }
+    } catch (err) {
+      console.warn('[receiptTypeId] no se pudieron leer los tipos de comprobante:', err instanceof Error ? err.message : err)
+    }
+    tiposCache = { at: Date.now(), map }
+  }
+  return tiposCache.map.get(tipo) ?? null
+}
+
+/** Cuerpo del POST /expenses: proveedor + categoría + comprobante. */
+export async function fudoExpenseBody(params: {
+  fudoProviderId: string
+  amount: number
+  date: string
+  gasto?: DatosGasto | null
+  conTipoComprobante?: boolean
+}) {
+  const { fudoProviderId, amount, date, gasto, conTipoComprobante = true } = params
+  const tipoId = conTipoComprobante ? await receiptTypeId(gasto?.comprobante ?? null) : null
+  const descripcion = descripcionGasto(gasto ?? null)
+  return {
+    data: {
+      type: 'Expense',
+      attributes: {
+        amount,
+        date,
+        ...(gasto?.numero ? { receiptNumber: gasto.numero } : {}),
+        ...(descripcion ? { description: descripcion } : {}),
+      },
+      relationships: {
+        provider: { data: { type: 'Provider', id: fudoProviderId } },
+        ...(gasto?.categoriaId ? { expenseCategory: { data: { type: 'ExpenseCategory', id: gasto.categoriaId } } } : {}),
+        ...(tipoId ? { receiptType: { data: { type: 'ReceiptType', id: tipoId } } } : {}),
+      },
+    },
+  }
+}
+
+/** POST /expenses; si Fudo rechaza el tipo de comprobante, reintenta sin él. */
+export async function postFudoExpense(params: Parameters<typeof fudoExpenseBody>[0]): Promise<string | null> {
+  const enviar = async (conTipoComprobante: boolean) => {
+    const res = await fudoFetch<{ data?: { id?: string } }>('/expenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(await fudoExpenseBody({ ...params, conTipoComprobante })),
+    })
+    return res?.data?.id ?? null
+  }
+  try {
+    return await enviar(true)
+  } catch (err) {
+    if (!params.gasto?.comprobante || params.gasto.comprobante === 'sin_comprobante') throw err
+    console.warn('[postFudoExpense] reintento sin tipo de comprobante:', err instanceof Error ? err.message : err)
+    return await enviar(false)
+  }
+}
+
 /**
  * Crea un gasto en Fudo al confirmar la llegada de un pedido en modo lve_stock.
  * Devuelve { id, amount } si tuvo éxito, null si Fudo falla (no corta el flujo
@@ -218,21 +318,12 @@ export async function createFudoExpenseForReceipt(params: {
   costTotal: number
   costPerUnit: number | null
   receivedDate: string
+  /** Categoría y comprobante */
+  gasto?: DatosGasto | null
 }): Promise<{ id: string; amount: number } | null> {
-  const { fudoProviderId, fudoIngredientId, qty, costTotal, costPerUnit, receivedDate } = params
+  const { fudoProviderId, fudoIngredientId, qty, costTotal, costPerUnit, receivedDate, gasto } = params
   try {
-    const expRes = await fudoFetch<{ data?: { id?: string } }>('/expenses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        data: {
-          type: 'Expense',
-          attributes: { amount: costTotal, date: receivedDate },
-          relationships: { provider: { data: { type: 'Provider', id: fudoProviderId } } },
-        },
-      }),
-    })
-    const expenseId = expRes?.data?.id
+    const expenseId = await postFudoExpense({ fudoProviderId, amount: costTotal, date: receivedDate, gasto })
     if (!expenseId) return null
 
     // Ítem del ingrediente: DESACTIVADO. En Fudo, un gasto con insumo suma

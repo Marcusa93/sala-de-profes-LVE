@@ -24,6 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogC
 import type { SugerenciasPayload, SugerenciaCompra } from '@/lib/compras/sugerencias'
 import { PAYMENT_METHODS, esComprable, money, parseQty, type ConciliarPayload, type Order, type PaymentMethod, type Profile, type StockLite, type Supplier } from './_components/shared'
 import { LlegoTodoDialog } from './_components/LlegoTodoDialog'
+import { DatosGastoFields, useDatosGasto } from './_components/DatosGastoFields'
 
 // ---------------------------------------------------------------------------
 // /pedidos — el ciclo real, en tres pasos y sin duplicar Fudo
@@ -1248,7 +1249,13 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
     return () => { alive = false }
   }, [supplier?.id])
 
-  const canConfirm = !!paymentMethod && (mode === 'sin_stock' || (mode === 'lve_stock' && !!stockItemId && !!receivedQty.trim()))
+  // Categoría del gasto: obligatoria cuando la llegada genera un gasto (hay monto)
+  const datosGasto = useDatosGasto(supplier?.id)
+  const hayMonto = mode === 'sin_stock'
+    ? Number.isFinite(montoSinStock) && montoSinStock > 0
+    : [parseQty(unitCost), parseQty(totalCost)].some((n) => Number.isFinite(n) && n > 0)
+  const canConfirm = !!paymentMethod && !(hayMonto && datosGasto.falta)
+    && (mode === 'sin_stock' || (mode === 'lve_stock' && !!stockItemId && !!receivedQty.trim()))
 
   async function confirm() {
     if (!paymentMethod) return
@@ -1276,6 +1283,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
           expiresAt: mode === 'lve_stock' && expiresAt ? expiresAt : null,
           note: note.trim() || null,
           paymentMethod,
+          gasto: datosGasto.datos,
         }),
       })
       const json = await res.json()
@@ -1466,6 +1474,8 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
               </div>
             </div>
           )}
+
+          <DatosGastoFields campos={datosGasto.campos} />
 
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Nota (opcional): faltó algo, vino distinto…" className="w-full resize-none rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none" />
         </div>
