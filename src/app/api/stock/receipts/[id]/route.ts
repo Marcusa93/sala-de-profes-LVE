@@ -112,14 +112,6 @@ export async function PATCH(
             })
           }
         }
-        // Arqueo de caja: egreso en Fudo si se salda en efectivo
-        if (newPaidMethod === 'efectivo' && receipt.cost_total > 0) {
-          const { createFudoCashMovement } = await import('@/lib/fudo/expenses')
-          await createFudoCashMovement({
-            amount: receipt.cost_total,
-            comment: receipt.note ?? undefined,
-          })
-        }
       }
 
       const userName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
