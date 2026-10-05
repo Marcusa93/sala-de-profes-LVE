@@ -8,6 +8,7 @@ import { normalizeToStockUnit, parseTypedUnit } from '@/lib/produccion/units'
 import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { getConsumptionContextWithTimeout } from '@/lib/stock/consumption'
+import { parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -325,6 +326,7 @@ export async function POST(request: NextRequest) {
     // total de la factura y supera lo cargado por producto, la diferencia
     // queda como gasto del proveedor (para Pagos) sin inventar costos.
     if (body.action === 'confirm_arrival_batch') {
+      const gasto = parseDatosGasto(body.gasto)
       const { items, paymentMethod, invoiceTotal, note } = body as {
         items: {
           orderId: number
@@ -424,6 +426,9 @@ export async function POST(request: NextRequest) {
         if (restoReceiptId) receiptIds.push(restoReceiptId)
       }
 
+      // Categoría y comprobante en los recibos del lote (IVA/IIBB una sola vez)
+      await guardarDatosGasto(admin, receiptIds, gasto)
+
       // UN SOLO gasto en Fudo para toda la compra del proveedor.
       // Si vino invoiceTotal lo usamos (cubre ítems + importe sin detallar).
       // Si no, usamos la suma de los costos recibidos.
@@ -439,6 +444,7 @@ export async function POST(request: NextRequest) {
             costTotal: totalParaFudo,
             costPerUnit: null,
             receivedDate: fudoDate,
+            gasto,
           })
           if (batchExpense) {
             // Vincular el gasto único a todos los recibos del lote
@@ -482,6 +488,7 @@ export async function POST(request: NextRequest) {
                 thenPay: batchPaymentStatus === 'pagado',
                 error: 'Fudo no respondió al crear el gasto (batch)',
                 userId: user.id,
+                gasto,
               })
             }
           }
@@ -521,6 +528,28 @@ export async function POST(request: NextRequest) {
 // ---------------------------------------------------------------------------
 
 type Resultado = { status: number; json: Record<string, unknown> }
+
+/**
+ * Guarda categoría y comprobante en los recibos. IVA e IIBB son de la factura
+ * entera: van solo en el primero (si no, al sumar recibos se multiplicarían).
+ * Las columnas las agrega supabase/migrations/20261005_stock_receipts_gasto_columns.sql:
+ * si todavía no se corrió, no se guarda (en Fudo igual queda) y nada se corta.
+ */
+async function guardarDatosGasto(admin: ReturnType<typeof createAdminClient>, receiptIds: number[], gasto: DatosGasto | null) {
+  if (!gasto || receiptIds.length === 0) return
+  const comunes = {
+    expense_category_id: gasto.categoriaId,
+    expense_category_name: gasto.categoriaNombre,
+    comprobante_tipo: gasto.comprobante,
+    comprobante_numero: gasto.numero,
+  }
+  const [primero, ...resto] = receiptIds
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recibos = admin.from('stock_receipts') as any
+  const { error } = await recibos.update({ ...comunes, iva: gasto.iva, iibb: gasto.iibb }).eq('id', primero)
+  if (!error && resto.length > 0) await recibos.update(comunes).in('id', resto)
+  if (error) console.warn('[datos del gasto] no se guardaron en el recibo (¿falta la migración?):', error.message)
+}
 const respuesta = (json: Record<string, unknown>, init?: { status?: number }): Resultado => ({ json, status: init?.status ?? 200 })
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -544,6 +573,8 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     /** batch: si true, no crea gasto en Fudo (el batch handler lo hace una sola vez) */
     skipFudoExpense?: boolean
   }
+  // Categoría y comprobante (en lote los guarda el batch, una vez por factura)
+  const gasto = skipFudoExpense ? null : parseDatosGasto((body as { gasto?: unknown }).gasto)
   // cuenta_corriente → queda en cuentas a pagar; el resto → pagado de contado
   const paymentStatus: 'pagado' | 'a_pagar' = paymentMethod === 'cuenta_corriente' ? 'a_pagar' : 'pagado'
   if (typeof orderId !== 'number' || !source || !mode) {
@@ -666,6 +697,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     }).select('id').single()
     if (lveReceiptErr) console.warn('[confirm_arrival] lve_stock receipt no registrado:', lveReceiptErr.message)
     lveReceiptId = (receiptInserted as { id?: number } | null)?.id ?? null
+    if (lveReceiptId) await guardarDatosGasto(admin, [lveReceiptId], gasto)
     batchReceiptId = lveReceiptId
     batchCostTotal = receiptBase.cost_total
 
@@ -691,6 +723,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
             costTotal: receiptCostTotal,
             costPerUnit,
             receivedDate,
+            gasto,
           })
         }
       }
@@ -708,6 +741,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
           thenPay: paymentStatus === 'pagado',
           error: 'Fudo no respondió al crear el gasto (lve_stock)',
           userId: user.id,
+          gasto,
         })
       }
 
@@ -848,6 +882,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     if (ssReceiptErr) console.warn('[confirm_arrival] sin_stock receipt no registrado:', ssReceiptErr.message)
 
     const ssReceiptId = (ssReceiptInserted as { id?: number } | null)?.id ?? null
+    if (ssReceiptId) await guardarDatosGasto(admin, [ssReceiptId], gasto)
     batchReceiptId = ssReceiptId
     batchCostTotal = sinStockAmount
 
@@ -863,6 +898,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
             costTotal: sinStockAmount,
             costPerUnit: null,
             receivedDate,
+            gasto,
           })
           if (sinStockFudoExpense) {
             lveExpense = sinStockFudoExpense
@@ -899,6 +935,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
               thenPay: paymentStatus === 'pagado',
               error: 'Fudo no respondió al crear el gasto (sin_stock)',
               userId: user.id,
+              gasto,
             })
           }
         }
