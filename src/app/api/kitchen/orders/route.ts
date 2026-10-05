@@ -532,7 +532,7 @@ type Resultado = { status: number; json: Record<string, unknown> }
 /**
  * Guarda categoría y comprobante en los recibos. IVA e IIBB son de la factura
  * entera: van solo en el primero (si no, al sumar recibos se multiplicarían).
- * Las columnas las agrega supabase/migrations/20261005_gasto_categoria_comprobante.sql:
+ * Las columnas las agrega supabase/migrations/20261005_stock_receipts_gasto_columns.sql:
  * si todavía no se corrió, no se guarda (en Fudo igual queda) y nada se corta.
  */
 async function guardarDatosGasto(admin: ReturnType<typeof createAdminClient>, receiptIds: number[], gasto: DatosGasto | null) {
