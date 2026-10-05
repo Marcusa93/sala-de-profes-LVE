@@ -22,7 +22,7 @@ import { LoadingState } from '@/components/ui/LoadingState'
 import { BackToHoy } from '@/components/layout/BackToHoy'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
 import type { SugerenciasPayload, SugerenciaCompra } from '@/lib/compras/sugerencias'
-import { PAYMENT_METHODS, money, parseQty, type ConciliarPayload, type Order, type PaymentMethod, type Profile, type StockLite, type Supplier } from './_components/shared'
+import { PAYMENT_METHODS, esComprable, money, parseQty, type ConciliarPayload, type Order, type PaymentMethod, type Profile, type StockLite, type Supplier } from './_components/shared'
 import { LlegoTodoDialog } from './_components/LlegoTodoDialog'
 
 // ---------------------------------------------------------------------------
@@ -117,19 +117,23 @@ function PedidosContent() {
 
   const fetchOrders = useCallback(async () => {
     const supabase = createClient()
-    const [barRes, kitchenRes, suppRes, profRes, stockRes] = await Promise.all([
+    const [barRes, kitchenRes, suppRes, profRes, stockRes, linksRes] = await Promise.all([
       supabase.from('bar_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }).limit(120),
       supabase.from('kitchen_orders').select('*').in('status', ['pending', 'ordered', 'received']).order('created_at', { ascending: false }).limit(120),
       supabase.from('suppliers').select('id, name, phone, contact_name, fudo_provider_id').eq('is_active', true).order('name'),
       supabase.from('profiles').select('id, first_name, last_name').eq('is_active', true),
-      supabase.from('stock_items').select('id, name, unit, current_qty, cost_per_unit, fudo_skip, fudo_ingredient_id, fudo_product_id').eq('is_active', true).order('name'),
+      supabase.from('stock_items').select('id, name, unit, current_qty, cost_per_unit, fudo_skip, fudo_ingredient_id, fudo_product_id, supplier_id').eq('is_active', true).order('name'),
+      // Vínculos insumo↔proveedor (la tabla no está en los tipos generados)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase.from('stock_item_suppliers' as any) as any).select('stock_item_id').is('dismissed_at', null),
     ])
     const bar = (barRes.data ?? []).map((o) => ({ ...(o as Record<string, unknown>), source: 'barra' as const })) as unknown as Order[]
     const kitchen = (kitchenRes.data ?? []).map((o) => ({ ...(o as Record<string, unknown>), source: 'cocina' as const })) as unknown as Order[]
     setOrders([...kitchen, ...bar])
     setSuppliers((suppRes.data ?? []) as unknown as Supplier[])
     setProfiles((profRes.data ?? []) as unknown as Profile[])
-    setStockItems((stockRes.data ?? []) as unknown as StockLite[])
+    const conProveedor = new Set(((linksRes.data ?? []) as { stock_item_id: string }[]).map((l) => l.stock_item_id))
+    setStockItems(((stockRes.data ?? []) as unknown as StockLite[]).map((s) => ({ ...s, has_supplier: conProveedor.has(s.id) })))
     setLoading(false)
 
     supabase
@@ -1140,7 +1144,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
   const mode: 'lve_stock' | 'sin_stock' = stockItemId ? 'lve_stock' : 'sin_stock'
   const selectedStock = stockItems.find((s) => s.id === stockItemId) ?? null
   const filteredStock = stockSearch.length > 1
-    ? stockItems.filter((s) => !(s.fudo_product_id && !s.fudo_ingredient_id) && s.name.toLowerCase().includes(stockSearch.toLowerCase())).slice(0, 6)
+    ? stockItems.filter((s) => esComprable(s) && s.name.toLowerCase().includes(stockSearch.toLowerCase())).slice(0, 6)
     : []
 
   // Cantidad parseable (acepta coma decimal): "5 kg" → 5
@@ -1503,9 +1507,8 @@ function NewOrderDialog({ suppliers, stockItems, onClose, onDone }: { suppliers:
     if (q.length <= 1) return []
     return stockItems
       .filter((s) => {
-        // Excluir productos Fudo (platos del menú): tienen fudo_product_id pero no fudo_ingredient_id
-        if (s.fudo_product_id && !s.fudo_ingredient_id) return false
-        return s.name.toLowerCase().includes(q)
+        // Platos del menú afuera; bebidas de reventa (con proveedor) adentro
+        return esComprable(s) && s.name.toLowerCase().includes(q)
       })
       .slice(0, 6)
   }
