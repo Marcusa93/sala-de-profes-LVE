@@ -455,11 +455,6 @@ export async function POST(request: NextRequest) {
                     relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
                       expense: { data: { type: 'Expense', id: batchExpense.id } } } } }),
                 })
-                // Arqueo de caja: egreso solo si se pagó en efectivo
-                if (paymentMethod === 'efectivo') {
-                  const { createFudoCashMovement } = await import('@/lib/fudo/expenses')
-                  await createFudoCashMovement({ amount: batchExpense.amount })
-                }
               } catch (payErr) {
                 console.warn('[confirm_arrival_batch] Fudo payment failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
                 const firstReceiptId = receiptIds[0] ?? null
@@ -727,11 +722,6 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
               relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
                 expense: { data: { type: 'Expense', id: lveExpense.id } } } } }),
           })
-          // Arqueo de caja: egreso solo si se pagó en efectivo
-          if (paymentMethod === 'efectivo') {
-            const { createFudoCashMovement } = await import('@/lib/fudo/expenses')
-            await createFudoCashMovement({ amount: lveExpense.amount, comment: si.name })
-          }
         } catch (payErr) {
           console.warn('[confirm_arrival] Fudo payment post failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
           if (lveReceiptId) {
@@ -887,11 +877,6 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
                     relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
                       expense: { data: { type: 'Expense', id: sinStockFudoExpense.id } } } } }),
                 })
-                // Arqueo de caja: egreso solo si se pagó en efectivo
-                if (paymentMethod === 'efectivo') {
-                  const { createFudoCashMovement } = await import('@/lib/fudo/expenses')
-                  await createFudoCashMovement({ amount: sinStockFudoExpense.amount })
-                }
               } catch (payErr) {
                 console.warn('[confirm_arrival] sin_stock Fudo payment post failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
                 const { encolarPagoGasto } = await import('@/lib/fudo/reintentos')
