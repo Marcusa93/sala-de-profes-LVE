@@ -446,6 +446,7 @@ export async function POST(request: NextRequest) {
             costPerUnit: null,
             receivedDate: fudoDate,
             gasto,
+            medioPago: paymentMethod,
           })
           if (batchExpense) {
             // Vincular el gasto único a todos los recibos del lote
@@ -453,15 +454,9 @@ export async function POST(request: NextRequest) {
               await admin.from('stock_receipts').update({ fudo_expense_id: batchExpense.id }).in('id', receiptIds)
             }
             if (batchPaymentStatus === 'pagado') {
-              const { fudoFetch } = await import('@/lib/fudoClient')
+              const { postFudoPayment } = await import('@/lib/fudo/expenses')
               try {
-                await fudoFetch('/payments', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: batchExpense.amount },
-                    relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
-                      expense: { data: { type: 'Expense', id: batchExpense.id } } } } }),
-                })
+                await postFudoPayment({ expenseId: batchExpense.id, amount: batchExpense.amount, medio: paymentMethod })
               } catch (payErr) {
                 console.warn('[confirm_arrival_batch] Fudo payment failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
                 const firstReceiptId = receiptIds[0] ?? null
@@ -473,6 +468,7 @@ export async function POST(request: NextRequest) {
                     receiptId: firstReceiptId,
                     error: payErr instanceof Error ? payErr.message : 'Fudo no aceptó el pago',
                     userId: user.id,
+                    medio: paymentMethod,
                   })
                 }
               }
@@ -490,6 +486,7 @@ export async function POST(request: NextRequest) {
                 error: 'Fudo no respondió al crear el gasto (batch)',
                 userId: user.id,
                 gasto,
+                medio: paymentMethod,
               })
             }
           }
@@ -726,6 +723,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
             costPerUnit,
             receivedDate,
             gasto,
+            medioPago: paymentMethod,
           })
         }
       }
@@ -744,20 +742,15 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
           error: 'Fudo no respondió al crear el gasto (lve_stock)',
           userId: user.id,
           gasto,
+          medio: paymentMethod,
         })
       }
 
       // Si el gasto se creó en Fudo y el pago fue de contado, imputar el payment
       if (lveExpense && paymentStatus === 'pagado') {
-        const { fudoFetch } = await import('@/lib/fudoClient')
+        const { postFudoPayment } = await import('@/lib/fudo/expenses')
         try {
-          await fudoFetch('/payments', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: lveExpense.amount },
-              relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
-                expense: { data: { type: 'Expense', id: lveExpense.id } } } } }),
-          })
+          await postFudoPayment({ expenseId: lveExpense.id, amount: lveExpense.amount, medio: paymentMethod })
         } catch (payErr) {
           console.warn('[confirm_arrival] Fudo payment post failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
           if (lveReceiptId) {
@@ -768,6 +761,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
               receiptId: lveReceiptId,
               error: payErr instanceof Error ? payErr.message : 'Fudo no aceptó el pago',
               userId: user.id,
+              medio: paymentMethod,
             })
           }
         }
@@ -901,20 +895,15 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
             costPerUnit: null,
             receivedDate,
             gasto,
+            medioPago: paymentMethod,
           })
           if (sinStockFudoExpense) {
             lveExpense = sinStockFudoExpense
             await admin.from('stock_receipts').update({ fudo_expense_id: sinStockFudoExpense.id }).eq('id', ssReceiptId)
             if (paymentStatus === 'pagado') {
-              const { fudoFetch: ff } = await import('@/lib/fudoClient')
+              const { postFudoPayment } = await import('@/lib/fudo/expenses')
               try {
-                await ff('/payments', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: sinStockFudoExpense.amount },
-                    relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
-                      expense: { data: { type: 'Expense', id: sinStockFudoExpense.id } } } } }),
-                })
+                await postFudoPayment({ expenseId: sinStockFudoExpense.id, amount: sinStockFudoExpense.amount, medio: paymentMethod })
               } catch (payErr) {
                 console.warn('[confirm_arrival] sin_stock Fudo payment post failed (encolando):', payErr instanceof Error ? payErr.message : payErr)
                 const { encolarPagoGasto } = await import('@/lib/fudo/reintentos')
@@ -924,6 +913,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
                   receiptId: ssReceiptId,
                   error: payErr instanceof Error ? payErr.message : 'Fudo no aceptó el pago',
                   userId: user.id,
+                  medio: paymentMethod,
                 })
               }
             }
@@ -938,6 +928,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
               error: 'Fudo no respondió al crear el gasto (sin_stock)',
               userId: user.id,
               gasto,
+              medio: paymentMethod,
             })
           }
         }

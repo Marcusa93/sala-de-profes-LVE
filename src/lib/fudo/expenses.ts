@@ -272,16 +272,84 @@ async function receiptTypeId(tipo: ComprobanteTipo | null): Promise<string | nul
   return tiposCache.map.get(tipo) ?? null
 }
 
-/** Cuerpo del POST /expenses: proveedor + categoría + comprobante. */
+// ---------------------------------------------------------------------------
+// Medios de pago: Sala de Profes → Fudo
+// ---------------------------------------------------------------------------
+// Antes todo se mandaba como id '1' (Efectivo): una transferencia figuraba en
+// Fudo como efectivo y un gasto en cuenta corriente quedaba SIN medio de pago,
+// así que no aparecía en la cuenta corriente del proveedor (órdenes de pago).
+// Se resuelve por tipo contra /payment-methods; si Fudo no responde, los ids
+// verificados en este Fudo (06/10/2026).
+// tarjeta_credito: solo para leer pagos hechos en Fudo (en Sala de Profes es una sola "Tarjeta" → débito)
+const MEDIO_FUDO_RESPALDO: Record<string, string> = { efectivo: '1', cuenta_corriente: '2', tarjeta_credito: '3', tarjeta: '4', transferencia: '5' }
+let mediosCache: { at: number; map: Record<string, string> } | null = null
+
+/** PaymentMethod de Fudo para un medio de Sala de Profes (efectivo, transferencia, tarjeta, cuenta_corriente). */
+export async function fudoPaymentMethodId(medio: string | null | undefined): Promise<string> {
+  const clave = medio && MEDIO_FUDO_RESPALDO[medio] ? medio : 'efectivo'
+  if (!mediosCache || Date.now() - mediosCache.at >= META_TTL_MS) {
+    const map: Record<string, string> = { ...MEDIO_FUDO_RESPALDO }
+    try {
+      const res = await fudoFetch<{ data?: JsonApiRes[] }>('/payment-methods?page[size]=100&fields[paymentMethod]=name,code,kind,forExpenses,active')
+      const medios = (res.data ?? []).filter((m) => m.attributes?.active !== false && m.attributes?.forExpenses !== false)
+      const buscar = (f: (a: Record<string, unknown>) => boolean) => medios.find((m) => f(m.attributes ?? {}))?.id
+      const encontrados: Record<string, string | undefined> = {
+        cuenta_corriente: buscar((a) => a.kind === 'HOUSE-ACCOUNT'),
+        efectivo: buscar((a) => a.kind === 'CASH'),
+        tarjeta: buscar((a) => a.kind === 'DEBIT-CARD'),
+        tarjeta_credito: buscar((a) => a.kind === 'CREDIT-CARD'),
+        transferencia: buscar((a) => /transfer/i.test(String(a.name ?? '')) || /transfer/i.test(String(a.code ?? ''))),
+      }
+      for (const [k, id] of Object.entries(encontrados)) if (id) map[k] = id
+    } catch (err) {
+      console.warn('[fudoPaymentMethodId] uso los ids conocidos:', err instanceof Error ? err.message : err)
+    }
+    mediosCache = { at: Date.now(), map }
+  }
+  return mediosCache.map[clave]
+}
+
+/** Al revés: medio de Sala de Profes para un PaymentMethod de Fudo (null si no hay equivalente). */
+export async function medioLveDesdeFudo(fudoId: string): Promise<string | null> {
+  await fudoPaymentMethodId('efectivo') // carga el mapa
+  const map = mediosCache?.map ?? MEDIO_FUDO_RESPALDO
+  const medio = Object.entries(map).find(([, id]) => id === fudoId)?.[0] ?? null
+  if (medio === 'tarjeta_credito') return 'tarjeta'
+  return medio === 'cuenta_corriente' ? null : medio
+}
+
+/** Imputa un pago a un gasto de Fudo con su medio real. */
+export async function postFudoPayment(params: { expenseId: string; amount: number; medio: string | null | undefined }) {
+  // Un pago no puede ser "cuenta corriente" (eso es deber): sin medio real, efectivo
+  const medioId = await fudoPaymentMethodId(params.medio === 'cuenta_corriente' ? 'efectivo' : params.medio)
+  return fudoFetch('/payments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: params.amount },
+      relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: medioId } },
+        expense: { data: { type: 'Expense', id: params.expenseId } } } } }),
+  })
+}
+
+/** ¿El gasto ya figura pagado en Fudo? (p. ej. por una orden de pago hecha en Fudo) */
+export async function fudoExpensePagado(expenseId: string): Promise<boolean> {
+  const res = await fudoFetch<{ data?: JsonApiRes }>(`/expenses/${encodeURIComponent(expenseId)}?fields[expense]=status`)
+  return res?.data?.attributes?.status === 'PAID'
+}
+
+/** Cuerpo del POST /expenses: proveedor + categoría + comprobante + medio de pago. */
 export async function fudoExpenseBody(params: {
   fudoProviderId: string
   amount: number
   date: string
   gasto?: DatosGasto | null
+  /** Medio de Sala de Profes; cuenta corriente lo deja en la cuenta del proveedor en Fudo */
+  medioPago?: string | null
   conTipoComprobante?: boolean
 }) {
-  const { fudoProviderId, amount, date, gasto, conTipoComprobante = true } = params
+  const { fudoProviderId, amount, date, gasto, medioPago, conTipoComprobante = true } = params
   const tipoId = conTipoComprobante ? await receiptTypeId(gasto?.comprobante ?? null) : null
+  const medioId = medioPago ? await fudoPaymentMethodId(medioPago) : null
   const descripcion = descripcionGasto(gasto ?? null)
   return {
     data: {
@@ -296,6 +364,7 @@ export async function fudoExpenseBody(params: {
         provider: { data: { type: 'Provider', id: fudoProviderId } },
         ...(gasto?.categoriaId ? { expenseCategory: { data: { type: 'ExpenseCategory', id: gasto.categoriaId } } } : {}),
         ...(tipoId ? { receiptType: { data: { type: 'ReceiptType', id: tipoId } } } : {}),
+        ...(medioId ? { paymentMethod: { data: { type: 'PaymentMethod', id: medioId } } } : {}),
       },
     },
   }
@@ -334,10 +403,12 @@ export async function createFudoExpenseForReceipt(params: {
   receivedDate: string
   /** Categoría y comprobante */
   gasto?: DatosGasto | null
+  /** efectivo | transferencia | tarjeta | cuenta_corriente */
+  medioPago?: string | null
 }): Promise<{ id: string; amount: number } | null> {
-  const { fudoProviderId, fudoIngredientId, qty, costTotal, costPerUnit, receivedDate, gasto } = params
+  const { fudoProviderId, fudoIngredientId, qty, costTotal, costPerUnit, receivedDate, gasto, medioPago } = params
   try {
-    const expenseId = await postFudoExpense({ fudoProviderId, amount: costTotal, date: receivedDate, gasto })
+    const expenseId = await postFudoExpense({ fudoProviderId, amount: costTotal, date: receivedDate, gasto, medioPago })
     if (!expenseId) return null
 
     // Ítem del ingrediente: DESACTIVADO. En Fudo, un gasto con insumo suma

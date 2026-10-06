@@ -17,6 +17,7 @@ import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
+import type { CanceladoEnFudo, ResultadoPagosFudo } from '@/lib/compras/pagos-fudo'
 
 type Receipt = {
   id: number
@@ -66,6 +67,7 @@ export default function CuentasPage() {
   const [showPaid, setShowPaid] = useState(false)
   const [editState, setEditState] = useState<{ id: number; costTotal: string; note: string } | null>(null)
   const [savingEdit, setSavingEdit] = useState(false)
+  const [canceladosFudo, setCanceladosFudo] = useState<CanceladoEnFudo[]>([])
 
   const canManage = isManagerOrAbove(profile?.role)
 
@@ -96,6 +98,24 @@ export default function CuentasPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Lo que ya se pagó en Fudo (orden de pago a proveedores) se marca pagado acá
+  useEffect(() => {
+    if (!canManage) return
+    let alive = true
+    fetch('/api/compras/pagos-fudo', { method: 'POST' })
+      .then((r) => (r.ok ? r.json() as Promise<ResultadoPagosFudo> : null))
+      .then((r) => {
+        if (!alive || !r) return
+        setCanceladosFudo(r.cancelados ?? [])
+        if (r.recibosPagados > 0) {
+          toast.success(`${r.recibosPagados} recibo${r.recibosPagados !== 1 ? 's' : ''} ya pagado${r.recibosPagados !== 1 ? 's' : ''} en Fudo: marcado${r.recibosPagados !== 1 ? 's' : ''} como pagado${r.recibosPagados !== 1 ? 's' : ''}`)
+          void fetchData()
+        }
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [canManage, fetchData])
 
   const pending = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar'), [receipts])
   const paid = useMemo(() => receipts.filter((r) => r.payment_status === 'pagado').slice(0, 15), [receipts])
@@ -251,6 +271,20 @@ export default function CuentasPage() {
             <p className="mt-0.5 text-xs text-[#a39e97]">
               Aplicá <code>20260723_receipt_payments.sql</code> en Supabase para habilitar el estado de pago de los gastos.
             </p>
+          </div>
+        </FadeIn>
+      )}
+
+      {canceladosFudo.length > 0 && (
+        <FadeIn>
+          <div className="rounded-2xl bg-[#fef2f2] px-4 py-3 ring-1 ring-[#ea504c]/20">
+            <p className="text-sm font-semibold text-[#ea504c]">Cancelados en Fudo, pendientes acá</p>
+            <p className="mt-0.5 text-xs text-[#7d6c64]">Revisá si hay que anular la compra en Sala de Profes o si el gasto se canceló por error en Fudo.</p>
+            <ul className="mt-1.5 space-y-0.5 text-xs text-[#3d2c24]">
+              {canceladosFudo.map((c) => (
+                <li key={c.expenseId}>· {c.proveedor ?? 'Sin proveedor'} — {fmtMoney(c.total)} <span className="text-[#a39e97]">(gasto #{c.expenseId} en Fudo)</span></li>
+              ))}
+            </ul>
           </div>
         </FadeIn>
       )}
