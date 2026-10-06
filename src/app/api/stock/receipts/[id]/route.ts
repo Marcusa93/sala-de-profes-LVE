@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
 import { logAudit } from '@/lib/audit'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
-import { fudoFetch } from '@/lib/fudoClient'
+import { fudoExpensePagado, postFudoPayment } from '@/lib/fudo/expenses'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/stock/receipts/[id]
@@ -95,13 +95,11 @@ export async function PATCH(
         }
         if (fudoExpenseId) {
           try {
-            await fudoFetch('/payments', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: receipt.cost_total },
-                relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
-                  expense: { data: { type: 'Expense', id: fudoExpenseId } } } } }),
-            })
+            // Si ya se pagó en Fudo (orden de pago a proveedores), no se manda
+            // otro pago: quedaría pagado dos veces.
+            if (!(await fudoExpensePagado(fudoExpenseId))) {
+              await postFudoPayment({ expenseId: fudoExpenseId, amount: receipt.cost_total, medio: newPaidMethod ?? receipt.payment_method })
+            }
             fudoSynced = true
           } catch (fudoErr) {
             console.warn('[PATCH receipt] Fudo payment post failed (queda en cola):', fudoErr instanceof Error ? fudoErr.message : fudoErr)
@@ -109,6 +107,7 @@ export async function PATCH(
             await encolarPagoGasto(admin, {
               fudoExpenseId, monto: receipt.cost_total, receiptId,
               error: fudoErr instanceof Error ? fudoErr.message : 'Fudo no aceptó el pago', userId: user.id,
+              medio: newPaidMethod ?? receipt.payment_method,
             })
           }
         }

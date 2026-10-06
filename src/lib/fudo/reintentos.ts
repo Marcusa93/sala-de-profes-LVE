@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { fudoFetch } from '@/lib/fudoClient'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { writeFudoStockDelta } from '@/lib/fudo/stock-sync'
 import { parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
@@ -75,10 +74,12 @@ export async function encolarPagoGasto(admin: SupabaseClient, input: {
   receiptId: number | string
   error: string
   userId?: string | null
+  /** efectivo | transferencia | tarjeta (sin dato: efectivo, como antes) */
+  medio?: string | null
 }): Promise<void> {
   const { error } = await admin.from('fudo_reintentos').insert({
     tipo: 'pago_gasto',
-    payload: { fudo_expense_id: input.fudoExpenseId, monto: input.monto, receipt_id: String(input.receiptId) },
+    payload: { fudo_expense_id: input.fudoExpenseId, monto: input.monto, receipt_id: String(input.receiptId), ...(input.medio ? { medio: input.medio } : {}) },
     origen: 'pago_gasto',
     ultimo_error: input.error.slice(0, 500),
     intentos: 1,
@@ -103,6 +104,8 @@ export async function encolarCrearGasto(admin: SupabaseClient, input: {
   userId?: string | null
   /** Categoría y comprobante: el gasto reintentado sale igual que el original */
   gasto?: DatosGasto | null
+  /** efectivo | transferencia | tarjeta | cuenta_corriente */
+  medio?: string | null
 }): Promise<void> {
   const { error } = await admin.from('fudo_reintentos').insert({
     tipo: 'crear_gasto',
@@ -113,6 +116,7 @@ export async function encolarCrearGasto(admin: SupabaseClient, input: {
       receipt_id: String(input.receiptId),
       then_pay: input.thenPay,
       ...(input.gasto ? { gasto: input.gasto } : {}),
+      ...(input.medio ? { medio: input.medio } : {}),
     },
     origen: 'crear_gasto',
     ultimo_error: input.error.slice(0, 500),
@@ -143,16 +147,11 @@ export async function deltasPendientes(admin: SupabaseClient): Promise<Map<strin
 
 async function reintentarUno(admin: SupabaseClient, r: Reintento): Promise<{ ok: boolean; error?: string; descartar?: string }> {
   if (r.tipo === 'pago_gasto') {
-    const { fudo_expense_id, monto } = r.payload as { fudo_expense_id?: string; monto?: number }
+    const { fudo_expense_id, monto, medio } = r.payload as { fudo_expense_id?: string; monto?: number; medio?: string }
     if (!fudo_expense_id || !monto) return { ok: false, descartar: 'Datos del pago incompletos' }
     try {
-      await fudoFetch('/payments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: monto },
-          relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
-            expense: { data: { type: 'Expense', id: fudo_expense_id } } } } }),
-      })
+      const { postFudoPayment } = await import('@/lib/fudo/expenses')
+      await postFudoPayment({ expenseId: fudo_expense_id, amount: monto, medio })
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'Error' }
@@ -160,25 +159,19 @@ async function reintentarUno(admin: SupabaseClient, r: Reintento): Promise<{ ok:
   }
 
   if (r.tipo === 'crear_gasto') {
-    const { fudo_provider_id, amount, date, receipt_id, then_pay, gasto } = r.payload as {
-      fudo_provider_id?: string; amount?: number; date?: string; receipt_id?: string; then_pay?: boolean; gasto?: unknown
+    const { fudo_provider_id, amount, date, receipt_id, then_pay, gasto, medio } = r.payload as {
+      fudo_provider_id?: string; amount?: number; date?: string; receipt_id?: string; then_pay?: boolean; gasto?: unknown; medio?: string
     }
     if (!fudo_provider_id || !amount || !date || !receipt_id) return { ok: false, descartar: 'Datos del gasto incompletos' }
     try {
-      const { postFudoExpense } = await import('@/lib/fudo/expenses')
-      const expenseId = await postFudoExpense({ fudoProviderId: fudo_provider_id, amount, date, gasto: parseDatosGasto(gasto, { confiable: true }) })
+      const { postFudoExpense, postFudoPayment } = await import('@/lib/fudo/expenses')
+      const expenseId = await postFudoExpense({ fudoProviderId: fudo_provider_id, amount, date, gasto: parseDatosGasto(gasto, { confiable: true }), medioPago: medio })
       if (!expenseId) return { ok: false, error: 'Fudo no devolvió ID de gasto' }
       // Guardar el ID en el recibo para que el PATCH de pago lo encuentre directamente
       await admin.from('stock_receipts').update({ fudo_expense_id: expenseId }).eq('id', Number(receipt_id))
       if (then_pay) {
         try {
-          await fudoFetch('/payments', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: { type: 'Payment', attributes: { amount },
-              relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: '1' } },
-                expense: { data: { type: 'Expense', id: expenseId } } } } }),
-          })
+          await postFudoPayment({ expenseId, amount, medio })
         } catch (payErr) {
           // El gasto existe: solo reencolar el pago
           await encolarPagoGasto(admin, {
@@ -187,6 +180,7 @@ async function reintentarUno(admin: SupabaseClient, r: Reintento): Promise<{ ok:
             receiptId: Number(receipt_id),
             error: payErr instanceof Error ? payErr.message : 'Error al pagar',
             userId: r.created_by ?? null,
+            medio,
           })
         }
       }
