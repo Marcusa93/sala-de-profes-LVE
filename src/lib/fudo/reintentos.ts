@@ -150,7 +150,9 @@ async function reintentarUno(admin: SupabaseClient, r: Reintento): Promise<{ ok:
     const { fudo_expense_id, monto, medio } = r.payload as { fudo_expense_id?: string; monto?: number; medio?: string }
     if (!fudo_expense_id || !monto) return { ok: false, descartar: 'Datos del pago incompletos' }
     try {
-      const { postFudoPayment } = await import('@/lib/fudo/expenses')
+      const { postFudoPayment, fudoExpensePagado } = await import('@/lib/fudo/expenses')
+      // Mientras estaba en cola pudo pagarse en Fudo (orden de pago): no duplicar
+      if (await fudoExpensePagado(fudo_expense_id)) return { ok: true }
       await postFudoPayment({ expenseId: fudo_expense_id, amount: monto, medio })
       return { ok: true }
     } catch (err) {

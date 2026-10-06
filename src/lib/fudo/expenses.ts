@@ -280,7 +280,8 @@ async function receiptTypeId(tipo: ComprobanteTipo | null): Promise<string | nul
 // así que no aparecía en la cuenta corriente del proveedor (órdenes de pago).
 // Se resuelve por tipo contra /payment-methods; si Fudo no responde, los ids
 // verificados en este Fudo (06/10/2026).
-const MEDIO_FUDO_RESPALDO: Record<string, string> = { efectivo: '1', cuenta_corriente: '2', tarjeta: '4', transferencia: '5' }
+// tarjeta_credito: solo para leer pagos hechos en Fudo (en Sala de Profes es una sola "Tarjeta" → débito)
+const MEDIO_FUDO_RESPALDO: Record<string, string> = { efectivo: '1', cuenta_corriente: '2', tarjeta_credito: '3', tarjeta: '4', transferencia: '5' }
 let mediosCache: { at: number; map: Record<string, string> } | null = null
 
 /** PaymentMethod de Fudo para un medio de Sala de Profes (efectivo, transferencia, tarjeta, cuenta_corriente). */
@@ -296,6 +297,7 @@ export async function fudoPaymentMethodId(medio: string | null | undefined): Pro
         cuenta_corriente: buscar((a) => a.kind === 'HOUSE-ACCOUNT'),
         efectivo: buscar((a) => a.kind === 'CASH'),
         tarjeta: buscar((a) => a.kind === 'DEBIT-CARD'),
+        tarjeta_credito: buscar((a) => a.kind === 'CREDIT-CARD'),
         transferencia: buscar((a) => /transfer/i.test(String(a.name ?? '')) || /transfer/i.test(String(a.code ?? ''))),
       }
       for (const [k, id] of Object.entries(encontrados)) if (id) map[k] = id
@@ -305,6 +307,15 @@ export async function fudoPaymentMethodId(medio: string | null | undefined): Pro
     mediosCache = { at: Date.now(), map }
   }
   return mediosCache.map[clave]
+}
+
+/** Al revés: medio de Sala de Profes para un PaymentMethod de Fudo (null si no hay equivalente). */
+export async function medioLveDesdeFudo(fudoId: string): Promise<string | null> {
+  await fudoPaymentMethodId('efectivo') // carga el mapa
+  const map = mediosCache?.map ?? MEDIO_FUDO_RESPALDO
+  const medio = Object.entries(map).find(([, id]) => id === fudoId)?.[0] ?? null
+  if (medio === 'tarjeta_credito') return 'tarjeta'
+  return medio === 'cuenta_corriente' ? null : medio
 }
 
 /** Imputa un pago a un gasto de Fudo con su medio real. */
