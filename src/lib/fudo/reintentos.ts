@@ -166,7 +166,7 @@ async function reintentarUno(admin: SupabaseClient, r: Reintento): Promise<{ ok:
     if (!fudo_provider_id || !amount || !date || !receipt_id) return { ok: false, descartar: 'Datos del gasto incompletos' }
     try {
       const { postFudoExpense } = await import('@/lib/fudo/expenses')
-      const expenseId = await postFudoExpense({ fudoProviderId: fudo_provider_id, amount, date, gasto: parseDatosGasto(gasto) })
+      const expenseId = await postFudoExpense({ fudoProviderId: fudo_provider_id, amount, date, gasto: parseDatosGasto(gasto, { confiable: true }) })
       if (!expenseId) return { ok: false, error: 'Fudo no devolvió ID de gasto' }
       // Guardar el ID en el recibo para que el PATCH de pago lo encuentre directamente
       await admin.from('stock_receipts').update({ fudo_expense_id: expenseId }).eq('id', Number(receipt_id))

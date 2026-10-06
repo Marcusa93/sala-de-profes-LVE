@@ -214,20 +214,34 @@ const META_TTL_MS = 30 * 60 * 1000
 let categoriasCache: { at: number; list: CategoriaGasto[] } | null = null
 let tiposCache: { at: number; map: Map<ComprobanteTipo, string> } | null = null
 
-/** Categorías de gasto activas de Fudo (las mismas que se ven en Fudo). */
+/**
+ * Categorías de gasto activas de Fudo, para elegir: las que cuelgan de otra
+ * (con su padre como grupo) y las sueltas. Las que son padre de otras no se
+ * ofrecen: para el análisis sirve la específica ("Verdulería", no "Compras").
+ * OJO: Fudo devuelve las categorías SIN atributos salvo que se pidan con
+ * fields[expenseCategory]; sin eso no venía ningún nombre y la lista quedaba
+ * vacía (la categoría no se pedía y los gastos llegaban sin categoría).
+ */
 export async function fetchFudoExpenseCategories(): Promise<CategoriaGasto[]> {
   if (categoriasCache && Date.now() - categoriasCache.at < META_TTL_MS) return categoriasCache.list
-  const list: CategoriaGasto[] = []
+  const todas: { id: string; name: string; active: boolean; parentId: string | null }[] = []
   for (let page = 1; page <= 10; page++) {
-    const res = await fudoFetch<{ data?: JsonApiRes[] }>(`/expense-categories?page[size]=200&page[number]=${page}&sort=name`)
+    const res = await fudoFetch<{ data?: JsonApiRes[] }>(
+      `/expense-categories?page[size]=200&page[number]=${page}&sort=name&fields[expenseCategory]=name,active,parentCategory`,
+    )
     const data = Array.isArray(res.data) ? res.data : []
     for (const c of data) {
       const a = c.attributes ?? {}
-      if (a.active === false || typeof a.name !== 'string') continue
-      list.push({ id: c.id, name: a.name })
+      if (typeof a.name !== 'string') continue
+      todas.push({ id: c.id, name: a.name.trim(), active: a.active !== false, parentId: relOne(c.relationships, 'parentCategory')?.id ?? null })
     }
     if (data.length < 200) break
   }
+  const nombre = new Map(todas.map((c) => [c.id, c.name]))
+  const padres = new Set(todas.map((c) => c.parentId).filter(Boolean))
+  const list = todas
+    .filter((c) => c.active && !padres.has(c.id))
+    .map((c) => ({ id: c.id, name: c.name, grupo: c.parentId ? nombre.get(c.parentId) ?? null : null }))
   categoriasCache = { at: Date.now(), list }
   return list
 }

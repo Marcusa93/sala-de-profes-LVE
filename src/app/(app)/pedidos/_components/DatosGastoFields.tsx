@@ -79,7 +79,14 @@ export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDato
         ) : (
           <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)} className={cn(inputCls, 'mt-1', !categoriaId && 'border-[#ea504c]/50')}>
             <option value="">Elegí la categoría…</option>
-            {categorias.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {/* Agrupadas como en Fudo: "Compras y proveedores › Verdulería" */}
+            {[...new Set(categorias.map((c) => c.grupo ?? 'Otras'))]
+              .sort((x, y) => (x === 'Otras' ? 1 : y === 'Otras' ? -1 : x.localeCompare(y)))
+              .map((grupo) => (
+                <optgroup key={grupo} label={grupo}>
+                  {categorias.filter((c) => (c.grupo ?? 'Otras') === grupo).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </optgroup>
+              ))}
           </select>
         )}
       </label>

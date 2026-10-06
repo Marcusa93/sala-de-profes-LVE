@@ -8,7 +8,7 @@ import { normalizeToStockUnit, parseTypedUnit } from '@/lib/produccion/units'
 import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { getConsumptionContextWithTimeout } from '@/lib/stock/consumption'
-import { parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
+import { conCargadoPor, parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -326,7 +326,7 @@ export async function POST(request: NextRequest) {
     // total de la factura y supera lo cargado por producto, la diferencia
     // queda como gasto del proveedor (para Pagos) sin inventar costos.
     if (body.action === 'confirm_arrival_batch') {
-      const gasto = parseDatosGasto(body.gasto)
+      let gasto = parseDatosGasto(body.gasto)
       const { items, paymentMethod, invoiceTotal, note } = body as {
         items: {
           orderId: number
@@ -346,6 +346,7 @@ export async function POST(request: NextRequest) {
       if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
         return NextResponse.json({ success: false, error: 'Solo encargados y socios pueden confirmar recepciones' }, { status: 403 })
       }
+      gasto = conCargadoPor(gasto, [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null)
       if (!Array.isArray(items) || items.length === 0 || items.length > 60) {
         return NextResponse.json({ success: false, error: 'Entre 1 y 60 productos' }, { status: 400 })
       }
@@ -574,7 +575,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     skipFudoExpense?: boolean
   }
   // Categoría y comprobante (en lote los guarda el batch, una vez por factura)
-  const gasto = skipFudoExpense ? null : parseDatosGasto((body as { gasto?: unknown }).gasto)
+  let gasto = skipFudoExpense ? null : parseDatosGasto((body as { gasto?: unknown }).gasto)
   // cuenta_corriente → queda en cuentas a pagar; el resto → pagado de contado
   const paymentStatus: 'pagado' | 'a_pagar' = paymentMethod === 'cuenta_corriente' ? 'a_pagar' : 'pagado'
   if (typeof orderId !== 'number' || !source || !mode) {
@@ -598,6 +599,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
   if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
     return respuesta({ success: false, error: 'Solo encargados pueden confirmar recepciones' }, { status: 403 })
   }
+  if (!skipFudoExpense) gasto = conCargadoPor(gasto, [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null)
   const table = source === 'barra' ? 'bar_orders' : 'kitchen_orders'
   const { data: order, error: fetchErr } = await admin
     .from(table)
