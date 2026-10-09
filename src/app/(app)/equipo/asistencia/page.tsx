@@ -40,6 +40,17 @@ type HistoryRecord = {
 
 const ROLE_ORDER: AppRole[] = ['encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha']
 
+// Filtros de la lista: mismo criterio que el estado que muestra cada fila
+type Filtro = 'todos' | 'trabajando' | 'salieron' | 'no_ficharon' | 'sin_fichar' | 'sin_turno'
+const FILTROS: { key: Filtro; label: string; test: (e: AttendanceDashboardRow) => boolean }[] = [
+  { key: 'todos', label: 'Todos', test: () => true },
+  { key: 'trabajando', label: 'Trabajando', test: (e) => e.is_currently_in },
+  { key: 'salieron', label: 'Salieron', test: (e) => !e.is_currently_in && !!e.last_event_time },
+  { key: 'no_ficharon', label: 'No ficharon', test: (e) => !e.is_currently_in && !e.last_event_time && e.no_show },
+  { key: 'sin_fichar', label: 'Todavía no entran', test: (e) => !e.is_currently_in && !e.last_event_time && !e.no_show && !!e.shift_today },
+  { key: 'sin_turno', label: 'Sin turno hoy', test: (e) => !e.is_currently_in && !e.last_event_time && !e.no_show && !e.shift_today },
+]
+
 function fmtDuration(start: string, end: string | null): string {
   if (!end) return ''
   const ms = new Date(end).getTime() - new Date(start).getTime()
@@ -280,6 +291,8 @@ export default function EquipoAsistenciaPage() {
   const [historyCache, setHistoryCache] = useState<Record<string, HistoryRecord[]>>({})
   const [loadingHistoryFor, setLoadingHistoryFor] = useState<string | null>(null)
   const [anulandoId, setAnulandoId] = useState<string | null>(null)
+  const [filtro, setFiltro] = useState<Filtro>('todos')
+  const elegirFiltro = (f: Filtro) => setFiltro((actual) => (actual === f ? 'todos' : f))
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -363,6 +376,7 @@ export default function EquipoAsistenciaPage() {
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
   })
 
+  const visibles = sorted.filter(FILTROS.find((f) => f.key === filtro)!.test)
   const present = employees.filter(e => e.is_currently_in).length
   const anomalyCount = employees.reduce((s, e) => s + e.open_anomalies, 0)
   const noShowCount = employees.filter(e => e.no_show).length
@@ -389,14 +403,23 @@ export default function EquipoAsistenciaPage() {
 
       {/* KPI strip: presencia + exactitud de horas del día */}
       <div className="grid grid-cols-4 gap-2">
-        <div className="card-elevated rounded-xl p-3 text-center">
+        {/* Tocar Presentes / No ficharon filtra la lista */}
+        <button
+          type="button"
+          onClick={() => elegirFiltro('trabajando')}
+          className={cn('card-elevated rounded-xl p-3 text-center', filtro === 'trabajando' && 'ring-2 ring-[#006d5a]')}
+        >
           <p className="font-display text-2xl font-bold text-[#006d5a]">{present}</p>
           <p className="mt-0.5 text-[10px] text-[#a39e97]">Presentes</p>
-        </div>
-        <div className={cn('rounded-xl p-3 text-center', noShowCount > 0 ? 'bg-[#fef2f2]' : 'card-elevated')}>
+        </button>
+        <button
+          type="button"
+          onClick={() => elegirFiltro('no_ficharon')}
+          className={cn('rounded-xl p-3 text-center', noShowCount > 0 ? 'bg-[#fef2f2]' : 'card-elevated', filtro === 'no_ficharon' && 'ring-2 ring-[#ea504c]')}
+        >
           <p className={cn('font-display text-2xl font-bold', noShowCount > 0 ? 'text-[#ea504c]' : 'text-[#3d2c24]')}>{noShowCount}</p>
           <p className={cn('mt-0.5 text-[10px]', noShowCount > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]')}>No ficharon</p>
-        </div>
+        </button>
         <div className="card-elevated rounded-xl p-3 text-center">
           <p className="font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
             {workedH}<span className="text-sm font-medium text-[#a39e97]">/{scheduledH}</span>
@@ -415,8 +438,30 @@ export default function EquipoAsistenciaPage() {
         <>
           {/* Employee list */}
           <div className="space-y-1.5">
+            {/* Filtros */}
+            <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1.5">
+              {FILTROS.map((f) => {
+                const n = sorted.filter(f.test).length
+                if (n === 0 && f.key !== 'todos' && f.key !== filtro) return null
+                const activo = filtro === f.key
+                return (
+                  <button
+                    key={f.key}
+                    type="button"
+                    onClick={() => setFiltro(f.key)}
+                    className={cn(
+                      'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                      activo ? 'border-[#006d5a] bg-[#006d5a] text-white' : 'border-[#ebe6df] bg-white text-[#7d6c64]',
+                    )}
+                  >
+                    {f.label}
+                    <span className={cn('rounded-full px-1.5 text-[10px] tabular-nums', activo ? 'bg-white/20' : 'bg-[#f3efe9]')}>{n}</span>
+                  </button>
+                )
+              })}
+            </div>
             <p className="section-label px-1">Equipo — tocá para ver historial</p>
-            {sorted.map(emp => (
+            {visibles.map(emp => (
               <EmployeeRow
                 key={emp.employee_id}
                 emp={emp}
@@ -428,9 +473,9 @@ export default function EquipoAsistenciaPage() {
                 onAnular={(recordId) => anularIngreso(emp, recordId)}
               />
             ))}
-            {sorted.length === 0 && (
+            {visibles.length === 0 && (
               <div className="rounded-xl border border-[#ebe6df] bg-white p-8 text-center text-sm text-[#a39e97]">
-                No hay empleados registrados.
+                {sorted.length === 0 ? 'No hay empleados registrados.' : 'Nadie en este filtro.'}
               </div>
             )}
           </div>
