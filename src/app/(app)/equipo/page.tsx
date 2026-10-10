@@ -28,7 +28,7 @@ import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { mustClockIn } from '@/lib/roles'
+import { mustClockIn, puestoDe } from '@/lib/roles'
 import { errorToast } from '@/lib/toast-helpers'
 import { createClient } from '@/lib/supabase/client'
 import { SWR_KEYS } from '@/lib/swr/keys'
@@ -493,7 +493,7 @@ export default function EquipoPage() {
                         <p className="truncate text-sm font-semibold text-[#3d2c24]">
                           {ea.profile.first_name} {ea.profile.last_name}
                         </p>
-                        {getRoleBadge(ea.profile.role)}
+                        {getRoleBadge(puestoDe(ea.profile))}
                       </div>
                       <div className="mt-0.5 flex items-center gap-2 text-xs text-[#a39e97]">
                         {ea.hasShiftToday && ea.shiftStart && ea.shiftEnd && (
@@ -776,7 +776,7 @@ export default function EquipoPage() {
                       >
                         {p.first_name} {p.last_name}
                       </p>
-                      {getRoleBadge(p.role)}
+                      {getRoleBadge(puestoDe(p))}
                       {!p.is_active && (
                         <span className="rounded-full bg-[#f3efe9] px-2 py-0.5 text-[10px] font-medium text-[#a39e97]">
                           Inactivo

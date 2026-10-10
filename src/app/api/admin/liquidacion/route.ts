@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
         .lte('operative_date', to)
         .order('operative_date'),
       admin.from('profiles')
-        .select('id, first_name, last_name, role')
+        .select('id, first_name, last_name, role, puesto')
         .eq('is_active', true),
       admin.from('payroll_rates')
         .select('role, hourly_rate, label'),
@@ -93,7 +93,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Turnos por persona y día, para saber con qué rol trabajó cada fichaje
-    const perfilRol = new Map(profiles.map((p) => [p.id, p.role as string]))
+    // Sin turno: el puesto (el cajero tiene rol encargado y puesto cajero)
+    const perfilRol = new Map(profiles.map((p) => [p.id, (p.puesto ?? p.role) as string]))
     const turnos = new Map<string, { rol: string; inicio: number; fin: number }[]>()
     for (const t of (shiftsRes.data ?? []) as { user_id: string; shift_date: string; start_time: string; end_time: string; shift_role: string | null }[]) {
       if (!t.shift_role || !t.start_time || !t.end_time) continue
@@ -220,7 +221,7 @@ export async function GET(request: NextRequest) {
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([date, data]) => ({ date, ...data, pay: Math.round(data.pay) }))
 
-        const hourlyRate = rateMap.get(p.role) ?? 0
+        const hourlyRate = rateMap.get(p.puesto ?? p.role) ?? 0
         const totalHours = Math.round(emp.totalHours * 100) / 100
         // Cada rol con su tarifa (de mayor a menor cantidad de horas)
         const byRole = [...emp.porRol.entries()]
@@ -236,7 +237,7 @@ export async function GET(request: NextRequest) {
           id: p.id,
           firstName: p.first_name,
           lastName: p.last_name,
-          role: p.role,
+          role: p.puesto ?? p.role,
           hourlyRate,
           totalHours,
           totalDays: emp.totalDays,

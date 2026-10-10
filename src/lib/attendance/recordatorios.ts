@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { fechaOperativa, instanteDe } from '@/lib/attendance/jornada'
 import { sendPushToUser } from '@/lib/push/send'
-import { idsConRolEnTurno } from '@/lib/turnos/rol-del-turno'
+import { idsConRolEnTurno, ROLES_ENCARGADO_TURNO } from '@/lib/turnos/rol-del-turno'
 
 // ---------------------------------------------------------------------------
 // Avisos de entrada sin marcar
@@ -64,7 +64,7 @@ export async function avisarIngresosSinMarcar(admin: SupabaseClient, ahora = new
   }
 
   if (paraEncargado.length > 0) {
-    let destino = await idsConRolEnTurno(admin, ['encargado'], ahora)
+    let destino = await idsConRolEnTurno(admin, ROLES_ENCARGADO_TURNO, ahora)
     if (destino.length === 0) {
       const { data } = await admin.from('profiles').select('id').eq('is_active', true).eq('role', 'encargado')
       destino = (data ?? []).map((d: { id: string }) => d.id)

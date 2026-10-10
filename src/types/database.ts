@@ -1,4 +1,4 @@
-export type AppRole = 'socio' | 'encargado' | 'chef' | 'barista' | 'runner' | 'cocina' | 'bacha'
+export type AppRole = 'socio' | 'encargado' | 'chef' | 'barista' | 'runner' | 'cocina' | 'bacha' | 'cajero'
 export type AnnouncementTypeValue = 'general' | 'urgente' | 'recordatorio' | 'operativo'
 export type PriorityValue = 'baja' | 'media' | 'alta' | 'critica'
 export type AlertTypeValue = 'low_stock' | 'upcoming_purchase' | 'critical'
@@ -2369,6 +2369,7 @@ export type Database = {
           is_active: boolean
           last_name: string
           phone: string | null
+          puesto: Database["public"]["Enums"]["app_role"] | null
           role: Database["public"]["Enums"]["app_role"]
           settings: Json
           updated_at: string
@@ -2387,6 +2388,7 @@ export type Database = {
           is_active?: boolean
           last_name: string
           phone?: string | null
+          puesto?: Database["public"]["Enums"]["app_role"] | null
           role?: Database["public"]["Enums"]["app_role"]
           settings?: Json
           updated_at?: string
@@ -2405,6 +2407,7 @@ export type Database = {
           is_active?: boolean
           last_name?: string
           phone?: string | null
+          puesto?: Database["public"]["Enums"]["app_role"] | null
           role?: Database["public"]["Enums"]["app_role"]
           settings?: Json
           updated_at?: string
@@ -3930,6 +3933,7 @@ export type Database = {
         | "cocina"
         | "socio"
         | "bacha"
+        | "cajero"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4065,6 +4069,7 @@ export const Constants = {
         "cocina",
         "socio",
         "bacha",
+        "cajero",
       ],
     },
   },

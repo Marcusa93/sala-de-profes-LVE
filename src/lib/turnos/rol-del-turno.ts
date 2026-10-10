@@ -73,8 +73,12 @@ export async function rolEnTurnoAhora(admin: SupabaseClient, userId: string, aho
   return null
 }
 
-/** Encargado o socio de perfil, o trabajando ahora como encargado según su turno. */
+/** Turnos que llevan permisos de encargado (el cajero tiene los mismos). */
+export const ROLES_ENCARGADO_TURNO = ['encargado', 'cajero'] as const
+
+/** Encargado o socio de perfil, o trabajando ahora como encargado/cajero según su turno. */
 export async function esEncargadoAhora(admin: SupabaseClient, user: { id: string; role: string }): Promise<boolean> {
   if (isManagerOrAbove(user.role)) return true
-  return (await rolEnTurnoAhora(admin, user.id)) === 'encargado'
+  const rol = await rolEnTurnoAhora(admin, user.id)
+  return !!rol && (ROLES_ENCARGADO_TURNO as readonly string[]).includes(rol)
 }

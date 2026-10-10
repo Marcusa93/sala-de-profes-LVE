@@ -48,7 +48,7 @@ const CHIP: Record<Visible, { txt: string; cls: string }> = {
   hecha_tarde: { txt: 'Hecha tarde', cls: 'bg-[#fdf6ec] text-[#b0762a]' },
 }
 
-const ROL: Record<string, string> = { socio: 'Socio', encargado: 'Encargado', chef: 'Chef', cocina: 'Cocina', barista: 'Barista', runner: 'Runner', bacha: 'Bacha' }
+const ROL: Record<string, string> = { socio: 'Socio', encargado: 'Encargado', cajero: 'Cajero', chef: 'Chef', cocina: 'Cocina', barista: 'Barista', runner: 'Runner', bacha: 'Bacha' }
 const hhmm = (iso: string) => format(new Date(iso), 'HH:mm')
 const urlsDe = (t: TareaUI) => (t.fotos_urls?.length ? t.fotos_urls : t.foto_url ? [t.foto_url] : [])
 

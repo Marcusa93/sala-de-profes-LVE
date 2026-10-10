@@ -21,7 +21,8 @@ import type { AppRole } from '@/types/database'
 // Body: { email, password, firstName, lastName, role, phone? }
 // ---------------------------------------------------------------------------
 
-const VALID_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha']
+// 'cajero': la base lo guarda como encargado (permisos) con puesto cajero
+const VALID_ROLES: AppRole[] = ['socio', 'encargado', 'cajero', 'chef', 'cocina', 'barista', 'runner', 'bacha']
 
 export async function POST(request: NextRequest) {
   const adminClient = createAdminClient()

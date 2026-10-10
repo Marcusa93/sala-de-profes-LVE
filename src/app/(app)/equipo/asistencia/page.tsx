@@ -38,7 +38,7 @@ type HistoryRecord = {
   is_suspicious: boolean
 }
 
-const ROLE_ORDER: AppRole[] = ['encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha']
+const ROLE_ORDER: AppRole[] = ['encargado', 'cajero', 'chef', 'cocina', 'barista', 'runner', 'bacha']
 
 // Filtros de la lista: mismo criterio que el estado que muestra cada fila
 type Filtro = 'todos' | 'trabajando' | 'salieron' | 'no_ficharon' | 'sin_fichar' | 'sin_turno'

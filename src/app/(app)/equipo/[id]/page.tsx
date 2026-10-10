@@ -7,7 +7,7 @@ import { ChevronLeft, Loader2, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { isManagerOrAbove, ENCARGADO_MANAGED_ROLES } from '@/lib/roles'
+import { isManagerOrAbove, ENCARGADO_MANAGED_ROLES, puestoDe } from '@/lib/roles'
 import type { AppRole } from '@/types/database'
 import { ROLES } from '@/lib/constants'
 import { UserAccessCard } from '@/components/equipo/UserAccessCard'
@@ -40,7 +40,7 @@ type EmployeeData = {
   emergency_contact_phone: string | null
 }
 
-const ALL_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'barista', 'runner', 'cocina', 'bacha']
+const ALL_ROLES: AppRole[] = ['socio', 'encargado', 'cajero', 'chef', 'barista', 'runner', 'cocina', 'bacha']
 
 // ---------------------------------------------------------------------------
 // Page
@@ -76,7 +76,7 @@ export default function EmpleadoFichaPage() {
       const { data, error } = await supabase
         .from('profiles')
         .select(
-          'id, first_name, last_name, phone, role, avatar_url, is_active, cuit, address, dni, birth_date, emergency_contact_name, emergency_contact_phone',
+          'id, first_name, last_name, phone, role, puesto, avatar_url, is_active, cuit, address, dni, birth_date, emergency_contact_name, emergency_contact_phone',
         )
         .eq('id', id)
         .single()
@@ -91,7 +91,7 @@ export default function EmpleadoFichaPage() {
       setFirstName(data.first_name ?? '')
       setLastName(data.last_name ?? '')
       setPhone(data.phone ?? '')
-      setRole(data.role as AppRole)
+      setRole(puestoDe(data))
       setIsActive(data.is_active)
       setCuit(data.cuit ?? '')
       setDni(data.dni ?? '')

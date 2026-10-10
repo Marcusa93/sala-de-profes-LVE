@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { fechaOperativa, instanteDe } from '@/lib/attendance/jornada'
 import { sendPushToUser } from '@/lib/push/send'
-import { turnoEnCurso, turnosDelDia } from '@/lib/turnos/rol-del-turno'
+import { ROLES_ENCARGADO_TURNO, turnoEnCurso, turnosDelDia } from '@/lib/turnos/rol-del-turno'
 
 // ---------------------------------------------------------------------------
 // Protocolos con horario (limpieza del baño, etc.)
@@ -104,9 +104,10 @@ export function candidatosPara(personal: Persona[], t: Pick<Tarea, 'fecha' | 'ho
 /** A quién avisar para asignar: encargados de turno fichados → con turno de encargado hoy → todos los encargados. */
 async function encargadosDeTurno(admin: SupabaseClient, fecha: string): Promise<string[]> {
   const personal = await personalDeTurno(admin, fecha)
-  const fichados = personal.filter((p) => p.presente && p.role === 'encargado').map((p) => p.id)
+  const esEnc = (r: string) => (ROLES_ENCARGADO_TURNO as readonly string[]).includes(r)
+  const fichados = personal.filter((p) => p.presente && esEnc(p.role)).map((p) => p.id)
   if (fichados.length > 0) return fichados
-  const conTurno = personal.filter((p) => p.turnos.some((t) => t.rol === 'encargado')).map((p) => p.id)
+  const conTurno = personal.filter((p) => p.turnos.some((t) => esEnc(t.rol))).map((p) => p.id)
   if (conTurno.length > 0) return conTurno
   const { data } = await admin.from('profiles').select('id').eq('is_active', true).eq('role', 'encargado')
   return (data ?? []).map((p: { id: string }) => p.id)

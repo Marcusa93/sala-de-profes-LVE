@@ -21,7 +21,7 @@ import {
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { isManagerOrAbove } from '@/lib/roles'
+import { isManagerOrAbove, puestoDe } from '@/lib/roles'
 import { logAuditClient } from '@/lib/audit'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn } from '@/components/ui/motion'
@@ -32,6 +32,7 @@ type Shift = { id: string; user_id: string; shift_date: string; start_time: stri
 
 const ROLE_SECTIONS: { role: AppRole; label: string }[] = [
   { role: 'encargado', label: 'Encargados' },
+  { role: 'cajero', label: 'Cajeros' },
   { role: 'cocina', label: 'Cocina' },
   { role: 'chef', label: 'Chef' },
   { role: 'barista', label: 'Baristas' },
@@ -52,7 +53,7 @@ const DEFAULT_PRESETS: { start: string; end: string }[] = [
   { start: '17:00', end: '00:00' },
 ]
 
-const ROL_CORTO: Partial<Record<AppRole, string>> = { encargado: 'Encargado', cocina: 'Cocina', chef: 'Chef', barista: 'Barista', runner: 'Runner', bacha: 'Bacha' }
+const ROL_CORTO: Partial<Record<AppRole, string>> = { encargado: 'Encargado', cajero: 'Cajero', cocina: 'Cocina', chef: 'Chef', barista: 'Barista', runner: 'Runner', bacha: 'Bacha' }
 
 const hhmm = (t: string) => t.slice(0, 5)
 const presetLabel = (p: { start: string; end: string }) => `${hhmm(p.start)}–${hhmm(p.end)}`
@@ -87,11 +88,13 @@ export default function CargarTurnosPage() {
     setLoading(true)
     try {
       const [empRes, shiftRes, histRes] = await Promise.all([
-        supabase.from('profiles').select('id, first_name, last_name, role').eq('is_active', true).neq('role', 'socio').order('first_name'),
+        supabase.from('profiles').select('id, first_name, last_name, role, puesto').eq('is_active', true).neq('role', 'socio').order('first_name'),
         supabase.from('shifts').select('id, user_id, shift_date, start_time, end_time, shift_role').gte('shift_date', weekStartStr).lte('shift_date', weekEndStr),
         supabase.from('shifts').select('start_time, end_time').gte('shift_date', format(subDays(new Date(), 28), 'yyyy-MM-dd')).limit(1000),
       ])
-      setEmployees((empRes.data ?? []) as Employee[])
+      // El cajero tiene rol encargado (permisos) y puesto cajero: se agrupa y
+      // se le cargan los turnos como cajero
+      setEmployees(((empRes.data ?? []) as (Employee & { puesto: AppRole | null })[]).map(e => ({ ...e, role: puestoDe(e) })))
       setShifts((shiftRes.data ?? []) as Shift[])
 
       // Turnos frecuentes reales de las últimas 4 semanas

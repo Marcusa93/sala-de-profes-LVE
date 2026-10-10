@@ -27,7 +27,7 @@ type Props = {
   onCreateForSlot: (userId: string, date: Date, role: AppRole) => void
 }
 
-const ROLE_ORDER: AppRole[] = ['encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha' as AppRole]
+const ROLE_ORDER: AppRole[] = ['encargado', 'cajero', 'chef', 'cocina', 'barista', 'runner', 'bacha']
 
 export function WeekGrid({ weekDays, employees, shifts, onEditShift, onDeleteShift, onCreateForSlot }: Props) {
   // Los socios no usan turnos. Cada persona sale en el grupo de su rol de
