@@ -87,6 +87,7 @@ export default function LiquidacionPage() {
   const [feriados, setFeriados] = useState<{ fecha: string; nombre: string }[]>([])
   const [nuevoFeriado, setNuevoFeriado] = useState({ fecha: '', nombre: '' })
   const [guardandoFeriado, setGuardandoFeriado] = useState(false)
+  const [bajandoPdf, setBajandoPdf] = useState(false)
 
   const getPeriod = useCallback(() => {
     const monthStart = startOfMonth(refDate)
@@ -120,6 +121,28 @@ export default function LiquidacionPage() {
       }
     } catch { /* ignore */ }
     setLoading(false)
+  }, [getPeriod])
+
+  // PDF con el diseño de LVE (lo arma el servidor con la misma cuenta)
+  const descargarPdf = useCallback(async () => {
+    const { from, to } = getPeriod()
+    setBajandoPdf(true)
+    try {
+      const res = await fetch(`/api/admin/liquidacion/pdf?from=${from}&to=${to}`, { credentials: 'include' })
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? 'No se pudo generar el PDF')
+      const url = URL.createObjectURL(await res.blob())
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Liquidacion LVE ${from} a ${to}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 30_000)
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : 'No se pudo generar el PDF')
+    } finally {
+      setBajandoPdf(false)
+    }
   }, [getPeriod])
 
   // Agrega o quita un feriado y recalcula la liquidación
@@ -386,7 +409,15 @@ export default function LiquidacionPage() {
             </FadeIn>
           )}
 
-          {/* Export button */}
+          {/* Export buttons */}
+          <button
+            onClick={descargarPdf}
+            disabled={bajandoPdf}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-60"
+          >
+            {bajandoPdf ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+            {bajandoPdf ? 'Armando el PDF…' : 'Descargar PDF'}
+          </button>
           <button
             onClick={handleExport}
             className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-[#006d5a] py-3 text-sm font-bold text-[#006d5a] transition-all hover:bg-[#e8f5f1] active:scale-[0.98]"
