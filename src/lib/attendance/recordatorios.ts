@@ -25,12 +25,15 @@ type Turno = {
 
 export async function avisarIngresosSinMarcar(admin: SupabaseClient, ahora = new Date()): Promise<{ personas: number; encargados: number }> {
   const fecha = fechaOperativa(ahora)
-  const [{ data: turnos }, { data: logs }, { data: perfiles }] = await Promise.all([
+  const [{ data: turnos }, { data: logs }, { data: perfiles }, { data: ausencias }] = await Promise.all([
     admin.from('shifts').select('id, user_id, start_time, shift_role, aviso_ingreso_at, aviso_encargado_at').eq('shift_date', fecha),
     admin.from('attendance_logs').select('user_id').eq('operative_date', fecha),
     admin.from('profiles').select('id, first_name, role, is_active'),
+    admin.from('ausencias').select('user_id').eq('fecha', fecha),
   ])
   const ficharon = new Set((logs ?? []).map((l: { user_id: string }) => l.user_id))
+  // Con motivo anotado (licencia, franco…) no se avisa: ya se sabe por qué no está
+  for (const a of (ausencias ?? []) as { user_id: string }[]) ficharon.add(a.user_id)
   const perfil = new Map(((perfiles ?? []) as { id: string; first_name: string | null; role: string; is_active: boolean }[]).map((p) => [p.id, p]))
   const t0 = ahora.getTime()
 

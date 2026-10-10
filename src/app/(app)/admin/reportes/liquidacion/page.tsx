@@ -43,6 +43,8 @@ type Employee = {
   missingCheckouts: number
   totalPay: number
   byRole: RolePay[]
+  /** Días con turno sin fichar y el motivo que anotó el encargado */
+  ausencias: { fecha: string; motivo: string; etiqueta: string; nota: string | null }[]
   days: DayDetail[]
 }
 
@@ -136,6 +138,17 @@ export default function LiquidacionPage() {
         csv += `"${e.firstName} ${e.lastName}",${rolLabel(r.role)},$${r.hourlyRate},${r.hours},"${formatMoney(r.pay)}"\n`
       }
       csv += `"${e.firstName} ${e.lastName}",TOTAL (${e.totalDays} días; sin egreso: ${e.missingCheckouts}),,${e.totalHours},"${formatMoney(e.totalPay)}"\n`
+    }
+
+    // Ausencias con motivo
+    if (employees.some(e => e.ausencias.length > 0)) {
+      csv += `\nSIN FICHAR (MOTIVO)\n`
+      csv += `Nombre,Fecha,Motivo,Detalle\n`
+      for (const e of employees) {
+        for (const a of e.ausencias) {
+          csv += `"${e.firstName} ${e.lastName}",${a.fecha},${a.etiqueta},"${(a.nota ?? '').replace(/"/g, "'")}"\n`
+        }
+      }
     }
 
     // Day by day for each employee
@@ -320,6 +333,7 @@ export default function LiquidacionPage() {
                           ? emp.byRole.map((r) => `${rolLabel(r.role)} ${r.hours}h`).join(' · ')
                           : <>{roleConfig?.emoji} {rolLabel(emp.byRole[0]?.role ?? emp.role)} · {formatMoney(emp.byRole[0]?.hourlyRate ?? emp.hourlyRate)}/h</>}
                         {' · '}{emp.totalDays} día{emp.totalDays !== 1 ? 's' : ''}
+                        {emp.ausencias.length > 0 && ` · ${emp.ausencias.length} ausencia${emp.ausencias.length !== 1 ? 's' : ''}`}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -347,6 +361,22 @@ export default function LiquidacionPage() {
                               <Bar dataKey="hours" fill={roleConfig?.color ?? '#006d5a'} radius={[3, 3, 0, 0]} />
                             </BarChart>
                           </ResponsiveContainer>
+                        </div>
+                      )}
+
+                      {/* Ausencias con motivo */}
+                      {emp.ausencias.length > 0 && (
+                        <div className="px-4 pt-3">
+                          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Sin fichar (motivo)</p>
+                          <ul className="space-y-0.5 text-xs text-[#3d2c24]">
+                            {emp.ausencias.map(a => (
+                              <li key={a.fecha} className="flex gap-2">
+                                <span className="w-20 shrink-0 capitalize text-[#7d6c64]">{format(new Date(a.fecha + 'T12:00:00'), 'EEE d MMM', { locale: es })}</span>
+                                <span className="font-semibold text-[#3b6ab5]">{a.etiqueta}</span>
+                                {a.nota && <span className="truncate italic text-[#7d6c64]">“{a.nota}”</span>}
+                              </li>
+                            ))}
+                          </ul>
                         </div>
                       )}
 

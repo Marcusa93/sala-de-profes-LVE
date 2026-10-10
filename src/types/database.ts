@@ -436,6 +436,39 @@ export type Database = {
           },
         ]
       }
+      ausencias: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          fecha: string
+          id: string
+          motivo: string
+          nota: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          fecha: string
+          id?: string
+          motivo: string
+          nota?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          fecha?: string
+          id?: string
+          motivo?: string
+          nota?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       bar_orders: {
         Row: {
           ordered_at: string | null

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { differenceInMinutes, parseISO } from 'date-fns'
 import { ventanaTurno } from '@/lib/turnos/rol-del-turno'
+import { ETIQUETA_AUSENCIA, type MotivoAusencia } from '@/lib/attendance/ausencias'
 
 // Hora en Argentina (el servidor corre en UTC: format() mostraba 3 h corridas)
 const horaAR = (iso: string) => new Date(iso).toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false })
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch all attendance logs in period
-    const [logsRes, profilesRes, ratesRes, shiftsRes] = await Promise.all([
+    const [logsRes, profilesRes, ratesRes, shiftsRes, ausenciasRes] = await Promise.all([
       admin.from('attendance_logs')
         .select('id, user_id, operative_date, clock_in_at, clock_out_at, status, clock_out_type')
         .gte('operative_date', from)
@@ -50,7 +51,19 @@ export async function GET(request: NextRequest) {
         .select('user_id, shift_date, start_time, end_time, shift_role')
         .gte('shift_date', from)
         .lte('shift_date', to),
+      admin.from('ausencias')
+        .select('user_id, fecha, motivo, nota')
+        .gte('fecha', from)
+        .lte('fecha', to)
+        .order('fecha'),
     ])
+    // Por qué no fichó (lo anota el encargado en Equipo): no suma horas, se informa
+    const ausenciasPor = new Map<string, { fecha: string; motivo: string; etiqueta: string; nota: string | null }[]>()
+    for (const a of (ausenciasRes.data ?? []) as { user_id: string; fecha: string; motivo: MotivoAusencia; nota: string | null }[]) {
+      const lista = ausenciasPor.get(a.user_id) ?? []
+      lista.push({ fecha: a.fecha, motivo: a.motivo, etiqueta: ETIQUETA_AUSENCIA[a.motivo] ?? a.motivo, nota: a.nota })
+      ausenciasPor.set(a.user_id, lista)
+    }
 
     const logs = logsRes.data
     const profiles = profilesRes.data
@@ -153,9 +166,9 @@ export async function GET(request: NextRequest) {
 
     // Build result
     const employees = profiles
-      .filter(p => empMap.has(p.id) && p.role !== 'socio')
+      .filter(p => (empMap.has(p.id) || ausenciasPor.has(p.id)) && p.role !== 'socio')
       .map(p => {
-        const emp = empMap.get(p.id)!
+        const emp = empMap.get(p.id) ?? { days: new Map(), porRol: new Map<string, number>(), totalHours: 0, totalDays: 0, missingCheckouts: 0, lateArrivals: 0 }
         const daysArray = Array.from(emp.days.entries())
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([date, data]) => ({ date, ...data, pay: Math.round(data.pay) }))
@@ -184,6 +197,7 @@ export async function GET(request: NextRequest) {
           missingCheckouts: emp.missingCheckouts,
           totalPay,
           byRole,
+          ausencias: ausenciasPor.get(p.id) ?? [],
           days: daysArray,
         }
       })
