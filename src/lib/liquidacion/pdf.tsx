@@ -30,18 +30,23 @@ const C = {
   rojoSuave: '#fdeeed',
 }
 
+// Por URL se agrega una versión: evita respuestas viejas guardadas en la caché
+// de Vercel (las fuentes llegaron a quedar cacheadas como redirección a /login).
+const VERSION_ASSETS = '2'
+const asset = (assets: string, ruta: string) => `${assets}/${ruta}${assets.startsWith('http') ? `?v=${VERSION_ASSETS}` : ''}`
+
 let fuentesListas = ''
 function registrarFuentes(assets: string) {
   if (fuentesListas === assets) return
   Font.register({
     family: 'Barlow',
     fonts: [
-      { src: `${assets}/fonts/Barlow-Regular.ttf` },
-      { src: `${assets}/fonts/Barlow-SemiBold.ttf`, fontWeight: 600 },
-      { src: `${assets}/fonts/Barlow-Bold.ttf`, fontWeight: 700 },
+      { src: asset(assets, 'fonts/Barlow-Regular.ttf') },
+      { src: asset(assets, 'fonts/Barlow-SemiBold.ttf'), fontWeight: 600 },
+      { src: asset(assets, 'fonts/Barlow-Bold.ttf'), fontWeight: 700 },
     ],
   })
-  Font.register({ family: 'Playfair', src: `${assets}/fonts/PlayfairDisplay-Bold.ttf`, fontWeight: 700 })
+  Font.register({ family: 'Playfair', src: asset(assets, 'fonts/PlayfairDisplay-Bold.ttf'), fontWeight: 700 })
   Font.registerHyphenationCallback((w) => [w]) // sin cortar palabras con guiones
   fuentesListas = assets
 }
@@ -107,7 +112,7 @@ function LiquidacionPDF({ liq, assets, generadoPor }: { liq: Liquidacion; assets
         {/* Encabezado */}
         <View style={s.header}>
           {/* eslint-disable-next-line jsx-a11y/alt-text */}
-          <Image style={s.logo} src={`${assets}/brand/lve-logo.png`} />
+          <Image style={s.logo} src={asset(assets, 'brand/lve-logo.png')} />
           <View>
             <Text style={s.titulo}>Liquidación de haberes</Text>
             <Text style={s.subtitulo}>{periodo}</Text>
