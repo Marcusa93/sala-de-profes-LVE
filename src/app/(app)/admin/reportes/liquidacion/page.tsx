@@ -276,8 +276,8 @@ export default function LiquidacionPage() {
             <div className="flex items-start gap-2 rounded-xl bg-[#fef2f2] p-3 text-xs text-[#a3302d]">
               <AlertTriangle className="mt-0.5 size-4 shrink-0" />
               <p>
-                <b>{summary.diasRevisar} día{summary.diasRevisar !== 1 ? 's' : ''} para revisar antes de pagar</b> (marcados en rojo en
-                cada persona). Casi siempre es un cambio de turno que no se cargó: corregí el turno y la liquidación se recalcula.
+                <b>{summary.diasRevisar} día{summary.diasRevisar !== 1 ? 's' : ''} para revisar</b> (marcados en rojo en cada persona).
+                Casi siempre es un turno mal cargado: se paga lo fichado, pero conviene corregir el turno en Turnos para que quede bien.
               </p>
             </div>
           )}
@@ -287,8 +287,8 @@ export default function LiquidacionPage() {
             <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Cómo se calcula</p>
             <p>
               Se paga desde el inicio del turno (llegar antes no suma) y hasta la salida, sin pasar el fin del turno
-              salvo que el encargado haya corregido la salida (✏️ = horas extra autorizadas). Licencias y ausencias no
-              suman. Feriados: 50% más.
+              salvo que el encargado haya corregido la salida (✏️ = horas extra autorizadas). Si el turno estaba mal
+              cargado (trabajó en otro horario), se paga lo fichado. Licencias y ausencias no suman. Feriados: 50% más.
             </p>
             <div>
               <p className="mb-1 font-semibold text-[#3d2c24]">Feriados del período</p>

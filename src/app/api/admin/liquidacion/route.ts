@@ -21,7 +21,8 @@ const horaAR = (iso: string) => new Date(iso).toLocaleTimeString('es-AR', { time
 //   · Irse antes resta: se paga hasta la salida.
 //   · Quedarse después solo cuenta si el encargado lo autorizó (corrigió la
 //     salida en Equipo → clock_out_type 'edited'); si no, hasta el fin del turno.
-//   · Sin turno cargado: las horas fichadas.
+//   · Sin turno cargado, o turno mal cargado (lo fichado cae casi todo fuera
+//     del turno): las horas fichadas, marcado para revisar.
 //   · Feriado (tabla feriados, por fecha operativa): 50% más.
 //   · Licencia y demás ausencias: no suman horas (se informan).
 // ---------------------------------------------------------------------------
@@ -159,11 +160,13 @@ export async function GET(request: NextRequest) {
           const out = Date.parse(log.clock_out_at)
           const hasta = log.clock_out_type === 'edited' ? out : Math.min(out, turno.fin)
           hours = Math.max(0, hasta - desde) / 3_600_000
-          // Trabajó casi todo fuera del turno cargado: casi seguro un cambio de
-          // turno que no se actualizó. Se paga según la regla, pero se avisa.
+          // Trabajó casi todo fuera del turno cargado: el turno estaba mal
+          // cargado (cambio sin actualizar). Trabajó un turno, así que se paga
+          // lo fichado (Marco, 10/10/2026) y se avisa para corregir el turno.
           if (fichadas >= 2 && hours < fichadas * 0.5) {
+            hours = fichadas
             revisar = true
-            motivoRevisar = 'Trabajó fuera de su turno: corregí el turno en Turnos si fue un cambio'
+            motivoRevisar = 'Turno cargado distinto al trabajado: se paga lo fichado. Corregí el turno en Turnos'
           }
         }
       }
