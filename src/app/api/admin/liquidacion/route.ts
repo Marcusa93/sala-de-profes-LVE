@@ -15,6 +15,15 @@ const horaAR = (iso: string) => new Date(iso).toLocaleTimeString('es-AR', { time
 // Cada fichaje se paga con la tarifa del ROL DE SU TURNO de ese día (un
 // runner que hace un turno de encargado cobra esas horas como encargado).
 // Si no hay turno cargado, se usa el rol del perfil. Los socios no se liquidan.
+//
+// Reglas de pago (Marco, 10/10/2026):
+//   · Llegar antes no cuenta: se paga desde el inicio del turno.
+//   · Irse antes resta: se paga hasta la salida.
+//   · Quedarse después solo cuenta si el encargado lo autorizó (corrigió la
+//     salida en Equipo → clock_out_type 'edited'); si no, hasta el fin del turno.
+//   · Sin turno cargado: las horas fichadas.
+//   · Feriado (tabla feriados, por fecha operativa): 50% más.
+//   · Licencia y demás ausencias: no suman horas (se informan).
 // ---------------------------------------------------------------------------
 
 export async function GET(request: NextRequest) {
@@ -36,7 +45,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch all attendance logs in period
-    const [logsRes, profilesRes, ratesRes, shiftsRes, ausenciasRes] = await Promise.all([
+    const [logsRes, profilesRes, ratesRes, shiftsRes, ausenciasRes, feriadosRes] = await Promise.all([
       admin.from('attendance_logs')
         .select('id, user_id, operative_date, clock_in_at, clock_out_at, status, clock_out_type')
         .gte('operative_date', from)
@@ -56,7 +65,13 @@ export async function GET(request: NextRequest) {
         .gte('fecha', from)
         .lte('fecha', to)
         .order('fecha'),
+      admin.from('feriados')
+        .select('fecha, nombre')
+        .gte('fecha', from)
+        .lte('fecha', to)
+        .order('fecha'),
     ])
+    const feriados = new Map(((feriadosRes.data ?? []) as { fecha: string; nombre: string }[]).map((f) => [f.fecha, f.nombre]))
     // Por qué no fichó (lo anota el encargado en Equipo): no suma horas, se informa
     const ausenciasPor = new Map<string, { fecha: string; motivo: string; etiqueta: string; nota: string | null }[]>()
     for (const a of (ausenciasRes.data ?? []) as { user_id: string; fecha: string; motivo: MotivoAusencia; nota: string | null }[]) {
@@ -79,26 +94,27 @@ export async function GET(request: NextRequest) {
 
     // Turnos por persona y día, para saber con qué rol trabajó cada fichaje
     const perfilRol = new Map(profiles.map((p) => [p.id, p.role as string]))
-    const turnos = new Map<string, { rol: string; inicio: number }[]>()
+    const turnos = new Map<string, { rol: string; inicio: number; fin: number }[]>()
     for (const t of (shiftsRes.data ?? []) as { user_id: string; shift_date: string; start_time: string; end_time: string; shift_role: string | null }[]) {
       if (!t.shift_role || !t.start_time || !t.end_time) continue
       const k = `${t.user_id}|${t.shift_date}`
       const lista = turnos.get(k) ?? []
-      lista.push({ rol: t.shift_role, inicio: ventanaTurno(t.shift_date, t.start_time, t.end_time).inicio })
+      lista.push({ rol: t.shift_role, ...ventanaTurno(t.shift_date, t.start_time, t.end_time) })
       turnos.set(k, lista)
     }
-    /** Rol del turno más cercano a la entrada; sin turno, el del perfil. */
-    const rolDelFichaje = (userId: string, fecha: string, entrada: string): string => {
+    /** Turno de ese día que corresponde al fichaje (el que empieza más cerca de la entrada). */
+    const turnoDelFichaje = (userId: string, fecha: string, entrada: string) => {
       const lista = turnos.get(`${userId}|${fecha}`)
-      if (!lista?.length) return perfilRol.get(userId) ?? ''
+      if (!lista?.length) return null
       const t = Date.parse(entrada)
-      return lista.reduce((a, b) => (Math.abs(b.inicio - t) < Math.abs(a.inicio - t) ? b : a)).rol
+      return lista.reduce((a, b) => (Math.abs(b.inicio - t) < Math.abs(a.inicio - t) ? b : a))
     }
 
     // Aggregate per employee
     const empMap = new Map<string, {
-      days: Map<string, { hours: number; clockIn: string; clockOut: string | null; status: string; clockOutType: string; attendanceId: string; tramos: number; revisar: boolean; role: string; pay: number }>
-      porRol: Map<string, number>
+      days: Map<string, { hours: number; hoursFichadas: number; clockIn: string; clockOut: string | null; status: string; clockOutType: string; attendanceId: string; tramos: number; revisar: boolean; motivoRevisar: string | null; role: string; pay: number; feriado: string | null }>
+      porRol: Map<string, { hours: number; pay: number }>
+      horasFeriado: number
       totalHours: number
       totalDays: number
       missingCheckouts: number
@@ -110,6 +126,7 @@ export async function GET(request: NextRequest) {
         empMap.set(log.user_id, {
           days: new Map(),
           porRol: new Map(),
+          horasFeriado: 0,
           totalHours: 0,
           totalDays: 0,
           missingCheckouts: 0,
@@ -122,15 +139,40 @@ export async function GET(request: NextRequest) {
       // medianoche sola. Si da negativa es un dato mal cargado → 0 h y a revisar
       // (antes sumaba 24 h y pagaba un día de más).
       let hours = 0
+      let fichadas = 0
       let revisar = false
+      let motivoRevisar: string | null = null
+      const turno = turnoDelFichaje(log.user_id, log.operative_date, log.clock_in_at)
       if (log.clock_out_at) {
-        hours = differenceInMinutes(parseISO(log.clock_out_at), parseISO(log.clock_in_at)) / 60
-        if (hours < 0 || hours > 20) { revisar = true; hours = Math.max(0, hours) > 20 ? hours : 0 }
+        fichadas = differenceInMinutes(parseISO(log.clock_out_at), parseISO(log.clock_in_at)) / 60
+        if (fichadas < 0 || fichadas > 20) {
+          revisar = true
+          motivoRevisar = fichadas < 0 ? 'Salida antes de la entrada' : 'Más de 20 horas seguidas'
+          fichadas = Math.max(0, fichadas) > 20 ? fichadas : 0
+        }
+        hours = fichadas
+        if (turno && !revisar) {
+          // Desde el inicio del turno; hasta la salida, sin pasar el fin del
+          // turno salvo que el encargado haya autorizado la salida (edited)
+          const desde = Math.max(Date.parse(log.clock_in_at), turno.inicio)
+          const out = Date.parse(log.clock_out_at)
+          const hasta = log.clock_out_type === 'edited' ? out : Math.min(out, turno.fin)
+          hours = Math.max(0, hasta - desde) / 3_600_000
+          // Trabajó casi todo fuera del turno cargado: casi seguro un cambio de
+          // turno que no se actualizó. Se paga según la regla, pero se avisa.
+          if (fichadas >= 2 && hours < fichadas * 0.5) {
+            revisar = true
+            motivoRevisar = 'Trabajó fuera de su turno: corregí el turno en Turnos si fue un cambio'
+          }
+        }
       }
 
-      const rol = rolDelFichaje(log.user_id, log.operative_date, log.clock_in_at)
-      const pago = hours * (rateMap.get(rol) ?? 0)
-      emp.porRol.set(rol, (emp.porRol.get(rol) ?? 0) + hours)
+      const rol = turno?.rol ?? perfilRol.get(log.user_id) ?? ''
+      const feriado = feriados.get(log.operative_date) ?? null
+      const pago = hours * (rateMap.get(rol) ?? 0) * (feriado ? 1.5 : 1)
+      const acum = emp.porRol.get(rol) ?? { hours: 0, pay: 0 }
+      emp.porRol.set(rol, { hours: acum.hours + hours, pay: acum.pay + pago })
+      if (feriado) emp.horasFeriado += hours
 
       // Turno cortado: dos fichajes el mismo día se suman en un solo día
       const prev = emp.days.get(log.operative_date)
@@ -139,15 +181,19 @@ export async function GET(request: NextRequest) {
         ? {
             ...prev,
             hours: Math.round((prev.hours + hours) * 100) / 100,
+            hoursFichadas: Math.round((prev.hoursFichadas + fichadas) * 100) / 100,
             clockOut: salida ?? prev.clockOut,
             status: log.status === 'open' ? 'open' : prev.status,
             tramos: prev.tramos + 1,
             revisar: prev.revisar || revisar,
+            motivoRevisar: prev.motivoRevisar ?? motivoRevisar,
             role: prev.role === rol ? rol : 'mixto',
             pay: prev.pay + pago,
           }
         : {
             hours: Math.round(hours * 100) / 100,
+            hoursFichadas: Math.round(fichadas * 100) / 100,
+            feriado,
             clockIn: horaAR(log.clock_in_at),
             clockOut: salida,
             status: log.status,
@@ -155,6 +201,7 @@ export async function GET(request: NextRequest) {
             attendanceId: log.id,
             tramos: 1,
             revisar,
+            motivoRevisar,
             role: rol,
             pay: pago,
           })
@@ -168,7 +215,7 @@ export async function GET(request: NextRequest) {
     const employees = profiles
       .filter(p => (empMap.has(p.id) || ausenciasPor.has(p.id)) && p.role !== 'socio')
       .map(p => {
-        const emp = empMap.get(p.id) ?? { days: new Map(), porRol: new Map<string, number>(), totalHours: 0, totalDays: 0, missingCheckouts: 0, lateArrivals: 0 }
+        const emp = empMap.get(p.id) ?? { days: new Map(), porRol: new Map<string, { hours: number; pay: number }>(), horasFeriado: 0, totalHours: 0, totalDays: 0, missingCheckouts: 0, lateArrivals: 0 }
         const daysArray = Array.from(emp.days.entries())
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([date, data]) => ({ date, ...data, pay: Math.round(data.pay) }))
@@ -179,8 +226,8 @@ export async function GET(request: NextRequest) {
         const byRole = [...emp.porRol.entries()]
           .map(([role, h]) => {
             const rate = rateMap.get(role) ?? 0
-            const hrs = Math.round(h * 100) / 100
-            return { role, hours: hrs, hourlyRate: rate, pay: Math.round(hrs * rate) }
+            // pay ya incluye el 50% de los feriados
+            return { role, hours: Math.round(h.hours * 100) / 100, hourlyRate: rate, pay: Math.round(h.pay) }
           })
           .sort((a, b) => b.hours - a.hours)
         const totalPay = byRole.reduce((s, r) => s + r.pay, 0)
@@ -197,6 +244,7 @@ export async function GET(request: NextRequest) {
           missingCheckouts: emp.missingCheckouts,
           totalPay,
           byRole,
+          horasFeriado: Math.round(emp.horasFeriado * 100) / 100,
           ausencias: ausenciasPor.get(p.id) ?? [],
           days: daysArray,
         }
@@ -207,12 +255,14 @@ export async function GET(request: NextRequest) {
       period: { from, to },
       employees,
       rates: rates.map(r => ({ role: r.role, hourlyRate: Number(r.hourly_rate), label: r.label })),
+      feriados: [...feriados.entries()].map(([fecha, nombre]) => ({ fecha, nombre })),
       summary: {
         totalEmployees: employees.length,
         totalHours: Math.round(employees.reduce((s, e) => s + e.totalHours, 0) * 100) / 100,
         totalDays: employees.reduce((s, e) => s + e.totalDays, 0),
         totalPay: employees.reduce((s, e) => s + e.totalPay, 0),
         missingCheckouts: employees.reduce((s, e) => s + e.missingCheckouts, 0),
+        diasRevisar: employees.reduce((s, e) => s + e.days.filter((d) => d.revisar).length, 0),
       },
     })
   } catch (error) {

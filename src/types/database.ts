@@ -1170,6 +1170,12 @@ export type Database = {
           },
         ]
       }
+      feriados: {
+        Row: { created_at: string; created_by: string | null; fecha: string; nombre: string }
+        Insert: { created_at?: string; created_by?: string | null; fecha: string; nombre: string }
+        Update: { created_at?: string; created_by?: string | null; fecha?: string; nombre?: string }
+        Relationships: []
+      }
       fudo_reintentos: {
         Row: {
           id: string
