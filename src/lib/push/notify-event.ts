@@ -97,6 +97,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio', 'encargado'],
     target_user_ids: [],
   },
+  faltante_reportado: {
+    label: 'Cocina reporta faltante de insumo',
+    description: 'Cuando alguien de cocina usa el botón "Reportar faltante" para avisar que se está terminando un insumo.',
+    enabled: true,
+    target_roles: ['socio', 'encargado'],
+    target_user_ids: [],
+  },
   sales_summary_daily: {
     label: 'Top 5 platos del día',
     description: 'Notificación a las 23:30 con los 5 platos más vendidos del día completo.',
