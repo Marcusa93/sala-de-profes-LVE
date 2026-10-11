@@ -90,6 +90,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio', 'encargado', 'chef'],
     target_user_ids: [],
   },
+  stock_bajo_critico: {
+    label: 'Stock crítico — insumos que no alcanzan',
+    description: 'A las 7hs, 15hs y 23hs: avisa cuando un insumo activo tiene menos de 1.5 días de stock según el historial de ventas.',
+    enabled: true,
+    target_roles: ['socio', 'encargado'],
+    target_user_ids: [],
+  },
   sales_summary_daily: {
     label: 'Top 5 platos del día',
     description: 'Notificación a las 23:30 con los 5 platos más vendidos del día completo.',
