@@ -5,6 +5,7 @@ import { esEncargadoAhora } from '@/lib/turnos/rol-del-turno'
 import { logAudit } from '@/lib/audit'
 import { sendPushToUser } from '@/lib/push/send'
 import { candidatosPara, personalDeTurno, type Tarea } from '@/lib/protocolos/protocolos'
+import { optimizarFoto } from '@/lib/protocolos/fotos'
 
 // ---------------------------------------------------------------------------
 // POST /api/protocolos/tareas/[id]
@@ -93,7 +94,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const fotos: string[] = []
     for (let i = 0; i < archivos.length; i++) {
       const ruta = `${t.fecha}/${t.id}-${i + 1}.jpg`
-      const { error: upErr } = await admin.storage.from('protocolos').upload(ruta, Buffer.from(await archivos[i].arrayBuffer()), { contentType: archivos[i].type, upsert: true })
+      // Se achica en el servidor (1024 px, ~50 KB) para no llenar el almacenamiento
+      const foto = await optimizarFoto(Buffer.from(await archivos[i].arrayBuffer()))
+      const { error: upErr } = await admin.storage.from('protocolos').upload(ruta, foto.buffer, { contentType: foto.contentType, upsert: true })
       if (upErr) throw new Error(`No se pudo guardar ${etiquetas[i].toLowerCase()}: ${upErr.message}`)
       fotos.push(ruta)
     }

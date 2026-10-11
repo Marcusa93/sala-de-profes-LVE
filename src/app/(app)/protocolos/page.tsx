@@ -52,16 +52,17 @@ const ROL: Record<string, string> = { socio: 'Socio', encargado: 'Encargado', ca
 const hhmm = (iso: string) => format(new Date(iso), 'HH:mm')
 const urlsDe = (t: TareaUI) => (t.fotos_urls?.length ? t.fotos_urls : t.foto_url ? [t.foto_url] : [])
 
-/** Achica la foto en el celular antes de subirla (máx. 1600 px, JPEG). */
+/** Achica la foto en el celular antes de subirla (máx. 1024 px, JPEG): sube rápido con datos.
+ *  El servidor la vuelve a optimizar igual (lib/protocolos/fotos.ts). */
 async function comprimir(file: File): Promise<Blob> {
   try {
     const bmp = await createImageBitmap(file)
-    const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height))
+    const k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height))
     const c = document.createElement('canvas')
     c.width = Math.round(bmp.width * k)
     c.height = Math.round(bmp.height * k)
     c.getContext('2d')!.drawImage(bmp, 0, 0, c.width, c.height)
-    const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/jpeg', 0.8))
+    const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/jpeg', 0.7))
     return blob ?? file
   } catch {
     return file
