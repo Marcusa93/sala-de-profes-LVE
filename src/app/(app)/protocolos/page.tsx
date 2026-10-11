@@ -23,9 +23,11 @@ type TareaUI = {
   asignado_a: string | null; asignado_nombre: string | null; hecho_nombre: string | null
   hecho_at: string | null; foto_url: string | null; fotos_urls?: string[]; nota: string | null
   candidatos: Candidato[]
+  medicion?: number | null
 }
 type ProtocoloUI = {
   id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean
+  medicion_etiqueta?: string | null; medicion_unidad?: string | null
   tareas: TareaUI[]
   historial: { fecha: string; hechas: number; total: number; tareas: TareaUI[] }[]
 }
@@ -169,7 +171,7 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
                   <span className={cn('inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold', chip.cls)}>{chip.txt}</span>
                   <p className="mt-1 truncate text-[12.5px] text-[#5c4a42]">
                     {hecha
-                      ? <>{t.hecho_nombre ?? 'Alguien'} · {t.hecho_at ? hhmm(t.hecho_at) : ''}</>
+                      ? <>{t.hecho_nombre ?? 'Alguien'} · {t.hecho_at ? hhmm(t.hecho_at) : ''}{t.medicion != null && <> · <b>{Number(t.medicion).toLocaleString('es-AR')} {p.medicion_unidad ?? ''}</b></>}</>
                       : t.asignado_nombre ? <>Le toca a <b>{mia ? 'vos' : t.asignado_nombre}</b></> : t.visible === 'programada' ? 'Todavía no es la hora' : 'Nadie asignado'}
                   </p>
                   {hecha && t.nota && <p className="mt-0.5 text-[11.5px] italic text-[#7d6c64]">“{t.nota}”</p>}
@@ -294,10 +296,13 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
   const etiquetas = protocolo.requiere_foto ? (protocolo.fotos?.length ? protocolo.fotos : ['Foto']) : []
   const [fotos, setFotos] = useState<(Blob | null)[]>(() => etiquetas.map(() => null))
   const [nota, setNota] = useState('')
+  const [medicion, setMedicion] = useState('')
   const [enviando, setEnviando] = useState(false)
   const todos = protocolo.pasos.every((p) => ok.has(p))
   const faltaFoto = etiquetas.find((_, i) => !fotos[i])
-  const puede = todos && !faltaFoto && !enviando
+  const pideMedicion = !!protocolo.medicion_etiqueta
+  const faltaMedicion = pideMedicion && !(medicion.trim() !== '' && Number(medicion.replace(',', '.')) >= 0)
+  const puede = todos && !faltaFoto && !faltaMedicion && !enviando
 
   async function enviar() {
     setEnviando(true)
@@ -306,11 +311,12 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
       fd.set('accion', 'completar')
       fd.set('pasos', JSON.stringify(protocolo.pasos.filter((p) => ok.has(p))))
       fd.set('nota', nota)
+      if (pideMedicion) fd.set('medicion', medicion.replace(',', '.'))
       fotos.forEach((f, i) => { if (f) fd.set(`foto_${i}`, f, `foto-${i + 1}.jpg`) })
       const r = await fetch(`/api/protocolos/tareas/${tarea.id}`, { method: 'POST', body: fd })
       const j = await r.json().catch(() => null)
       if (!r.ok) throw new Error(j?.error ?? 'No se pudo registrar')
-      toast.success(etiquetas.length > 1 ? '¡Listo! Quedó registrado con las fotos' : '¡Listo! Quedó registrado')
+      toast.success(j?.enTolva ? `¡Listo! El peso quedó en Tolva (${j.enTolva})` : etiquetas.length > 1 ? '¡Listo! Quedó registrado con las fotos' : '¡Listo! Quedó registrado')
       onDone()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'No se pudo registrar')
@@ -341,6 +347,20 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
           })}
         </ul>
 
+        {pideMedicion && (
+          <label className="block">
+            <span className="mb-1 block text-[12.5px] font-semibold text-[#3d2c24]">{protocolo.medicion_etiqueta}</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" inputMode="decimal" min={0} value={medicion} onChange={(e) => setMedicion(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-xl border border-[#ebe6df] px-3 py-2.5 text-[16px] font-semibold tabular-nums outline-none focus:border-[#d4943a]"
+              />
+              {protocolo.medicion_unidad && <span className="text-sm font-semibold text-[#7d6c64]">{protocolo.medicion_unidad}</span>}
+            </div>
+          </label>
+        )}
+
         {etiquetas.length > 0 && (
           <div className={cn('grid gap-2', etiquetas.length > 1 && 'grid-cols-2')}>
             {etiquetas.map((e, i) => (
@@ -354,7 +374,7 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
         <DialogFooter>
           <button onClick={() => void enviar()} disabled={!puede} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-bold text-white disabled:opacity-40">
             {enviando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : faltaFoto ? `Falta: ${faltaFoto.split(' (')[0].toLowerCase()}` : 'Registrar'}
+            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : faltaMedicion ? `Falta: ${(protocolo.medicion_etiqueta ?? '').toLowerCase()}` : faltaFoto ? `Falta: ${faltaFoto.split(' (')[0].toLowerCase()}` : 'Registrar'}
           </button>
         </DialogFooter>
       </DialogContent>

@@ -18,12 +18,17 @@ export const REAVISO_MIN = 15
 export const RECORDATORIO_MIN = 30
 export const ATRASO_MIN = 60
 
-export type Protocolo = { id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean }
+export type Protocolo = {
+  id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean
+  /** Número a registrar al completar (ej. peso de la tolva) */
+  medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null
+}
 export type Tarea = {
   id: string; protocolo_id: string; fecha: string; hora: string
   estado: 'pendiente' | 'asignada' | 'hecha'
   asignado_a: string | null; asignado_por: string | null; asignado_at: string | null
   hecho_por: string | null; hecho_at: string | null; foto_path: string | null; fotos: string[] | null; pasos_ok: string[] | null; nota: string | null
+  medicion?: number | null
   avisado_at: string | null; reaviso_at: string | null; recordatorio_at: string | null; atraso_at: string | null
   created_at: string
 }

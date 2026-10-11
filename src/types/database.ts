@@ -2428,6 +2428,7 @@ export type Database = {
       }
       protocolo_tareas: {
         Row: {
+          medicion: number | null
           id: string
           protocolo_id: string
           fecha: string
@@ -2449,6 +2450,7 @@ export type Database = {
           created_at: string
         }
         Insert: {
+          medicion?: number | null
           id?: string
           protocolo_id: string
           fecha: string
@@ -2470,6 +2472,7 @@ export type Database = {
           created_at?: string
         }
         Update: {
+          medicion?: number | null
           id?: string
           protocolo_id?: string
           fecha?: string
@@ -2502,6 +2505,9 @@ export type Database = {
       }
       protocolos: {
         Row: {
+          medicion_etiqueta: string | null
+          medicion_unidad: string | null
+          registro: string | null
           id: string
           nombre: string
           descripcion: string | null
@@ -2514,6 +2520,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          medicion_etiqueta?: string | null
+          medicion_unidad?: string | null
+          registro?: string | null
           id?: string
           nombre: string
           descripcion?: string | null
@@ -2526,6 +2535,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          medicion_etiqueta?: string | null
+          medicion_unidad?: string | null
+          registro?: string | null
           id?: string
           nombre?: string
           descripcion?: string | null

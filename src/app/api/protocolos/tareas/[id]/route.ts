@@ -6,6 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { sendPushToUser } from '@/lib/push/send'
 import { candidatosPara, personalDeTurno, type Tarea } from '@/lib/protocolos/protocolos'
 import { optimizarFoto } from '@/lib/protocolos/fotos'
+import { registrarPesoTolva } from '@/lib/protocolos/tolva'
 
 // ---------------------------------------------------------------------------
 // POST /api/protocolos/tareas/[id]
@@ -31,9 +32,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!UUID.test(id)) return NextResponse.json({ error: 'Tarea inválida' }, { status: 400 })
     const admin = createAdminClient()
 
-    const { data: tarea } = await admin.from('protocolo_tareas').select('*, protocolos(nombre, pasos, fotos, requiere_foto)').eq('id', id).maybeSingle()
+    const { data: tarea } = await admin.from('protocolo_tareas').select('*, protocolos(nombre, pasos, fotos, requiere_foto, medicion_etiqueta, medicion_unidad, registro)').eq('id', id).maybeSingle()
     if (!tarea) return NextResponse.json({ error: 'Tarea no encontrada' }, { status: 404 })
-    const t = tarea as Tarea & { protocolos: { nombre: string; pasos: string[]; fotos: string[]; requiere_foto: boolean } }
+    const t = tarea as unknown as Tarea & { protocolos: { nombre: string; pasos: string[]; fotos: string[]; requiere_foto: boolean; medicion_etiqueta: string | null; medicion_unidad: string | null; registro: string | null } }
     const { data: yo } = await admin.from('profiles').select('first_name, last_name').eq('id', auth.user.id).maybeSingle()
     const quien = [yo?.first_name, yo?.last_name].filter(Boolean).join(' ') || 'Alguien'
 
@@ -82,6 +83,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const faltan = t.protocolos.pasos.filter((p) => !pasos.includes(p))
     if (faltan.length > 0) return NextResponse.json({ error: `Faltan pasos: ${faltan.join(', ')}` }, { status: 400 })
 
+    // Número a registrar (ej. peso de la tolva): obligatorio si el protocolo lo pide
+    let medicion: number | null = null
+    if (t.protocolos.medicion_etiqueta) {
+      const crudo = String(form.get('medicion') ?? '').replace(',', '.').trim()
+      medicion = crudo === '' ? NaN : Number(crudo)
+      if (!Number.isFinite(medicion) || medicion < 0 || medicion > 100_000) {
+        return NextResponse.json({ error: `Falta: ${t.protocolos.medicion_etiqueta.toLowerCase()}` }, { status: 400 })
+      }
+    }
+
     const etiquetas = t.protocolos.requiere_foto ? (t.protocolos.fotos?.length ? t.protocolos.fotos : ['Foto']) : []
     const archivos: File[] = []
     for (let i = 0; i < etiquetas.length; i++) {
@@ -105,17 +116,26 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const nota = String(form.get('nota') ?? '').trim().slice(0, 500) || null
     const ahora = new Date().toISOString()
     const { error } = await admin.from('protocolo_tareas').update({
-      estado: 'hecha', hecho_por: auth.user.id, hecho_at: ahora, foto_path: fotoPath, fotos: fotos.length ? fotos : null, pasos_ok: pasos, nota,
+      estado: 'hecha', hecho_por: auth.user.id, hecho_at: ahora, foto_path: fotoPath, fotos: fotos.length ? fotos : null, pasos_ok: pasos, nota, medicion,
       ...(t.asignado_a ? {} : { asignado_a: auth.user.id, asignado_por: auth.user.id, asignado_at: ahora }),
     }).eq('id', id).neq('estado', 'hecha')
     if (error) throw error
 
+    // El peso de la tolva pasa solo al registro de Tolva
+    let enTolva: string | null = null
+    if (t.protocolos.registro === 'tolva' && medicion != null) {
+      enTolva = await registrarPesoTolva(admin, t.fecha, t.hora, medicion, auth.user.id).catch((e) => {
+        console.warn('[protocolos] no se pudo pasar el peso a Tolva', e)
+        return null
+      })
+    }
+
     // Aviso a quien la asignó: quedó hecha
     if (t.asignado_por && t.asignado_por !== auth.user.id) {
-      await sendPushToUser(t.asignado_por, { title: `✅ Hecho: ${t.protocolos.nombre} (${t.hora})`, body: `${quien} la completó con ${fotos.length === 1 ? 'foto' : `${fotos.length} fotos`}.`, url: '/protocolos' }).catch(() => {})
+      await sendPushToUser(t.asignado_por, { title: `✅ Hecho: ${t.protocolos.nombre} (${t.hora})`, body: `${quien} la completó${medicion != null ? ` · ${medicion.toLocaleString('es-AR')} ${t.protocolos.medicion_unidad ?? ''}`.trimEnd() : ''}${fotos.length ? ` con ${fotos.length === 1 ? 'foto' : `${fotos.length} fotos`}` : ''}.`, url: '/protocolos' }).catch(() => {})
     }
     void logAudit(admin, { userId: auth.user.id, userName: quien, action: 'protocolo_completar', module: 'equipo', entityType: 'protocolo_tarea', entityId: id, description: `${quien} completó "${t.protocolos.nombre}" (${t.hora})` })
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, enTolva })
   } catch (err) {
     console.error('[POST /api/protocolos/tareas]', err)
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Error interno' }, { status: 500 })
