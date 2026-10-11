@@ -33,7 +33,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
-import { mustClockIn } from '@/lib/roles'
+import { mustClockIn, isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { useState, useEffect, useCallback } from 'react'
@@ -295,6 +295,7 @@ export function BottomNav() {
   const { profile } = useProfileContext()
   const [moreOpen, setMoreOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [stockAlertCount, setStockAlertCount] = useState(0)
 
   const nav = getNavItems(profile?.role)
   const more = nav.more
@@ -334,6 +335,22 @@ export function BottomNav() {
       clearInterval(interval)
     }
   }, [fetchUnread])
+
+  // Badge de stock crítico — solo encargados/socios
+  useEffect(() => {
+    if (!profile || !isManagerOrAbove(profile.role)) return
+    async function fetchStockAlerts() {
+      try {
+        const res = await fetch('/api/stock/alertas')
+        if (!res.ok) return
+        const d = await res.json() as { count?: number }
+        setStockAlertCount(d.count ?? 0)
+      } catch { /* silencioso */ }
+    }
+    const t = window.setTimeout(() => { void fetchStockAlerts() }, 500)
+    const iv = setInterval(() => { void fetchStockAlerts() }, 60_000)
+    return () => { window.clearTimeout(t); clearInterval(iv) }
+  }, [profile])
 
   // Immediately decrement badge when a notification is marked as read
   useEffect(() => {
@@ -476,6 +493,7 @@ export function BottomNav() {
             const Icon = item.icon
             const active = isActive(item.href)
             const showBadge = item.href === '/notificaciones' && unreadCount > 0
+            const showStockBadge = item.href === '/stock' && stockAlertCount > 0
             return (
               <Link
                 key={item.href}
@@ -503,6 +521,11 @@ export function BottomNav() {
                   {showBadge && (
                     <span className="absolute -right-1.5 -top-1 flex size-4.5 items-center justify-center rounded-full bg-[#ea504c] text-[9px] font-bold text-white shadow-sm">
                       {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                  {showStockBadge && (
+                    <span className="absolute -right-1.5 -top-1 flex size-4.5 items-center justify-center rounded-full bg-[#ea504c] text-[9px] font-bold text-white shadow-sm">
+                      {stockAlertCount > 9 ? '9+' : stockAlertCount}
                     </span>
                   )}
                 </div>

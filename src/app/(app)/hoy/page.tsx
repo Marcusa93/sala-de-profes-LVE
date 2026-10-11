@@ -29,6 +29,7 @@ import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { AskBar } from '@/components/ai/AskBar'
 import { lotTone, formatLotCountdown, formatQty } from '@/lib/stock/helpers'
+import { StockAlertaBanner } from '@/components/hoy/StockAlertaBanner'
 
 type PurchaseOrderLite = {
   supplier_id: string
@@ -566,6 +567,9 @@ export default function HoyPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-4 pb-28">
       {GreetingHeader}
+
+      {/* Card de stock crítico — arriba de todo para que no se pueda ignorar */}
+      {isManager && <StockAlertaBanner />}
 
       {/* Tira de KPIs operativos — solo encargados/socios */}
       {isManager && kpis && (
