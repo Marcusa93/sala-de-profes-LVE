@@ -1170,6 +1170,18 @@ export type Database = {
           },
         ]
       }
+      descartables_producto: {
+        Row: { cantidad: number; created_at: string; created_by: string | null; fudo_product_id: string; stock_item_id: string }
+        Insert: { cantidad?: number; created_at?: string; created_by?: string | null; fudo_product_id: string; stock_item_id: string }
+        Update: { cantidad?: number; created_at?: string; created_by?: string | null; fudo_product_id?: string; stock_item_id?: string }
+        Relationships: []
+      }
+      descartables_consumidos: {
+        Row: { created_at: string; detalle: Json; fudo_product_id: string; fudo_sale_item_id: string; vendido_at: string }
+        Insert: { created_at?: string; detalle?: Json; fudo_product_id: string; fudo_sale_item_id: string; vendido_at: string }
+        Update: { created_at?: string; detalle?: Json; fudo_product_id?: string; fudo_sale_item_id?: string; vendido_at?: string }
+        Relationships: []
+      }
       feriados: {
         Row: { created_at: string; created_by: string | null; fecha: string; nombre: string }
         Insert: { created_at?: string; created_by?: string | null; fecha: string; nombre: string }

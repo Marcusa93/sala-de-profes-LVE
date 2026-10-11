@@ -6,6 +6,7 @@ import { asegurarVentasDeHoy } from '@/lib/fudo/ventas-intradia'
 import { syncFromFudo } from '@/lib/fudo/stock-sync'
 import { sincronizarMenu } from '@/lib/fudo/menu-sync'
 import { sincronizarPagosDesdeFudo } from '@/lib/compras/pagos-fudo'
+import { procesarDescartablesParaLlevar } from '@/lib/stock/descartables'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/fudo-pulso — cada 10 minutos (pg_cron en Supabase)
@@ -70,6 +71,9 @@ export async function GET(request: NextRequest) {
 
   // 3. Ventas de hoy
   await paso('ventas', () => asegurarVentasDeHoy(admin, { maxAgeMin: 10 }))
+
+  // 3b. Descartables de las ventas para llevar (vasos, tapas…)
+  await paso('descartables', () => procesarDescartablesParaLlevar(admin))
 
   const salud = await leerSalud(admin)
 

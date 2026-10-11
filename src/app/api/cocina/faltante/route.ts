@@ -14,6 +14,7 @@ import { logAudit } from '@/lib/audit'
 // POST /api/cocina/faltante — cocina reporta que falta un insumo
 //   Body: { stock_item_id: string, nota?: string }
 //   Rate limit: 1 reporte por item cada 2 horas
+//   Lo usan cocina y barra (baristas: descartables, café, leche…).
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
@@ -25,7 +26,7 @@ async function getUser() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   const { data: profile } = await supabase.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
-  if (!profile || (!isKitchenRole(profile.role) && !isManagerOrAbove(profile.role))) return null
+  if (!profile || (!isKitchenRole(profile.role) && !isManagerOrAbove(profile.role) && profile.role !== 'barista')) return null
   return { id: user.id, role: profile.role, name: [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null }
 }
 
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
   const { stock_item_id, nota } = body as { stock_item_id: string; nota?: string }
 
   const admin = createAdminClient()
+  const sector = user.role === 'barista' ? 'barra' : 'cocina'
 
   // Verificar que el item existe
   const { data: item } = await admin
@@ -95,8 +97,8 @@ export async function POST(request: NextRequest) {
     alert_type: 'reported_shortage',
     priority: 'critical',
     message: nota
-      ? `Falta ${item.name} — reportado por ${user.name ?? 'cocina'}: "${nota.slice(0, 200)}"`
-      : `Falta ${item.name} — reportado por ${user.name ?? 'cocina'}. Hay ${Number(item.current_qty).toFixed(1)} ${item.unit} en sistema.`,
+      ? `Falta ${item.name} — reportado por ${user.name ?? sector}: "${nota.slice(0, 200)}"`
+      : `Falta ${item.name} — reportado por ${user.name ?? sector}. Hay ${Number(item.current_qty).toFixed(1)} ${item.unit} en sistema.`,
     status: 'active',
     triggered_at: new Date().toISOString(),
   })
@@ -104,8 +106,8 @@ export async function POST(request: NextRequest) {
   // Push a encargados y socios
   const notaTexto = nota ? ` "${nota.slice(0, 100)}"` : ''
   await notifyEvent(admin, 'faltante_reportado', {
-    title: `⚠️ Cocina reporta: falta ${item.name}`,
-    body: `${user.name ?? 'Cocina'} avisa que se está terminando ${item.name}.${notaTexto} Verificá y pedí.`,
+    title: `⚠️ ${sector === 'barra' ? 'Barra' : 'Cocina'} reporta: falta ${item.name}`,
+    body: `${user.name ?? sector} avisa que se está terminando ${item.name}.${notaTexto} Verificá y pedí.`,
     url: '/control',
   }, { excludeUserId: user.id })
 
@@ -117,7 +119,7 @@ export async function POST(request: NextRequest) {
     module: 'stock',
     entityType: 'stock_item',
     entityId: stock_item_id,
-    description: `${user.name ?? 'Cocina'}: reportó faltante de "${item.name}"${nota ? ` — "${nota.slice(0, 100)}"` : ''}`,
+    description: `${user.name ?? sector}: reportó faltante de "${item.name}"${nota ? ` — "${nota.slice(0, 100)}"` : ''}`,
     metadata: { stock_item_id, item_name: item.name, current_qty: item.current_qty, nota: nota ?? null },
   })
 
