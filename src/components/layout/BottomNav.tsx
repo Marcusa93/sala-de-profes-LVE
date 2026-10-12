@@ -186,6 +186,7 @@ const CHEF_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
@@ -209,6 +210,7 @@ const COCINA_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
         { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
@@ -251,6 +253,7 @@ const RUNNER_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
@@ -267,6 +270,7 @@ const BACHA_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
       ],

@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { calcularLiquidacion } from '@/lib/liquidacion/calcular'
 import { ventasPorDia } from '@/lib/fudo/ventas-diarias'
 import { ventanaTurno } from '@/lib/turnos/rol-del-turno'
-import { fechaOperativa } from '@/lib/attendance/jornada'
+import { fechaOperativa, instanteDe } from '@/lib/attendance/jornada'
 import { ETIQUETA_AUSENCIA, type MotivoAusencia } from '@/lib/attendance/ausencias'
 
 // ---------------------------------------------------------------------------
@@ -32,13 +32,14 @@ export async function informeControl(admin: SupabaseClient, from: string, to: st
   const ayer = fechaOperativa(new Date(Date.now() - 86_400_000))
   const hastaCerrado = to < ayer ? to : ayer // asistencia: solo días ya terminados
 
-  const [liq, ventas, { data: turnosData }, { data: logsData }, { data: ausData }, { data: perfiles }] = await Promise.all([
+  const [liq, ventas, { data: turnosData }, { data: logsData }, { data: ausData }, { data: perfiles }, { data: tareasData }] = await Promise.all([
     calcularLiquidacion(admin, from, to),
     ventasPorDia(admin, from, to),
     admin.from('shifts').select('user_id, shift_date, start_time, end_time, shift_role, created_by').gte('shift_date', from).lte('shift_date', to),
     admin.from('attendance_logs').select('id, user_id, operative_date, clock_in_at, clock_out_at, clock_out_type, clock_in_type, edited_by').gte('operative_date', from).lte('operative_date', to),
     admin.from('ausencias').select('user_id, fecha, motivo, created_by').gte('fecha', from).lte('fecha', to),
     admin.from('profiles').select('id, first_name, last_name, role, puesto, is_active'),
+    admin.from('protocolo_tareas').select('fecha, hora, estado, asignado_a, hecho_por, hecho_at, protocolos(nombre)').gte('fecha', from).lte('fecha', hastaCerrado),
   ])
   const turnos = (turnosData ?? []) as Turno[]
   const logs = (logsData ?? []) as Log[]
@@ -210,8 +211,43 @@ export async function informeControl(admin: SupabaseClient, from: string, to: st
     return { hora: h, ventasProm: Math.round(ventasProm), personasProm: Math.round(personasProm * 10) / 10, ventasPorPersona: personasProm > 0 ? Math.round(ventasProm / personasProm) : null }
   }).filter((x) => x.ventasProm > 0 || x.personasProm > 0)
 
+  // ---------------- Tareas con horario (baño, tolva, descartables…) ----------------
+  // A tiempo = hecha dentro de la hora; tarde = hecha después; no hecha = el día
+  // terminó sin hacerse (asignada a alguien o sin asignar).
+  type TareaRow = { fecha: string; hora: string; estado: string; asignado_a: string | null; hecho_por: string | null; hecho_at: string | null; protocolos: { nombre: string } | null }
+  const porProto = new Map<string, { nombre: string; total: number; aTiempo: number; tarde: number; noHechas: number; sinAsignar: number }>()
+  const porPersonaT = new Map<string, { id: string; nombre: string; asignadas: number; aTiempo: number; tarde: number; noHechas: number }>()
+  const tp = (id: string) => {
+    let x = porPersonaT.get(id)
+    if (!x) { x = { id, nombre: nombre(id), asignadas: 0, aTiempo: 0, tarde: 0, noHechas: 0 }; porPersonaT.set(id, x) }
+    return x
+  }
+  for (const t of (tareasData ?? []) as unknown as TareaRow[]) {
+    const nom = t.protocolos?.nombre ?? 'Protocolo'
+    const pr = porProto.get(nom) ?? { nombre: nom, total: 0, aTiempo: 0, tarde: 0, noHechas: 0, sinAsignar: 0 }
+    pr.total++
+    const limite = instanteDe(t.fecha, t.hora).getTime() + 60 * 60_000
+    const quien = t.asignado_a ?? t.hecho_por
+    if (t.estado === 'hecha') {
+      const aTiempo = !t.hecho_at || Date.parse(t.hecho_at) <= limite
+      if (aTiempo) pr.aTiempo++; else pr.tarde++
+      if (quien) { const x = tp(quien); x.asignadas++; if (aTiempo) x.aTiempo++; else x.tarde++ }
+    } else {
+      pr.noHechas++
+      if (t.asignado_a) { const x = tp(t.asignado_a); x.asignadas++; x.noHechas++ } else pr.sinAsignar++
+    }
+    porProto.set(nom, pr)
+  }
+  const tareas = {
+    protocolos: [...porProto.values()].map((x) => ({ ...x, cumplimiento: x.total ? Math.round((100 * x.aTiempo) / x.total) : 100 })),
+    personas: [...porPersonaT.values()]
+      .map((x) => ({ ...x, cumplimiento: x.asignadas ? Math.round((100 * x.aTiempo) / x.asignadas) : 100 }))
+      .sort((a, b) => a.cumplimiento - b.cumplimiento || b.asignadas - a.asignadas),
+  }
+
   return {
     period: { from, to, asistenciaHasta: hastaCerrado },
+    tareas,
     asistencia,
     encargados,
     costo: {

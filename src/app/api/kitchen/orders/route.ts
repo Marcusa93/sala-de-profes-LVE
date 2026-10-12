@@ -332,6 +332,8 @@ export async function POST(request: NextRequest) {
           orderId: number
           source: 'cocina' | 'barra'
           llego: boolean
+          /** solo si llego=false: true = no va a venir (se cierra ese producto); false = sigue en camino */
+          noVino?: boolean
           receivedQty?: string | null
           stockItemId?: string | null
           totalCost?: number | null
@@ -350,12 +352,26 @@ export async function POST(request: NextRequest) {
       if (!Array.isArray(items) || items.length === 0 || items.length > 60) {
         return NextResponse.json({ success: false, error: 'Entre 1 y 60 productos' }, { status: 400 })
       }
-      if (!paymentMethod) {
+      const llegan = items.filter((i) => i.llego)
+      const noVienen = items.filter((i) => !i.llego && i.noVino === true)
+      if (llegan.length === 0 && noVienen.length === 0) {
+        return NextResponse.json({ success: false, error: 'Marcá al menos un producto que llegó' }, { status: 400 })
+      }
+      // El medio de pago hace falta solo si algo llegó (lo que no vino no se paga)
+      if (llegan.length > 0 && !paymentMethod) {
         return NextResponse.json({ success: false, error: 'Elegí cómo se paga' }, { status: 400 })
       }
-      const llegan = items.filter((i) => i.llego)
-      if (llegan.length === 0) {
-        return NextResponse.json({ success: false, error: 'Marcá al menos un producto que llegó' }, { status: 400 })
+
+      // Lo que no vino se cierra primero, producto por producto: sin stock,
+      // sin recibo y sin gasto. No entra en el total que va a Fudo.
+      let noVinoOk = 0
+      {
+        const who = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null
+        for (const it of noVienen) {
+          const r = await marcarNoVino(admin, user, who, { orderId: it.orderId, source: it.source, note: it.note ?? null, avisar: true })
+          if (r.status < 300 && r.json.success === true) noVinoOk++
+          else console.warn('[confirm_arrival_batch] no vino no registrado:', it.orderId, r.json.error)
+        }
       }
 
       const resultados: { orderId: number; ok: boolean; error?: string; stockUpdated?: boolean }[] = []
@@ -502,11 +518,65 @@ export async function POST(request: NextRequest) {
         module: 'pedidos',
         entityType: 'supplier',
         entityId: supplierId ?? undefined,
-        description: `${who ?? 'Alguien'}: llegaron ${okCount} de ${llegan.length} productos juntos${items.length > llegan.length ? ` (${items.length - llegan.length} quedan en camino)` : ''}${factura ? ` · factura $${factura.toLocaleString('es-AR')}` : ''} · ${paymentMethod}`,
-        metadata: { resultados, invoiceTotal: factura, resto, paymentMethod, noLlegaron: items.filter((i) => !i.llego).map((i) => i.orderId) },
+        description: `${who ?? 'Alguien'}: llegaron ${okCount} de ${llegan.length} productos juntos${noVinoOk ? ` · ${noVinoOk} no vinieron` : ''}${items.length - llegan.length - noVienen.length > 0 ? ` (${items.length - llegan.length - noVienen.length} quedan en camino)` : ''}${factura ? ` · factura $${factura.toLocaleString('es-AR')}` : ''} · ${paymentMethod}`,
+        metadata: { resultados, invoiceTotal: factura, resto, paymentMethod, noVinieron: noVienen.map((i) => i.orderId), siguenEnCamino: items.filter((i) => !i.llego && i.noVino !== true).map((i) => i.orderId) },
       }).catch(() => {})
 
-      return NextResponse.json({ success: okCount > 0, resultados, recibidos: okCount, fallidos: llegan.length - okCount, resto })
+      return NextResponse.json({ success: okCount > 0 || noVinoOk > 0, resultados, recibidos: okCount, fallidos: llegan.length - okCount, resto, noVinieron: noVinoOk })
+    }
+
+    // ----- NO VINO: UN producto del pedido no llegó (cocina o barra) -----
+    // Marca SOLO ese producto: no suma stock, no genera recibo ni gasto en
+    // Fudo. El resto del pedido sigue en camino. Antes "No vino" usaba el
+    // mismo 'cancelled' que "Cancelar" y avisaba "❌ Pedido cancelado".
+    if (body.action === 'marcar_no_vino') {
+      const { orderId, source, note } = body as { orderId?: unknown; source?: unknown; note?: unknown }
+      if (typeof orderId !== 'number' || (source !== 'cocina' && source !== 'barra')) {
+        return NextResponse.json({ success: false, error: 'orderId y source requeridos' }, { status: 400 })
+      }
+      const { data: profile } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
+      if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
+        return NextResponse.json({ success: false, error: 'Solo encargados y socios pueden marcar lo que no vino' }, { status: 403 })
+      }
+      const who = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null
+      const r = await marcarNoVino(admin, user, who, { orderId, source, note: typeof note === 'string' ? note : null })
+      return NextResponse.json(r.json, { status: r.status })
+    }
+
+    // ----- DESHACER "NO VINO" (se tocó por error): vuelve a en camino -----
+    if (body.action === 'deshacer_no_vino') {
+      const { orderId, source } = body as { orderId?: unknown; source?: unknown }
+      if (typeof orderId !== 'number' || (source !== 'cocina' && source !== 'barra')) {
+        return NextResponse.json({ success: false, error: 'orderId y source requeridos' }, { status: 400 })
+      }
+      const { data: profile } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
+      if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
+        return NextResponse.json({ success: false, error: 'Solo encargados y socios pueden cambiar esto' }, { status: 403 })
+      }
+      const table = source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: vuelto, error } = await (admin.from(table) as any)
+        .update({ status: 'ordered', received_mode: null, received_by: null, received_at: null, received_note: null })
+        .eq('id', orderId)
+        .eq('status', 'cancelled')
+        .eq('received_mode', 'no_vino')
+        .select('id, product_name')
+      if (error) throw error
+      if (!vuelto || vuelto.length === 0) {
+        return NextResponse.json({ success: false, error: 'Ese producto ya no está marcado como "no vino"' }, { status: 409 })
+      }
+      const who = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || null
+      logAudit(admin, {
+        userId: user.id,
+        userName: who,
+        action: 'deshacer_no_vino',
+        module: 'pedidos',
+        entityType: table,
+        entityId: String(orderId),
+        description: `${who ?? 'Alguien'} deshizo "no vino" de ${(vuelto[0] as { product_name?: string }).product_name ?? `#${orderId}`}: vuelve a en camino`,
+        metadata: { orderId, source },
+      }).catch(() => {})
+      return NextResponse.json({ success: true })
     }
 
     return NextResponse.json({ success: false, error: 'Acción no reconocida' }, { status: 400 })
@@ -965,4 +1035,122 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
   }).catch(() => {})
 
   return respuesta({ success: true, stockUpdated, fudoSynced, mode, receiptId: batchReceiptId, costTotal: batchCostTotal })
+}
+
+// ---------------------------------------------------------------------------
+// "No vino": cierra UN producto del pedido sin recibirlo.
+// ---------------------------------------------------------------------------
+// - Queda status 'cancelled' + received_mode 'no_vino' (así se distingue de
+//   "Cancelar", que es no pedirlo). received_by/received_at = quién y cuándo
+//   lo marcó. No toca stock, no crea recibo, no crea gasto ni pago en Fudo.
+// - El resto del pedido (mismo proveedor, mismo envío) sigue en camino.
+// - El "pedido" no tiene cabecera propia: es el grupo de productos enviados
+//   juntos (mismo proveedor + mismo ordered_at). Se cierra solo cuando no le
+//   queda nada en camino; si NINGUNO vino, ese pedido quedó cancelado.
+// - Como el stock no subió, el insumo vuelve a aparecer en "Pedir" con la
+//   marca "no vino en el último pedido" (ver lib/compras/sugerencias.ts).
+// ---------------------------------------------------------------------------
+
+async function marcarNoVino(
+  admin: ReturnType<typeof createAdminClient>,
+  user: { id: string },
+  who: string | null,
+  params: { orderId: number; source: 'cocina' | 'barra'; note?: string | null; avisar?: boolean },
+): Promise<Resultado> {
+  const { orderId, source } = params
+  const note = (params.note ?? '').trim().slice(0, 300) || null
+  const table = source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+  const authorCol = source === 'barra' ? 'requested_by' : 'created_by'
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tabla = () => admin.from(table) as any
+  const { data: order, error: fetchErr } = await tabla()
+    .select(`id, product_name, quantity, status, supplier_id, ordered_at, received_mode, ${authorCol}`)
+    .eq('id', orderId)
+    .maybeSingle()
+  if (fetchErr) return respuesta({ success: false, error: fetchErr.message }, { status: 500 })
+  if (!order) return respuesta({ success: false, error: 'Pedido no encontrado' }, { status: 404 })
+  const o = order as { id: number; product_name: string; quantity: string; status: string; supplier_id: string | null; ordered_at: string | null; received_mode: string | null } & Record<string, unknown>
+
+  // Doble toque o pantalla vieja: ya estaba marcado, no se repite nada
+  if (o.status === 'cancelled' && o.received_mode === 'no_vino') {
+    return respuesta({ success: true, yaEstaba: true, ...(await estadoDelPedido(tabla, o)) })
+  }
+  if (o.status !== 'ordered') {
+    const estado = o.status === 'received' ? 'ya fue recibido' : o.status === 'pending' ? 'todavía no se pidió al proveedor' : 'ya estaba cancelado'
+    return respuesta({ success: false, error: `${o.product_name} ${estado}` }, { status: 409 })
+  }
+
+  // Solo si sigue en camino (si otro lo recibió recién, no lo pisamos)
+  const { data: upd, error: upErr } = await tabla()
+    .update({ status: 'cancelled', received_mode: 'no_vino', received_by: user.id, received_at: new Date().toISOString(), received_note: note })
+    .eq('id', orderId)
+    .eq('status', 'ordered')
+    .select('id')
+  if (upErr) return respuesta({ success: false, error: upErr.message }, { status: 500 })
+  if (!upd || upd.length === 0) {
+    return respuesta({ success: false, error: `${o.product_name} cambió recién (¿lo recibió otra persona?). Actualizá la pantalla.` }, { status: 409 })
+  }
+
+  const estado = await estadoDelPedido(tabla, o)
+
+  logAudit(admin, {
+    userId: user.id,
+    userName: who,
+    action: 'order_no_vino',
+    module: 'pedidos',
+    entityType: table,
+    entityId: String(orderId),
+    description: `${who ?? 'Alguien'}: no vino ${o.product_name} (${o.quantity})${estado.siguenEnCamino > 0 ? ` · ${estado.siguenEnCamino} del mismo pedido siguen en camino` : estado.ningunoVino ? ' · no vino nada de ese pedido: quedó cancelado' : ' · el pedido quedó cerrado'}`,
+    metadata: { orderId, source, note, ...estado },
+  }).catch(() => {})
+
+  // Aviso a quien lo pidió: que no vino ESTE producto (no "pedido cancelado")
+  const autor = (o[authorCol] as string | null | undefined) ?? null
+  if (autor && params.avisar !== false) {
+    await admin.from('announcements').insert({
+      author_id: user.id,
+      type: 'operativo',
+      priority: 'baja',
+      title: `🚫 No vino: ${o.product_name}`,
+      body: `${o.product_name} (${o.quantity}) — el proveedor no lo trajo. El resto del pedido sigue su curso; si hace falta, se vuelve a pedir.`,
+      scope: 'user',
+      target_user_id: autor,
+      is_active: true,
+    }).then(() => null, () => null)
+    try {
+      const { notifyOrderStatusChange } = await import('@/lib/email/send')
+      notifyOrderStatusChange({ userId: autor, productName: o.product_name, quantity: o.quantity, newStatus: 'no_vino' }).catch(() => {})
+    } catch { /* email opcional */ }
+  }
+
+  return respuesta({ success: true, ...estado })
+}
+
+/**
+ * Cómo quedó el pedido al que pertenece el producto: los enviados juntos
+ * (mismo proveedor + mismo ordered_at, así los crea create_order).
+ */
+async function estadoDelPedido(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tabla: () => any,
+  o: { id: number; supplier_id: string | null; ordered_at: string | null },
+): Promise<{ siguenEnCamino: number; recibidos: number; noVinieron: number; pedidoCerrado: boolean; ningunoVino: boolean }> {
+  const solo = { siguenEnCamino: 0, recibidos: 0, noVinieron: 1, pedidoCerrado: true, ningunoVino: true }
+  if (!o.ordered_at) return solo
+  let q = tabla().select('id, status, received_mode').eq('ordered_at', o.ordered_at)
+  q = o.supplier_id ? q.eq('supplier_id', o.supplier_id) : q.is('supplier_id', null)
+  const { data, error } = await q
+  if (error || !data) return solo
+  const filas = data as { id: number; status: string; received_mode: string | null }[]
+  const siguenEnCamino = filas.filter((f) => f.status === 'ordered').length
+  const recibidos = filas.filter((f) => f.status === 'received').length
+  const noVinieron = filas.filter((f) => f.status === 'cancelled' && f.received_mode === 'no_vino').length
+  return {
+    siguenEnCamino,
+    recibidos,
+    noVinieron,
+    pedidoCerrado: siguenEnCamino === 0,
+    ningunoVino: siguenEnCamino === 0 && recibidos === 0,
+  }
 }

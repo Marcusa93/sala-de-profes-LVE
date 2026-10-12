@@ -25,6 +25,7 @@ import type { SugerenciasPayload, SugerenciaCompra } from '@/lib/compras/sugeren
 import { PAYMENT_METHODS, esComprable, money, parseQty, type ConciliarPayload, type Order, type PaymentMethod, type Profile, type StockLite, type Supplier } from './_components/shared'
 import { LlegoTodoDialog } from './_components/LlegoTodoDialog'
 import { DatosGastoFields, useDatosGasto } from './_components/DatosGastoFields'
+import { SinPrecioSection, faltaPrecio } from './_components/SinPrecio'
 
 // ---------------------------------------------------------------------------
 // /pedidos — el ciclo real, en tres pasos y sin duplicar Fudo
@@ -106,11 +107,18 @@ function PedidosContent() {
   const [llegoTodo, setLlegoTodo] = useState<{ supplier: Supplier | null; list: Order[] } | null>(null)
   const [correctionDialog, setCorrectionDialog] = useState<Order | null>(null)
   const [assignDialog, setAssignDialog] = useState<Order | null>(null)
+  // "No vino": producto que se está marcando (evita el doble toque) y los
+  // que no vinieron en los últimos días (se ven en Recibidos, con deshacer)
+  const [noVinoBusy, setNoVinoBusy] = useState<string | null>(null)
+  const [noVinieron, setNoVinieron] = useState<Order[]>([])
   const [newOrderOpen, setNewOrderOpen] = useState(false)
   // Saldo pendiente de pago a proveedores (null si la migración de pagos no está)
   const [porPagar, setPorPagar] = useState<number | null>(null)
   const [receiptsCount, setReceiptsCount] = useState(0)
   const [receipts, setReceipts] = useState<ReceiptRow[]>([])
+  // Cuenta corriente que llegó sin monto: van aparte ("Falta el precio")
+  const [sinPrecioCount, setSinPrecioCount] = useState(0)
+  const [receiptsSinPrecio, setReceiptsSinPrecio] = useState<ReceiptRow[]>([])
   const [receiptsLoading, setReceiptsLoading] = useState(false)
   const [receiptPayState, setReceiptPayState] = useState<ReceiptPayState | null>(null)
   const [receiptConfirming, setReceiptConfirming] = useState(false)
@@ -131,6 +139,7 @@ function PedidosContent() {
     const bar = (barRes.data ?? []).map((o) => ({ ...(o as Record<string, unknown>), source: 'barra' as const })) as unknown as Order[]
     const kitchen = (kitchenRes.data ?? []).map((o) => ({ ...(o as Record<string, unknown>), source: 'cocina' as const })) as unknown as Order[]
     setOrders([...kitchen, ...bar])
+    void cargarNoVinieron(supabase).then(setNoVinieron)
     setSuppliers((suppRes.data ?? []) as unknown as Supplier[])
     setProfiles((profRes.data ?? []) as unknown as Profile[])
     const conProveedor = new Set(((linksRes.data ?? []) as { stock_item_id: string }[]).map((l) => l.stock_item_id))
@@ -141,12 +150,14 @@ function PedidosContent() {
       .from('stock_receipts')
       .select('cost_total')
       .eq('payment_status', 'a_pagar')
-      .not('cost_total', 'is', null)
       .then(({ data, error }) => {
         if (error) { setPorPagar(null); return }
-        const rows = data ?? []
-        setPorPagar(Math.round(rows.reduce((acc, r) => acc + (Number((r as { cost_total: number | null }).cost_total) || 0), 0)))
+        const all = (data ?? []) as { cost_total: number | null }[]
+        // Los sin precio no suman al saldo en $, pero se cuentan aparte
+        const rows = all.filter((r) => !faltaPrecio(r.cost_total))
+        setPorPagar(Math.round(rows.reduce((acc, r) => acc + (Number(r.cost_total) || 0), 0)))
         setReceiptsCount(rows.length)
+        setSinPrecioCount(all.length - rows.length)
       })
   }, [])
 
@@ -201,7 +212,6 @@ function PedidosContent() {
       .from('stock_receipts')
       .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, order_id, suppliers:supplier_id(name)')
       .eq('payment_status', 'a_pagar')
-      .not('cost_total', 'is', null)
       .order('received_date', { ascending: false })
       .limit(300)
     if (!error && data) {
@@ -225,7 +235,10 @@ function PedidosContent() {
           if (row.order_id !== null) row.fudo_expense_id = fudoMap.get(row.order_id) ?? null
         }
       }
-      setReceipts(rows)
+      setReceipts(rows.filter((r) => !faltaPrecio(r.cost_total)))
+      const sinPrecio = rows.filter((r) => faltaPrecio(r.cost_total))
+      setReceiptsSinPrecio(sinPrecio)
+      setSinPrecioCount(sinPrecio.length)
     }
     setReceiptsLoading(false)
   }, [])
@@ -345,6 +358,55 @@ function PedidosContent() {
     }
   }
 
+  // "No vino": cierra SOLO ese producto (sin stock, sin gasto, sin pago).
+  // El resto del pedido sigue en camino. Se puede deshacer desde el aviso.
+  async function marcarNoVino(order: Order) {
+    const key = `${order.source}-${order.id}`
+    if (noVinoBusy) return
+    setNoVinoBusy(key)
+    try {
+      const res = await fetch('/api/kitchen/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'marcar_no_vino', orderId: order.id, source: order.source }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'No se pudo marcar')
+      const siguen = Number(json.siguenEnCamino ?? 0)
+      const detalle = siguen > 0
+        ? `${siguen} ${siguen === 1 ? 'producto sigue' : 'productos siguen'} en camino`
+        : json.ningunoVino ? 'No vino nada de ese pedido: quedó cancelado' : 'El pedido quedó cerrado'
+      toast.success(`No vino: ${order.product_name}`, {
+        description: `${detalle}. No suma stock ni genera gasto.`,
+        action: { label: 'Deshacer', onClick: () => void deshacerNoVino(order) },
+      })
+      void fetchOrders()
+      void fetchSugerencias(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo marcar')
+      void fetchOrders()
+    } finally {
+      setNoVinoBusy(null)
+    }
+  }
+
+  async function deshacerNoVino(order: Order) {
+    try {
+      const res = await fetch('/api/kitchen/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'deshacer_no_vino', orderId: order.id, source: order.source }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'No se pudo deshacer')
+      toast.success(`${order.product_name} vuelve a estar en camino`)
+      void fetchOrders()
+      void fetchSugerencias(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo deshacer')
+    }
+  }
+
   async function assignSupplier(order: Order, supplierId: string) {
     const table = order.source === 'barra' ? 'bar_orders' : 'kitchen_orders'
     const supabase = createClient()
@@ -444,7 +506,7 @@ function PedidosContent() {
             { key: 'pedir' as const, label: 'Pedir', count: (sugerencias?.total_items ?? 0) + pending.length, Icon: ShoppingCart, tone: '#d4943a' },
             { key: 'camino' as const, label: 'En camino', count: ordered.length, Icon: Truck, tone: '#4a90d9' },
             { key: 'recibido' as const, label: 'Recibidos', count: receivedShown.length, Icon: Check, tone: '#006d5a' },
-            { key: 'pagos' as const, label: 'Pagos', count: receiptsCount, Icon: Wallet, tone: '#8b5e34' },
+            { key: 'pagos' as const, label: 'Pagos', count: receiptsCount + sinPrecioCount, Icon: Wallet, tone: '#8b5e34' },
           ]).map(({ key, label, count, Icon, tone }) => {
             const active = step === key
             return (
@@ -590,6 +652,7 @@ function PedidosContent() {
                                     <span className={cn('font-semibold', s.reason === 'negativo' || s.reason === 'sin_stock' ? 'text-[#ea504c]' : 'text-[#d4943a]')}>{s.reason_label}</span>
                                     {s.daily_consumption ? <span> · ~{s.daily_consumption} {s.unit}/día</span> : null}
                                     {s.already_ordered && <span className="ml-1 font-bold text-[#006d5a]">· ya pedido</span>}
+                                    {s.no_vino_at && s.reason !== 'reponer' && <span className="ml-1 font-bold text-[#ea504c]">· no vino en el último pedido</span>}
                                   </p>
                                   {!g.supplier_id && canManage && (
                                     <label className="relative mt-1 inline-flex items-center gap-1 rounded-lg bg-[#e8f5f1] px-2 py-1 text-[11px] font-semibold text-[#006d5a]">
@@ -726,7 +789,7 @@ function PedidosContent() {
         ) : (
           <FadeIn>
             <p className="px-1 text-[11px] text-[#a39e97]">
-              Cuando llegue el pedido, tocá <strong className="text-[#006d5a]">Llegó todo</strong> para recibir todo lo del proveedor de una vez, o <strong className="text-[#006d5a]">Llegó</strong> en cada producto.
+              Cuando llegue el pedido, tocá <strong className="text-[#006d5a]">Llegó todo</strong> para recibir todo lo del proveedor de una vez, o <strong className="text-[#006d5a]">Llegó</strong> en cada producto. Si un producto no vino, tocá <strong className="text-[#ea504c]">No vino</strong>: se cierra solo ese y el resto sigue en camino.
             </p>
             {canManage && (
               <button
@@ -780,8 +843,12 @@ function PedidosContent() {
                               <button onClick={() => setArrivalDialog(o)} className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-3 py-1.5 text-[11px] font-semibold text-white active:scale-95">
                                 <Check className="size-3" /> Llegó
                               </button>
-                              <button onClick={() => void updateStatus(o, 'cancelled')} className="flex items-center gap-1 rounded-lg bg-[#fef2f2] px-2.5 py-1.5 text-[11px] font-semibold text-[#ea504c] active:scale-95">
-                                <X className="size-3" /> No vino
+                              <button
+                                onClick={() => void marcarNoVino(o)}
+                                disabled={noVinoBusy !== null}
+                                className="flex items-center gap-1 rounded-lg bg-[#fef2f2] px-2.5 py-1.5 text-[11px] font-semibold text-[#ea504c] active:scale-95 disabled:opacity-50"
+                              >
+                                {noVinoBusy === `${o.source}-${o.id}` ? <Loader2 className="size-3 animate-spin" /> : <X className="size-3" />} No vino
                               </button>
                             </div>
                           )}
@@ -799,13 +866,16 @@ function PedidosContent() {
       {/* ═══════════ PASO 3 — RECIBIDOS ═══════════ */}
       {step === 'recibido' && (
         <FadeIn>
-          {canManage && porPagar !== null && porPagar > 0 && (
+          {canManage && porPagar !== null && (porPagar > 0 || sinPrecioCount > 0) && (
             <button
               onClick={() => setStep('pagos')}
               className="mb-2 flex w-full items-center gap-2.5 rounded-2xl bg-[#fdf6ec] px-4 py-2.5 ring-1 ring-[#d4943a]/30 active:scale-[0.99]"
             >
               <Wallet className="size-4 shrink-0 text-[#d4943a]" />
-              <span className="flex-1 text-xs font-semibold text-[#8b5e34]">Pendiente de pago</span>
+              <span className="flex-1 text-xs font-semibold text-[#8b5e34]">
+                Pendiente de pago
+                {sinPrecioCount > 0 && <span className="ml-1 font-normal text-[#d4943a]">· {sinPrecioCount} sin precio</span>}
+              </span>
               <span className="rounded-full bg-[#d4943a]/15 px-2.5 py-0.5 text-[12px] font-bold tabular-nums text-[#d4943a]">{money(porPagar)}</span>
               <ChevronRight className="size-4 shrink-0 text-[#a39e97]" />
             </button>
@@ -856,6 +926,43 @@ function PedidosContent() {
         </FadeIn>
       )}
 
+      {/* Lo que no vino (últimos 14 días): queda registro y se puede deshacer */}
+      {step === 'recibido' && noVinieron.length > 0 && (
+        <FadeIn>
+          <section className="mt-3 overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
+            <div className="flex items-center gap-2 border-b border-[#f5f0ea] bg-[#fef2f2]/60 px-4 py-2.5">
+              <X className="size-4 text-[#ea504c]" />
+              <p className="flex-1 text-[12px] font-bold uppercase tracking-wider text-[#3d2c24]">No vinieron</p>
+              <span className="text-[11px] tabular-nums text-[#a39e97]">{noVinieron.length}</span>
+            </div>
+            <p className="border-b border-[#f5f0ea] px-4 py-2 text-[11px] text-[#7d6c64]">
+              No sumaron stock ni generaron gasto. Si todavía hacen falta, aparecen en <strong>Pedir</strong> para volver a pedirlos.
+            </p>
+            <div className="divide-y divide-[#f5f0ea]">
+              {noVinieron.map((o) => (
+                <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.received_by ?? o.created_by ?? o.requested_by ?? null)} supplier={suppliers.find((s) => s.id === o.supplier_id) ?? null} muted>
+                  <p className="mt-1 text-[11px] text-[#7d6c64]">
+                    <span className="mr-1 rounded-full bg-[#fef2f2] px-1.5 py-0.5 text-[10px] font-bold text-[#ea504c]">no vino</span>
+                    {o.received_at ? `Marcado ${format(new Date(o.received_at), "d MMM HH:mm", { locale: es })}` : 'Marcado'}
+                    {o.received_by && ` por ${profileName(o.received_by)}`}
+                    {o.received_note && <span className="block italic text-[#a39e97]">&ldquo;{o.received_note}&rdquo;</span>}
+                  </p>
+                  {canManage && (
+                    <button
+                      type="button"
+                      onClick={() => void deshacerNoVino(o)}
+                      className="mt-1.5 text-[11px] font-semibold text-[#a39e97] underline underline-offset-2"
+                    >
+                      Deshacer (vuelve a en camino)
+                    </button>
+                  )}
+                </OrderRow>
+              ))}
+            </div>
+          </section>
+        </FadeIn>
+      )}
+
       {/* Diálogos */}
       {/* ═══════════ PASO 4 — PAGOS ═══════════ */}
       {step === 'pagos' && (
@@ -881,6 +988,12 @@ function PedidosContent() {
               </div>
             )}
 
+            {receiptsSinPrecio.length > 0 && (
+              <div className="mb-3">
+                <SinPrecioSection recibos={receiptsSinPrecio} onSaved={() => { void fetchReceipts(); void fetchOrders() }} />
+              </div>
+            )}
+
             <div className="mb-2 flex items-center justify-between gap-2">
               <Link
                 href="/pedidos/gastos"
@@ -897,7 +1010,7 @@ function PedidosContent() {
               </a>
             </div>
             {receipts.length === 0 ? (
-              <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-10 text-center ring-1 ring-[#ebe6df]">
+              receiptsSinPrecio.length > 0 ? null : <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-10 text-center ring-1 ring-[#ebe6df]">
                 <Wallet className="size-8 text-[#ebe6df]" />
                 <p className="mt-3 text-sm font-medium text-[#7d6c64]">Todo al día</p>
                 <p className="mt-1 text-[11px] text-[#a39e97]">Los pedidos recibidos en cuenta corriente aparecen acá.</p>
@@ -1844,4 +1957,20 @@ function CorrectionDialog({ order, onClose, onDone }: {
       </DialogContent>
     </Dialog>
   )
+}
+
+/**
+ * Productos marcados "no vino" en los últimos 14 días (cocina y barra).
+ * Son 'cancelled' con received_mode 'no_vino'; los "Cancelar" comunes no
+ * aparecen. Best-effort: si falla, lista vacía.
+ */
+async function cargarNoVinieron(supabase: ReturnType<typeof createClient>): Promise<Order[]> {
+  const since = new Date(Date.now() - 14 * 86_400_000).toISOString()
+  const [barRes, kitchenRes] = await Promise.all([
+    supabase.from('bar_orders').select('*').eq('status', 'cancelled').eq('received_mode', 'no_vino').gte('received_at', since).order('received_at', { ascending: false }).limit(40),
+    supabase.from('kitchen_orders').select('*').eq('status', 'cancelled').eq('received_mode', 'no_vino').gte('received_at', since).order('received_at', { ascending: false }).limit(40),
+  ])
+  const bar = barRes.error ? [] : (barRes.data ?? []).map((o) => ({ ...(o as Record<string, unknown>), source: 'barra' as const })) as unknown as Order[]
+  const kitchen = kitchenRes.error ? [] : (kitchenRes.data ?? []).map((o) => ({ ...(o as Record<string, unknown>), source: 'cocina' as const })) as unknown as Order[]
+  return [...kitchen, ...bar].sort((a, b) => (b.received_at ?? '').localeCompare(a.received_at ?? ''))
 }

@@ -4298,7 +4298,7 @@ export type ProductionOutput = Database['public']['Tables']['production_outputs'
 export type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
 export type ProductionOutputUpdate = Database['public']['Tables']['production_outputs']['Update']
 
-export type ProductionOrderStatus = 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
+export type ProductionOrderStatus = 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled' | 'rejected'
 
 // Full order with nested inputs + outputs (returned by GET /api/produccion/orders/[id])
 export type ProductionOrderDetail = ProductionOrder & {

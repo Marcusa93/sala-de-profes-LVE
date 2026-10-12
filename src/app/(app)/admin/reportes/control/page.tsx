@@ -195,6 +195,58 @@ export default function ControlPage() {
             </div>
           </section>
 
+          {/* ===================== TAREAS CON HORARIO ===================== */}
+          {datos.tareas && datos.tareas.protocolos.length > 0 && (
+            <section className="space-y-2">
+              <h3 className="font-display text-lg text-[#3d2c24]">Tareas con horario</h3>
+              <p className="text-[11px] text-[#7d6c64]">Baño, tolva, descartables… A tiempo = hecha dentro de la hora. No hecha = el día terminó sin hacerse.</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {datos.tareas.protocolos.map((p) => (
+                  <div key={p.nombre} className="rounded-xl bg-white p-3 ring-1 ring-[#ebe6df]">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-[#3d2c24]">{p.nombre}</p>
+                      <span className="text-lg font-bold tabular-nums" style={{ color: p.cumplimiento >= 90 ? '#006d5a' : p.cumplimiento >= 70 ? '#d4943a' : '#ea504c' }}>{p.cumplimiento}%</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1 text-[10.5px]">
+                      <Chip verde>{p.aTiempo} a tiempo</Chip>
+                      {p.tarde > 0 && <Chip ambar>{p.tarde} tarde</Chip>}
+                      {p.noHechas > 0 && <Chip rojo>{p.noHechas} sin hacer{p.sinAsignar > 0 ? ` (${p.sinAsignar} sin asignar)` : ''}</Chip>}
+                      <Chip>{p.total} en total</Chip>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {datos.tareas.personas.length > 0 && (
+                <div className="overflow-x-auto rounded-2xl bg-white ring-1 ring-[#ebe6df]">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-[10px] uppercase tracking-wider text-[#a39e97]">
+                        <th className="px-3 py-2 text-left">Persona</th>
+                        <th className="px-2 py-2 text-right">Asignadas</th>
+                        <th className="px-2 py-2 text-right">A tiempo</th>
+                        <th className="px-2 py-2 text-right">Tarde</th>
+                        <th className="px-2 py-2 text-right">Sin hacer</th>
+                        <th className="px-3 py-2 text-right">%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {datos.tareas.personas.map((x) => (
+                        <tr key={x.id} className="border-t border-[#f0ebe4]">
+                          <td className="px-3 py-2 font-semibold text-[#3d2c24]">{x.nombre}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{x.asignadas}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{x.aTiempo}</td>
+                          <td className={cn('px-2 py-2 text-right tabular-nums', x.tarde > 0 && 'font-semibold text-[#d4943a]')}>{x.tarde}</td>
+                          <td className={cn('px-2 py-2 text-right tabular-nums', x.noHechas > 0 && 'font-bold text-[#ea504c]')}>{x.noHechas}</td>
+                          <td className="px-3 py-2 text-right font-bold tabular-nums" style={{ color: x.cumplimiento >= 90 ? '#006d5a' : x.cumplimiento >= 70 ? '#d4943a' : '#ea504c' }}>{x.cumplimiento}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
           {/* ===================== ENCARGADOS ===================== */}
           {datos.encargados.length > 0 && (
             <section className="space-y-2">

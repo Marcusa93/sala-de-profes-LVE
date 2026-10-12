@@ -18,6 +18,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
 import type { CanceladoEnFudo, ResultadoPagosFudo } from '@/lib/compras/pagos-fudo'
+import { SinPrecioSection, faltaPrecio } from '../_components/SinPrecio'
 
 type Receipt = {
   id: number
@@ -77,7 +78,8 @@ export default function CuentasPage() {
     const { data, error } = await supabase
       .from('stock_receipts')
       .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, suppliers!stock_receipts_supplier_id_fkey(name, phone, contact_name)')
-      .not('cost_total', 'is', null)
+      // Sin filtrar por cost_total: los "a pagar" sin precio también se traen
+      // (van a "Falta el precio"); los pagados sin monto se descartan abajo.
       .order('received_date', { ascending: false })
       .limit(300)
 
@@ -117,8 +119,10 @@ export default function CuentasPage() {
     return () => { alive = false }
   }, [canManage, fetchData])
 
-  const pending = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar'), [receipts])
-  const paid = useMemo(() => receipts.filter((r) => r.payment_status === 'pagado').slice(0, 15), [receipts])
+  const pending = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && !faltaPrecio(r.cost_total)), [receipts])
+  // Cuenta corriente que llegó sin monto: aparte, sin sumar al saldo en $
+  const sinPrecio = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && faltaPrecio(r.cost_total)), [receipts])
+  const paid = useMemo(() => receipts.filter((r) => r.payment_status === 'pagado' && r.cost_total != null).slice(0, 15), [receipts])
   const totalPending = useMemo(() => pending.reduce((acc, r) => acc + (Number(r.cost_total) || 0), 0), [pending])
 
   const groups = useMemo(() => {
@@ -305,7 +309,18 @@ export default function CuentasPage() {
                 <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">recibos</p>
               </div>
             </div>
+            {sinPrecio.length > 0 && (
+              <p className="mt-2 text-[11px] font-semibold text-[#d4943a]">
+                + {sinPrecio.length} recibo{sinPrecio.length !== 1 ? 's' : ''} sin precio (no sumado{sinPrecio.length !== 1 ? 's' : ''} al saldo)
+              </p>
+            )}
           </div>
+        </FadeIn>
+      )}
+
+      {!migrationMissing && sinPrecio.length > 0 && (
+        <FadeIn>
+          <SinPrecioSection recibos={sinPrecio} onSaved={() => void fetchData()} />
         </FadeIn>
       )}
 
@@ -534,7 +549,7 @@ export default function CuentasPage() {
         )
       })}
 
-      {!migrationMissing && pending.length === 0 && (
+      {!migrationMissing && pending.length === 0 && sinPrecio.length === 0 && (
         <FadeIn>
           <div className="flex flex-col items-center py-10 text-center">
             <Wallet className="size-10 text-[#ebe6df]" />

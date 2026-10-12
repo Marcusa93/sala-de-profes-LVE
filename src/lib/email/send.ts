@@ -201,7 +201,8 @@ export async function notifyOrderStatusChange(opts: {
   userId: string
   productName: string
   quantity: string
-  newStatus: 'ordered' | 'received' | 'cancelled'
+  /** no_vino: el proveedor no trajo ESTE producto (el resto del pedido sigue) */
+  newStatus: 'ordered' | 'received' | 'cancelled' | 'no_vino'
 }) {
   const email = await getUserEmail(opts.userId)
   if (!email) return
@@ -210,6 +211,7 @@ export async function notifyOrderStatusChange(opts: {
     ordered: { icon: '🚚', label: 'Enviado al proveedor', color: '#d4943a' },
     received: { icon: '✅', label: 'Recibido', color: '#006d5a' },
     cancelled: { icon: '❌', label: 'Cancelado', color: '#ea504c' },
+    no_vino: { icon: '🚫', label: 'No vino', color: '#d4943a' },
   }
 
   const s = statusLabels[opts.newStatus]
@@ -229,4 +231,35 @@ export async function notifyOrderStatusChange(opts: {
   )
 
   await sendEmail([email], `${s.icon} Pedido: ${opts.productName} — ${s.label}`, html)
+}
+
+// ---------------------------------------------------------------------------
+// Mail con adjuntos (resumen semanal). Devuelve si salió, para que el cron
+// lo informe (los otros envíos son "silenciosos").
+// ---------------------------------------------------------------------------
+export async function enviarMailConAdjuntos(opts: {
+  to: string[]
+  subject: string
+  html: string
+  adjuntos?: { filename: string; content: Buffer }[]
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!resend) return { ok: false, error: 'Falta RESEND_API_KEY' }
+  if (opts.to.length === 0) return { ok: false, error: 'Sin destinatarios' }
+  try {
+    const { error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: opts.to,
+      subject: opts.subject,
+      html: opts.html,
+      attachments: (opts.adjuntos ?? []).map((a) => ({ filename: a.filename, content: a.content })),
+    })
+    return error ? { ok: false, error: error.message } : { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Error' }
+  }
+}
+
+/** Mails de quienes tienen alguno de esos roles (activos). */
+export async function mailsDeRoles(roles: string[]): Promise<string[]> {
+  return getEmailsByRoles(roles)
 }
