@@ -85,7 +85,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
   {
     slug: 'albondiga',
     displayName: 'Albóndigas',
-    mainIngredientName: 'Carne molida', // sin stock_item hoy — avisar cuando se cree/confirme el nombre real
+    mainIngredientName: 'Molida Esp.', // antes "Carne molida": no existía y la molida nunca se descontaba
     baseQty: 1,
     baseUnit: 'kg',
     secondary: [
@@ -123,13 +123,16 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Oregano',    qty: 3,   unit: 'g' },
       { name: 'Pimenton',   qty: 8,   unit: 'g' },
     ],
+    output: { name: 'salsa portuguesa unidad', unit: 'unidad', yieldPerBase: 18 },
     yieldNote: 'Porcionar en bolsitas de 170g. Por 3lt de tomate ≈ 18 porciones',
   },
 
   {
     slug: 'cajón-pollo',
     displayName: 'Porcionado de Cajón de Pollo',
-    mainIngredientName: 'Pollo', // sin stock_item hoy — "Pollo entero" fue dado de baja, "Filet de pollo" no es correcto como insumo (es lo que sale de este proceso)
+    // Lo que se compra (en Fudo: "Filet de pollo", por kg). Antes decía "Pollo" y
+    // encontraba "Pollo porcionado": el proceso se descontaba a sí mismo
+    mainIngredientName: 'Filet de pollo',
     baseQty: 15,
     baseUnit: 'kg',
     secondary: [],
@@ -140,7 +143,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
   {
     slug: 'bastones-dambo',
     displayName: 'Bastones de Dambo / Mozzarella',
-    mainIngredientName: 'Queso dambo', // sin stock_item hoy — avisar cuando se cree/confirme el nombre real
+    mainIngredientName: 'Mozzarella Cilindro', // antes "Queso dambo", que no existe en stock
     baseQty: 1,
     baseUnit: 'kg',
     secondary: [
@@ -156,6 +159,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Pimenton',         qty: 40,  unit: 'g',  note: 'se mezcla en el pan rallado' },
       { name: 'Cereal triturado', qty: 150, unit: 'g', note: 'se mezcla en el pan rallado — sin stock_item hoy' },
     ],
+    output: { name: 'baston mozza unidad', unit: 'unidad', yieldPerBase: 6 },
     yieldNote: 'Bastones de 40g (4 bastones = 1 porción). Sin rebozar: 6 porciones / 1kg. Rebozado: bastón de 70g, porción 280g',
   },
 
@@ -228,7 +232,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
   {
     slug: 'hamburguesa',
     displayName: 'Hamburguesas',
-    mainIngredientName: 'Carne molida', // sin stock_item hoy — mismo insumo que Albóndigas
+    mainIngredientName: 'Molida Esp.', // antes "Carne molida": no existía y la molida nunca se descontaba
     baseQty: 1,
     baseUnit: 'kg',
     secondary: [
