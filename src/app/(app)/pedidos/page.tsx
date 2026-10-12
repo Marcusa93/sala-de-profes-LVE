@@ -62,6 +62,13 @@ const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
 
 function stripNonDigits(s: string): string { return s.replace(/\D/g, '') }
 
+/** Pedidos sin enviar agrupados por proveedor (los sin proveedor, al final). */
+function agruparPorProveedor(orders: Order[]): [string | null, Order[]][] {
+  const m = new Map<string | null, Order[]>()
+  for (const o of orders) m.set(o.supplier_id ?? null, [...(m.get(o.supplier_id ?? null) ?? []), o])
+  return [...m.entries()].sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : 0))
+}
+
 /** Número → cantidad legible con coma decimal (para el mensaje de WhatsApp). */
 function formatQty(n: number): string {
   return String(Math.round(n * 1000) / 1000).replace('.', ',')
@@ -358,6 +365,30 @@ function PedidosContent() {
     }
   }
 
+  // Lo que pidió cocina, de un proveedor: un WhatsApp con todo y queda "en camino"
+  const [enviandoGrupo, setEnviandoGrupo] = useState<string | null>(null)
+  async function pedirGrupo(supplier: Supplier, items: Order[], viaWhatsApp: boolean) {
+    if (enviandoGrupo) return
+    if (viaWhatsApp && supplier.phone) {
+      // ANTES de los fetch: el popup tiene que salir del gesto del usuario
+      const lineas = items.map((o) => ({ name: `${o.product_name}${o.note ? ` (${o.note})` : ''}`, qty: o.quantity, unit: '' }))
+      window.open(`https://wa.me/${stripNonDigits(supplier.phone)}?text=${encodeURIComponent(buildMessage(supplier.name, supplier.contact_name, lineas).replace(/ \n/g, '\n'))}`, '_blank', 'noopener,noreferrer')
+    }
+    setEnviandoGrupo(supplier.id)
+    try {
+      const rs = await Promise.all(items.map((o) => fetch(o.source === 'barra' ? '/api/kitchen/bar' : '/api/kitchen/orders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: o.source === 'barra' ? 'update_order_status' : 'update_status', orderId: o.id, status: 'ordered' }),
+      })))
+      const fallaron = rs.filter((r) => !r.ok).length
+      if (fallaron) toast.error(`${fallaron} no se marcaron como pedidos: tocá "Ya lo pedí" en cada uno`)
+      else toast.success(`Pedido a ${supplier.name}: ${items.length} producto${items.length !== 1 ? 's' : ''} en camino`)
+      void fetchOrders()
+    } finally {
+      setEnviandoGrupo(null)
+    }
+  }
+
   // "No vino": cierra SOLO ese producto (sin stock, sin gasto, sin pago).
   // El resto del pedido sigue en camino. Se puede deshacer desde el aviso.
   async function marcarNoVino(order: Order) {
@@ -549,25 +580,47 @@ function PedidosContent() {
                   <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[11px] font-bold text-[#d4943a]">{pending.length}</span>
                 </div>
                 <div className="divide-y divide-[#f5f0ea]">
-                  {pending.map((o) => (
-                    <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.created_by ?? o.requested_by ?? null)} supplier={suppliers.find((s) => s.id === o.supplier_id) ?? null}>
-                      {canManage && (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {!o.supplier_id && (
-                            <button onClick={() => setAssignDialog(o)} className="flex items-center gap-1 rounded-lg bg-[#fdf6ec] px-2.5 py-1.5 text-[11px] font-semibold text-[#d4943a] active:scale-95">
-                              <Package className="size-3" /> Proveedor
-                            </button>
+                  {agruparPorProveedor(pending).map(([supId, items]) => {
+                    const sup = suppliers.find((x) => x.id === supId) ?? null
+                    return (
+                      <div key={supId ?? 'sin'}>
+                        <div className="flex items-center gap-2 bg-[#fcfbf9] px-4 py-2">
+                          <p className="min-w-0 flex-1 truncate text-[12px] font-bold text-[#3d2c24]">{sup?.name ?? 'Sin proveedor'} <span className="font-normal text-[#a39e97]">· {items.length}</span></p>
+                          {canManage && sup && items.length > 0 && (
+                            <>
+                              {sup.phone && (
+                                <button onClick={() => void pedirGrupo(sup, items, true)} disabled={enviandoGrupo !== null} className="flex items-center gap-1 rounded-lg bg-[#25d366] px-2.5 py-1.5 text-[11px] font-bold text-white active:scale-95 disabled:opacity-50">
+                                  {enviandoGrupo === sup.id ? <Loader2 className="size-3 animate-spin" /> : <MessageCircle className="size-3" />} Pedir por WhatsApp
+                                </button>
+                              )}
+                              <button onClick={() => void pedirGrupo(sup, items, false)} disabled={enviandoGrupo !== null} className="flex items-center gap-1 rounded-lg bg-[#4a90d9] px-2.5 py-1.5 text-[11px] font-semibold text-white active:scale-95 disabled:opacity-50">
+                                <Truck className="size-3" /> Ya pedí todo
+                              </button>
+                            </>
                           )}
-                          <button onClick={() => void updateStatus(o, 'ordered')} className="flex items-center gap-1 rounded-lg bg-[#4a90d9] px-2.5 py-1.5 text-[11px] font-semibold text-white active:scale-95">
-                            <Truck className="size-3" /> Ya lo pedí
-                          </button>
-                          <button onClick={() => void updateStatus(o, 'cancelled')} className="flex items-center gap-1 rounded-lg bg-[#fef2f2] px-2.5 py-1.5 text-[11px] font-semibold text-[#ea504c] active:scale-95">
-                            <X className="size-3" /> Cancelar
-                          </button>
                         </div>
-                      )}
-                    </OrderRow>
-                  ))}
+                        {items.map((o) => (
+                    <OrderRow key={`${o.source}-${o.id}`} order={o} who={profileName(o.created_by ?? o.requested_by ?? null)} supplier={suppliers.find((s) => s.id === o.supplier_id) ?? null}>
+                        {canManage && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {!o.supplier_id && (
+                              <button onClick={() => setAssignDialog(o)} className="flex items-center gap-1 rounded-lg bg-[#fdf6ec] px-2.5 py-1.5 text-[11px] font-semibold text-[#d4943a] active:scale-95">
+                                <Package className="size-3" /> Proveedor
+                              </button>
+                            )}
+                            <button onClick={() => void updateStatus(o, 'ordered')} className="flex items-center gap-1 rounded-lg bg-[#4a90d9] px-2.5 py-1.5 text-[11px] font-semibold text-white active:scale-95">
+                              <Truck className="size-3" /> Ya lo pedí
+                            </button>
+                            <button onClick={() => void updateStatus(o, 'cancelled')} className="flex items-center gap-1 rounded-lg bg-[#fef2f2] px-2.5 py-1.5 text-[11px] font-semibold text-[#ea504c] active:scale-95">
+                              <X className="size-3" /> Cancelar
+                            </button>
+                          </div>
+                        )}
+                      </OrderRow>
+                        ))}
+                      </div>
+                    )
+                  })}
                 </div>
               </section>
             </FadeIn>

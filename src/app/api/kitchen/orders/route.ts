@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     // ----- CREATE ORDER (single or batch) -----
     if (body.action === 'create_order') {
       const { items, urgency, note, supplier_id, initial_status } = body as {
-        items: { product_name: string; quantity: string; category?: string; stock_item_id?: string | null }[]
+        items: { product_name: string; quantity: string; category?: string; stock_item_id?: string | null; detalle?: string | null }[]
         urgency?: string
         note?: string
         supplier_id?: string | number | null
@@ -63,16 +63,27 @@ export async function POST(request: NextRequest) {
       const startOrdered = initial_status === 'ordered' && ['encargado', 'socio'].includes(profile.role)
       const nowIso = new Date().toISOString()
 
+      // Sin proveedor elegido (pedido de cocina): cada insumo va con su
+      // proveedor habitual, así el encargado lo ve agrupado y lo manda junto
+      const proveedorDe = new Map<string, string>()
+      if (!supplier_id) {
+        const ids = items.map((i) => i.stock_item_id).filter((x): x is string => Boolean(x))
+        if (ids.length > 0) {
+          const { data: sis } = await admin.from('stock_items').select('id, supplier_id').in('id', ids)
+          for (const r of (sis ?? []) as { id: string; supplier_id: string | null }[]) if (r.supplier_id) proveedorDe.set(r.id, r.supplier_id)
+        }
+      }
+
       // Insert all items
       const inserts = items.map((item) => ({
         product_name: item.product_name,
         quantity: item.quantity,
         category: (item.category || 'otros') as KitchenOrderCategoryValue,
         urgency: orderUrgency as KitchenOrderUrgencyValue,
-        note: note || null,
+        note: [item.detalle?.trim().slice(0, 120), note].filter(Boolean).join(' · ') || null,
         created_by: user.id,
         stock_item_id: item.stock_item_id ?? null,
-        ...(supplier_id ? { supplier_id } : {}),
+        ...(supplier_id ? { supplier_id } : item.stock_item_id && proveedorDe.has(item.stock_item_id) ? { supplier_id: proveedorDe.get(item.stock_item_id) } : {}),
         ...(startOrdered ? { status: 'ordered', ordered_at: nowIso } : {}),
       }))
 

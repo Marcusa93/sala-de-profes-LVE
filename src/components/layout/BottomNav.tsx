@@ -187,6 +187,7 @@ const CHEF_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
+        { label: 'Pedir a compras', href: '/cocina/pedido', icon: ShoppingCart, description: 'Pegá la lista de lo que hay que comprar: les llega a los encargados' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
@@ -212,6 +213,7 @@ const COCINA_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
+        { label: 'Pedir a compras', href: '/cocina/pedido', icon: ShoppingCart, description: 'Pegá la lista de lo que hay que comprar: les llega a los encargados' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
