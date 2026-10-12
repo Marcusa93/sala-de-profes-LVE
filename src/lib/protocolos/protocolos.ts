@@ -45,6 +45,12 @@ export function estadoVisible(t: Pick<Tarea, 'fecha' | 'hora' | 'estado' | 'hech
   return t.estado === 'asignada' ? 'asignada' : 'sin_asignar'
 }
 
+/** Se puede cerrar desde un rato antes de la hora (no a la mañana la de la tarde). */
+export const ANTICIPO_MIN = 30
+export function sePuedeCerrar(t: Pick<Tarea, 'fecha' | 'hora'>, ahora = new Date()): boolean {
+  return ahora.getTime() >= instanteDe(t.fecha, t.hora).getTime() - ANTICIPO_MIN * 60_000
+}
+
 /** Crea (si faltan) las tareas del día para cada horario de cada protocolo activo. */
 export async function asegurarTareasDelDia(admin: SupabaseClient, fecha = fechaOperativa()): Promise<void> {
   const { data: protocolos } = await admin.from('protocolos').select('id, horarios').eq('activo', true)

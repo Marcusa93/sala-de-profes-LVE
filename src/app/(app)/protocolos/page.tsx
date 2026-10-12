@@ -1,11 +1,12 @@
 'use client'
 
 import { useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import useSWR from 'swr'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
-import { Camera, Check, ChevronDown, Clock, Loader2, Settings2, Sparkles, UserPlus, X, AlertTriangle, Plus, Trash2 } from 'lucide-react'
+import { Camera, Check, ChevronDown, ClipboardList, Clock, Loader2, Settings2, Sparkles, UserPlus, X, AlertTriangle, Plus, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 
@@ -24,10 +25,14 @@ type TareaUI = {
   hecho_at: string | null; foto_url: string | null; fotos_urls?: string[]; nota: string | null
   candidatos: Candidato[]
   medicion?: number | null
+  /** false si falta más de media hora para la hora de la tarea */
+  puede_cerrar?: boolean
 }
 type ProtocoloUI = {
   id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean
-  medicion_etiqueta?: string | null; medicion_unidad?: string | null
+  medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null
+  /** Pantalla donde se carga lo que pide la tarea (ej. el conteo de elaborados) */
+  enlace_url?: string | null; enlace_texto?: string | null
   tareas: TareaUI[]
   historial: { fecha: string; hechas: number; total: number; tareas: TareaUI[] }[]
 }
@@ -154,12 +159,16 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
         )}
       </div>
 
+      {p.enlace_url && p.tareas.some((t) => t.estado !== 'hecha' && t.visible !== 'programada') && (
+        <EnlaceCarga p={p} className="mt-3" />
+      )}
+
       <ul className="mt-3 space-y-2">
         {p.tareas.map((t) => {
           const chip = CHIP[t.visible]
           const mia = t.asignado_a === yo.id
           const hecha = t.estado === 'hecha'
-          const puedeCompletar = !hecha && (mia || yo.puede_asignar) && t.visible !== 'programada'
+          const puedeCompletar = !hecha && (mia || yo.puede_asignar) && t.visible !== 'programada' && t.puede_cerrar !== false
           return (
             <li key={t.id} className={cn('rounded-xl p-3 ring-1', t.visible === 'atrasada' ? 'bg-[#fffafa] ring-[#f3d0cf]' : mia && !hecha ? 'bg-[#f7faff] ring-[#cfdcf3]' : 'bg-[#fcfbf9] ring-[#f0ebe4]')}>
               <div className="flex items-center gap-3">
@@ -291,6 +300,15 @@ function AsignarDialog({ tarea, protocolo, yoId, onClose, onDone }: {
   )
 }
 
+function EnlaceCarga({ p, className }: { p: ProtocoloUI; className?: string }) {
+  if (!p.enlace_url) return null
+  return (
+    <Link href={p.enlace_url} className={cn('flex items-center justify-center gap-2 rounded-xl bg-[#006d5a] px-3 py-2.5 text-[13.5px] font-bold text-white', className)}>
+      <ClipboardList className="size-4" /> {p.enlace_texto || 'Cargar'}
+    </Link>
+  )
+}
+
 function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI; protocolo: ProtocoloUI; onClose: () => void; onDone: () => void }) {
   const [ok, setOk] = useState<Set<string>>(new Set())
   const etiquetas = protocolo.requiere_foto ? (protocolo.fotos?.length ? protocolo.fotos : ['Foto']) : []
@@ -329,6 +347,12 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
       <DialogContent className="max-h-[90svh] overflow-y-auto">
         <DialogHeader><DialogTitle>{protocolo.nombre} · {tarea.hora}</DialogTitle></DialogHeader>
         <p className="-mt-2 text-[12.5px] text-[#7d6c64]">Marcá cada paso{etiquetas.length === 1 ? ' y sacá la foto' : etiquetas.length > 1 ? ` y sacá las ${etiquetas.length} fotos` : ''}. Sin todo completo no se puede cerrar.</p>
+        {protocolo.enlace_url && (
+          <div className="rounded-xl bg-[#e8f5f1] p-3 text-[12.5px] text-[#004d40]">
+            <p className="mb-2">{protocolo.registro === 'conteo_elaborados' ? <>Primero cargá <b>cuánto hay de cada elaborado</b> y guardalo. Después volvé acá y cerrá la tarea.</> : 'Primero cargalo acá:'}</p>
+            <EnlaceCarga p={protocolo} />
+          </div>
+        )}
 
         <ul className="space-y-1.5">
           {protocolo.pasos.map((p) => {
@@ -369,7 +393,7 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
           </div>
         )}
 
-        <textarea value={nota} onChange={(e) => setNota(e.target.value)} maxLength={500} rows={2} placeholder="Algo para avisar (opcional): falta papel, pérdida en el inodoro…" className="w-full rounded-xl border border-[#ebe6df] px-3 py-2 text-[13px] outline-none focus:border-[#d4943a]" />
+        <textarea value={nota} onChange={(e) => setNota(e.target.value)} maxLength={500} rows={2} placeholder={protocolo.registro === 'conteo_elaborados' ? 'Lo que falta producir (les llega a los encargados)' : 'Algo para avisar (opcional, les llega a los encargados): falta papel, pérdida en el inodoro…'} className="w-full rounded-xl border border-[#ebe6df] px-3 py-2 text-[13px] outline-none focus:border-[#d4943a]" />
 
         <DialogFooter>
           <button onClick={() => void enviar()} disabled={!puede} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-bold text-white disabled:opacity-40">

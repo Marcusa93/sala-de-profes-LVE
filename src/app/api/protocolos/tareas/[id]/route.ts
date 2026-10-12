@@ -4,9 +4,10 @@ import { requireRole } from '@/lib/supabase/require-role'
 import { esEncargadoAhora } from '@/lib/turnos/rol-del-turno'
 import { logAudit } from '@/lib/audit'
 import { sendPushToUser } from '@/lib/push/send'
-import { candidatosPara, personalDeTurno, type Tarea } from '@/lib/protocolos/protocolos'
+import { ANTICIPO_MIN, candidatosPara, personalDeTurno, sePuedeCerrar, type Tarea } from '@/lib/protocolos/protocolos'
 import { optimizarFoto } from '@/lib/protocolos/fotos'
 import { registrarPesoTolva } from '@/lib/protocolos/tolva'
+import { estadoConteoHoy } from '@/lib/stock/conteo-diario'
 
 // ---------------------------------------------------------------------------
 // POST /api/protocolos/tareas/[id]
@@ -77,11 +78,24 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const esManager = await esEncargadoAhora(admin, auth.user)
     if (t.estado === 'hecha') return NextResponse.json({ error: 'Ya está hecha' }, { status: 409 })
     if (t.asignado_a !== auth.user.id && !esManager) return NextResponse.json({ error: 'Esta tarea no está asignada a vos' }, { status: 403 })
+    if (!sePuedeCerrar(t)) return NextResponse.json({ error: `Esta es la de las ${t.hora}: se puede cerrar desde ${ANTICIPO_MIN} minutos antes. ¿No será otra tarea?` }, { status: 400 })
 
     let pasos: string[] = []
     try { pasos = JSON.parse(String(form.get('pasos') ?? '[]')) } catch { /* inválido */ }
     const faltan = t.protocolos.pasos.filter((p) => !pasos.includes(p))
     if (faltan.length > 0) return NextResponse.json({ error: `Faltan pasos: ${faltan.join(', ')}` }, { status: 400 })
+
+    // Conteo de elaborados: la tarea no se cierra sin el conteo del día cargado
+    // (antes se podía tildar los pasos y cerrarla sin cargar ninguna cantidad)
+    if (t.protocolos.registro === 'conteo_elaborados') {
+      const c = await estadoConteoHoy(admin)
+      const minimo = Math.min(10, c.total)
+      if (c.contados < minimo) {
+        return NextResponse.json({
+          error: `Primero cargá el conteo: tocá "Cargar el conteo" (Cocina → Elaborados → Contar), poné cuánto hay de cada uno y guardalo. Hoy van ${c.contados} de ${c.total} elaborados.`,
+        }, { status: 400 })
+      }
+    }
 
     // Número a registrar (ej. peso de la tolva): obligatorio si el protocolo lo pide
     let medicion: number | null = null
@@ -132,7 +146,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     // Aviso a quien la asignó: quedó hecha
     if (t.asignado_por && t.asignado_por !== auth.user.id) {
-      await sendPushToUser(t.asignado_por, { title: `✅ Hecho: ${t.protocolos.nombre} (${t.hora})`, body: `${quien} la completó${medicion != null ? ` · ${medicion.toLocaleString('es-AR')} ${t.protocolos.medicion_unidad ?? ''}`.trimEnd() : ''}${fotos.length ? ` con ${fotos.length === 1 ? 'foto' : `${fotos.length} fotos`}` : ''}.`, url: '/protocolos' }).catch(() => {})
+      await sendPushToUser(t.asignado_por, { title: `✅ Hecho: ${t.protocolos.nombre} (${t.hora})`, body: `${quien} la completó${medicion != null ? ` · ${medicion.toLocaleString('es-AR')} ${t.protocolos.medicion_unidad ?? ''}`.trimEnd() : ''}${fotos.length ? ` con ${fotos.length === 1 ? 'foto' : `${fotos.length} fotos`}` : ''}.${nota ? ` Nota: ${nota.slice(0, 140)}` : ''}`, url: '/protocolos' }).catch(() => {})
+    }
+    // La nota (ej. "falta lomo, pappardelle…") les llega a todos los encargados
+    // (cajeros incluidos), aunque nadie haya asignado la tarea
+    if (nota) {
+      const yaAvisado = new Set([auth.user.id, t.asignado_por ?? ''])
+      const { data: encs } = await admin.from('profiles').select('id').eq('is_active', true).eq('role', 'encargado')
+      const encargados = ((encs ?? []) as { id: string }[]).map((p) => p.id).filter((x) => !yaAvisado.has(x))
+      await Promise.allSettled(encargados.map((uid) => sendPushToUser(uid, {
+        title: `📝 ${t.protocolos.nombre}: nota de ${quien.split(' ')[0]}`,
+        body: nota.slice(0, 180),
+        url: '/protocolos',
+      })))
     }
     void logAudit(admin, { userId: auth.user.id, userName: quien, action: 'protocolo_completar', module: 'equipo', entityType: 'protocolo_tarea', entityId: id, description: `${quien} completó "${t.protocolos.nombre}" (${t.hora})` })
     return NextResponse.json({ success: true, enTolva })
