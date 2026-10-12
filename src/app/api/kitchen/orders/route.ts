@@ -54,10 +54,12 @@ export async function POST(request: NextRequest) {
         .eq('id', user.id)
         .single()
 
-      const allowedRoles = ['chef', 'cocina', 'encargado', 'socio']
-      if (!profile || !allowedRoles.includes(profile.role)) {
+      // Cualquier empleado puede SUGERIR (queda 'pending' = sin enviar); solo
+      // encargados y socios lo pasan a pedido (update_status) o lo crean ya enviado
+      if (!profile) {
         return NextResponse.json({ success: false, error: 'No tenés permiso para crear pedidos' }, { status: 403 })
       }
+      const esSugerencia = !['encargado', 'socio'].includes(profile.role)
 
       const orderUrgency = urgency || 'normal'
       const startOrdered = initial_status === 'ordered' && ['encargado', 'socio'].includes(profile.role)
@@ -162,8 +164,10 @@ export async function POST(request: NextRequest) {
           author_id: user.id,
           type: 'operativo',
           priority: (priorityMap[orderUrgency] || 'media') as PriorityValue,
-          title: `🍳 Pedido de Cocina — ${urgencyLabels[orderUrgency] || 'Normal'}`,
-          body: `${authorName} solicita:\n${itemsList}${note ? `\n\nNota: ${note}` : ''}`,
+          title: esSugerencia
+            ? `💡 Sugerencia de compra — ${urgencyLabels[orderUrgency] || 'Normal'}`
+            : `🛒 Pedido — ${urgencyLabels[orderUrgency] || 'Normal'}`,
+          body: `${authorName} ${esSugerencia ? 'sugiere pedir' : 'pidió'}:\n${itemsList}${note ? `\n\nNota: ${note}` : ''}`,
           scope: 'role',
           target_role: 'encargado',
           is_active: true,
@@ -177,6 +181,7 @@ export async function POST(request: NextRequest) {
           urgency: orderUrgency,
           note,
           excludeUserId: user.id,
+          sugerencia: esSugerencia,
         }).catch(() => {})
 
         const pushSummary = items
@@ -187,7 +192,7 @@ export async function POST(request: NextRequest) {
           .join(', ')
 
         notifyEvent(admin, 'purchase_created', {
-          title: '🛒 Nuevo pedido de cocina',
+          title: esSugerencia ? '💡 Sugerencia de compra: hay que pedir' : '🛒 Nuevo pedido',
           body: `${authorName}: ${pushSummary}`,
           url: '/pedidos',
         }, { excludeUserId: user.id }).catch(() => {})

@@ -1,19 +1,21 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRole } from '@/lib/supabase/require-role'
+import { ROLES } from '@/lib/constants'
 
 // ---------------------------------------------------------------------------
-// GET /api/cocina/pedido — datos de "Pedir a compras" (cocina)
+// GET /api/compras/sugerir — datos de "Sugerir compra" (cualquier empleado)
 //   insumos: lo que se compra (sin elaborados), para reconocer la lista
-//   mios:    mis pedidos de los últimos 10 días, con su estado
-// El pedido se manda con POST /api/kitchen/orders (create_order): queda
-// "sin enviar" en Compras y les llega a los encargados.
+//   mios:    mis sugerencias de los últimos 10 días, con su estado
+// La sugerencia se manda con POST /api/kitchen/orders (create_order): queda
+// "sin enviar" en Compras y les llega a los encargados, que son los únicos
+// que hacen el pedido.
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const auth = await requireRole(['chef', 'cocina', 'encargado', 'socio'])
+  const auth = await requireRole(Object.keys(ROLES))
   if (auth.response) return auth.response
   const admin = createAdminClient()
   const desde = new Date(Date.now() - 10 * 86_400_000).toISOString()

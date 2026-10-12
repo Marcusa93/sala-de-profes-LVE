@@ -576,7 +576,7 @@ function PedidosContent() {
               <section className="overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
                 <div className="flex items-center gap-2 border-b border-[#f5f0ea] bg-[#faf8f5] px-4 py-2.5">
                   <AlertTriangle className="size-4 text-[#d4943a]" />
-                  <p className="flex-1 text-[12px] font-bold uppercase tracking-wider text-[#3d2c24]">Pidió el equipo · sin enviar</p>
+                  <p className="flex-1 text-[12px] font-bold uppercase tracking-wider text-[#3d2c24]">Sugerencias del equipo · para pedir</p>
                   <span className="rounded-full bg-[#fdf6ec] px-2 py-0.5 text-[11px] font-bold text-[#d4943a]">{pending.length}</span>
                 </div>
                 <div className="divide-y divide-[#f5f0ea]">

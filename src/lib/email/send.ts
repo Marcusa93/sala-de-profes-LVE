@@ -101,6 +101,8 @@ export async function notifyOrderToEncargados(opts: {
   note?: string | null
   /** Creador del pedido: se excluye del mail (no se autonotifica) */
   excludeUserId?: string | null
+  /** Lo mandó un empleado (no encargado): es una sugerencia, el pedido lo hace el encargado */
+  sugerencia?: boolean
 }) {
   const emails = await getEmailsByRole('encargado', opts.excludeUserId ?? null)
   const icon = opts.type === 'barra' ? '☕' : '🍳'
@@ -115,10 +117,10 @@ export async function notifyOrderToEncargados(opts: {
   }
 
   const html = wrapTemplate(
-    `${icon} Nuevo pedido de ${label}`,
+    opts.sugerencia ? '💡 Sugerencia de compra' : `${icon} Nuevo pedido de ${label}`,
     `
       <p style="color: #6b6560; margin: 0 0 12px; font-size: 14px;">
-        <strong>${opts.authorName}</strong> creó un pedido:
+        <strong>${opts.authorName}</strong> ${opts.sugerencia ? 'sugiere pedir (revisalo y hacé el pedido en Compras)' : 'creó un pedido'}:
       </p>
       <ul style="padding-left: 20px; margin: 0 0 12px;">${itemsList}</ul>
       <p style="margin: 0;">
@@ -130,7 +132,7 @@ export async function notifyOrderToEncargados(opts: {
     `,
   )
 
-  await sendEmail(emails, `${icon} Pedido de ${label} — ${opts.authorName}`, html)
+  await sendEmail(emails, opts.sugerencia ? `💡 Sugerencia de compra — ${opts.authorName}` : `${icon} Pedido de ${label} — ${opts.authorName}`, html)
 }
 
 /** Notify the responsible person (only) about expediente movements */

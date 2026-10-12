@@ -187,7 +187,7 @@ const CHEF_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
-        { label: 'Pedir a compras', href: '/cocina/pedido', icon: ShoppingCart, description: 'Pegá la lista de lo que hay que comprar: les llega a los encargados' },
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
@@ -213,7 +213,7 @@ const COCINA_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
-        { label: 'Pedir a compras', href: '/cocina/pedido', icon: ShoppingCart, description: 'Pegá la lista de lo que hay que comprar: les llega a los encargados' },
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
@@ -241,6 +241,7 @@ const BARISTA_MORE: ExpandableNavItem = {
       items: [
         { label: 'Tolva', href: '/tolva', icon: Coffee, description: 'Control de la tolva del día' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tolva, descartables y baño: tareas con horario' },
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'Descartables', href: '/stock?area=descartables', icon: Package, description: 'Contar vasos y tapas · avisar faltantes' },
         { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
@@ -262,6 +263,7 @@ const RUNNER_MORE: ExpandableNavItem = {
         { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
       ],
     },
   ],
@@ -277,6 +279,7 @@ const BACHA_MORE: ExpandableNavItem = {
       items: [
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
       ],
     },
