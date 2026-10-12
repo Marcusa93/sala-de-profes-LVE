@@ -40,7 +40,7 @@ export async function GET() {
     for (const f of firmadas ?? []) if (f.path && f.signedUrl) urls.set(f.path, f.signedUrl)
   }
   const ahora = new Date()
-  const armar = (t: Tarea) => ({
+  const armar = (t: Tarea, roles?: string[] | null) => ({
     ...t,
     visible: estadoVisible(t, ahora),
     puede_cerrar: sePuedeCerrar(t, ahora),
@@ -48,16 +48,16 @@ export async function GET() {
     hecho_nombre: t.hecho_por ? nombre.get(t.hecho_por) ?? null : null,
     foto_url: t.foto_path ? urls.get(t.foto_path) ?? null : null,
     fotos_urls: (t.fotos ?? (t.foto_path ? [t.foto_path] : [])).map((r) => urls.get(r)).filter((u): u is string => !!u),
-    candidatos: t.fecha === hoy && t.estado !== 'hecha' ? candidatosPara(personal, t, ahora) : [],
+    candidatos: t.fecha === hoy && t.estado !== 'hecha' ? candidatosPara(personal, t, ahora, roles) : [],
   })
 
   const lista = ((protocolos ?? []) as Protocolo[]).map((p) => {
     const suyas = todas.filter((t) => t.protocolo_id === p.id)
     const historial = [...new Set(suyas.map((t) => t.fecha))].sort().reverse().map((fecha) => {
       const delDia = suyas.filter((t) => t.fecha === fecha)
-      return { fecha, hechas: delDia.filter((t) => t.estado === 'hecha').length, total: delDia.length, tareas: delDia.map(armar) }
+      return { fecha, hechas: delDia.filter((t) => t.estado === 'hecha').length, total: delDia.length, tareas: delDia.map((t) => armar(t, p.roles)) }
     })
-    return { ...p, tareas: suyas.filter((t) => t.fecha === hoy).map(armar), historial }
+    return { ...p, tareas: suyas.filter((t) => t.fecha === hoy).map((t) => armar(t, p.roles)), historial }
   })
 
   return NextResponse.json({

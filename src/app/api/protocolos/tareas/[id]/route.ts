@@ -8,6 +8,7 @@ import { ANTICIPO_MIN, candidatosPara, personalDeTurno, sePuedeCerrar, type Tare
 import { optimizarFoto } from '@/lib/protocolos/fotos'
 import { registrarPesoTolva } from '@/lib/protocolos/tolva'
 import { estadoConteoHoy } from '@/lib/stock/conteo-diario'
+import { instanteDe } from '@/lib/attendance/jornada'
 
 // ---------------------------------------------------------------------------
 // POST /api/protocolos/tareas/[id]
@@ -33,9 +34,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!UUID.test(id)) return NextResponse.json({ error: 'Tarea inválida' }, { status: 400 })
     const admin = createAdminClient()
 
-    const { data: tarea } = await admin.from('protocolo_tareas').select('*, protocolos(nombre, pasos, fotos, requiere_foto, medicion_etiqueta, medicion_unidad, registro)').eq('id', id).maybeSingle()
+    const { data: tarea } = await admin.from('protocolo_tareas').select('*, protocolos(nombre, pasos, fotos, requiere_foto, medicion_etiqueta, medicion_unidad, registro, roles)').eq('id', id).maybeSingle()
     if (!tarea) return NextResponse.json({ error: 'Tarea no encontrada' }, { status: 404 })
-    const t = tarea as unknown as Tarea & { protocolos: { nombre: string; pasos: string[]; fotos: string[]; requiere_foto: boolean; medicion_etiqueta: string | null; medicion_unidad: string | null; registro: string | null } }
+    const t = tarea as unknown as Tarea & { protocolos: { nombre: string; pasos: string[]; fotos: string[]; requiere_foto: boolean; medicion_etiqueta: string | null; medicion_unidad: string | null; registro: string | null; roles: string[] | null } }
     const { data: yo } = await admin.from('profiles').select('first_name, last_name').eq('id', auth.user.id).maybeSingle()
     const quien = [yo?.first_name, yo?.last_name].filter(Boolean).join(' ') || 'Alguien'
 
@@ -50,10 +51,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       const { data: persona } = await admin.from('profiles').select('id, first_name, last_name, is_active').eq('id', body.user_id!).maybeSingle()
       if (!persona?.is_active) return NextResponse.json({ error: 'Esa persona no está activa' }, { status: 400 })
       // Solo a quien esté trabajando a esa hora (turno cargado o fichado ahora)
-      const candidatos = candidatosPara(await personalDeTurno(admin, t.fecha), t)
+      const candidatos = candidatosPara(await personalDeTurno(admin, t.fecha), t, new Date(), t.protocolos.roles)
       if (!candidatos.some((c) => c.id === persona.id)) {
         const primer = persona.first_name || 'Esa persona'
-        return NextResponse.json({ error: `${primer} no está en turno a las ${t.hora}: solo se asigna a quien trabaja a esa hora` }, { status: 400 })
+        const soloRoles = t.protocolos.roles?.length ? ` de ${t.protocolos.roles.join(' o ')}` : ''
+        return NextResponse.json({ error: `${primer} no está en turno${soloRoles} a las ${t.hora}: solo se asigna a quien trabaja a esa hora${soloRoles ? ' en ese puesto' : ''}` }, { status: 400 })
       }
 
       const { error } = await admin.from('protocolo_tareas').update({
@@ -93,6 +95,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (c.contados < minimo) {
         return NextResponse.json({
           error: `Primero cargá el conteo: tocá "Cargar el conteo" (Cocina → Elaborados → Contar), poné cuánto hay de cada uno y guardalo. Hoy van ${c.contados} de ${c.total} elaborados.`,
+        }, { status: 400 })
+      }
+    }
+
+    // Control de descartables: los vasos tienen que estar contados en Stock
+    // (antes se escribían en la nota y el stock no se enteraba)
+    if (t.protocolos.registro === 'conteo_descartables') {
+      const desde = new Date(instanteDe(t.fecha, t.hora).getTime() - 60 * 60_000).toISOString()
+      const { data: vasos } = await admin.from('stock_items').select('name, last_counted_at').eq('is_active', true).eq('area', 'descartables').ilike('name', '%vaso%')
+      const sinContar = ((vasos ?? []) as { name: string; last_counted_at: string | null }[]).filter((v) => !v.last_counted_at || v.last_counted_at < desde)
+      if (sinContar.length > 0) {
+        return NextResponse.json({
+          error: `Primero contá los vasos: tocá "Contar los vasos", cargá cuántos hay y guardá. Faltan: ${sinContar.map((v) => v.name).join(', ')}.`,
         }, { status: 400 })
       }
     }

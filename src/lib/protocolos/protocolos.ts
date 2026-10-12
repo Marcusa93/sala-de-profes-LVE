@@ -22,6 +22,8 @@ export type Protocolo = {
   id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean
   /** Número a registrar al completar (ej. peso de la tolva) */
   medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null
+  /** Roles del turno a los que se puede asignar (null = cualquiera). Ej. elaborados: cocina y chef */
+  roles?: string[] | null
 }
 export type Tarea = {
   id: string; protocolo_id: string; fecha: string; hora: string
@@ -99,7 +101,7 @@ export async function personalDeTurno(admin: SupabaseClient, fecha = fechaOperat
  * superpone con su plazo (hora → hora + 60'), o los que están fichados si la
  * tarea es de ahora. Nadie fuera de turno.
  */
-export function candidatosPara(personal: Persona[], t: Pick<Tarea, 'fecha' | 'hora'>, ahora = new Date()): Candidato[] {
+export function candidatosPara(personal: Persona[], t: Pick<Tarea, 'fecha' | 'hora'>, ahora = new Date(), roles?: string[] | null): Candidato[] {
   const inicio = instanteDe(t.fecha, t.hora).getTime()
   const limite = inicio + ATRASO_MIN * 60_000
   const esDeAhora = ahora.getTime() >= inicio - ATRASO_MIN * 60_000 && ahora.getTime() < limite
@@ -107,7 +109,9 @@ export function candidatosPara(personal: Persona[], t: Pick<Tarea, 'fecha' | 'ho
   for (const p of personal) {
     const turno = p.turnos.find((x) => x.inicio < limite && x.fin > inicio)
     if (!turno && !(p.presente && esDeAhora)) continue
-    out.push({ id: p.id, nombre: p.nombre, role: turno?.rol ?? p.role, presente: p.presente, turno: turno ? `${turno.desde}–${turno.hasta}` : null })
+    const rol = turno?.rol ?? p.role
+    if (roles?.length && !roles.includes(rol)) continue
+    out.push({ id: p.id, nombre: p.nombre, role: rol, presente: p.presente, turno: turno ? `${turno.desde}–${turno.hasta}` : null })
   }
   return out
 }

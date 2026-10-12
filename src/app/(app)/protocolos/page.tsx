@@ -30,7 +30,7 @@ type TareaUI = {
 }
 type ProtocoloUI = {
   id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean
-  medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null
+  medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null; roles?: string[] | null
   /** Pantalla donde se carga lo que pide la tarea (ej. el conteo de elaborados) */
   enlace_url?: string | null; enlace_texto?: string | null
   tareas: TareaUI[]
@@ -276,7 +276,7 @@ function AsignarDialog({ tarea, protocolo, yoId, onClose, onDone }: {
         <p className="-mt-2 text-[12.5px] text-[#7d6c64]">¿Quién lo hace? Solo aparecen los que están en turno a esa hora.</p>
         {lista.length === 0 && (
           <p className="rounded-lg bg-[#fdf6ec] px-3 py-2 text-[12px] text-[#b0762a]">
-            No hay nadie con turno a las {tarea.hora}. Cargá el turno en Equipo → Turnos para poder asignarla.
+            No hay nadie con turno{protocolo.roles?.length ? ` de ${protocolo.roles.join(' o ')}` : ''} a las {tarea.hora}. Cargá el turno en Equipo → Turnos para poder asignarla.
           </p>
         )}
         <ul className="space-y-1.5">
@@ -349,7 +349,7 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
         <p className="-mt-2 text-[12.5px] text-[#7d6c64]">Marcá cada paso{etiquetas.length === 1 ? ' y sacá la foto' : etiquetas.length > 1 ? ` y sacá las ${etiquetas.length} fotos` : ''}. Sin todo completo no se puede cerrar.</p>
         {protocolo.enlace_url && (
           <div className="rounded-xl bg-[#e8f5f1] p-3 text-[12.5px] text-[#004d40]">
-            <p className="mb-2">{protocolo.registro === 'conteo_elaborados' ? <>Primero cargá <b>cuánto hay de cada elaborado</b> y guardalo. Después volvé acá y cerrá la tarea.</> : 'Primero cargalo acá:'}</p>
+            <p className="mb-2">{protocolo.registro === 'conteo_elaborados' ? <>Primero cargá <b>cuánto hay de cada elaborado</b> y guardalo. Después volvé acá y cerrá la tarea.</> : protocolo.registro === 'conteo_descartables' ? <>Primero cargá <b>cuántos vasos hay de cada tamaño</b> y guardá. Después volvé acá y cerrá la tarea.</> : 'Primero cargalo acá:'}</p>
             <EnlaceCarga p={protocolo} />
           </div>
         )}
