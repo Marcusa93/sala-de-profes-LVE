@@ -32,11 +32,13 @@ export function semanaAnterior(hoy = new Date()): { from: string; to: string } {
 }
 
 export async function armarResumenSemanal(admin: SupabaseClient, from: string, to: string) {
-  const [control, liq, { data: desc }, { count: pendientesFudo }] = await Promise.all([
+  const [control, liq, { data: desc }, { count: pendientesFudo }, { data: negativos }, { count: pedidosViejos }] = await Promise.all([
     informeControl(admin, from, to),
     calcularLiquidacion(admin, from, to),
     admin.from('stock_items').select('name, current_qty, min_qty, unit').eq('is_active', true).eq('area', 'descartables').gt('min_qty', 0),
     admin.from('fudo_reintentos').select('id', { count: 'exact', head: true }).eq('estado', 'pendiente'),
+    admin.from('stock_items').select('name, current_qty, unit').eq('is_active', true).lt('current_qty', 0).order('current_qty').limit(50),
+    admin.from('kitchen_orders').select('id', { count: 'exact', head: true }).eq('status', 'ordered').lt('created_at', new Date(Date.now() - 2 * 86_400_000).toISOString()),
   ])
   const bajoMinimo = ((desc ?? []) as { name: string; current_qty: number; min_qty: number; unit: string }[])
     .filter((d) => Number(d.current_qty) <= Number(d.min_qty))
@@ -61,6 +63,9 @@ export async function armarResumenSemanal(admin: SupabaseClient, from: string, t
   if (liq.summary.diasRevisar > 0) atencion.push(`<b>${liq.summary.diasRevisar}</b> día${liq.summary.diasRevisar !== 1 ? 's' : ''} con turno mal cargado en la liquidación (se pagó lo fichado: conviene corregir el turno).`)
   if (bajoMinimo.length) atencion.push(`Descartables bajo el mínimo: ${bajoMinimo.map((d) => `<b>${esc(d.name)}</b> (${Math.round(Number(d.current_qty))})`).join(', ')}.`)
   if ((pendientesFudo ?? 0) > 0) atencion.push(`<b>${pendientesFudo}</b> movimiento${pendientesFudo !== 1 ? 's' : ''} esperando para entrar a Fudo (ver Salud de Fudo).`)
+  const neg = (negativos ?? []) as { name: string; current_qty: number; unit: string }[]
+  if (neg.length) atencion.push(`<b>${neg.length}</b> insumo${neg.length !== 1 ? 's' : ''} con stock negativo (se usó sin registrar producción o recepción): ${neg.slice(0, 5).map((n) => `<b>${esc(n.name)}</b> (${Number(n.current_qty).toLocaleString('es-AR')} ${n.unit})`).join(', ')}${neg.length > 5 ? '…' : ''}. Hay que contarlos.`)
+  if ((pedidosViejos ?? 0) > 0) atencion.push(`<b>${pedidosViejos}</b> producto${pedidosViejos !== 1 ? 's' : ''} pedido${pedidosViejos !== 1 ? 's' : ''} siguen "en camino" hace más de 2 días: si llegaron, no se sumaron al stock.`)
   const sinMotivo = control.asistencia.reduce((s, a) => s + a.sinFicharSinMotivo, 0)
   if (sinMotivo > 0) atencion.push(`<b>${sinMotivo}</b> turno${sinMotivo !== 1 ? 's' : ''} sin fichar y sin motivo anotado por el encargado.`)
 

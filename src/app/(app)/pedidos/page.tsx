@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { format, formatDistanceToNow } from 'date-fns'
+import { differenceInCalendarDays, format, formatDistanceToNow } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import Link from 'next/link'
 import {
@@ -1203,6 +1203,11 @@ function groupBySupplier(list: Order[], suppliers: Supplier[]) {
   return [...map.values()].sort((a, b) => (a.supplier?.name ?? 'zzz').localeCompare(b.supplier?.name ?? 'zzz'))
 }
 
+/** Días enteros desde una fecha (para "en camino hace N días"). */
+function diasDesde(iso: string): number {
+  return differenceInCalendarDays(new Date(), new Date(iso))
+}
+
 function OrderRow({ order, who, supplier, muted, children }: { order: Order; who: string; supplier: Supplier | null; muted?: boolean; children?: React.ReactNode }) {
   const when = order.ordered_at ?? order.created_at
   return (
@@ -1220,6 +1225,12 @@ function OrderRow({ order, who, supplier, muted, children }: { order: Order; who
             <span>· {formatDistanceToNow(new Date(when), { addSuffix: true, locale: es })}</span>
             {order.urgency && order.urgency !== 'normal' && <span className="font-semibold text-[#ea504c]">· {order.urgency}</span>}
           </p>
+          {/* En camino hace 2 días o más: casi seguro llegó y nadie lo marcó (la mercadería no se sumó) */}
+          {order.status === 'ordered' && diasDesde(when) >= 2 && (
+            <p className="mt-1 inline-block rounded-full bg-[#fef2f2] px-2 py-0.5 text-[10.5px] font-bold text-[#ea504c]">
+              ⏰ En camino hace {diasDesde(when)} días · ¿llegó? Marcá Llegó o No vino
+            </p>
+          )}
           {order.note && <p className="mt-0.5 truncate text-[11px] italic text-[#a39e97]">💬 {order.note}</p>}
         </div>
       </div>
