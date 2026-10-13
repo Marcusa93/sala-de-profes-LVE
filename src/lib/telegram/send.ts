@@ -34,14 +34,16 @@ export async function llamarTelegram<T = unknown>(metodo: string, body?: Record<
   return j.result as T
 }
 
-export async function enviarTelegram(admin: SupabaseClient, texto: string): Promise<{ ok: boolean; enviados: number; error?: string }> {
+/** Manda uno o varios mensajes (en orden) a cada chat vinculado. */
+export async function enviarTelegram(admin: SupabaseClient, texto: string | string[]): Promise<{ ok: boolean; enviados: number; error?: string }> {
+  const partes = Array.isArray(texto) ? texto : [texto]
   const chats = await chatsTelegram(admin)
   if (!chats.length) return { ok: false, enviados: 0, error: 'No hay chats vinculados' }
   let enviados = 0
   const errores: string[] = []
   for (const chat_id of chats) {
     try {
-      await llamarTelegram('sendMessage', { chat_id, text: texto, parse_mode: 'HTML', disable_web_page_preview: true })
+      for (const text of partes) await llamarTelegram('sendMessage', { chat_id, text, parse_mode: 'HTML', disable_web_page_preview: true })
       enviados++
     } catch (err) {
       errores.push(err instanceof Error ? err.message : 'Error')

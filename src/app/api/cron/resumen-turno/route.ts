@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { armarResumenTurno, turnoQueTermino, type Turno } from '@/lib/reportes/resumen-turno'
+import { armarResumenTurno, partirMensaje, turnoQueTermino, type Turno } from '@/lib/reportes/resumen-turno'
 import { enviarTelegram } from '@/lib/telegram/send'
 import { logAudit } from '@/lib/audit'
 
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     const fecha = /^\d{4}-\d{2}-\d{2}$/.test(p.get('fecha') ?? '') ? p.get('fecha')! : auto.fecha
     const texto = await armarResumenTurno(admin, fecha, turno)
     if (p.get('vista') === '1') return new NextResponse(texto, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
-    const r = await enviarTelegram(admin, texto)
+    const r = await enviarTelegram(admin, partirMensaje(texto))
     void logAudit(admin, {
       userId: null, userName: 'Sistema', action: 'resumen_turno', module: 'equipo', entityType: 'telegram', entityId: `${fecha}_${turno}`,
       description: r.ok ? `Resumen ${turno} ${fecha} enviado a ${r.enviados} chat${r.enviados !== 1 ? 's' : ''}` : `Resumen ${turno} ${fecha} NO salió: ${r.error}`,
