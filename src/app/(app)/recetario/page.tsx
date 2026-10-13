@@ -23,15 +23,18 @@ import { avisoCantidad } from '@/lib/recipes/recetario-platos'
 type Plato = {
   id: string; nombre: string; categoria: string; precio: number | null; ingredientes: number
   costo: number | null; costoCompleto: boolean; revisar: string[]; editadaEnApp: boolean; enFudo: boolean
+  /** Se arma con opciones de Fudo (ej. el Clásico): no lleva receta fija */
+  conOpciones: boolean
 }
 type Insumo = { id: string; nombre: string; unidad: string; costo: number | null; elaborado: boolean }
 type Detalle = {
   plato: { id: string; nombre: string; precio: number | null }
   preparacion: string; editadaEnApp: string | null; editadaPor: string | null; desdeFudo: string | null
-  ingredientes: { stock_item_id: string; nombre: string; unidadStock: string; qty: number; unidad: string; nota: string | null }[]
+  ingredientes: { stock_item_id: string; nombre: string; unidadStock: string; qty: number; unidad: string; nota: string | null; elaborado: boolean; lleva: string | null }[]
+  opciones: { nombre: string; min: number; max: number; opciones: { nombre: string; precioExtra: number; costo: number | null; conReceta: boolean }[] }[]
   insumos: Insumo[]; puedeEditar: boolean
 }
-type Filtro = 'todos' | 'sin_receta' | 'revisar'
+type Filtro = 'todos' | 'sin_receta' | 'opciones' | 'revisar'
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('es-AR')}`
 const fmt = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 3 })
@@ -62,14 +65,14 @@ export default function RecetarioPlatos() {
   const categorias = useMemo(() => [...new Set((platos ?? []).map((p) => p.categoria))].sort((a, b) => a.localeCompare(b, 'es')), [platos])
   const cuenta = useMemo(() => {
     const l = platos ?? []
-    return { todos: l.length, sin_receta: l.filter((p) => p.ingredientes === 0).length, revisar: l.filter((p) => p.revisar.length > 0).length }
+    return { todos: l.length, sin_receta: l.filter((p) => p.ingredientes === 0 && !p.conOpciones).length, opciones: l.filter((p) => p.conOpciones).length, revisar: l.filter((p) => p.revisar.length > 0).length }
   }, [platos])
   const visibles = useMemo(() => {
     const q = buscar.trim().toLowerCase()
     return (platos ?? []).filter((p) =>
       (!q || p.nombre.toLowerCase().includes(q)) &&
       (!categoria || p.categoria === categoria) &&
-      (filtro === 'todos' || (filtro === 'sin_receta' && p.ingredientes === 0) || (filtro === 'revisar' && p.revisar.length > 0)))
+      (filtro === 'todos' || (filtro === 'sin_receta' && p.ingredientes === 0 && !p.conOpciones) || (filtro === 'opciones' && p.conOpciones) || (filtro === 'revisar' && p.revisar.length > 0)))
   }, [platos, buscar, categoria, filtro])
   const porCategoria = useMemo(() => {
     const m = new Map<string, Plato[]>()
@@ -92,7 +95,7 @@ export default function RecetarioPlatos() {
       {platos && (
         <>
           <div className="flex flex-wrap gap-1.5">
-            {([['todos', 'Todos'], ['sin_receta', 'Sin receta'], ['revisar', '⚠ Para revisar']] as const).map(([k, label]) => (
+            {([['todos', 'Todos'], ['sin_receta', 'Sin receta'], ['opciones', 'Con opciones'], ['revisar', '⚠ Para revisar']] as const).map(([k, label]) => (
               <button key={k} onClick={() => setFiltro(k)} className={cn('rounded-full px-3 py-1 text-[11.5px] font-medium', filtro === k ? (k === 'revisar' ? 'bg-[#fef2f2] text-[#ea504c] ring-1 ring-[#ea504c]/30' : 'bg-[#e8f5f1] text-[#006d5a] ring-1 ring-[#006d5a]/30') : 'bg-white text-[#7d6c64] ring-1 ring-[#ebe6df]')}>
                 {label} <span className="opacity-60">{cuenta[k]}</span>
               </button>
@@ -123,7 +126,7 @@ export default function RecetarioPlatos() {
                           <p className="truncate text-[13.5px] font-semibold text-[#3d2c24]">{p.nombre}</p>
                           <p className="truncate text-[11px] text-[#a39e97]">
                             {p.ingredientes === 0
-                              ? <span className="font-semibold text-[#b0762a]">Sin receta</span>
+                              ? (p.conOpciones ? <span className="font-semibold text-[#4a90d9]">Se arma con opciones de Fudo</span> : <span className="font-semibold text-[#b0762a]">Sin receta</span>)
                               : <>{p.ingredientes} ingrediente{p.ingredientes !== 1 ? 's' : ''}{p.costo ? <> · costo {money(p.costo)}{!p.costoCompleto && '*'}{pct != null && <> · <b className={pct > 35 ? 'text-[#ea504c]' : 'text-[#006d5a]'}>{pct}%</b> del precio</>}</> : ''}</>}
                           </p>
                           {p.revisar.length > 0 && <p className="mt-0.5 flex items-center gap-1 text-[11px] font-semibold text-[#ea504c]"><AlertTriangle className="size-3" /> Revisar: {p.revisar.slice(0, 3).join(', ')}</p>}
@@ -232,7 +235,8 @@ function EditorPlato({ id, puedeEditar, onClose, onGuardado }: { id: string; pue
             <div>
               <p className="mb-1 text-[12px] font-semibold text-[#3d2c24]">Lleva, por porción <span className="font-normal text-[#a39e97]">· según Fudo</span></p>
               <ul className="divide-y divide-[#f5f0ea] overflow-hidden rounded-xl ring-1 ring-[#ebe6df]">
-                {lineas.length === 0 && <li className="bg-[#faf8f5] px-3 py-3 text-center text-[12px] text-[#a39e97]">Sin ingredientes. Cargá la receta en Fudo y volvé a importar.</li>}
+                {lineas.length === 0 && d.opciones.length === 0 && <li className="bg-[#faf8f5] px-3 py-3 text-center text-[12px] text-[#a39e97]">Sin ingredientes. Cargá la receta en Fudo y volvé a importar.</li>}
+                {lineas.length === 0 && d.opciones.length > 0 && <li className="bg-[#eef4fc] px-3 py-2.5 text-[12px] text-[#2f5f9a]">No tiene receta fija: se arma con las opciones de abajo y Fudo descuenta con la receta de cada opción elegida.</li>}
                 {lineas.map((l, idx) => (
                   <li key={`${l.stock_item_id}-${idx}`} className={cn('px-3 py-2', avisos[idx]?.grave ? 'bg-[#fffafa]' : 'bg-white')}>
                     <div className="flex items-center gap-2">
@@ -241,11 +245,38 @@ function EditorPlato({ id, puedeEditar, onClose, onGuardado }: { id: string; pue
                       </p>
                       <p className="shrink-0 text-[13px] font-semibold tabular-nums text-[#3d2c24]">{fmt(l.qty)} {l.unidad}</p>
                     </div>
+                    {l.elaborado && (
+                      <p className="mt-0.5 text-[11px] text-[#7d6c64]">
+                        {l.lleva ? <>↳ Cada uno lleva: {l.lleva}. </> : <>↳ Sin receta de producción. </>}
+                        <Link href="/cocina/elaborados" className="font-semibold text-[#b0762a] underline">{l.lleva ? 'Se cambia en Elaborados' : 'Cargala en Elaborados'}</Link>
+                      </p>
+                    )}
                     {avisos[idx] && <p className={cn('mt-0.5 text-[11px] font-semibold', avisos[idx]!.grave ? 'text-[#ea504c]' : 'text-[#b0762a]')}>⚠ {avisos[idx]!.texto}</p>}
                   </li>
                 ))}
               </ul>
             </div>
+
+            {d.opciones.length > 0 && (
+              <div>
+                <p className="mb-1 text-[12px] font-semibold text-[#3d2c24]">Opciones <span className="font-normal text-[#a39e97]">· según Fudo</span></p>
+                <div className="space-y-2">
+                  {d.opciones.map((g, gi) => (
+                    <div key={gi} className="rounded-xl bg-white px-3 py-2 ring-1 ring-[#ebe6df]">
+                      <p className="text-[12px] font-semibold text-[#3d2c24]">{g.nombre} <span className="font-normal text-[#a39e97]">· elige {g.min === g.max ? g.min : `${g.min} a ${g.max}`}</span></p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {g.opciones.map((o, oi) => (
+                          <span key={oi} className={cn('rounded-md px-1.5 py-0.5 text-[11px]', o.conReceta ? 'bg-[#e8f5f1] text-[#004d40]' : 'bg-[#fdf6ec] text-[#8a5a1c]')}>
+                            {o.nombre}{o.costo != null && <b> {money(o.costo)}</b>}{!o.conReceta && ' · sin receta'}{o.precioExtra > 0 && ` (+${money(o.precioExtra)})`}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1 text-[10.5px] text-[#a39e97]">En verde, las opciones con receta (con su costo). En naranja, las que no tienen: al venderlas no se descuenta nada.</p>
+              </div>
+            )}
 
             <label className="block">
               <span className="mb-1 block text-[12px] font-semibold text-[#3d2c24]">Cómo se arma</span>

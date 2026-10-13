@@ -4,6 +4,7 @@ import { requireRole } from '@/lib/supabase/require-role'
 import { ROLES } from '@/lib/constants'
 import { costRecipes } from '@/lib/recipes/recipe-cost'
 import { avisoCantidad } from '@/lib/recipes/recetario-platos'
+import { productosConOpciones } from '@/lib/fudo/opciones'
 
 // ---------------------------------------------------------------------------
 // GET /api/recetario — Recetario de platos: cada plato de la carta con su
@@ -33,7 +34,8 @@ export async function GET() {
   // De a 100 ids: con ~300 recetas el pedido entero queda demasiado largo
   const tandas: string[][] = []
   for (let i = 0; i < recipeIds.length; i += 100) tandas.push(recipeIds.slice(i, i + 100))
-  const [costos, ingsT, recetasT] = await Promise.all([
+  const [conOpciones, costos, ingsT, recetasT] = await Promise.all([
+    productosConOpciones().catch(() => new Map<string, number>()),
     costRecipes(admin, recipeIds).catch(() => new Map()),
     Promise.all(tandas.map((t) => admin.from('recipe_ingredients').select('recipe_id, qty_per_portion, ingredient_unit, stock_items(name, unit)').in('recipe_id', t))),
     Promise.all(tandas.map((t) => admin.from('recipes').select('id, editada_en_app_at').in('id', t))),
@@ -67,6 +69,8 @@ export async function GET() {
         revisar: p.recipe_id ? revisar.get(p.recipe_id) ?? [] : [],
         editadaEnApp: p.recipe_id ? !!editada.get(p.recipe_id) : false,
         enFudo: !!p.fudo_product_id,
+        /** Se arma con opciones de Fudo (ej. el Clásico): no lleva receta fija */
+        conOpciones: !!p.fudo_product_id && conOpciones.has(p.fudo_product_id),
       }
     }),
     puedeEditar: ['socio', 'encargado', 'chef'].includes(auth.user.role),

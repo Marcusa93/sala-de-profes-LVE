@@ -4,6 +4,8 @@ import { requireRole } from '@/lib/supabase/require-role'
 import { ROLES } from '@/lib/constants'
 import { logAudit } from '@/lib/audit'
 import { costRecipes } from '@/lib/recipes/recipe-cost'
+import { cargarRecetasProduccion } from '@/lib/produccion/recetas'
+import { opcionesDeProducto } from '@/lib/fudo/opciones'
 
 // ---------------------------------------------------------------------------
 // /api/recetario/[id] — receta de UN plato (id = menu_items.id)
@@ -23,7 +25,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!UUID.test(id)) return NextResponse.json({ error: 'Plato inválido' }, { status: 400 })
   const admin = createAdminClient()
 
-  const { data: plato } = await admin.from('menu_items').select('id, name, recipe_id, sale_price').eq('id', id).maybeSingle()
+  const { data: plato } = await admin.from('menu_items').select('id, name, recipe_id, sale_price, fudo_product_id').eq('id', id).maybeSingle()
   if (!plato) return NextResponse.json({ error: 'Plato no encontrado' }, { status: 404 })
 
   const [{ data: receta }, { data: ings }, { data: insumos }, costos] = await Promise.all([
@@ -45,8 +47,39 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     editadaPor = p?.first_name ?? null
   }
 
+  // Elaborados (medallón, milanesa…): qué lleva cada uno según su receta de producción
+  const elaboradosIds = ((ings ?? []) as { stock_item_id: string }[]).map((r) => r.stock_item_id).filter((sid) => porId.get(sid)?.is_produced)
+  const recetasProd = elaboradosIds.length ? await cargarRecetasProduccion(admin, elaboradosIds).catch(() => new Map()) : new Map()
+  const fmt = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 3 })
+  const lleva = (sid: string): string | null => {
+    const r = recetasProd.get(sid)
+    if (!r) return null
+    return r.ingredientes.map((i: { name: string; qty_por_unidad: number; unidad_receta: string | null; unit: string }) => `${fmt(i.qty_por_unidad)} ${i.unidad_receta ?? i.unit} ${i.name}`).join(', ')
+  }
+
+  // Opciones de Fudo (grupos modificadores): el plato se arma con lo que elige el cliente
+  let opciones: { nombre: string; min: number; max: number; opciones: { nombre: string; precioExtra: number; costo: number | null; conReceta: boolean }[] }[] = []
+  if (plato.fudo_product_id) {
+    try {
+      const grupos = await opcionesDeProducto(plato.fudo_product_id)
+      const fids = [...new Set(grupos.flatMap((g) => g.opciones.map((o) => o.fudoProductId)).filter(Boolean))]
+      const { data: mis } = fids.length ? await admin.from('menu_items').select('fudo_product_id, recipe_id').in('fudo_product_id', fids) : { data: [] }
+      const recetaDe = new Map(((mis ?? []) as { fudo_product_id: string; recipe_id: string | null }[]).filter((m) => m.recipe_id).map((m) => [m.fudo_product_id, m.recipe_id as string]))
+      const costosOp = await costRecipes(admin, [...new Set(recetaDe.values())]).catch(() => new Map())
+      opciones = grupos.map((g) => ({
+        nombre: g.nombre, min: g.min, max: g.max,
+        opciones: g.opciones.map((o) => {
+          const rid = recetaDe.get(o.fudoProductId)
+          const c = rid ? costosOp.get(rid) : undefined
+          return { nombre: o.nombre, precioExtra: o.precioExtra, costo: c && c.cost > 0 ? Math.round(c.cost) : null, conReceta: !!rid && (c?.ingredients ?? 0) > 0 }
+        }),
+      }))
+    } catch { /* Fudo no respondió: el plato se muestra sin las opciones */ }
+  }
+
   return NextResponse.json({
     plato: { id: plato.id, nombre: plato.name, precio: plato.sale_price != null ? Number(plato.sale_price) : null },
+    opciones,
     preparacion: receta?.preparation ?? '',
     editadaEnApp: receta?.editada_en_app_at ?? null,
     editadaPor,
@@ -64,6 +97,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           qty: Number(r.qty_per_portion ?? 0),
           unidad: r.ingredient_unit ?? i?.unit ?? 'unidad',
           nota: r.notes,
+          elaborado: !!i?.is_produced,
+          lleva: i?.is_produced ? lleva(r.stock_item_id) : null,
         }
       }),
     insumos: ((insumos ?? []) as Insumo[]).map((i) => ({ id: i.id, nombre: i.name, unidad: i.unit, costo: i.cost_per_unit, elaborado: !!i.is_produced })),
