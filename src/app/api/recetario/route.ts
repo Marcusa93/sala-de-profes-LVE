@@ -8,7 +8,8 @@ import { avisoCantidad } from '@/lib/recipes/recetario-platos'
 // ---------------------------------------------------------------------------
 // GET /api/recetario — Recetario de platos: cada plato de la carta con su
 // receta (qué lleva por porción), costo y si hay algo para revisar.
-// La edición va por /api/recetario/[menuItemId].
+// Los ingredientes mandan en Fudo (se traen importando el Excel); acá se
+// ven, se detectan errores y se edita solo "Cómo se arma".
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
@@ -18,9 +19,10 @@ export async function GET() {
   if (auth.response) return auth.response
   const admin = createAdminClient()
 
-  const [{ data: platos }, { data: categorias }] = await Promise.all([
+  const [{ data: platos }, { data: categorias }, { data: imp }] = await Promise.all([
     admin.from('menu_items').select('id, name, recipe_id, sale_price, menu_category_id, fudo_product_id').eq('is_active', true).order('name'),
     admin.from('menu_categories').select('id, name'),
+    admin.from('app_settings').select('value').eq('key', 'fudo_recetas_import').maybeSingle(),
   ])
   type Plato = { id: string; name: string; recipe_id: string | null; sale_price: number | null; menu_category_id: number | null; fudo_product_id: string | null }
   const lista = (platos ?? []) as Plato[]
@@ -67,5 +69,7 @@ export async function GET() {
       }
     }),
     puedeEditar: ['socio', 'encargado', 'chef'].includes(auth.user.role),
+    puedeImportar: ['socio', 'encargado'].includes(auth.user.role),
+    ultimaImportacion: (imp?.value as { last_import_at?: string } | null)?.last_import_at ?? null,
   })
 }

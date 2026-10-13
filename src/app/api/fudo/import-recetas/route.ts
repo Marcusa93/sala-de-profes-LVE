@@ -233,7 +233,7 @@ export async function POST(request: NextRequest) {
   const [menuRes, stockRes, recipesRes] = await Promise.all([
     admin.from('menu_items').select('id, name, fudo_product_id, recipe_id'),
     admin.from('stock_items').select('id, name, unit, fudo_ingredient_id, fudo_product_id'),
-    admin.from('recipes').select('id, name, category, output_stock_item_id, editada_en_app_at'),
+    admin.from('recipes').select('id, name, category, output_stock_item_id'),
   ])
 
   if (menuRes.error || stockRes.error || recipesRes.error) {
@@ -428,13 +428,6 @@ export async function POST(request: NextRequest) {
 
   plan.sort((a, b) => a.productName.localeCompare(b.productName, 'es'))
 
-  // Recetas corregidas a mano en el Recetario de platos: el Excel de Fudo no
-  // las pisa (se informan aparte para revisarlas)
-  const editadas = new Set(((recipesRes.data ?? []) as { id: string; editada_en_app_at: string | null }[])
-    .filter((r) => r.editada_en_app_at).map((r) => r.id))
-  const protegidas = plan.filter((p) => p.recipeId && editadas.has(p.recipeId)).map((p) => p.productName)
-  for (let i = plan.length - 1; i >= 0; i--) if (plan[i].recipeId && editadas.has(plan[i].recipeId!)) plan.splice(i, 1)
-
   const toCreate = plan.filter(p => p.action === 'crear')
   const toUpdate = plan.filter(p => p.action === 'actualizar')
   const totalIngredients = plan.reduce((acc, p) => acc + p.ingredients.length, 0)
@@ -456,8 +449,6 @@ export async function POST(request: NextRequest) {
       creadas: toCreate.length,
       actualizadas: toUpdate.length,
       total: plan.length,
-      /** Editadas en Sala de Profes: no se reemplazaron */
-      protegidas,
     },
     ingredientes: {
       vinculados: totalIngredients,

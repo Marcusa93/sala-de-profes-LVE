@@ -9,6 +9,8 @@ import { idsConRolEnTurno, ROLES_ENCARGADO_TURNO } from '@/lib/turnos/rol-del-tu
 //   · Pedido "en camino" hace 2 días o más → "¿Llegó el pedido de X?"
 //     (si llegó y nadie lo marcó, la mercadería nunca se sumó al stock)
 //   · Producción esperando validación hace más de 12 h → "Validala o rechazala"
+//   · Recetas de Fudo importadas hace más de 30 días → una vez por semana
+//     (las recetas de los platos se cambian en Fudo y la app las trae del Excel)
 // Solo de 10 a 20 h (no de noche). La clave del día va a avisos_enviados y se
 // reserva antes de mandar, así sale una sola vez aunque corran dos procesos.
 // Lo corre el pulso de Fudo cada 10 minutos.
@@ -16,6 +18,7 @@ import { idsConRolEnTurno, ROLES_ENCARGADO_TURNO } from '@/lib/turnos/rol-del-tu
 
 const DIAS_PEDIDO = 2
 const HORAS_PRODUCCION = 12
+const DIAS_RECETAS = 30
 
 async function destinatarios(admin: SupabaseClient, ahora: Date): Promise<string[]> {
   const enTurno = await idsConRolEnTurno(admin, ROLES_ENCARGADO_TURNO, ahora)
@@ -31,8 +34,8 @@ async function reservar(admin: SupabaseClient, clave: string): Promise<boolean> 
 
 const ddmm = (iso: string) => new Date(iso).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit' })
 
-export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()): Promise<{ pedidos: number; producciones: number }> {
-  const out = { pedidos: 0, producciones: 0 }
+export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()): Promise<{ pedidos: number; producciones: number; recetas: number }> {
+  const out = { pedidos: 0, producciones: 0, recetas: 0 }
   const hora = Number(ahora.toLocaleString('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false })) % 24
   if (hora < 10 || hora >= 20) return out
   const hoy = fechaOperativa(ahora)
@@ -80,6 +83,23 @@ export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()
       url: '/stock/produccion',
     })))
     out.producciones++
+  }
+
+  // ---- Recetas de Fudo desactualizadas (una vez por semana, el lunes o el primer día que toque) ----
+  const { data: imp } = await admin.from('app_settings').select('value').eq('key', 'fudo_recetas_import').maybeSingle()
+  const ultima = (imp?.value as { last_import_at?: string } | null)?.last_import_at ?? null
+  const dias = ultima ? Math.floor((ahora.getTime() - Date.parse(ultima)) / 86_400_000) : null
+  if (dias == null || dias > DIAS_RECETAS) {
+    const f = new Date(`${hoy}T12:00:00Z`)
+    const lunes = new Date(f.getTime() - ((f.getUTCDay() + 6) % 7) * 86_400_000).toISOString().slice(0, 10)
+    if (await reservar(admin, `recetas:${lunes}`)) {
+      await Promise.allSettled((await getPara()).map((id) => sendPushToUser(id, {
+        title: '📋 Actualizá las recetas de Fudo',
+        body: `${ultima ? `La última importación fue el ${ddmm(ultima)} (hace ${dias} días)` : 'Nunca se importaron las recetas'}. Si cambiaron recetas en Fudo, exportá el Excel de productos y subilo en Más → Importar recetas.`,
+        url: '/admin/fudo/importar',
+      })))
+      out.recetas++
+    }
   }
   return out
 }
