@@ -23,8 +23,10 @@ export async function guardarChatsTelegram(admin: SupabaseClient, chatIds: strin
 
 export async function llamarTelegram<T = unknown>(metodo: string, body?: Record<string, unknown>): Promise<T> {
   // En Vercel quedó como TELEGRAM_JOB_BOT (bot @LVE_Job_Bot); se aceptan los dos nombres
-  const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.TELEGRAM_JOB_BOT
-  if (!token) throw new Error('Falta la clave del bot (TELEGRAM_JOB_BOT) en Vercel')
+  const crudo = process.env.TELEGRAM_BOT_TOKEN ?? process.env.TELEGRAM_JOB_BOT ?? ''
+  // Solo la clave (número:letras), por si se pegó con texto alrededor ("HTTP API: …", el nombre del bot)
+  const token = crudo.match(/\d{6,}:[A-Za-z0-9_-]{30,}/)?.[0]
+  if (!token) throw new Error(crudo ? 'La clave del bot (TELEGRAM_JOB_BOT) no tiene el formato de Telegram' : 'Falta la clave del bot (TELEGRAM_JOB_BOT) en Vercel')
   const r = await fetch(`https://api.telegram.org/bot${token}/${metodo}`, {
     method: body ? 'POST' : 'GET',
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
