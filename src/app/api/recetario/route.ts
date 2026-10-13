@@ -20,7 +20,8 @@ export async function GET() {
   const admin = createAdminClient()
 
   const [{ data: platos }, { data: categorias }, { data: imp }] = await Promise.all([
-    admin.from('menu_items').select('id, name, recipe_id, sale_price, menu_category_id, fudo_product_id').eq('is_active', true).order('name'),
+    // Solo los platos que existen en Fudo (los demás son restos viejos de la app)
+    admin.from('menu_items').select('id, name, recipe_id, sale_price, menu_category_id, fudo_product_id').eq('is_active', true).not('fudo_product_id', 'is', null).order('name'),
     admin.from('menu_categories').select('id, name'),
     admin.from('app_settings').select('value').eq('key', 'fudo_recetas_import').maybeSingle(),
   ])
