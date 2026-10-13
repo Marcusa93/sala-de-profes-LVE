@@ -148,10 +148,16 @@ async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise
   const manuales = gastos.filter((g) => !deLaApp.has(g.id))
   if (manuales.length === 0) return 0
 
-  // Un solo resumen por día con los gastos nuevos (cada gasto se avisa una vez)
+  // Un solo resumen por día con los gastos nuevos (cada gasto se avisa una
+  // vez; los que aparezcan después del aviso de hoy van en el de mañana)
+  if (!(await reservar(admin, `gastos_manuales_dia:${fechaOperativa(ahora)}`))) return 0
   const nuevos: typeof manuales = []
   for (const g of manuales) if (await reservar(admin, `gasto_manual:${g.id}`)) nuevos.push(g)
-  if (nuevos.length === 0) return 0
+  if (nuevos.length === 0) {
+    // No había nada nuevo: liberar el turno de hoy para un gasto que aparezca más tarde
+    await admin.from('avisos_enviados').delete().eq('clave', `gastos_manuales_dia:${fechaOperativa(ahora)}`)
+    return 0
+  }
   const { data: perfiles } = await admin.from('profiles').select('id').eq('is_active', true).in('role', ['socio', 'encargado'])
   const provs = [...new Set(nuevos.map((g) => g.provider ?? 'sin proveedor'))]
   await Promise.allSettled((perfiles ?? []).map((p: { id: string }) => sendPushToUser(p.id, {
