@@ -12,9 +12,9 @@ import { idsConRolEnTurno, ROLES_ENCARGADO_TURNO } from '@/lib/turnos/rol-del-tu
 //   · Recetas de Fudo importadas hace más de 30 días → una vez por semana
 //     (las recetas de los platos se cambian en Fudo y la app las trae del Excel)
 //   · Compras recibidas sin precio → no están en Fudo como gasto (una vez por día)
-//   · Gasto con insumos cargado directo en Fudo (no por la app) → a socios y
-//     encargados, uno por gasto: las compras se cargan en la app, y si además
-//     se marcó "Llegó", el stock se sumó dos veces
+//   · Gastos con insumos cargados directo en Fudo (no por la app) → a socios
+//     y encargados, un resumen con los nuevos: las compras se cargan en la
+//     app, y si además se marcó "Llegó", el stock se sumó dos veces
 // Solo de 10 a 20 h (no de noche). La clave del día va a avisos_enviados y se
 // reserva antes de mandar, así sale una sola vez aunque corran dos procesos.
 // Lo corre el pulso de Fudo cada 10 minutos.
@@ -148,18 +148,16 @@ async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise
   const manuales = gastos.filter((g) => !deLaApp.has(g.id))
   if (manuales.length === 0) return 0
 
+  // Un solo resumen por día con los gastos nuevos (cada gasto se avisa una vez)
+  const nuevos: typeof manuales = []
+  for (const g of manuales) if (await reservar(admin, `gasto_manual:${g.id}`)) nuevos.push(g)
+  if (nuevos.length === 0) return 0
   const { data: perfiles } = await admin.from('profiles').select('id').eq('is_active', true).in('role', ['socio', 'encargado'])
-  const para = (perfiles ?? []).map((p: { id: string }) => p.id)
-  let n = 0
-  for (const g of manuales) {
-    if (!(await reservar(admin, `gasto_manual:${g.id}`))) continue
-    const insumos = g.ingredientNames.slice(0, 4).join(', ') + (g.ingredientNames.length > 4 ? '…' : '')
-    await Promise.allSettled(para.map((id) => sendPushToUser(id, {
-      title: '⚠️ Compra cargada directo en Fudo',
-      body: `${g.provider ?? 'Proveedor'} $${Math.round(g.amount).toLocaleString('es-AR')} (${insumos}). Las compras se cargan en la app ("Llegó"). Si ese pedido también se marcó en la app, el stock se sumó dos veces: hay que corregirlo.`,
-      url: '/pedidos',
-    })))
-    n++
-  }
-  return n
+  const provs = [...new Set(nuevos.map((g) => g.provider ?? 'sin proveedor'))]
+  await Promise.allSettled((perfiles ?? []).map((p: { id: string }) => sendPushToUser(p.id, {
+    title: `⚠️ ${nuevos.length === 1 ? 'Una compra se cargó' : `${nuevos.length} compras se cargaron`} directo en Fudo`,
+    body: `${provs.slice(0, 4).join(', ')}${provs.length > 4 ? '…' : ''}. Las compras se cargan en la app ("Llegó"), que crea el gasto en Fudo. Si también se marcaron en la app, el stock se sumó dos veces.`,
+    url: '/pedidos',
+  })))
+  return nuevos.length
 }
