@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // ---------------------------------------------------------------------------
 // Mensajes de la app por Telegram (resúmenes de turno)
 // ---------------------------------------------------------------------------
-// TELEGRAM_BOT_TOKEN (Vercel) = el bot que manda. Los chats que reciben se
+// TELEGRAM_JOB_BOT (Vercel) = la clave del bot @LVE_Job_Bot, que manda. Los chats que reciben se
 // guardan en app_settings 'telegram_resumenes' al vincular (Más → el socio
 // le escribe /start al bot y abre /api/admin/telegram/vincular).
 // ---------------------------------------------------------------------------
@@ -22,8 +22,9 @@ export async function guardarChatsTelegram(admin: SupabaseClient, chatIds: strin
 }
 
 export async function llamarTelegram<T = unknown>(metodo: string, body?: Record<string, unknown>): Promise<T> {
-  const token = process.env.TELEGRAM_BOT_TOKEN
-  if (!token) throw new Error('Falta TELEGRAM_BOT_TOKEN en Vercel')
+  // En Vercel quedó como TELEGRAM_JOB_BOT (bot @LVE_Job_Bot); se aceptan los dos nombres
+  const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.TELEGRAM_JOB_BOT
+  if (!token) throw new Error('Falta la clave del bot (TELEGRAM_JOB_BOT) en Vercel')
   const r = await fetch(`https://api.telegram.org/bot${token}/${metodo}`, {
     method: body ? 'POST' : 'GET',
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
