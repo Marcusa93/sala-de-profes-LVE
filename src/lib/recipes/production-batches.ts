@@ -77,6 +77,8 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Sal fina celusal', qty: 40, unit: 'g' },
       { name: 'Pimienta Blanca', qty: 20,  unit: 'g' },
       { name: 'Oregano',         qty: 15,  unit: 'g' },
+      // 500 g netos por kg de milanesa; lo que sobra no se reutiliza → 1 kg por tanda
+      { name: 'Rebozador Preferido 5Kg', qty: 1000, unit: 'g', note: 'pan rallado: lo que sobra se descarta' },
     ],
     output: { name: 'Milanesa cruda', unit: 'unidad', yieldPerBase: 13 },
     yieldNote: 'Bife 178g bruto (compra) → 150-160g neto tras limpieza. Cargar el PESO BRUTO comprado: 2,314kg ≈ 13 milanesas. La merma de limpieza (~15%) ya está incluida en el costo.',
@@ -137,7 +139,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
     baseUnit: 'kg',
     secondary: [],
     output: { name: 'Pollo porcionado', unit: 'unidad', yieldPerBase: 68 },
-    yieldNote: 'Filetear y porcionar en bolsitas de 200g. 15kg → 68 porciones',
+    yieldNote: 'Filetear y porcionar en bolsitas de 200g. 15kg → 65 a 70 porciones según el agua que pierde el filet (promedio 68)',
   },
 
   {
@@ -159,7 +161,8 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Pimenton',         qty: 40,  unit: 'g',  note: 'se mezcla en el pan rallado' },
       { name: 'Cereal triturado', qty: 150, unit: 'g', note: 'se mezcla en el pan rallado — sin stock_item hoy' },
     ],
-    output: { name: 'baston mozza unidad', unit: 'unidad', yieldPerBase: 6 },
+    // En stock se cuenta cada bastón (4 = 1 porción): 1 kg → 6 porciones → 24 bastones
+    output: { name: 'baston mozza unidad', unit: 'unidad', yieldPerBase: 24 },
     yieldNote: 'Bastones de 40g (4 bastones = 1 porción). Sin rebozar: 6 porciones / 1kg. Rebozado: bastón de 70g, porción 280g',
   },
 
