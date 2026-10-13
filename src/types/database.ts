@@ -2741,6 +2741,9 @@ export type Database = {
           cost_per_portion: number | null
           created_at: string | null
           created_by: string
+          editada_en_app_at: string | null
+          editada_por: string | null
+          fudo_synced_at: string | null
           id: string
           ingredients: Json | null
           is_active: boolean | null
@@ -2757,6 +2760,9 @@ export type Database = {
           cost_per_portion?: number | null
           created_at?: string | null
           created_by: string
+          editada_en_app_at?: string | null
+          editada_por?: string | null
+          fudo_synced_at?: string | null
           id?: string
           ingredients?: Json | null
           is_active?: boolean | null
@@ -2773,6 +2779,9 @@ export type Database = {
           cost_per_portion?: number | null
           created_at?: string | null
           created_by?: string
+          editada_en_app_at?: string | null
+          editada_por?: string | null
+          fudo_synced_at?: string | null
           id?: string
           ingredients?: Json | null
           is_active?: boolean | null
