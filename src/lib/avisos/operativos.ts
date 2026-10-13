@@ -11,6 +11,10 @@ import { idsConRolEnTurno, ROLES_ENCARGADO_TURNO } from '@/lib/turnos/rol-del-tu
 //   · Producción esperando validación hace más de 12 h → "Validala o rechazala"
 //   · Recetas de Fudo importadas hace más de 30 días → una vez por semana
 //     (las recetas de los platos se cambian en Fudo y la app las trae del Excel)
+//   · Compras recibidas sin precio → no están en Fudo como gasto (una vez por día)
+//   · Gasto con insumos cargado directo en Fudo (no por la app) → a socios y
+//     encargados, uno por gasto: las compras se cargan en la app, y si además
+//     se marcó "Llegó", el stock se sumó dos veces
 // Solo de 10 a 20 h (no de noche). La clave del día va a avisos_enviados y se
 // reserva antes de mandar, así sale una sola vez aunque corran dos procesos.
 // Lo corre el pulso de Fudo cada 10 minutos.
@@ -34,8 +38,8 @@ async function reservar(admin: SupabaseClient, clave: string): Promise<boolean> 
 
 const ddmm = (iso: string) => new Date(iso).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit' })
 
-export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()): Promise<{ pedidos: number; producciones: number; recetas: number }> {
-  const out = { pedidos: 0, producciones: 0, recetas: 0 }
+export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()): Promise<{ pedidos: number; producciones: number; recetas: number; sinPrecio: number; gastosFudo: number }> {
+  const out = { pedidos: 0, producciones: 0, recetas: 0, sinPrecio: 0, gastosFudo: 0 }
   const hora = Number(ahora.toLocaleString('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false })) % 24
   if (hora < 10 || hora >= 20) return out
   const hoy = fechaOperativa(ahora)
@@ -101,5 +105,61 @@ export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()
       out.recetas++
     }
   }
+
+  // ---- Compras recibidas sin precio (no llegaron a Fudo como gasto) ----
+  const hace30 = new Date(ahora.getTime() - 30 * 86_400_000).toISOString()
+  const { data: sinPrecio } = await admin.from('stock_receipts').select('id, cost_total').is('fudo_expense_id', null).gte('received_at', hace30)
+  const nSinPrecio = ((sinPrecio ?? []) as { cost_total: number | null }[]).filter((r) => !(Number(r.cost_total ?? 0) > 0)).length
+  if (nSinPrecio > 0 && (await reservar(admin, `sin_precio:${hoy}`))) {
+    await Promise.allSettled((await getPara()).map((id) => sendPushToUser(id, {
+      title: `💲 ${nSinPrecio} compra${nSinPrecio !== 1 ? 's' : ''} sin precio`,
+      body: 'Se recibieron pero no tienen precio, así que no están en Fudo como gasto. Cargalo en Compras → Pagos → "Falta el precio" y el gasto se crea solo.',
+      url: '/pedidos',
+    })))
+    out.sinPrecio = nSinPrecio
+  }
+
+  // ---- Gastos con insumos cargados directo en Fudo (posible stock doble) ----
+  out.gastosFudo = await gastosManualesEnFudo(admin, ahora)
   return out
+}
+
+/** Desde cuándo rige "las compras se cargan en la app" (no avisar gastos viejos) */
+const DESDE_COMPRAS_EN_APP = '2026-10-13T03:00:00Z'
+
+async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise<number> {
+  const desde = new Date(Math.max(Date.parse(DESDE_COMPRAS_EN_APP), ahora.getTime() - 3 * 86_400_000)).toISOString()
+  let gastos: { id: string; provider: string | null; amount: number; date: string; ingredientNames: string[]; itemCount: number }[] = []
+  try {
+    const { fetchFudoExpenses } = await import('@/lib/fudo/expenses')
+    gastos = (await fetchFudoExpenses(desde)).filter((g) => g.itemCount > 0)
+  } catch {
+    return 0 // Fudo no respondió: se revisa en el próximo pulso
+  }
+  if (gastos.length === 0) return 0
+  // Los que creó o vinculó la app no cuentan
+  const ids = gastos.map((g) => g.id)
+  const [{ data: r }, { data: k }, { data: b }] = await Promise.all([
+    admin.from('stock_receipts').select('fudo_expense_id').in('fudo_expense_id', ids),
+    admin.from('kitchen_orders').select('fudo_expense_id').in('fudo_expense_id', ids),
+    admin.from('bar_orders').select('fudo_expense_id').in('fudo_expense_id', ids),
+  ])
+  const deLaApp = new Set([...(r ?? []), ...(k ?? []), ...(b ?? [])].map((x: { fudo_expense_id: string | null }) => x.fudo_expense_id))
+  const manuales = gastos.filter((g) => !deLaApp.has(g.id))
+  if (manuales.length === 0) return 0
+
+  const { data: perfiles } = await admin.from('profiles').select('id').eq('is_active', true).in('role', ['socio', 'encargado'])
+  const para = (perfiles ?? []).map((p: { id: string }) => p.id)
+  let n = 0
+  for (const g of manuales) {
+    if (!(await reservar(admin, `gasto_manual:${g.id}`))) continue
+    const insumos = g.ingredientNames.slice(0, 4).join(', ') + (g.ingredientNames.length > 4 ? '…' : '')
+    await Promise.allSettled(para.map((id) => sendPushToUser(id, {
+      title: '⚠️ Compra cargada directo en Fudo',
+      body: `${g.provider ?? 'Proveedor'} $${Math.round(g.amount).toLocaleString('es-AR')} (${insumos}). Las compras se cargan en la app ("Llegó"). Si ese pedido también se marcó en la app, el stock se sumó dos veces: hay que corregirlo.`,
+      url: '/pedidos',
+    })))
+    n++
+  }
+  return n
 }

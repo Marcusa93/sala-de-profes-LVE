@@ -14,8 +14,9 @@ import { parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
 //   3. Si a la hora sigue fallando, avisa a socios (una vez).
 //   4. Mientras está pendiente, la lectura de stock desde Fudo le suma el
 //      pendiente, así el espejo nocturno no borra el movimiento.
-//   5. A los 3 días sin poder entrar se descarta (el stock ya se habrá
-//      contado de nuevo) y queda registrado.
+//   5. A los 3 días sin poder entrar, un movimiento de STOCK se descarta (el
+//      stock ya se habrá contado de nuevo). Gastos y pagos nunca se descartan
+//      por tiempo: son plata y se reintentan hasta que entren.
 // ---------------------------------------------------------------------------
 
 export const ALERTA_MIN = 60
@@ -251,7 +252,9 @@ export async function procesarReintentos(admin: SupabaseClient, limite = 25): Pr
     if (res.ok) {
       await admin.from('fudo_reintentos').update({ estado: 'hecho', hecho_at: new Date().toISOString(), intentos: r.intentos + 1, ultimo_error: null, updated_at: new Date().toISOString() }).eq('id', r.id)
       out.hechos++
-    } else if (res.descartar || edadHoras >= DESCARTE_HORAS) {
+    } else if (res.descartar || (edadHoras >= DESCARTE_HORAS && r.tipo === 'stock_delta')) {
+      // Plata (crear un gasto, imputar un pago) NO se descarta por tiempo: se
+      // sigue reintentando hasta que Fudo lo acepte (el aviso a socios sale igual)
       await admin.from('fudo_reintentos').update({ estado: 'descartado', intentos: r.intentos + 1, ultimo_error: res.descartar ?? `Sin poder entrar a Fudo en ${DESCARTE_HORAS} h: ${res.error ?? ''}`.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', r.id)
       out.descartados++
     } else {

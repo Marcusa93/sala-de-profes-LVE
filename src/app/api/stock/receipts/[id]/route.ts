@@ -5,6 +5,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { logAudit } from '@/lib/audit'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { fudoExpensePagado, postFudoPayment } from '@/lib/fudo/expenses'
+import { asegurarGastoEnFudo, TEXTO_GASTO, type ResultadoGasto } from '@/lib/compras/gasto-fudo'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/stock/receipts/[id]
@@ -198,9 +199,17 @@ export async function PATCH(
     }
 
     const userName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
-    logAudit(admin, { userId: user.id, userName, action: 'edit_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} editado`, metadata: { receiptId, changes: update, fudoSynced } }).catch(() => {})
 
-    return NextResponse.json({ success: true, fudoSynced })
+    // Precio cargado después ("Falta el precio"): si la compra todavía no está
+    // en Fudo como gasto, se crea ahora (antes quedaba solo en la app)
+    let gastoFudo: ResultadoGasto | null = null
+    if (update.cost_total !== undefined && Number(update.cost_total) > 0) {
+      gastoFudo = await asegurarGastoEnFudo(admin, receiptId, userName, user.id)
+    }
+
+    logAudit(admin, { userId: user.id, userName, action: 'edit_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} editado${gastoFudo === 'creado' ? ' · gasto creado en Fudo' : ''}`, metadata: { receiptId, changes: update, fudoSynced, gastoFudo } }).catch(() => {})
+
+    return NextResponse.json({ success: true, fudoSynced, gastoFudo, gastoFudoTexto: gastoFudo ? TEXTO_GASTO[gastoFudo] : null })
   } catch (error) {
     console.error('[PATCH /api/stock/receipts/[id]]', error)
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Error interno' }, { status: 500 })
