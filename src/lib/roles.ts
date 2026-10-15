@@ -58,7 +58,7 @@ export function isKitchenRole(role: string | AppRole | null | undefined): boolea
  * cuenta la suya: si el barista no entra, el área "barra" no la cuenta nadie.
  */
 export function canCountStock(role: string | AppRole | null | undefined): boolean {
-  return !!role && (MANAGER_ROLES.has(role) || role === 'chef' || role === 'cocina' || role === 'barista')
+  return !!role && (MANAGER_ROLES.has(role) || role === 'chef' || role === 'cocina' || role === 'barista' || role === 'runner')
 }
 
 /** Can this role create kitchen orders? */
