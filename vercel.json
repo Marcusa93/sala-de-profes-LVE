@@ -47,6 +47,10 @@
     {
       "path": "/api/cron/stock-preclose",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/recordatorio-turno",
+      "schedule": "0 21 * * *"
     }
   ]
 }
