@@ -126,6 +126,113 @@ export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()
   return out
 }
 
+// ---------------------------------------------------------------------------
+// Alerta a socios: empleados que no marcaron o llegaron tarde
+// ---------------------------------------------------------------------------
+// Corre cada 10 min (via fudo-pulso). Para cada turno que empezó hace 15-45
+// min, verifica si hay un clock_in. Si no hay (o fue tarde), empuja una push
+// a todos los socios activos. Dedup: avisos_enviados "marcado_turno:{id}" →
+// máximo un aviso por turno aunque el cron pise dos veces la ventana.
+// ---------------------------------------------------------------------------
+
+const GRACIA_MARCADO_MIN = 10
+
+export async function verificarMarcadosAtiempo(admin: SupabaseClient, ahora = new Date()): Promise<number> {
+  const horaAR = Number(ahora.toLocaleString('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false })) % 24
+  if (horaAR < 7 || horaAR >= 23) return 0
+
+  const ahoraAR = new Date(ahora.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }))
+  const minAhora = ahoraAR.getHours() * 60 + ahoraAR.getMinutes()
+
+  const ventanaInicio = minAhora - 45
+  const ventanaFin = minAhora - 15
+  if (ventanaFin < 6 * 60) return 0
+
+  const toHHMM = (m: number) => {
+    const n = ((m % (24 * 60)) + 24 * 60) % (24 * 60)
+    return `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`
+  }
+
+  const hoyStr = ahoraAR.toLocaleDateString('en-CA') // 'YYYY-MM-DD'
+
+  type ShiftRow = { id: string; user_id: string; start_time: string }
+  const { data: turnos } = await admin
+    .from('shifts')
+    .select('id, user_id, start_time')
+    .eq('shift_date', hoyStr)
+    .gte('start_time', toHHMM(Math.max(6 * 60, ventanaInicio)))
+    .lte('start_time', toHHMM(ventanaFin))
+
+  if (!turnos?.length) return 0
+
+  // Reservar dedup antes de cualquier consulta cara (skip si ya avisamos)
+  const aTratar: ShiftRow[] = []
+  for (const t of turnos as ShiftRow[]) {
+    if (await reservar(admin, `marcado_turno:${t.id}`)) aTratar.push(t)
+  }
+  if (!aTratar.length) return 0
+
+  const userIds = [...new Set(aTratar.map((t) => t.user_id))]
+
+  const [{ data: ausenciasRes }, { data: marcadosRes }, { data: perfilesRes }] = await Promise.all([
+    admin.from('ausencias').select('user_id').eq('fecha', hoyStr).in('user_id', userIds),
+    admin
+      .from('attendance_logs')
+      .select('user_id, clock_in_at')
+      .in('user_id', userIds)
+      .eq('operative_date', hoyStr)
+      .order('clock_in_at', { ascending: true }),
+    admin.from('profiles').select('id, first_name, role').in('id', userIds).eq('is_active', true),
+  ])
+
+  const tieneAusencia = new Set((ausenciasRes ?? []).map((a: { user_id: string }) => a.user_id))
+  const primerFichaje = new Map<string, string>()
+  for (const m of (marcadosRes ?? []) as { user_id: string; clock_in_at: string }[]) {
+    if (!primerFichaje.has(m.user_id)) primerFichaje.set(m.user_id, m.clock_in_at)
+  }
+  const perfil = new Map(
+    ((perfilesRes ?? []) as { id: string; first_name: string | null; role: string }[]).map((p) => [p.id, p]),
+  )
+
+  const alertas: string[] = []
+
+  for (const t of aTratar) {
+    if (tieneAusencia.has(t.user_id)) continue
+    const p = perfil.get(t.user_id)
+    if (!p || p.role === 'socio') continue
+
+    const nombre = p.first_name ?? 'Empleado'
+    const fichaje = primerFichaje.get(t.user_id)
+
+    if (!fichaje) {
+      alertas.push(`${nombre}: no marcó (${t.start_time})`)
+      continue
+    }
+
+    const tardanzaMin = Math.round(
+      (Date.parse(fichaje) - Date.parse(`${hoyStr}T${t.start_time}:00-03:00`)) / 60_000,
+    )
+    if (tardanzaMin > GRACIA_MARCADO_MIN) {
+      alertas.push(`${nombre}: ${tardanzaMin} min tarde`)
+    }
+  }
+
+  if (!alertas.length) return 0
+
+  const { data: socios } = await admin.from('profiles').select('id').eq('is_active', true).eq('role', 'socio')
+  const n = alertas.length
+  await Promise.allSettled(
+    (socios ?? []).map((s: { id: string }) =>
+      sendPushToUser(s.id, {
+        title: n === 1 ? `⏰ ${alertas[0]}` : `⏰ ${n} empleados: sin marcar o tarde`,
+        body: n > 1 ? alertas.join(' · ') : '',
+        url: '/fichajes',
+      }),
+    ),
+  )
+  return n
+}
+
 /** Desde cuándo rige "las compras se cargan en la app" (no avisar gastos viejos) */
 const DESDE_COMPRAS_EN_APP = '2026-10-13T03:00:00Z'
 
