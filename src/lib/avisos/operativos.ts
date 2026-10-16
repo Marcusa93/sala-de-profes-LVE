@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { fechaOperativa } from '@/lib/attendance/jornada'
 import { sendPushToUser } from '@/lib/push/send'
 import { idsConRolEnTurno, ROLES_ENCARGADO_TURNO } from '@/lib/turnos/rol-del-turno'
+import type { FudoExpense } from '@/lib/fudo/expenses'
 
 // ---------------------------------------------------------------------------
 // Avisos operativos al encargado (una vez por día cada uno)
@@ -119,8 +120,9 @@ export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()
     out.sinPrecio = nSinPrecio
   }
 
-  // ---- Gastos con insumos cargados directo en Fudo (posible stock doble) ----
+  // ---- Gastos con insumos cargados directo en Fudo → importar al stock ----
   out.gastosFudo = await gastosManualesEnFudo(admin, ahora)
+  await importarGastosManuales(admin, ahora) // actualiza stock sin esperar al sync de las 3am
   return out
 }
 
@@ -161,9 +163,122 @@ async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise
   const { data: perfiles } = await admin.from('profiles').select('id').eq('is_active', true).in('role', ['socio', 'encargado'])
   const provs = [...new Set(nuevos.map((g) => g.provider ?? 'sin proveedor'))]
   await Promise.allSettled((perfiles ?? []).map((p: { id: string }) => sendPushToUser(p.id, {
-    title: `⚠️ ${nuevos.length === 1 ? 'Una compra se cargó' : `${nuevos.length} compras se cargaron`} directo en Fudo`,
-    body: `${provs.slice(0, 4).join(', ')}${provs.length > 4 ? '…' : ''}. Las compras se cargan en la app ("Llegó"), que crea el gasto en Fudo. Si también se marcaron en la app, el stock se sumó dos veces.`,
+    title: `📦 ${nuevos.length === 1 ? 'Una compra se cargó' : `${nuevos.length} compras se cargaron`} directo en Fudo`,
+    body: `${provs.slice(0, 4).join(', ')}${provs.length > 4 ? '…' : ''}. Se actualizó el stock en la app automáticamente. Para futuras compras, usá "Llegó" en la app.`,
     url: '/pedidos',
   })))
   return nuevos.length
+}
+
+// ---------------------------------------------------------------------------
+// Importación automática de gastos manuales de Fudo al stock de la app
+// ---------------------------------------------------------------------------
+// Cuando alguien carga una compra directo en Fudo (con ingredientes), Fudo
+// actualiza su propio stock. La app no se entera hasta el sync de las 3am.
+// Esta función detecta esos gastos y crea los stock_receipts en la app YA,
+// sin esperar al cron nocturno. Corre cada 10 minutos via fudo-pulso.
+//
+// Dedup: usa fudo_expense_id en stock_receipts. Si ya existe un receipt con ese
+// fudo_expense_id para ese stock_item, se saltea (no hay doble conteo).
+// ---------------------------------------------------------------------------
+
+async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promise<void> {
+  const desde = new Date(Math.max(Date.parse(DESDE_COMPRAS_EN_APP), ahora.getTime() - 3 * 86_400_000)).toISOString()
+
+  let gastos: FudoExpense[] = []
+  try {
+    const { fetchFudoExpenses } = await import('@/lib/fudo/expenses')
+    gastos = (await fetchFudoExpenses(desde)).filter((g) => g.items.length > 0)
+  } catch {
+    return // Fudo no respondió
+  }
+
+  if (gastos.length === 0) return
+
+  // Cuáles ya fueron importados (fudo_expense_id ya existe en stock_receipts)
+  const ids = gastos.map((g) => g.id)
+  const [{ data: r }, { data: k }, { data: b }] = await Promise.all([
+    admin.from('stock_receipts').select('fudo_expense_id').in('fudo_expense_id', ids),
+    admin.from('kitchen_orders').select('fudo_expense_id').in('fudo_expense_id', ids),
+    admin.from('bar_orders').select('fudo_expense_id').in('fudo_expense_id', ids),
+  ])
+  const yaEnApp = new Set([...(r ?? []), ...(k ?? []), ...(b ?? [])].map((x: { fudo_expense_id: string | null }) => x.fudo_expense_id))
+  const pendientes = gastos.filter((g) => !yaEnApp.has(g.id))
+
+  if (pendientes.length === 0) return
+
+  // Cargar mapeos en bloque (evita N queries individuales)
+  const [{ data: stockItems }, { data: suppliers }] = await Promise.all([
+    admin.from('stock_items')
+      .select('id, name, unit, current_qty, fudo_ingredient_id')
+      .eq('is_active', true)
+      .not('fudo_ingredient_id', 'is', null),
+    admin.from('suppliers')
+      .select('id, fudo_provider_id')
+      .not('fudo_provider_id', 'is', null),
+  ])
+
+  type StockRow = { id: string; name: string; unit: string; current_qty: number; fudo_ingredient_id: string }
+  const itemByIngId = new Map(
+    ((stockItems ?? []) as StockRow[]).map((si) => [si.fudo_ingredient_id, { ...si }]),
+  )
+  const supplierByProvId = new Map(
+    ((suppliers ?? []) as { id: string; fudo_provider_id: string }[]).map((s) => [s.fudo_provider_id, s.id]),
+  )
+
+  for (const gasto of pendientes) {
+    const supplierId = gasto.providerId ? (supplierByProvId.get(gasto.providerId) ?? null) : null
+    const fechaAR = gasto.date.slice(0, 10) // 'YYYY-MM-DD'
+
+    for (const item of gasto.items) {
+      if (item.qty <= 0) continue
+      const si = itemByIngId.get(item.ingredientId)
+      if (!si) continue // sin stock_item vinculado → sin match
+
+      // Verificar que no exista ya un receipt para este gasto + insumo
+      const { data: dup } = await admin
+        .from('stock_receipts')
+        .select('id')
+        .eq('fudo_expense_id', gasto.id)
+        .eq('stock_item_id', si.id)
+        .limit(1)
+        .maybeSingle()
+      if (dup) continue
+
+      const { error: rcptErr } = await admin.from('stock_receipts').insert({
+        stock_item_id: si.id,
+        supplier_id: supplierId,
+        qty: item.qty,
+        unit: si.unit,
+        cost_per_unit: item.price > 0 ? item.price : null,
+        cost_total: item.price > 0 ? Math.round(item.price * item.qty * 100) / 100 : null,
+        received_date: fechaAR,
+        received_at: gasto.date,
+        fudo_expense_id: gasto.id,
+        payment_status: 'pagado',
+        note: `Importado desde Fudo (${gasto.provider ?? 'proveedor desconocido'}) — entrada directa`,
+      })
+      if (rcptErr) {
+        console.error('[importarGastosManuales] error receipt:', rcptErr.message, { gasto: gasto.id, item: item.ingredientId })
+        continue
+      }
+
+      // Sumar al stock actual y registrar en stock_logs
+      const oldQty = Number(si.current_qty)
+      const newQty = Math.round((oldQty + item.qty) * 1000) / 1000
+      await Promise.allSettled([
+        admin.from('stock_items').update({ current_qty: newQty, updated_at: ahora.toISOString() }).eq('id', si.id),
+        admin.from('stock_logs').insert({
+          stock_item_id: si.id,
+          action: 'receipt',
+          old_qty: oldQty,
+          new_qty: newQty,
+          note: `Compra en Fudo: ${gasto.provider ?? 'proveedor'} — importado automáticamente`,
+        }),
+      ])
+
+      // Mantener el mapa actualizado para el próximo ítem del mismo insumo
+      si.current_qty = newQty
+    }
+  }
 }
