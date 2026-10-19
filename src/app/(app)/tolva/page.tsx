@@ -71,16 +71,18 @@ export default function TolvaPage() {
     const rows = (data ?? []) as TolvaLog[]
     setLogs(rows)
 
-    // Cruce con ventas (en paralelo, no bloquea la carga)
-    fetch('/api/tolva/cruce?dias=14')
-      .then(r => r.json())
-      .then(d => {
-        const map = new Map<string, CruceRow>()
-        for (const row of (d.rows ?? []) as CruceRow[]) map.set(`${row.log_date}:${row.shift}`, row)
-        setCruce(map)
-        if (d.gr_por_cafe) setGrPorCafe(d.gr_por_cafe)
-      })
-      .catch(() => null)
+    // Cruce con ventas — solo socios (info de gestión, no del barista)
+    if (profile?.role === 'socio') {
+      fetch('/api/tolva/cruce?dias=14')
+        .then(r => r.json())
+        .then(d => {
+          const map = new Map<string, CruceRow>()
+          for (const row of (d.rows ?? []) as CruceRow[]) map.set(`${row.log_date}:${row.shift}`, row)
+          setCruce(map)
+          if (d.gr_por_cafe) setGrPorCafe(d.gr_por_cafe)
+        })
+        .catch(() => null)
+    }
 
     // Turno actual: si ya existe, cargar sus valores; si no, arrastrar el
     // final del último turno registrado como inicio (como hacen en el cuaderno)
