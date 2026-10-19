@@ -408,6 +408,35 @@ export async function postFudoExpense(params: Parameters<typeof fudoExpenseBody>
 }
 
 /**
+ * Suma un producto a un gasto de Fudo que ya existe (misma factura cargada
+ * producto por producto con "Llegó"). Solo si el gasto sigue en el mismo
+ * estado que la compra nueva: cuenta corriente → impago; pagado → pagado (el
+ * pago del monto agregado lo imputa quien llama). Si no, null: va aparte.
+ */
+export async function sumarAGastoFudo(params: { expenseId: string; delta: number; medioPago: string | null | undefined }): Promise<{ id: string; amount: number } | null> {
+  const { expenseId, delta, medioPago } = params
+  if (!(delta > 0)) return null
+  try {
+    const res = await fudoFetch<{ data?: JsonApiRes }>(`/expenses/${encodeURIComponent(expenseId)}?fields[expense]=amount,status,canceled`)
+    const a = res?.data?.attributes
+    if (!a || a.canceled === true) return null
+    const ctaCte = medioPago === 'cuenta_corriente'
+    if (ctaCte ? a.status !== 'UNPAID' : a.status !== 'PAID') return null
+    const nuevo = Math.round((Number(a.amount ?? 0) + delta) * 100) / 100
+    await fudoFetch(`/expenses/${encodeURIComponent(expenseId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { id: expenseId, type: 'Expense', attributes: { amount: nuevo } } }),
+    })
+    cache = null
+    return { id: expenseId, amount: delta }
+  } catch (err) {
+    console.warn('[sumarAGastoFudo] va como gasto aparte:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/**
  * Crea un gasto en Fudo al confirmar la llegada de un pedido en modo lve_stock.
  * Devuelve { id, amount } si tuvo éxito, null si Fudo falla (no corta el flujo
  * de recepción — el stock ya fue actualizado).
