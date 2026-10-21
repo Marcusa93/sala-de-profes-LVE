@@ -515,6 +515,11 @@ export async function POST(request: NextRequest) {
               body: JSON.stringify({ data: { id: batchExpense.id, type: 'Expense', attributes: { amount: totalParaFudo } } }),
             }).catch((e) => console.warn('[confirm_arrival_batch] no se pudo ajustar el monto del gasto:', e instanceof Error ? e.message : e))
             batchExpense = { id: batchExpense.id, amount: totalParaFudo }
+            // Cuenta corriente: la deuda que anotó Fudo al crearlo pasa al monto final
+            if (paymentMethod === 'cuenta_corriente') {
+              const { ajustarDeudaCtaCte } = await import('@/lib/fudo/expenses')
+              await ajustarDeudaCtaCte(batchExpense.id, totalParaFudo)
+            }
           }
           if (!batchExpense) {
             batchExpense = await createFudoExpenseForReceipt({
@@ -852,7 +857,7 @@ async function confirmarLlegada(
         fudoIngredientId: si.fudo_ingredient_id ?? null,
         fudoProductId: si.fudo_ingredient_id ? null : si.fudo_product_id ?? null,
         qty,
-        precioUnitario: costPerUnit ?? receiptCostTotal / qty,
+        precioTotal: receiptCostTotal,
       })
       if (r.sumoStock) fudoSumadoPorGasto = { fudoAfter: r.fudoAfter }
     }

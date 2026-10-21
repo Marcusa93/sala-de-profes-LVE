@@ -421,11 +421,16 @@ export async function agregarItemAGastoFudo(params: {
   fudoIngredientId?: string | null
   fudoProductId?: string | null
   qty: number
-  precioUnitario: number
+  /**
+   * TOTAL del renglón (cantidad × precio). En Fudo el "precio" de un ítem de
+   * gasto es el total de esa línea: con el precio por kg el detalle mostraba
+   * el costo de 1 kg (gasto 2240: Jamón crudo 2,61 kg → $13.933 en vez de $36.364).
+   */
+  precioTotal: number
 }): Promise<{ itemCreado: boolean; sumoStock: boolean; fudoAfter: number | null }> {
-  const { expenseId, fudoIngredientId, fudoProductId, qty, precioUnitario } = params
+  const { expenseId, fudoIngredientId, fudoProductId, qty, precioTotal } = params
   const nada = { itemCreado: false, sumoStock: false, fudoAfter: null }
-  if (!(qty > 0) || !(precioUnitario > 0) || (!fudoIngredientId && !fudoProductId)) return nada
+  if (!(qty > 0) || !(precioTotal > 0) || (!fudoIngredientId && !fudoProductId)) return nada
   const { readFudoIngredientStock, readFudoProductStock } = await import('@/lib/fudo/stock-sync')
   const leer = () => (fudoIngredientId ? readFudoIngredientStock(fudoIngredientId) : readFudoProductStock(fudoProductId!))
   try {
@@ -441,7 +446,7 @@ export async function agregarItemAGastoFudo(params: {
       body: JSON.stringify({
         data: {
           type: 'ExpenseItem',
-          attributes: { price: Math.round(precioUnitario * 10000) / 10000, quantity: qty },
+          attributes: { price: Math.round(precioTotal * 100) / 100, quantity: qty },
           relationships: {
             expense: { data: { type: 'Expense', id: expenseId } },
             ...(fudoIngredientId
@@ -479,6 +484,34 @@ export async function agregarItemAGastoFudo(params: {
 }
 
 /**
+ * Cuenta corriente: Fudo anota la deuda (un pago "Cta. Cte.") por el monto del
+ * gasto AL CREARLO. Si después el monto cambia (misma factura cargada de a un
+ * producto, o "Llegó todo" que se ajusta al final), la deuda quedaba en el
+ * monto viejo y aparecía un "saldo a pagar" que no correspondía (gasto 2240).
+ * Esto lleva la deuda al monto actual. Si no hay deuda en Cta. Cte., no hace nada.
+ */
+export async function ajustarDeudaCtaCte(expenseId: string, montoTotal: number): Promise<void> {
+  try {
+    const ctaCteId = await fudoPaymentMethodId('cuenta_corriente')
+    const res = await fudoFetch<{ data?: JsonApiRes; included?: JsonApiRes[] }>(
+      `/expenses/${encodeURIComponent(expenseId)}?include=payments&fields[expense]=payments`,
+    )
+    const deuda = (res.included ?? []).find((i) => i.type === 'Payment' && i.attributes?.canceled !== true
+      && (i.relationships?.paymentMethod?.data as { id: string } | null | undefined)?.id === ctaCteId)
+    if (!deuda) return
+    const monto = Math.round(montoTotal * 100) / 100
+    if (Math.abs(Number(deuda.attributes?.amount ?? 0) - monto) < 0.01) return
+    await fudoFetch(`/payments/${encodeURIComponent(deuda.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { id: deuda.id, type: 'Payment', attributes: { amount: monto } } }),
+    })
+  } catch (err) {
+    console.warn('[ajustarDeudaCtaCte] la deuda en Cta. Cte. no se pudo ajustar:', err instanceof Error ? err.message : err)
+  }
+}
+
+/**
  * Suma un producto a un gasto de Fudo que ya existe (misma factura cargada
  * producto por producto con "Llegó"). Solo si el gasto sigue en el mismo
  * estado que la compra nueva: cuenta corriente → impago; pagado → pagado (el
@@ -500,6 +533,8 @@ export async function sumarAGastoFudo(params: { expenseId: string; delta: number
       body: JSON.stringify({ data: { id: expenseId, type: 'Expense', attributes: { amount: nuevo } } }),
     })
     cache = null
+    // Cuenta corriente: la deuda anotada en Fudo pasa al total nuevo
+    if (ctaCte) await ajustarDeudaCtaCte(expenseId, nuevo)
     return { id: expenseId, amount: delta }
   } catch (err) {
     console.warn('[sumarAGastoFudo] va como gasto aparte:', err instanceof Error ? err.message : err)
