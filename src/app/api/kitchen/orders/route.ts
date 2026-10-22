@@ -9,6 +9,7 @@ import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { getConsumptionContextWithTimeout } from '@/lib/stock/consumption'
 import { conCargadoPor, parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
+import { fraccionADecimal } from '@/lib/compras/lista-pegada'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -731,7 +732,7 @@ async function confirmarLlegada(
   /** gastoLote: en "Llegó todo", el gasto único del proveedor (se crea al primer producto que lo necesita) */
   opciones: { gastoLote?: () => Promise<{ id: string } | null> } = {},
 ): Promise<Resultado> {
-  const { orderId, source, mode, expense, receivedQty, unitCost, totalCost, amount, note, paymentMethod, expiresAt, skipFudoExpense } = body as {
+  const { orderId, source, mode, expense, receivedQty: receivedQtyEscrita, unitCost, totalCost, amount, note, paymentMethod, expiresAt, skipFudoExpense } = body as {
     orderId: number
     source: 'cocina' | 'barra'
     mode: 'fudo_expense' | 'lve_stock' | 'sin_stock'
@@ -750,6 +751,8 @@ async function confirmarLlegada(
     /** batch: si true, no crea gasto en Fudo (el batch handler lo hace una sola vez) */
     skipFudoExpense?: boolean
   }
+  // "1/2kg" → "0,5kg": parseFloat leía 1 y entraba un kilo entero
+  const receivedQty = receivedQtyEscrita != null ? fraccionADecimal(String(receivedQtyEscrita)) : receivedQtyEscrita
   // Categoría y comprobante (en lote los guarda el batch, una vez por factura)
   let gasto = skipFudoExpense ? null : parseDatosGasto((body as { gasto?: unknown }).gasto)
   // cuenta_corriente → queda en cuentas a pagar; el resto → pagado de contado
