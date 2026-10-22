@@ -407,12 +407,21 @@ export async function POST(request: NextRequest) {
       let gastoLote: { id: string; amount: number } | null = null
       let gastoLoteIntentado = false
       const fudoDateLote = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+      // ¿Esta factura ya se cargó antes? (mismo proveedor + número + forma de
+      // pago: otro "Llegó todo" o "Llegó"). Alem 500 22/10: una factura en dos
+      // "Llegó todo", cada uno con el total → dos gastos y el arqueo doble.
+      // Si ya existe, los productos van a ESE gasto y el total no se repite.
+      const primeroLote = llegan[0]
+      const { data: ordenPrimera } = await admin.from(primeroLote.source === 'barra' ? 'bar_orders' : 'kitchen_orders').select('supplier_id').eq('id', primeroLote.orderId).maybeSingle()
+      const proveedorLote = (ordenPrimera as { supplier_id?: string | null } | null)?.supplier_id ?? null
+      const facturaPrevia = await buscarFacturaPrevia(admin, proveedorLote, gasto?.numero ?? null, paymentMethod ?? null)
+      if (facturaPrevia && gasto) gasto = { ...gasto, iva: null, iibb: null } // IVA/IIBB ya están en la primera carga
+
       const obtenerGastoLote = async () => {
+        if (facturaPrevia) return { id: facturaPrevia.expenseId, amount: 0 }
         if (gastoLote || gastoLoteIntentado || !montoPrevisto) return gastoLote
         gastoLoteIntentado = true
-        const primero = llegan[0]
-        const { data: o } = await admin.from(primero.source === 'barra' ? 'bar_orders' : 'kitchen_orders').select('supplier_id').eq('id', primero.orderId).maybeSingle()
-        const prov = (o as { supplier_id?: string | null } | null)?.supplier_id ?? null
+        const prov = proveedorLote
         if (!prov) return null
         const { data: sup } = await admin.from('suppliers').select('fudo_provider_id').eq('id', prov).single()
         if (!sup?.fudo_provider_id) return null
@@ -464,7 +473,7 @@ export async function POST(request: NextRequest) {
       let resto: number | null = null
       const factura = typeof invoiceTotal === 'number' && invoiceTotal > 0 ? invoiceTotal : null
       const batchPaymentStatus = paymentMethod === 'cuenta_corriente' ? 'a_pagar' : 'pagado'
-      if (factura && resultados.some((r) => r.ok) && factura - cargadoPorProducto >= 1) {
+      if (!facturaPrevia && factura && resultados.some((r) => r.ok) && factura - cargadoPorProducto >= 1) {
         resto = Math.round((factura - cargadoPorProducto) * 100) / 100
         const restoDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
         const { data: restoInserted, error: restoErr } = await admin.from('stock_receipts').insert({
@@ -492,10 +501,34 @@ export async function POST(request: NextRequest) {
       // Categoría y comprobante en los recibos del lote (IVA/IIBB una sola vez)
       await guardarDatosGasto(admin, receiptIds, gasto)
 
+      // Factura ya cargada: los productos se suman a ese gasto. Si la primera
+      // carga dejó un "importe sin detallar", estos productos ya estaban en el
+      // total: salen de ahí (el gasto no cambia). Si no, el gasto sube.
+      if (facturaPrevia && resultados.some((r) => r.ok)) {
+        const sumaNuevos = Math.round(cargadoPorProducto * 100) / 100
+        if (receiptIds.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (admin.from('stock_receipts') as any).update({ fudo_expense_id: facturaPrevia.expenseId }).in('id', receiptIds)
+        }
+        if (sumaNuevos > 0) {
+          if (facturaPrevia.resto && facturaPrevia.resto.cost_total + 0.01 >= sumaNuevos) {
+            const nuevoResto = Math.round((facturaPrevia.resto.cost_total - sumaNuevos) * 100) / 100
+            await admin.from('stock_receipts').update({ cost_total: nuevoResto }).eq('id', facturaPrevia.resto.id)
+          } else {
+            const { sumarAGastoFudo, postFudoPayment } = await import('@/lib/fudo/expenses')
+            const unido = await sumarAGastoFudo({ expenseId: facturaPrevia.expenseId, delta: sumaNuevos, medioPago: paymentMethod })
+            if (unido && batchPaymentStatus === 'pagado') {
+              await postFudoPayment({ expenseId: facturaPrevia.expenseId, amount: sumaNuevos, medio: paymentMethod })
+                .catch((e) => console.warn('[confirm_arrival_batch] pago de lo agregado a la factura:', e instanceof Error ? e.message : e))
+            }
+          }
+        }
+      }
+
       // UN SOLO gasto en Fudo para toda la compra del proveedor.
       // Si vino invoiceTotal lo usamos (cubre ítems + importe sin detallar).
       // Si no, usamos la suma de los costos recibidos.
-      const totalParaFudo = factura ?? (cargadoPorProducto > 0 ? Math.round(cargadoPorProducto * 100) / 100 : null)
+      const totalParaFudo = facturaPrevia ? null : factura ?? (cargadoPorProducto > 0 ? Math.round(cargadoPorProducto * 100) / 100 : null)
       if ((gastoLote as { id: string } | null) && !(totalParaFudo && supplierId && resultados.some((r) => r.ok))) {
         console.warn('[confirm_arrival_batch] gasto de Fudo creado sin recibos para vincular:', (gastoLote as unknown as { id: string }).id)
       }
@@ -667,6 +700,31 @@ export async function POST(request: NextRequest) {
 type Resultado = { status: number; json: Record<string, unknown> }
 
 /**
+ * Factura ya cargada (mismo proveedor + número + forma de pago, últimos 7
+ * días) y su "importe sin detallar" si lo tiene. Para que "Llegó todo" no
+ * cree otro gasto ni repita el total cuando la factura se carga en partes.
+ */
+async function buscarFacturaPrevia(
+  admin: ReturnType<typeof createAdminClient>,
+  supplierId: string | null, numero: string | null, medio: string | null,
+): Promise<{ expenseId: string; resto: { id: number; cost_total: number } | null } | null> {
+  const n = numero?.trim()
+  if (!n || !supplierId) return null
+  const desde = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (admin.from('stock_receipts') as any)
+    .select('id, fudo_expense_id, payment_method, stock_item_id, cost_total, note')
+    .eq('supplier_id', supplierId).eq('comprobante_numero', n)
+    .not('fudo_expense_id', 'is', null).gte('received_date', desde)
+    .order('id', { ascending: false })
+  const filas = (data ?? []) as { id: number; fudo_expense_id: string; payment_method: string | null; stock_item_id: string | null; cost_total: number | null; note: string | null }[]
+  const previo = filas.find((r) => r.payment_method === medio)
+  if (!previo) return null
+  const resto = filas.find((r) => r.fudo_expense_id === previo.fudo_expense_id && !r.stock_item_id && (r.note ?? '').startsWith('Factura del proveedor'))
+  return { expenseId: String(previo.fudo_expense_id), resto: resto ? { id: resto.id, cost_total: Number(resto.cost_total) || 0 } : null }
+}
+
+/**
  * Gasto de Fudo para un recibo de "Llegó". Si ya hay otro recibo del mismo
  * proveedor con el MISMO número de comprobante (la factura se cargó producto
  * por producto), se suma a ese gasto en vez de crear uno por producto.
@@ -676,24 +734,16 @@ async function gastoFudoParaRecibo(
   p: Parameters<typeof import('@/lib/fudo/expenses').createFudoExpenseForReceipt>[0] & { supplierId: string | null; receiptId: number | null },
 ) {
   const { createFudoExpenseForReceipt, sumarAGastoFudo } = await import('@/lib/fudo/expenses')
-  const numero = p.gasto?.numero?.trim()
-  if (numero && p.supplierId) {
-    const desde = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (admin.from('stock_receipts') as any)
-      .select('fudo_expense_id, payment_method')
-      .eq('supplier_id', p.supplierId)
-      .eq('comprobante_numero', numero)
-      .not('fudo_expense_id', 'is', null)
-      .neq('id', p.receiptId ?? -1)
-      .gte('received_date', desde)
-      .order('id', { ascending: false })
-      .limit(1)
-    const previo = (data ?? [])[0] as { fudo_expense_id: string; payment_method: string | null } | undefined
-    if (previo && previo.payment_method === (p.medioPago ?? null)) {
-      const unido = await sumarAGastoFudo({ expenseId: String(previo.fudo_expense_id), delta: p.costTotal, medioPago: p.medioPago })
-      if (unido) return unido
+  const previa = await buscarFacturaPrevia(admin, p.supplierId, p.gasto?.numero ?? null, p.medioPago ?? null)
+  if (previa) {
+    // La primera carga dejó un "importe sin detallar" que ya incluye este
+    // producto: sale de ahí y el gasto no cambia (amount 0 = no hay pago extra)
+    if (previa.resto && previa.resto.cost_total + 0.01 >= p.costTotal) {
+      await admin.from('stock_receipts').update({ cost_total: Math.round((previa.resto.cost_total - p.costTotal) * 100) / 100 }).eq('id', previa.resto.id)
+      return { id: previa.expenseId, amount: 0 }
     }
+    const unido = await sumarAGastoFudo({ expenseId: previa.expenseId, delta: p.costTotal, medioPago: p.medioPago })
+    if (unido) return unido
   }
   const { supplierId: _s, receiptId: _r, ...crear } = p
   void _s; void _r
@@ -950,7 +1000,7 @@ async function confirmarLlegada(
       }
 
       // Si el gasto se creó en Fudo y el pago fue de contado, imputar el payment
-      if (lveExpense && paymentStatus === 'pagado') {
+      if (lveExpense && lveExpense.amount > 0 && paymentStatus === 'pagado') {
         const { postFudoPayment } = await import('@/lib/fudo/expenses')
         try {
           await postFudoPayment({ expenseId: lveExpense.id, amount: lveExpense.amount, medio: paymentMethod })
@@ -1104,7 +1154,7 @@ async function confirmarLlegada(
           if (sinStockFudoExpense) {
             lveExpense = sinStockFudoExpense
             await admin.from('stock_receipts').update({ fudo_expense_id: sinStockFudoExpense.id }).eq('id', ssReceiptId)
-            if (paymentStatus === 'pagado') {
+            if (paymentStatus === 'pagado' && sinStockFudoExpense.amount > 0) {
               const { postFudoPayment } = await import('@/lib/fudo/expenses')
               try {
                 await postFudoPayment({ expenseId: sinStockFudoExpense.id, amount: sinStockFudoExpense.amount, medio: paymentMethod })
