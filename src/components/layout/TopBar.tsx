@@ -85,7 +85,9 @@ export function TopBar() {
   }
 
   return (
-    <header className={`sticky top-0 z-40 shrink-0 bg-[#006d5a] transition-all duration-200 ${scrolled ? 'shadow-md' : ''}`}>
+    // pt safe-area: con la app instalada en iPhone (status bar translúcida) la
+    // hora y la batería tapaban el encabezado y no se podía tocar el usuario
+    <header className={`sticky top-0 z-40 shrink-0 bg-[#006d5a] pt-[env(safe-area-inset-top)] transition-all duration-200 ${scrolled ? 'shadow-md' : ''}`}>
       <div className={`flex items-center justify-between px-5 transition-all duration-200 ${scrolled ? 'h-[2.75rem]' : 'h-[3.75rem]'}`}>
         {/* Volver + Brand */}
         <div className="flex min-w-0 items-center gap-1.5">
