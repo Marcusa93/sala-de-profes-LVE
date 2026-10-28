@@ -280,10 +280,12 @@ async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise
 // ---------------------------------------------------------------------------
 // Importación automática de gastos manuales de Fudo al stock de la app
 // ---------------------------------------------------------------------------
-// Cuando alguien carga una compra directo en Fudo (con ingredientes), Fudo
-// actualiza su propio stock. La app no se entera hasta el sync de las 3am.
+// Cuando alguien carga una compra directo en Fudo (con insumos o productos),
+// Fudo actualiza su propio stock. La app no se entera hasta el sync de las 3am.
 // Esta función detecta esos gastos y crea los stock_receipts en la app YA,
 // sin esperar al cron nocturno. Corre cada 10 minutos via fudo-pulso.
+// En Fudo el "price" de un renglón es el TOTAL de la línea (no el unitario):
+// cost_total = price, cost_per_unit = price / cantidad.
 //
 // Dedup: usa fudo_expense_id en stock_receipts. Si ya existe un receipt con ese
 // fudo_expense_id para ese stock_item, se saltea (no hay doble conteo).
@@ -295,7 +297,7 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
   let gastos: FudoExpense[] = []
   try {
     const { fetchFudoExpenses } = await import('@/lib/fudo/expenses')
-    gastos = (await fetchFudoExpenses(desde)).filter((g) => g.items.length > 0)
+    gastos = (await fetchFudoExpenses(desde)).filter((g) => g.items.length > 0 || g.productItems.length > 0)
   } catch {
     return // Fudo no respondió
   }
@@ -317,18 +319,19 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
   // Cargar mapeos en bloque (evita N queries individuales)
   const [{ data: stockItems }, { data: suppliers }] = await Promise.all([
     admin.from('stock_items')
-      .select('id, name, unit, current_qty, fudo_ingredient_id')
+      .select('id, name, unit, current_qty, fudo_ingredient_id, fudo_product_id')
       .eq('is_active', true)
-      .not('fudo_ingredient_id', 'is', null),
+      .or('fudo_ingredient_id.not.is.null,fudo_product_id.not.is.null'),
     admin.from('suppliers')
       .select('id, fudo_provider_id')
       .not('fudo_provider_id', 'is', null),
   ])
 
-  type StockRow = { id: string; name: string; unit: string; current_qty: number; fudo_ingredient_id: string }
-  const itemByIngId = new Map(
-    ((stockItems ?? []) as StockRow[]).map((si) => [si.fudo_ingredient_id, { ...si }]),
-  )
+  type StockRow = { id: string; name: string; unit: string; current_qty: number; fudo_ingredient_id: string | null; fudo_product_id: string | null }
+  // Un solo objeto por insumo (current_qty se actualiza al sumar)
+  const filasStock = ((stockItems ?? []) as StockRow[]).map((si) => ({ ...si }))
+  const itemByIngId = new Map(filasStock.filter((si) => si.fudo_ingredient_id).map((si) => [si.fudo_ingredient_id!, si]))
+  const itemByProdId = new Map(filasStock.filter((si) => si.fudo_product_id).map((si) => [si.fudo_product_id!, si]))
   const supplierByProvId = new Map(
     ((suppliers ?? []) as { id: string; fudo_provider_id: string }[]).map((s) => [s.fudo_provider_id, s.id]),
   )
@@ -337,9 +340,13 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
     const supplierId = gasto.providerId ? (supplierByProvId.get(gasto.providerId) ?? null) : null
     const fechaAR = gasto.date.slice(0, 10) // 'YYYY-MM-DD'
 
-    for (const item of gasto.items) {
+    const renglones = [
+      ...gasto.items.map((i) => ({ qty: i.qty, price: i.price, si: itemByIngId.get(i.ingredientId) })),
+      ...gasto.productItems.map((i) => ({ qty: i.qty, price: i.price, si: itemByProdId.get(i.productId) })),
+    ]
+    for (const item of renglones) {
       if (item.qty <= 0) continue
-      const si = itemByIngId.get(item.ingredientId)
+      const si = item.si
       if (!si) continue // sin stock_item vinculado → sin match
 
       // Verificar que no exista ya un receipt para este gasto + insumo
@@ -357,8 +364,9 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
         supplier_id: supplierId,
         qty: item.qty,
         unit: si.unit,
-        cost_per_unit: item.price > 0 ? item.price : null,
-        cost_total: item.price > 0 ? Math.round(item.price * item.qty * 100) / 100 : null,
+        // price = total de la línea en Fudo
+        cost_per_unit: item.price > 0 ? Math.round((item.price / item.qty) * 10000) / 10000 : null,
+        cost_total: item.price > 0 ? Math.round(item.price * 100) / 100 : null,
         received_date: fechaAR,
         received_at: gasto.date,
         fudo_expense_id: gasto.id,
@@ -366,7 +374,7 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
         note: `Importado desde Fudo (${gasto.provider ?? 'proveedor desconocido'}) — entrada directa`,
       })
       if (rcptErr) {
-        console.error('[importarGastosManuales] error receipt:', rcptErr.message, { gasto: gasto.id, item: item.ingredientId })
+        console.error('[importarGastosManuales] error receipt:', rcptErr.message, { gasto: gasto.id, item: si.id })
         continue
       }
 
