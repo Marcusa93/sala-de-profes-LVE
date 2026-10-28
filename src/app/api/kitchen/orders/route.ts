@@ -710,7 +710,7 @@ export async function POST(request: NextRequest) {
         : { data: null }
       const proveedorGasto = (provGasto as { id: string } | null)?.id ?? null
 
-      const fechaAR = new Date(g.fecha).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' })
+      const fechaAR = new Date(g.fecha).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
       const pagado = g.pagado
       const resultados: { orderId: number; ok: boolean; error?: string; conImporte?: boolean }[] = []
       for (const it of items) {
