@@ -3,14 +3,13 @@
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { COMPROBANTES, esFactura, type CategoriaGasto, type ComprobanteTipo, type DatosGasto } from '@/lib/compras/datos-gasto'
-import { parseQty } from './shared'
+import { COMPROBANTES, esFactura, esFacturaEnFudo, type CategoriaGasto, type ComprobanteTipo, type DatosGasto } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
 // "Datos del gasto" en Llegó / Llegó todo: categoría (obligatoria: con eso se
 // hace el análisis de fin de mes) y comprobante. Categoría, tipo y número van
-// a Fudo; IVA e IIBB (Factura A) quedan en Sala de Profes y se vuelven a
-// cargar en Fudo, porque Fudo no deja recibirlos por la API.
+// a Fudo. La Factura A no: la carga administración en Fudo con IVA, IIBB y
+// total, y en la app queda solo lo que llegó (lib/compras/factura-en-fudo).
 // ---------------------------------------------------------------------------
 
 export function useDatosGasto(supplierId: string | null | undefined) {
@@ -22,8 +21,6 @@ export function useDatosGasto(supplierId: string | null | undefined) {
   const [numero, setNumero] = useState('')
   // Número de la última carga de HOY de este proveedor (misma factura)
   const [numeroAnterior, setNumeroAnterior] = useState<string | null>(null)
-  const [iva, setIva] = useState('')
-  const [iibb, setIibb] = useState('')
 
   useEffect(() => {
     let alive = true
@@ -43,57 +40,33 @@ export function useDatosGasto(supplierId: string | null | undefined) {
     return () => { alive = false }
   }, [supplierId])
 
-  const num = (v: string) => { const n = parseQty(v); return Number.isFinite(n) && n >= 0 ? n : null }
-  const facturaA = comprobante === 'factura_a'
   const datos: DatosGasto = {
     categoriaId: categoriaId || null,
     categoriaNombre: categorias.find((c) => c.id === categoriaId)?.name ?? null,
     comprobante,
     numero: esFactura(comprobante) || comprobante === 'ticket' ? numero.trim() || null : null,
-    iva: facturaA ? num(iva) : null,
-    iibb: facturaA ? num(iibb) : null,
+    iva: null,
+    iibb: null,
   }
+  // Factura A: la carga administración en Fudo; en la app no hay gasto
+  const facturaEnFudo = esFacturaEnFudo(datos)
   // Obligatoria cuando hay de dónde elegir: si Fudo no responde no se traba
   // la recepción de la mercadería.
-  const falta = cargando || (categorias.length > 0 && !categoriaId)
+  const falta = cargando || (!facturaEnFudo && categorias.length > 0 && !categoriaId)
 
   return {
-    datos, falta,
-    campos: { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior, iva, setIva, iibb, setIibb },
+    datos, falta, facturaEnFudo,
+    campos: { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior },
   }
 }
 
 const inputCls = 'w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none'
 
 export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDatosGasto>['campos'] }) {
-  const { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior, iva, setIva, iibb, setIibb } = campos
+  const { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior } = campos
+  const facturaA = comprobante === 'factura_a'
   return (
     <div className="space-y-2.5 rounded-xl bg-[#faf8f5] p-3">
-      <label className="block">
-        <span className="text-[12px] font-semibold text-[#3d2c24]">
-          Categoría del gasto {categorias.length > 0 && <span className="text-[#ea504c]">*</span>}
-        </span>
-        {cargando ? (
-          <span className="mt-1 flex items-center gap-1.5 text-[11px] text-[#a39e97]"><Loader2 className="size-3 animate-spin" /> Trayendo categorías de Fudo…</span>
-        ) : categorias.length === 0 ? (
-          <span className="mt-1 block text-[11px] text-[#d4943a]">
-            {errorFudo ? 'Fudo no respondió: el gasto se carga sin categoría (completala en Fudo).' : 'No hay categorías de gasto en Fudo.'}
-          </span>
-        ) : (
-          <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)} className={cn(inputCls, 'mt-1', !categoriaId && 'border-[#ea504c]/50')}>
-            <option value="">Elegí la categoría…</option>
-            {/* Agrupadas como en Fudo: "Compras y proveedores › Verdulería" */}
-            {[...new Set(categorias.map((c) => c.grupo ?? 'Otras'))]
-              .sort((x, y) => (x === 'Otras' ? 1 : y === 'Otras' ? -1 : x.localeCompare(y)))
-              .map((grupo) => (
-                <optgroup key={grupo} label={grupo}>
-                  {categorias.filter((c) => (c.grupo ?? 'Otras') === grupo).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </optgroup>
-              ))}
-          </select>
-        )}
-      </label>
-
       <div>
         <span className="text-[12px] font-semibold text-[#3d2c24]">Comprobante</span>
         <div className="mt-1 flex flex-wrap gap-1.5">
@@ -116,29 +89,46 @@ export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDato
       {comprobante !== 'sin_comprobante' && (
         <div className="space-y-1">
           <input value={numero} onChange={(e) => setNumero(e.target.value)} maxLength={45} placeholder="Número (ej: 0001-00012345)" className={inputCls} />
-          <p className="text-[10.5px] text-[#a39e97]">
-            {numeroAnterior && numero.trim() === numeroAnterior
-              ? 'Es el mismo número que la carga anterior de hoy: se suma a ese gasto en Fudo. Si es otra factura, cambialo.'
-              : 'Misma factura cargada producto por producto: poné el mismo número y queda un solo gasto en Fudo.'}
-          </p>
+          {!facturaA && (
+            <p className="text-[10.5px] text-[#a39e97]">
+              {numeroAnterior && numero.trim() === numeroAnterior
+                ? 'Es el mismo número que la carga anterior de hoy: se suma a ese gasto en Fudo. Si es otra factura, cambialo.'
+                : 'Misma factura cargada producto por producto: poné el mismo número y queda un solo gasto en Fudo.'}
+            </p>
+          )}
         </div>
       )}
 
-      {comprobante === 'factura_a' && (
-        <>
-          <div className="grid grid-cols-2 gap-2">
-            {([['IVA', iva, setIva], ['IIBB', iibb, setIibb]] as const).map(([label, value, setter]) => (
-              <label key={label} className="block">
-                <span className="text-[11px] font-semibold text-[#3d2c24]">{label}</span>
-                <div className="relative mt-1">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
-                  <input inputMode="decimal" value={value} onChange={(e) => setter(e.target.value)} placeholder="0" className={cn(inputCls, 'pl-7')} />
-                </div>
-              </label>
-            ))}
-          </div>
-          <p className="text-[10.5px] text-[#a39e97]">IVA e IIBB quedan en Sala de Profes. En Fudo hay que volver a cargarlos (Fudo no deja recibirlos desde otra app).</p>
-        </>
+      {facturaA ? (
+        <div className="rounded-lg bg-[#eef4fc] px-3 py-2 text-[11.5px] text-[#2f5d8a] ring-1 ring-[#cfdcf3]">
+          <p className="font-semibold">La Factura A la carga administración en Fudo</p>
+          <p className="mt-0.5">Con IVA, IIBB y el total. Acá queda solo lo que llegó: no se paga ni se crea el gasto desde la app. El stock entra cuando la factura esté en Fudo con los productos.</p>
+        </div>
+      ) : (
+        <label className="block">
+          <span className="text-[12px] font-semibold text-[#3d2c24]">
+            Categoría del gasto {categorias.length > 0 && <span className="text-[#ea504c]">*</span>}
+          </span>
+          {cargando ? (
+            <span className="mt-1 flex items-center gap-1.5 text-[11px] text-[#a39e97]"><Loader2 className="size-3 animate-spin" /> Trayendo categorías de Fudo…</span>
+          ) : categorias.length === 0 ? (
+            <span className="mt-1 block text-[11px] text-[#d4943a]">
+              {errorFudo ? 'Fudo no respondió: el gasto se carga sin categoría (completala en Fudo).' : 'No hay categorías de gasto en Fudo.'}
+            </span>
+          ) : (
+            <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)} className={cn(inputCls, 'mt-1', !categoriaId && 'border-[#ea504c]/50')}>
+              <option value="">Elegí la categoría…</option>
+              {/* Agrupadas como en Fudo: "Compras y proveedores › Verdulería" */}
+              {[...new Set(categorias.map((c) => c.grupo ?? 'Otras'))]
+                .sort((x, y) => (x === 'Otras' ? 1 : y === 'Otras' ? -1 : x.localeCompare(y)))
+                .map((grupo) => (
+                  <optgroup key={grupo} label={grupo}>
+                    {categorias.filter((c) => (c.grupo ?? 'Otras') === grupo).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </optgroup>
+                ))}
+            </select>
+          )}
+        </label>
       )}
     </div>
   )

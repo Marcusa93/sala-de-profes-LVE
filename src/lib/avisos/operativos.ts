@@ -289,6 +289,12 @@ async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise
 //
 // Dedup: usa fudo_expense_id en stock_receipts. Si ya existe un receipt con ese
 // fudo_expense_id para ese stock_item, se saltea (no hay doble conteo).
+//
+// Facturas A (lib/compras/factura-en-fudo): si la factura es de un pedido que
+// llegó con la factura pendiente, el recibo queda de ese pedido y el pedido
+// se cierra con el gasto. El stock de sus renglones se suma acá como el de
+// cualquier compra de Fudo (una sola vez). Lo de la misma entrega que la
+// factura no trae como renglón, Fudo no lo sumó: se suma en Fudo y en la app.
 // ---------------------------------------------------------------------------
 
 async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promise<void> {
@@ -336,9 +342,23 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
     ((suppliers ?? []) as { id: string; fudo_provider_id: string }[]).map((s) => [s.fudo_provider_id, s.id]),
   )
 
+  // Pedidos que llegaron con la Factura A pendiente de cargar en Fudo
+  const { pedidosConFacturaPendiente, pedidosDeLaFactura, cerrarConFactura, sumarStockSinRenglon } = await import('@/lib/compras/factura-en-fudo')
+  const conFacturaPendiente = await pedidosConFacturaPendiente(admin).catch(() => [])
+  const cerrados = new Set<string>()
+
   for (const gasto of pendientes) {
     const supplierId = gasto.providerId ? (supplierByProvId.get(gasto.providerId) ?? null) : null
-    const fechaAR = gasto.date.slice(0, 10) // 'YYYY-MM-DD'
+    const itemsDeLaFactura = new Set([
+      ...gasto.items.map((i) => itemByIngId.get(i.ingredientId)?.id),
+      ...gasto.productItems.map((i) => itemByProdId.get(i.productId)?.id),
+    ].filter((x): x is string => Boolean(x)))
+    const deEstaFactura = supplierId
+      ? pedidosDeLaFactura(conFacturaPendiente.filter((o) => !cerrados.has(`${o.source}-${o.id}`)), { supplierId, fecha: gasto.date, stockItemIds: itemsDeLaFactura })
+      : []
+    const pedidoPorItem = new Map(deEstaFactura.filter((o) => o.stock_item_id).map((o) => [o.stock_item_id!, o]))
+    // gasto.date es ISO en UTC: la fecha de la compra es la de Argentina
+    const fechaAR = new Date(gasto.date).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }) // 'YYYY-MM-DD'
 
     const renglones = [
       ...gasto.items.map((i) => ({ qty: i.qty, price: i.price, si: itemByIngId.get(i.ingredientId) })),
@@ -359,9 +379,11 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
         .maybeSingle()
       if (dup) continue
 
+      const pedido = pedidoPorItem.get(si.id)
       const { error: rcptErr } = await admin.from('stock_receipts').insert({
         stock_item_id: si.id,
         supplier_id: supplierId,
+        ...(pedido ? { order_id: pedido.id, order_source: pedido.source } : {}),
         qty: item.qty,
         unit: si.unit,
         // price = total de la línea en Fudo
@@ -371,7 +393,7 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
         received_at: gasto.date,
         fudo_expense_id: gasto.id,
         payment_status: 'pagado',
-        note: `Importado desde Fudo (${gasto.provider ?? 'proveedor desconocido'}) — entrada directa`,
+        note: `Importado desde Fudo (${gasto.provider ?? 'proveedor desconocido'}) — ${pedido ? `factura del pedido «${pedido.product_name}»` : 'entrada directa'}`,
       })
       if (rcptErr) {
         console.error('[importarGastosManuales] error receipt:', rcptErr.message, { gasto: gasto.id, item: si.id })
@@ -394,6 +416,25 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
 
       // Mantener el mapa actualizado para el próximo ítem del mismo insumo
       si.current_qty = newQty
+
+      if (pedido && await cerrarConFactura(admin, pedido, gasto.id, item.price > 0 ? Math.round(item.price * 100) / 100 : null)) {
+        cerrados.add(`${pedido.source}-${pedido.id}`)
+      }
+    }
+    // Los de la misma entrega sin renglón en la factura: Fudo no les sumó
+    // stock, se suma en Fudo y en la app (con renglón ya se sumó arriba)
+    for (const o of deEstaFactura) {
+      if (cerrados.has(`${o.source}-${o.id}`)) continue
+      if (o.stock_item_id && !itemsDeLaFactura.has(o.stock_item_id)) {
+        await sumarStockSinRenglon(admin, o, gasto.id)
+        // El mapa en memoria no puede quedar viejo para las facturas que siguen
+        const enMapa = filasStock.find((x) => x.id === o.stock_item_id)
+        if (enMapa) {
+          const { data: fresco } = await admin.from('stock_items').select('current_qty').eq('id', o.stock_item_id).maybeSingle()
+          if (fresco) enMapa.current_qty = Number((fresco as { current_qty: number }).current_qty)
+        }
+      }
+      if (await cerrarConFactura(admin, o, gasto.id, null)) cerrados.add(`${o.source}-${o.id}`)
     }
   }
 }
