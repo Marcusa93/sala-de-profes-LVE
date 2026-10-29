@@ -110,23 +110,28 @@ export async function cerrarConFactura(admin: SupabaseClient, o: { id: number; s
 }
 
 /**
- * Renglón de una compra que Fudo YA sumó a su stock (gasto cargado en Fudo):
- * se suma solo en la app, una vez, con su movimiento en stock_logs. Igual que
- * el importador de compras de Fudo. El pulso después lee el mismo número de
- * Fudo, así que no se duplica. Devuelve la cantidad nueva.
+ * Movimiento de stock que Fudo YA tiene (gasto cargado en Fudo): se aplica
+ * solo en la app, una vez, con su registro en stock_logs. Igual que el
+ * importador de compras de Fudo. Para insumos vinculados, el pulso después
+ * lee el mismo número de Fudo. Devuelve la cantidad nueva.
  */
-export async function sumarStockSoloApp(admin: SupabaseClient, stockItemId: string, qty: number, nota: string): Promise<number | null> {
-  if (!(qty > 0)) return null
+export async function ajustarStockSoloApp(admin: SupabaseClient, stockItemId: string, delta: number, nota: string): Promise<number | null> {
+  if (!Number.isFinite(delta) || delta === 0) return null
   const { data } = await admin.from('stock_items').select('current_qty').eq('id', stockItemId).maybeSingle()
   if (!data) return null
   const oldQty = Number((data as { current_qty: number | null }).current_qty ?? 0)
-  const newQty = Math.round((oldQty + qty) * 1000) / 1000
+  const newQty = Math.max(0, Math.round((oldQty + delta) * 1000) / 1000)
   const ahoraIso = new Date().toISOString()
   await Promise.allSettled([
     admin.from('stock_items').update({ current_qty: newQty, updated_at: ahoraIso }).eq('id', stockItemId),
-    admin.from('stock_logs').insert({ stock_item_id: stockItemId, action: 'receipt', old_qty: oldQty, new_qty: newQty, note: nota }),
+    admin.from('stock_logs').insert({ stock_item_id: stockItemId, action: delta > 0 ? 'receipt' : 'reception', old_qty: oldQty, new_qty: newQty, note: nota }),
   ])
   return newQty
+}
+
+/** Renglón de una compra que Fudo ya sumó: se suma solo en la app */
+export async function sumarStockSoloApp(admin: SupabaseClient, stockItemId: string, qty: number, nota: string): Promise<number | null> {
+  return qty > 0 ? ajustarStockSoloApp(admin, stockItemId, qty, nota) : null
 }
 
 /**

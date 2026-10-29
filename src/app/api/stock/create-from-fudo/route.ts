@@ -78,10 +78,15 @@ async function requireManager() {
 // GET — lista de ingredientes/productos Fudo sin item en LVE
 // ---------------------------------------------------------------------------
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireManager()
     if ('error' in auth) return auth.error
+
+    // ?sin_stock=1 (buscador de Compras): también insumos sin control de stock
+    // en Fudo (castañas caju, azúcar impalpable…: si no aparecen acá los crean
+    // como producto local y no van al detalle del gasto)
+    const sinStock = request.nextUrl.searchParams.get('sin_stock') === '1'
 
     const admin = createAdminClient()
     const [ingredients, products, { linkedIngredients, linkedProducts }] = await Promise.all([
@@ -91,7 +96,7 @@ export async function GET() {
     ])
 
     const unmappedIngredients = ingredients
-      .filter(i => i.stockControl && !linkedIngredients.has(i.id))
+      .filter(i => (i.stockControl || sinStock) && !linkedIngredients.has(i.id))
       .map(({ id, name, unit, cost, stock }) => ({ id, name, unit, cost, stock }))
 
     const unmappedProducts = products.filter(p => !linkedProducts.has(p.id))

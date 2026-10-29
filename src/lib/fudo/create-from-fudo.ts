@@ -11,6 +11,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { fudoHttp } from '@/lib/fudoClient'
+import { normalizarTexto } from '@/lib/buscar'
 import { readFudoStock, type FudoIngredient } from '@/lib/fudo/stock-sync'
 import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
@@ -96,6 +97,41 @@ export async function readFudoIngredientsWithUnit(): Promise<FudoIngredientWithU
   }
 
   return all
+}
+
+// ---------------------------------------------------------------------------
+// ¿Ya está en Fudo? (alta de productos locales)
+// ---------------------------------------------------------------------------
+// Un producto local (fudo_skip) no entra en el detalle del gasto de Fudo ni
+// mueve su stock. Se crearon así insumos que SÍ estaban en Fudo, sin control
+// de stock: "castañas de caju" (Fudo: castañas caju), azúcar impalpable,
+// edulcorante (10/2026). Antes de crear uno local se busca el mismo nombre.
+
+const PALABRAS_VACIAS = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'con', 'y'])
+
+/** Clave para comparar nombres: sin tildes ni mayúsculas, sin "de", sin plurales, en cualquier orden */
+export function claveNombre(nombre: string): string {
+  return normalizarTexto(nombre).split(/[^a-z0-9]+/)
+    .filter((p) => p && !PALABRAS_VACIAS.has(p))
+    .map((p) => (p.length > 3 ? p.replace(/s$/, '') : p))
+    .sort().join(' ')
+}
+
+export type MismoEnFudo = { tipo: 'ingrediente' | 'producto'; id: string; name: string; unit: 'kg' | 'l' | 'unidad'; stock: number | null }
+
+/**
+ * Ingrediente de Fudo (con o sin control de stock) que se llama igual.
+ * Santa Fe: los PRODUCTOS de Fudo no se buscan. Acá muchos platos de la carta
+ * tienen control de stock en Fudo, y los descartables (vasos, bolsas,
+ * bandejas) existen también como producto de Fudo pero se llevan como
+ * productos propios: vincularlos haría que el pulso les pise el stock.
+ */
+export async function buscarMismoEnFudo(nombre: string): Promise<MismoEnFudo | null> {
+  const clave = claveNombre(nombre)
+  if (!clave) return null
+  const ing = (await readFudoIngredientsWithUnit()).find((i) => claveNombre(i.name) === clave)
+  if (ing) return { tipo: 'ingrediente', id: ing.id, name: ing.name, unit: ing.unit, stock: ing.stock }
+  return null
 }
 
 /** Sets de ids Fudo ya vinculados a algún stock_item (activo o no) */
