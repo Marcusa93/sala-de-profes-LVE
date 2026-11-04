@@ -7,6 +7,7 @@ import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { anularEnGastoFudo, corregirMontoEnGastoFudo, fudoExpensePagado, postFudoPayment } from '@/lib/fudo/expenses'
 import { asegurarGastoEnFudo, TEXTO_GASTO, type ResultadoGasto } from '@/lib/compras/gasto-fudo'
 import { ajustarStockSoloApp } from '@/lib/compras/factura-en-fudo'
+import { NOTA_DIFERENCIA_FUDO } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/stock/receipts/[id]
@@ -50,6 +51,14 @@ type ReceiptRow = {
   order_source: string | null
   received_date: string | null
   fudo_expense_id: string | null
+}
+
+/**
+ * Recibo que acompaña a una factura sin ser mercadería: en Santa Fe solo la
+ * diferencia con Fudo (no hay recibo de impuestos). Si queda solo, se va con ella.
+ */
+function esAgregadoDeFactura(note: string | null): boolean {
+  return (note ?? '').startsWith(NOTA_DIFERENCIA_FUDO)
 }
 
 /** Gasto que cargaron directo en Fudo: la app no lo creó (se corrige en Fudo) */
@@ -299,9 +308,10 @@ export async function DELETE(
     if (gastoId && deFudo) {
       gastoFudo = { anulado: false, ajustado: false, aviso: `Este gasto lo cargaron en Fudo (#${gastoId}): si la compra no fue, anulalo allá (si no, la app lo vuelve a traer)` }
     } else if (gastoId) {
-      // Santa Fe no tiene recibo de "Impuestos de la factura": cualquier otro recibo cuenta
-      const { data: hermanos } = await admin.from('stock_receipts').select('id').eq('fudo_expense_id', gastoId).neq('id', receiptId)
-      const quedanOtros = (hermanos ?? []).length > 0
+      // Santa Fe no tiene recibo de "Impuestos de la factura": cualquier otro
+      // recibo cuenta, salvo la diferencia con Fudo (no es mercadería)
+      const { data: hermanos } = await admin.from('stock_receipts').select('id, note').eq('fudo_expense_id', gastoId).neq('id', receiptId)
+      const quedanOtros = ((hermanos ?? []) as { id: number; note: string | null }[]).some((h) => !esAgregadoDeFactura(h.note))
       const r = await anularEnGastoFudo({
         expenseId: gastoId, monto: Number(receipt.cost_total ?? 0), qty: receipt.qty, quedanOtros,
         fudoIngredientId: si?.fudo_ingredient_id, fudoProductId: si?.fudo_product_id, medio: receipt.payment_method,
@@ -391,9 +401,22 @@ export async function DELETE(
     const { error: delErr } = await admin.from('stock_receipts').delete().eq('id', receiptId)
     if (delErr) throw delErr
 
+    // 3b) Gasto anulado en Fudo y de esa factura quedó solo la diferencia con
+    // Fudo: se va con ella (no queda deuda de una factura que ya no está)
+    let diferenciaBorrada = 0
+    if (gastoId && gastoFudo?.anulado) {
+      const { data: restantes } = await admin.from('stock_receipts').select('id, note').eq('fudo_expense_id', gastoId)
+      const filas = (restantes ?? []) as { id: number; note: string | null }[]
+      if (filas.length > 0 && filas.every((f) => esAgregadoDeFactura(f.note))) {
+        const { error: difErr } = await admin.from('stock_receipts').delete().in('id', filas.map((f) => f.id))
+        if (difErr) console.warn('[DELETE receipt] diferencia con Fudo no borrada:', difErr.message)
+        else diferenciaBorrada = filas.length
+      }
+    }
+
     const userName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
     const textoGasto = gastoFudo?.anulado ? `gasto #${gastoId} anulado en Fudo` : gastoFudo?.ajustado ? `gasto #${gastoId} corregido en Fudo` : null
-    logAudit(admin, { userId: user.id, userName, action: 'delete_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} eliminado${stockReversed ? ` (stock revertido${fudoReversed ? ' en Fudo' : ' solo en LVE'})` : ''}${textoGasto ? ` · ${textoGasto}` : ''}${gastoFudo?.aviso ? ` · ${gastoFudo.aviso}` : ''}`, metadata: { receiptId, qty: receipt.qty, cost_total: receipt.cost_total, stock_item_id: receipt.stock_item_id, stockReversed, fudoReversed, fudo_expense_id: gastoId, gastoFudo, fudoYaDevolvio: Boolean(fudoYaDevolvio) } }).catch(() => {})
+    logAudit(admin, { userId: user.id, userName, action: 'delete_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} eliminado${stockReversed ? ` (stock revertido${fudoReversed ? ' en Fudo' : ' solo en LVE'})` : ''}${textoGasto ? ` · ${textoGasto}` : ''}${gastoFudo?.aviso ? ` · ${gastoFudo.aviso}` : ''}`, metadata: { receiptId, qty: receipt.qty, cost_total: receipt.cost_total, stock_item_id: receipt.stock_item_id, stockReversed, fudoReversed, fudo_expense_id: gastoId, gastoFudo, fudoYaDevolvio: Boolean(fudoYaDevolvio), diferenciaBorrada } }).catch(() => {})
 
     return NextResponse.json({ success: true, stockReversed, fudoReversed, gastoFudoTexto: textoGasto, avisoFudo: gastoFudo?.aviso ?? null })
   } catch (error) {
