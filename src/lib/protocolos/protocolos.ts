@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { fechaOperativa, instanteDe } from '@/lib/attendance/jornada'
+import { CORTE_HORA, fechaOperativa, instanteDe } from '@/lib/attendance/jornada'
 import { sendPushToUser } from '@/lib/push/send'
 import { ROLES_ENCARGADO_TURNO, turnoEnCurso, turnosDelDia } from '@/lib/turnos/rol-del-turno'
 
@@ -46,6 +46,52 @@ export function diaSemana(fecha: string): number {
 export function saleElDia(p: Pick<Protocolo, 'dias'>, fecha: string): boolean {
   return !p.dias || p.dias.length === 0 || p.dias.includes(diaSemana(fecha))
 }
+
+/**
+ * Hora de arranque de TODOS los protocolos por día de la semana, en
+ * app_settings (ej. {"6": "08:00", "0": "08:00", "feriado": "08:00"}: los
+ * fines de semana y feriados el local abre más tarde). Ese día, lo que esté
+ * antes de esa hora pasa a esa hora; lo de después de medianoche (cierre,
+ * antes de las 06) no se toca. Sin dato = como siempre. Los feriados son los
+ * de la tabla feriados (los mismos de la liquidación).
+ */
+export const CLAVE_INICIO_POR_DIA = 'protocolos_inicio_por_dia'
+export type InicioPorDia = Record<string, string>
+const HORA_VALIDA = /^([01]\d|2[0-3]):[0-5]\d$/
+
+/** Deja solo días 0-6 (y "feriado") con hora HH:MM desde el corte de la jornada (06:00). */
+export function normalizarInicioPorDia(v: unknown): InicioPorDia {
+  const out: InicioPorDia = {}
+  if (!v || typeof v !== 'object') return out
+  for (const [dia, hora] of Object.entries(v as Record<string, unknown>)) {
+    if (/^([0-6]|feriado)$/.test(dia) && typeof hora === 'string' && HORA_VALIDA.test(hora) && Number(hora.slice(0, 2)) >= CORTE_HORA) out[dia] = hora
+  }
+  return out
+}
+
+export async function leerInicioPorDia(admin: SupabaseClient): Promise<InicioPorDia> {
+  const { data } = await admin.from('app_settings').select('value').eq('key', CLAVE_INICIO_POR_DIA).maybeSingle()
+  return normalizarInicioPorDia((data as { value?: unknown } | null)?.value)
+}
+
+/** ¿Esa fecha operativa es feriado? (tabla feriados, la de la liquidación) */
+export async function esFeriado(admin: SupabaseClient, fecha: string): Promise<boolean> {
+  const { data } = await admin.from('feriados').select('fecha').eq('fecha', fecha).limit(1)
+  return (data ?? []).length > 0
+}
+
+/**
+ * Horarios de un protocolo para un día, con la hora de arranque de ese día
+ * aplicada. Si es feriado y hay hora para feriados, vale la más tarde de las dos.
+ */
+export function horariosDelDia(horarios: string[], fecha: string, inicio: InicioPorDia, feriado = false): string[] {
+  const delDia = inicio[String(diaSemana(fecha))]
+  const delFeriado = feriado ? inicio.feriado : undefined
+  const desde = [delDia, delFeriado].filter((h): h is string => Boolean(h)).sort().pop()
+  if (!desde) return horarios
+  const corte = `${String(CORTE_HORA).padStart(2, '0')}:00`
+  return [...new Set(horarios.map((h) => (h >= corte && h < desde ? desde : h)))].sort()
+}
 export type Tarea = {
   id: string; protocolo_id: string; fecha: string; hora: string
   estado: 'pendiente' | 'asignada' | 'hecha'
@@ -77,7 +123,11 @@ export function sePuedeCerrar(t: Pick<Tarea, 'fecha' | 'hora'>, ahora = new Date
 /** Crea (si faltan) las tareas del día para cada horario de cada protocolo activo. */
 export async function asegurarTareasDelDia(admin: SupabaseClient, fecha = fechaOperativa()): Promise<void> {
   // select('*'): tolera que todavía no existan las columnas dias / al_terminar_produccion
-  const { data: protocolos } = await admin.from('protocolos').select('*').eq('activo', true)
+  const [{ data: protocolos }, inicio, feriado] = await Promise.all([
+    admin.from('protocolos').select('*').eq('activo', true),
+    leerInicioPorDia(admin),
+    esFeriado(admin, fecha).catch(() => false),
+  ])
   // El día se arma UNA vez: si un control ya tiene tareas ese día, no se le
   // agregan más. Si no, un cambio de horarios a mitad del día sumaba los
   // nuevos encima de los ya asignados (tolva con 5 controles). Los cambios
@@ -86,7 +136,7 @@ export async function asegurarTareasDelDia(admin: SupabaseClient, fecha = fechaO
   const conTareas = new Set(((yaArmadas ?? []) as { protocolo_id: string }[]).map((t) => t.protocolo_id))
   const filas = ((protocolos ?? []) as Pick<Protocolo, 'id' | 'horarios' | 'dias'>[])
     .filter((p) => saleElDia(p, fecha) && !conTareas.has(p.id))
-    .flatMap((p) => (p.horarios ?? []).map((hora) => ({ protocolo_id: p.id, fecha, hora })))
+    .flatMap((p) => horariosDelDia(p.horarios ?? [], fecha, inicio, feriado).map((hora) => ({ protocolo_id: p.id, fecha, hora })))
   if (filas.length === 0) return
   await admin.from('protocolo_tareas').upsert(filas, { onConflict: 'protocolo_id,fecha,hora', ignoreDuplicates: true })
 }
