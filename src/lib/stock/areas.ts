@@ -109,7 +109,8 @@ export function mapFudoProductCategory(fudoCategory: string | null | undefined):
 } {
   const c = norm(fudoCategory)
   if (!c) return { area: 'otros', category: null }
-  if (c.includes('pastel') || c.includes('postre') || c.includes('desayuno') || c.includes('merienda')) {
+  // "SIN TACC" (alfajores, brownie, pastafrola, pan): pastelería, como en la 24
+  if (c.includes('pastel') || c.includes('postre') || c.includes('desayuno') || c.includes('merienda') || c.includes('tacc')) {
     return { area: 'pasteleria', category: 'panaderia' }
   }
   if (c.includes('bebida') || c.includes('leche') || c.includes('cafe') || c.includes('infusion') || c.includes('copa') || c.includes('filtrado')) {

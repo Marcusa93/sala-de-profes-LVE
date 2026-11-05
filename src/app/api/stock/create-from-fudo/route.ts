@@ -15,6 +15,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { fudo } from '@/lib/fudoClient'
 import { logAudit } from '@/lib/audit'
 import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
+import { mapFudoProductCategory } from '@/lib/stock/areas'
 import {
   createStockItemsFromIngredients,
   readFudoIngredientsWithUnit,
@@ -32,6 +33,8 @@ type UnmappedProduct = {
   name: string
   cost: number | null
   stock: number | null
+  /** Categoría de Fudo: define el área en la app (como la creación nocturna) */
+  categoria: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +47,8 @@ function asNullableNumber(value: unknown): number | null {
 
 /** Productos Fudo con control de stock (terminados, ej. empanadas) */
 async function readFudoProductsWithStock(): Promise<UnmappedProduct[]> {
-  const products = await fudo.getProducts()
+  const [products, categorias] = await Promise.all([fudo.getProducts(), fudo.getCategories()])
+  const nombreCategoria = new Map(categorias.map(c => [String(c.id), c.name]))
   return products
     .filter(p => p.stockControl && p.stock != null)
     .map(p => ({
@@ -52,6 +56,7 @@ async function readFudoProductsWithStock(): Promise<UnmappedProduct[]> {
       name: p.name,
       cost: asNullableNumber(p.cost),
       stock: asNullableNumber(p.stock),
+      categoria: nombreCategoria.get(String((p._relationships?.productCategory?.data as { id?: string } | null)?.id ?? '')) ?? null,
     }))
 }
 
@@ -192,14 +197,19 @@ export async function POST(request: NextRequest) {
         continue
       }
       const hasCost = prod.cost != null && prod.cost > 0
+      // Área según la categoría de Fudo, como el sync (antes quedaban sin área
+      // y no aparecían en el conteo de su sector)
+      const m = mapFudoProductCategory(prod.categoria)
       const basePayload = {
         name: prod.name,
         unit: 'unidad',
         cost_per_unit: hasCost ? prod.cost : null,
         current_qty: typeof prod.stock === 'number' ? Math.round(prod.stock * 100) / 100 : 0,
         fudo_product_id: prod.id,
+        fudo_category: prod.categoria,
         is_active: true,
-        category: 'otros',
+        category: m.category ?? 'otros',
+        area: m.area,
         semaphore: 'green',
         updated_at: now,
       }
