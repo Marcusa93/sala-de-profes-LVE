@@ -75,6 +75,8 @@ export type FudoExpense = {
   creado: string | null
   /** Fecha de la factura que pusieron a mano (YYYY-MM-DD; puede venir mal, ej. 2020) */
   fechaFactura: string | null
+  /** Número de comprobante cargado en Fudo (ej. "6113" o "0001-00006113") */
+  numero: string | null
 }
 
 /**
@@ -177,7 +179,7 @@ export async function fetchFudoExpensesConMeta(
         // ni precio de los renglones, y sin fields[expense] no manda monto ni
         // estado (el importador leía todo en 0 y no traía nada, 4/11)
         `/expenses?include=payments,provider,expenseItems.ingredient,expenseItems.product`
-        + '&fields[expense]=amount,status,canceled,createdAt,date,provider,payments,expenseItems&fields[expenseItem]=price,quantity,ingredient,product'
+        + '&fields[expense]=amount,status,canceled,createdAt,date,receiptNumber,provider,payments,expenseItems&fields[expenseItem]=price,quantity,ingredient,product'
         + `&page[size]=${pageSize}&page[number]=${page}`,
       )
       const data = Array.isArray(res.data) ? res.data : []
@@ -282,6 +284,7 @@ export async function fetchFudoExpensesConMeta(
       pagos: validPayments.map((p) => ({ amount: p.amount, paymentMethodId: p.paymentMethodId })),
       creado: typeof exp.attributes?.createdAt === 'string' ? exp.attributes.createdAt : null,
       fechaFactura: typeof exp.attributes?.date === 'string' ? exp.attributes.date.slice(0, 10) : null,
+      numero: typeof exp.attributes?.receiptNumber === 'string' && exp.attributes.receiptNumber.trim() ? exp.attributes.receiptNumber.trim() : null,
     })
   }
 
