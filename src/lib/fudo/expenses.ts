@@ -49,7 +49,15 @@ export type FudoExpense = {
   providerId: string | null
   /** ids de los Ingredient comprados (para cruzar con stock_items.fudo_ingredient_id) */
   ingredientIds: string[]
-  date: string // ISO del primer payment no cancelado
+  /**
+   * Cuándo se cargó la compra en Fudo (ISO). Antes era el primer pago vigente:
+   * al pagar varias Cta. Cte. juntas (Bennasar, 62 compras el 3/11) Fudo
+   * cancela la deuda y crea un pago nuevo, y compras de septiembre pasaban a
+   * ser "del 3/11" (el importador las trajo como nuevas, 9/11).
+   */
+  date: string
+  /** Último pago vigente (ISO): cuándo se pagó, para "pagado el" */
+  pagadoAt: string
   amount: number // Σ payments no cancelados
   ingredientNames: string[]
   itemCount: number // cantidad de expenseItems con ingredient
@@ -227,10 +235,12 @@ export async function fetchFudoExpensesConMeta(
     if (validPayments.length === 0) continue // sin pago válido → descartar
 
     const amount = validPayments.reduce((s, p) => s + p.amount, 0)
-    // Fecha = createdAt del primer pago no cancelado (orden por createdAt asc)
+    // Fecha = cuándo se cargó el gasto; sin ese dato, el primer pago vigente
     const sortedByDate = [...validPayments].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    const date = sortedByDate[0]?.createdAt || ''
+    const creadoAt = typeof exp.attributes?.createdAt === 'string' ? exp.attributes.createdAt : ''
+    const date = creadoAt || sortedByDate[0]?.createdAt || ''
     if (!date) continue
+    const pagadoAt = sortedByDate[sortedByDate.length - 1]?.createdAt || date
 
     // Ingredientes: nombres, ids y detalle (qty/price) de los expenseItems
     const itemRefs = relArray(exp.relationships, 'expenseItems')
@@ -261,6 +271,7 @@ export async function fetchFudoExpensesConMeta(
       providerId: providerId ?? null,
       ingredientIds,
       date,
+      pagadoAt,
       amount: Math.round(amount * 100) / 100,
       ingredientNames: names,
       itemCount: items.length,
