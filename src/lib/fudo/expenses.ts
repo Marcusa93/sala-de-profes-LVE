@@ -667,6 +667,22 @@ export async function anularEnGastoFudo(p: {
         // Sin fudoFetch: el DELETE responde sin cuerpo
         const r = await fudoHttp(`https://api.fu.do/v1alpha1/expense-items/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
         if (!r.ok && r.status !== 404) throw new Error(`Fudo API ${r.status} al quitar el renglón ${item.id}`)
+        // Bennasar #2432 (9/11): el DELETE no sacaba el renglón (404 se tomaba
+        // como "ya no está"). La app descontaba el stock y, al anular el gasto
+        // con el último recibo, Fudo devolvía el de TODOS sus renglones: papas
+        // y cebolla quedaron descontadas dos veces. Si el renglón sigue, se
+        // deja en cero (así al anular el gasto no devuelve nada de él); si
+        // tampoco se puede, no se anula el recibo (error, sin tocar nada más).
+        const sigue = (await leerGastoParaAjuste(p.expenseId))?.items.find((i) => i.id === item.id)
+        if (sigue && sigue.qty !== 0) {
+          await fudoFetch(`/expense-items/${encodeURIComponent(item.id)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: { id: item.id, type: 'ExpenseItem', attributes: { quantity: 0, price: 0 } } }),
+          })
+          const otraVez = (await leerGastoParaAjuste(p.expenseId))?.items.find((i) => i.id === item.id)
+          if (otraVez && otraVez.qty !== 0) throw new Error(`Fudo no deja sacar el renglón ${item.id} del gasto #${p.expenseId}`)
+        }
       }
       const nuevoMonto = redondo(g.amount - p.monto)
       if (nuevoMonto > 0) {
