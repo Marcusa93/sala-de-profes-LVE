@@ -292,8 +292,8 @@ async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise
 // Dedup: usa fudo_expense_id en stock_receipts. Si ya existe un receipt con ese
 // fudo_expense_id para ese stock_item, se saltea (no hay doble conteo).
 //
-// Qué trae: desde DESDE_COMPRAS_EN_APP, las compras con productos y las
-// deudas (sin pagar en Fudo), hasta MAX_GASTOS_POR_PULSO por pulso. Pago como
+// Qué trae: desde DESDE_COMPRAS_EN_APP, todos los gastos de Fudo (con o sin
+// productos, pagados o no), hasta MAX_GASTOS_POR_PULSO por pulso. Pago como
 // en Fudo: sin pagar → "a pagar" en Cta. Cte.; pagado → pagado con su fecha y
 // medio. Lo que el total tiene y los renglones no (impuestos, sin vínculo,
 // sin productos) va en un recibo sin producto: la suma da el total de Fudo.
@@ -331,9 +331,10 @@ const DIAS_QUE_SUMAN_STOCK = 3
 async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promise<ResumenImportacion> {
   const resumen: ResumenImportacion = { vistos: 0, pendientes: 0, importados: 0, deudas: 0, sinVinculo: 0, fechasCorregidas: 0, sinSumarStock: 0, noCierran: [], errores: [] }
 
-  // Desde que la app carga compras: con productos (historial, precios y stock)
-  // o con deuda en Fudo (Cta. Cte. sin pagar), así "a pagar" de la app da lo
-  // mismo que Fudo. Antes eran solo los últimos 3 días y nunca las deudas.
+  // Desde que la app carga compras, TODOS los gastos de Fudo (9/11: todo se
+  // carga en Fudo y se refleja acá): con productos (historial, precios y
+  // stock), con deuda o pagados sin productos (servicios, envíos, personal).
+  // Los que no tienen productos no tocan el stock (solo historial y deuda).
   let gastos: FudoExpense[] = []
   let medioLveDesdeFudo: (id: string) => Promise<string | null>
   let diaDeCompra: (g: FudoExpense) => string
@@ -341,8 +342,7 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
     const fudo = await import('@/lib/fudo/expenses')
     medioLveDesdeFudo = fudo.medioLveDesdeFudo
     diaDeCompra = fudo.diaDeCompra
-    gastos = (await fudo.fetchFudoExpenses(DESDE_COMPRAS_EN_APP))
-      .filter((g) => g.items.length > 0 || g.productItems.length > 0 || g.status === 'UNPAID')
+    gastos = await fudo.fetchFudoExpenses(DESDE_COMPRAS_EN_APP)
   } catch (err) {
     return { ...resumen, fallo: err instanceof Error ? err.message.slice(0, 200) : 'Fudo no respondió' }
   }

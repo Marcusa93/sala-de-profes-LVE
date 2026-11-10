@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const admin = createAdminClient()
+  const inicio = Date.now()
   const out: Record<string, unknown> = {}
   const paso = async (nombre: string, fn: () => Promise<unknown>) => {
     try { out[nombre] = await fn() } catch (err) { out[nombre] = { error: err instanceof Error ? err.message : 'error' } }
@@ -105,12 +106,19 @@ export async function GET(request: NextRequest) {
     })
   }
 
-  // 7. Pagos hechos en Fudo → recibos "a pagar" de Sala de Profes (1 vez por hora)
-  if (new Date().getMinutes() < 10) {
+  // 7. Pagos hechos en Fudo → recibos "a pagar" de Sala de Profes. En cada
+  //    pulso (antes 1 vez por hora): todo se paga en Fudo (TODO_EN_FUDO) y
+  //    acá tiene que verse pagado enseguida. Santa Fe: una consulta a Fudo
+  //    por gasto a pagar (~0,3 s c/u, 47 al 9/11); si el pulso ya viene largo
+  //    (hora del stock, importación grande) se deja para el próximo y no se
+  //    pasa de maxDuration.
+  if (Date.now() - inicio < 70_000) {
     await paso('pagos_fudo', async () => {
       const r = await sincronizarPagosDesdeFudo(admin)
       return { revisados: r.revisados, pagados: r.pagados, cancelados: r.cancelados.length, ajustados: r.ajustados, errores: r.errores }
     })
+  } else {
+    out.pagos_fudo = 'para el próximo pulso (este ya viene largo)'
   }
 
   // 8. Control de compras contra Fudo: desde las 20, una vez por día (después
