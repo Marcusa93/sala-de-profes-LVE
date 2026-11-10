@@ -6,7 +6,10 @@
  */
 
 const SUPABASE_URL = 'https://tumbcpizdqlnuevplawr.supabase.co'
-const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR1bWJjcGl6ZHFsbnVldnBsYXdyIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjkxNjM3NCwiZXhwIjoyMDg4NDkyMzc0fQ.PHCuIljdGNWpfAmov5vccRcBDWy8W2W-tdkRlEwER6s'
+// La clave NO va en el código (el repo es público): se lee del entorno.
+// Ejecutar con: SUPABASE_SERVICE_ROLE_KEY=... node scripts/create-users.mjs
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+if (!SERVICE_ROLE_KEY) throw new Error('Falta SUPABASE_SERVICE_ROLE_KEY en el entorno')
 const DEFAULT_PASSWORD = 'LVE2026test'
 
 const USERS = [
