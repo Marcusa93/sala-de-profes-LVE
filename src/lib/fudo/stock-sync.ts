@@ -72,7 +72,11 @@ type FudoWriteContext = {
   idempotencyKey?: string | null
 }
 
-export type StockWriteReason = 'physical_count' | 'manual_adjustment' | 'waste' | 'reception'
+/**
+ * transfer_out: envío de producción a la 24 (sale de Santa Fe).
+ * transfer_return: ese envío se anuló antes de llegar y la mercadería vuelve.
+ */
+export type StockWriteReason = 'physical_count' | 'manual_adjustment' | 'waste' | 'reception' | 'transfer_out' | 'transfer_return'
 
 type StockWriteOptions = {
   reason?: StockWriteReason
@@ -94,11 +98,25 @@ type StockWriteOptions = {
   fudoSumadoPorGasto?: { fudoAfter: number | null } | null
 }
 
-const MOVEMENT_TYPE_BY_REASON: Record<StockWriteReason, 'ajuste' | 'merma' | 'entrada'> = {
+const MOVEMENT_TYPE_BY_REASON: Record<StockWriteReason, 'ajuste' | 'merma' | 'entrada' | 'out' | 'in'> = {
   physical_count: 'ajuste',
   manual_adjustment: 'ajuste',
   waste: 'merma',
   reception: 'entrada',
+  // Envío a la 24: salida propia (no es merma ni venta: reason 'transfer_out')
+  transfer_out: 'out',
+  transfer_return: 'in',
+}
+
+/** Motivos que son un MOVIMIENTO (delta sobre lo que Fudo tiene ahora), nunca un absoluto */
+const DELTA_REASONS: ReadonlySet<StockWriteReason> = new Set(['waste', 'reception', 'transfer_out', 'transfer_return'])
+
+/** Origen con el que un movimiento que Fudo no aceptó queda en la cola de reintentos */
+const ORIGEN_REINTENTO: Partial<Record<StockWriteReason, string>> = {
+  waste: 'merma',
+  reception: 'recepcion',
+  transfer_out: 'envio_24',
+  transfer_return: 'envio_24_anulado',
 }
 
 function stockWriteNeedsNote(currentQty: number, newQty: number, unit?: string | null) {
@@ -537,7 +555,7 @@ export async function insertStockMovement(
   admin: SupabaseClient,
   row: {
     stock_item_id: string
-    movement_type: 'entrada' | 'uso' | 'ajuste' | 'merma'
+    movement_type: 'entrada' | 'uso' | 'ajuste' | 'merma' | 'out' | 'in'
     qty: number
     previous_qty: number
     new_qty: number
@@ -995,7 +1013,11 @@ export async function syncToFudo(
       ? 'stock_reception'
       : writeReason === 'waste'
         ? 'stock_waste'
-        : 'manual_stock_write'
+        : writeReason === 'transfer_out'
+          ? 'stock_envio_24'
+          : writeReason === 'transfer_return'
+            ? 'stock_envio_24_anulado'
+            : 'manual_stock_write'
   const note = options.note?.trim() || null
   const delta = Math.round((newQty - item.current_qty) * 1000) / 1000
   // Para merma/recepción manda el delta explícito si vino; si no, el implícito.
@@ -1025,7 +1047,7 @@ export async function syncToFudo(
   // Movimiento (merma/recepción) que Fudo no aceptó: queda en LVE y en la cola
   let pendienteFudo: { delta: number; error: string } | null = null
   if (fudoLink && !skipFudo) {
-    const isDeltaReason = writeReason === 'waste' || writeReason === 'reception'
+    const isDeltaReason = DELTA_REASONS.has(writeReason)
     const baseContext = {
       admin,
       operation: writeOperation,
@@ -1171,7 +1193,7 @@ export async function syncToFudo(
     await encolarDeltaStock(admin, {
       stockItemId,
       delta: pendienteFudo.delta,
-      origen: writeReason === 'waste' ? 'merma' : 'recepcion',
+      origen: ORIGEN_REINTENTO[writeReason] ?? 'recepcion',
       error: pendienteFudo.error,
       nota: note,
       movimientoIds: movementId ? [movementId] : [],

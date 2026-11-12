@@ -111,6 +111,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio'],
     target_user_ids: [],
   },
+  envio_24_faltantes: {
+    label: 'La 24 recibió un envío con faltantes',
+    description: 'Cuando la 24 toca «Llegó» en un envío de producción de Santa Fe y llegó menos de lo que se mandó.',
+    enabled: true,
+    target_roles: ['socio', 'encargado'],
+    target_user_ids: [],
+  },
   turno_manana: {
     label: 'Recordatorio de turno del día siguiente',
     description: 'A las 18hs avisa a cada empleado que tiene turno mañana, con el horario, para que confirme con el encargado si no puede ir.',

@@ -5,13 +5,13 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Search, X, RefreshCw, Loader2, ChevronDown, ChevronRight, CheckCircle2, AlertTriangle,
-  ClipboardList, TrendingUp, History, Activity, ChefHat, ShieldCheck, Package, Plus,
+  ClipboardList, TrendingUp, History, Activity, ChefHat, ShieldCheck, Package, Plus, Truck,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { useStockItems, type StockItem } from '@/lib/hooks/use-stock'
-import { canCountStock, isManagerOrAbove } from '@/lib/roles'
+import { canCountStock, isKitchenRole, isManagerOrAbove } from '@/lib/roles'
 import { ReportarFaltanteDialog } from '@/components/cocina/ReportarFaltanteDialog'
 import { STOCK_CATEGORIES } from '@/lib/constants'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -79,6 +79,7 @@ function StockPageContent() {
 
   const isManager = isManagerOrAbove(profile?.role)
   const canOperate = canCountStock(profile?.role)
+  const canSendTo24 = isKitchenRole(profile?.role)
   const [faltante, setFaltante] = useState(false)
   // Alta de un producto que no está en Fudo (encargados y socios)
   const [agregar, setAgregar] = useState(false)
@@ -370,6 +371,20 @@ function StockPageContent() {
             )
           })}
         </div>
+      )}
+
+      {/* Producción que sale para la otra sucursal */}
+      {canSendTo24 && (
+        <FadeIn delay={0.09}>
+          <Link href="/cocina/envios" className="flex items-center gap-3 rounded-2xl bg-white px-3.5 py-3 ring-1 ring-[#ebe6df] active:scale-[0.99]">
+            <Truck className="size-4 shrink-0 text-[#006d5a]" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[12.5px] font-semibold text-[#3d2c24]">Enviar a la 24</span>
+              <span className="block truncate text-[10.5px] text-[#a39e97]">Producción para la otra sucursal: baja el stock de acá</span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-[#d1cdc7]" />
+          </Link>
+        </FadeIn>
       )}
 
       {/* Más (managers): analítica del stock */}

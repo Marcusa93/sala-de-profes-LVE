@@ -212,7 +212,7 @@ async function reintentarUno(admin: SupabaseClient, r: Reintento): Promise<{ ok:
       userId: r.created_by ?? undefined,
       entityType: 'fudo_reintento',
       entityId: r.id,
-      reason: r.origen === 'produccion' ? 'production' : r.origen === 'merma' ? 'waste' : 'reception',
+      reason: r.origen === 'produccion' ? 'production' : r.origen === 'merma' ? 'waste' : r.origen === 'envio_24' ? 'transfer_out' : r.origen === 'envio_24_anulado' ? 'transfer_return' : 'reception',
       note: r.nota ?? `Reintento automático (${r.origen})`,
     },
   )

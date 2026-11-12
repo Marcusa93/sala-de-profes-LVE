@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   Plus, ChefHat, CheckCircle2, Clock, XCircle, ChevronRight,
   TrendingUp, AlertTriangle, Package, GitBranch, ShieldCheck,
-  Sparkles, RefreshCw, ChevronDown, ChevronUp, Check, Loader2,
+  Sparkles, RefreshCw, ChevronDown, ChevronUp, Check, Loader2, Truck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
@@ -408,13 +408,23 @@ export default function ProduccionPage() {
                 <p className="text-[11px] text-muted-foreground">Despiece y transformación</p>
               </div>
             </div>
-            <Link
-              href="/cocina/produccion/nueva"
-              className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3.5 py-2 text-[13px] font-semibold text-white shadow-sm active:scale-95 transition-transform"
-            >
-              <Plus className="size-4" />
-              Nueva
-            </Link>
+            <div className="flex items-center gap-1.5">
+              <Link
+                href="/cocina/envios"
+                title="Mandar producción a la 24"
+                className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-[12.5px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df] active:scale-95 transition-transform"
+              >
+                <Truck className="size-4 text-[#006d5a]" />
+                A la 24
+              </Link>
+              <Link
+                href="/cocina/produccion/nueva"
+                className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3.5 py-2 text-[13px] font-semibold text-white shadow-sm active:scale-95 transition-transform"
+              >
+                <Plus className="size-4" />
+                Nueva
+              </Link>
+            </div>
           </div>
 
           {/* Filters */}

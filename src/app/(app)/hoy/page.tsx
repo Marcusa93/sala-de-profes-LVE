@@ -30,6 +30,7 @@ import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { AskBar } from '@/components/ai/AskBar'
 import { lotTone, formatLotCountdown, formatQty } from '@/lib/stock/helpers'
 import { StockAlertaBanner } from '@/components/hoy/StockAlertaBanner'
+import { EnviosA24Hoy } from '@/components/hoy/EnviosA24Hoy'
 
 type PurchaseOrderLite = {
   supplier_id: string
@@ -699,6 +700,13 @@ export default function HoyPage() {
           )
         })}
       </StaggerList>
+
+      {/* Producción que sale para la otra sucursal */}
+      {isKitchenRole(profile?.role) && (
+        <FadeIn>
+          <EnviosA24Hoy />
+        </FadeIn>
+      )}
 
       {/* Consejo IA — auto-visible para cocina/chef, colapsado para encargados */}
       {data.plan?.analysis && data.plan.items.length > 0 && (

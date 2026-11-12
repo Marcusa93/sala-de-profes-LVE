@@ -40,7 +40,7 @@ const fetcher = async (url: string) => {
   return r.json()
 }
 const hace = (iso: string | null) => (iso ? `hace ${formatDistanceToNowStrict(new Date(iso), { locale: es })}` : 'nunca')
-const ORIGEN: Record<string, string> = { produccion: 'Producción', recepcion: 'Recepción', merma: 'Merma', pago_gasto: 'Pago de gasto', anulacion_recibo: 'Anulación' }
+const ORIGEN: Record<string, string> = { produccion: 'Producción', recepcion: 'Recepción', merma: 'Merma', pago_gasto: 'Pago de gasto', anulacion_recibo: 'Anulación', envio_24: 'Envío a la 24', envio_24_anulado: 'Envío a la 24 anulado' }
 const num = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 3 })
 
 async function accion(body: Record<string, unknown>) {

@@ -175,6 +175,8 @@ function labelMovement(
     return { kind: 'produccion', label: r.includes('input') ? 'Producción (consumo)' : 'Producción' }
   }
   if (r === 'manual_adjustment' || r === 'ajuste') return { kind: 'ajuste', label: 'Ajuste manual' }
+  if (r === 'transfer_out') return { kind: 'otro', label: 'Envío a la 24' }
+  if (r === 'transfer_return') return { kind: 'otro', label: 'Envío a la 24 anulado (volvió)' }
 
   if (t === 'entrada' || t === 'in') return { kind: 'compra', label: 'Entrada' }
   if (t === 'uso' || t === 'out') return { kind: 'venta', label: 'Salida' }

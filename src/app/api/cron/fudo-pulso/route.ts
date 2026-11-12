@@ -9,6 +9,7 @@ import { sincronizarPagosDesdeFudo } from '@/lib/compras/pagos-fudo'
 import { controlDiarioCompras } from '@/lib/compras/control-diario'
 import { procesarDescartablesParaLlevar } from '@/lib/stock/descartables'
 import { avisosOperativos, verificarMarcadosAtiempo } from '@/lib/avisos/operativos'
+import { procesarEnvios } from '@/lib/envios/salientes'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/fudo-pulso — cada 10 minutos (pg_cron en Supabase)
@@ -17,6 +18,7 @@ import { avisosOperativos, verificarMarcadosAtiempo } from '@/lib/avisos/operati
 // crons diarios, por eso lo dispara la base):
 //   1. ¿Fudo responde? → si no responde hace 30 min, avisa (y cuando vuelve)
 //   2. Reintenta lo que no pudo entrar a Fudo (producción, recepciones…)
+//      y los envíos a la 24 (mandar pendientes, ¿llegaron?)
 //   3. Ventas de hoy: se traen si la última importación tiene más de 10 min
 //   4. Stock de Fudo: se lee cada hora
 //   5. Menú y precios: una vez por día
@@ -71,6 +73,10 @@ export async function GET(request: NextRequest) {
 
   // 2. Reintentos
   await paso('reintentos', () => procesarReintentos(admin))
+
+  // 2b. Envíos a la 24: manda los pendientes y pregunta si llegaron los que
+  //     están en camino (si llegó con faltantes, avisa). Como mucho ~35 s.
+  await paso('envios_24', () => procesarEnvios(admin))
 
   // 3. Ventas de hoy
   await paso('ventas', () => asegurarVentasDeHoy(admin, { maxAgeMin: 10 }))
