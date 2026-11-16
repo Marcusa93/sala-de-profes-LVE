@@ -31,7 +31,7 @@ import { AskBar } from '@/components/ai/AskBar'
 import { lotTone, formatLotCountdown, formatQty } from '@/lib/stock/helpers'
 import { StockAlertaBanner } from '@/components/hoy/StockAlertaBanner'
 import { EnviosA24Hoy } from '@/components/hoy/EnviosA24Hoy'
-import { CocinaHoy } from '@/components/hoy/CocinaHoy'
+import { CocinaHoy, ProducirHoy } from '@/components/hoy/CocinaHoy'
 
 type PurchaseOrderLite = {
   supplier_id: string
@@ -701,6 +701,13 @@ export default function HoyPage() {
           )
         })}
       </StaggerList>
+
+      {/* Producción: qué falta para el mínimo en Santa Fe y en la 24 */}
+      {isKitchenRole(profile?.role) && (
+        <FadeIn>
+          <ProducirHoy />
+        </FadeIn>
+      )}
 
       {/* Jefa de cocina: confirmar producción, conteo de cierre y merma */}
       {(isManager || profile?.role === 'chef') && (

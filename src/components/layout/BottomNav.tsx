@@ -128,6 +128,7 @@ const SOCIO_MORE: ExpandableNavItem = {
         { label: 'Descartables', href: '/stock/descartables', icon: Package, description: 'Vasos y tapas que se descuentan solos al vender para llevar' },
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Tareas y control del servicio' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
+        { label: 'Qué producir', href: '/cocina/a-producir', icon: Hammer, description: 'Lo que falta para el mínimo en Santa Fe y en la 24' },
         { label: 'Enviar a la 24', href: '/cocina/envios', icon: Truck, description: 'Mandar producción a la otra sucursal y ver si llegó' },
         { label: 'Lo de hoy · Cocina', href: '/cocina/lo-de-hoy', icon: ClipboardCheck, description: 'Confirmar producción, conteo de cierre y merma' },
         { label: 'Lista y mínimos', href: '/cocina/lista', icon: ClipboardList, description: 'Qué se produce y cuánto tiene que haber en cada local' },
@@ -170,6 +171,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
         { label: 'Descartables', href: '/stock/descartables', icon: Package, description: 'Vasos y tapas que se descuentan solos al vender para llevar' },
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Servicio y tareas del salón' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
+        { label: 'Qué producir', href: '/cocina/a-producir', icon: Hammer, description: 'Lo que falta para el mínimo en Santa Fe y en la 24' },
         { label: 'Enviar a la 24', href: '/cocina/envios', icon: Truck, description: 'Mandar producción a la otra sucursal y ver si llegó' },
         { label: 'Lo de hoy · Cocina', href: '/cocina/lo-de-hoy', icon: ClipboardCheck, description: 'Confirmar producción, conteo de cierre y merma' },
         { label: 'Lista y mínimos', href: '/cocina/lista', icon: ClipboardList, description: 'Qué se produce y cuánto tiene que haber en cada local' },
@@ -197,6 +199,7 @@ const CHEF_MORE: ExpandableNavItem = {
       items: [
         { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
+        { label: 'Qué producir', href: '/cocina/a-producir', icon: Hammer, description: 'Lo que falta para el mínimo en Santa Fe y en la 24' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Enviar a la 24', href: '/cocina/envios', icon: Truck, description: 'Mandar producción a la otra sucursal' },
         { label: 'Lo de hoy · Cocina', href: '/cocina/lo-de-hoy', icon: ClipboardCheck, description: 'Confirmar producción, conteo de cierre y merma' },
@@ -226,6 +229,7 @@ const COCINA_MORE: ExpandableNavItem = {
       items: [
         { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
+        { label: 'Qué producir', href: '/cocina/a-producir', icon: Hammer, description: 'Lo que falta para el mínimo en Santa Fe y en la 24' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Enviar a la 24', href: '/cocina/envios', icon: Truck, description: 'Mandar producción a la otra sucursal' },
         { label: 'Lista y mínimos', href: '/cocina/lista', icon: ClipboardList, description: 'Qué se produce y los mínimos de cada local' },

@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { Suspense, useMemo, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import useSWR from 'swr'
 import { toast } from 'sonner'
 import { AlertTriangle, Check, ChefHat, Loader2, Package, PlugZap, RefreshCw, Search, Trash2, Truck, X } from 'lucide-react'
@@ -115,7 +116,9 @@ export default function EnviarALa24Page() {
       {isLoading && !data && <LoadingState />}
 
       {data && !data.falta_configurar && (
-        <NuevoEnvio insumos={data.insumos} onEnviado={() => void mutate()} />
+        <Suspense fallback={null}>
+          <NuevoEnvio insumos={data.insumos} onEnviado={() => void mutate()} />
+        </Suspense>
       )}
 
       {data && (
@@ -138,9 +141,26 @@ export default function EnviarALa24Page() {
 // Armar un envío
 // ---------------------------------------------------------------------------
 
+/** ?items=<id>:<cantidad>,… (desde «Qué producir»): el envío viene armado */
+function renglonesDeUrl(param: string | null, insumos: InsumoEnviable[]): Renglon[] {
+  if (!param) return []
+  const enviables = new Set(insumos.filter((i) => i.en_fudo).map((i) => i.id))
+  const vistos = new Set<string>()
+  const out: Renglon[] = []
+  for (const parte of param.split(',')) {
+    const [id, qty] = parte.split(':')
+    const n = Number(qty)
+    if (!id || !enviables.has(id) || vistos.has(id) || !(n > 0)) continue
+    vistos.add(id)
+    out.push({ id, cantidad: String(Number(n.toFixed(3))).replace('.', ',') })
+  }
+  return out.slice(0, 100)
+}
+
 function NuevoEnvio({ insumos, onEnviado }: { insumos: InsumoEnviable[]; onEnviado: () => void }) {
+  const params = useSearchParams()
   const [buscar, setBuscar] = useState('')
-  const [renglones, setRenglones] = useState<Renglon[]>([])
+  const [renglones, setRenglones] = useState<Renglon[]>(() => renglonesDeUrl(params.get('items'), insumos))
   const [nota, setNota] = useState('')
   const [confirmando, setConfirmando] = useState(false)
   const [enviando, setEnviando] = useState(false)

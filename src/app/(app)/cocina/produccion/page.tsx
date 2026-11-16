@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   Plus, ChefHat, CheckCircle2, Clock, XCircle, ChevronRight,
   TrendingUp, AlertTriangle, Package, GitBranch, ShieldCheck,
-  Sparkles, RefreshCw, ChevronDown, ChevronUp, Check, Loader2, Truck, ClipboardList,
+  Sparkles, RefreshCw, ChevronDown, ChevronUp, Check, Loader2, Truck, ClipboardList, Hammer,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
@@ -469,6 +469,19 @@ export default function ProduccionPage() {
             <div>
               <p className="text-[13px] font-semibold text-[#3d2c24]">Elaborados</p>
               <p className="text-[11px] text-[#a39e97]">Qué lleva cada uno, conteo rápido y cuánto dura</p>
+            </div>
+          </div>
+          <ChevronRight className="size-4 text-[#a39e97]" />
+        </Link>
+        <Link
+          href="/cocina/a-producir"
+          className="flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 ring-1 ring-[#ebe6df] transition hover:bg-[#faf8f5]"
+        >
+          <div className="flex items-center gap-2.5">
+            <Hammer className="size-4 text-[#006d5a]" />
+            <div>
+              <p className="text-[13px] font-semibold text-[#3d2c24]">Qué producir según los mínimos</p>
+              <p className="text-[11px] text-[#a39e97]">Lo que falta en Santa Fe y en la 24, con «Lo hice» y el envío armado</p>
             </div>
           </div>
           <ChevronRight className="size-4 text-[#a39e97]" />
