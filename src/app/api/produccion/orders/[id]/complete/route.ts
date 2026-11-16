@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isManagerOrAbove } from '@/lib/roles'
+import { ROLES_VALIDAN_PRODUCCION, puedeValidarProduccion } from '@/lib/roles'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { logAudit } from '@/lib/audit'
 import { crearTareaAlTerminarProduccion } from '@/lib/protocolos/protocolos'
@@ -170,9 +170,9 @@ export async function POST(
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
 
     const { data: profile } = await supabase.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
-    if (!profile || !isManagerOrAbove(profile.role)) {
+    if (!profile || !(ROLES_VALIDAN_PRODUCCION as readonly string[]).includes(profile.role)) {
       return NextResponse.json({
-        error: 'Solo socio o encargado puede validar producción e impactar Fudo',
+        error: 'Solo socio, encargado o chef puede validar producción e impactar Fudo',
       }, { status: 403 })
     }
 
@@ -184,12 +184,17 @@ export async function POST(
 
     const { data: order, error: orderErr } = await admin
       .from('production_orders')
-      .select('id, name, status')
+      .select('id, name, status, chef_id')
       .eq('id', id)
       .single()
 
     if (orderErr || !order) {
       return NextResponse.json({ error: 'Orden de producción no encontrada' }, { status: 404 })
+    }
+
+    // El chef confirma la producción de otro, nunca la suya
+    if (!puedeValidarProduccion(profile.role, user.id, order.chef_id)) {
+      return NextResponse.json({ error: 'Esta producción la cargaste vos: la tiene que confirmar otra persona' }, { status: 403 })
     }
 
     if (order.status === 'completed') {

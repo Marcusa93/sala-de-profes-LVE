@@ -62,6 +62,22 @@ export function canCountStock(role: string | AppRole | null | undefined): boolea
   return !!role && (COUNT_STOCK_ROLES as readonly string[]).includes(role)
 }
 
+/**
+ * ¿Puede confirmar (validar) o rechazar una producción? Socios y encargados,
+ * siempre. El chef también (la jefa de cocina confirma lo que cargó el
+ * encargado de producción), pero nunca la suya propia: la confirma otro.
+ */
+export function puedeValidarProduccion(role: string | AppRole | null | undefined, userId: string, chefId: string | null | undefined): boolean {
+  if (isManagerOrAbove(role)) return true
+  return role === 'chef' && !!chefId && chefId !== userId
+}
+
+/** Roles que pueden entrar a validar (después se mira de quién es la producción) */
+export const ROLES_VALIDAN_PRODUCCION: readonly AppRole[] = ['socio', 'encargado', 'chef']
+
+/** Merma (vencido, mal guardado, consumo del personal): socios, encargados y chef */
+export const ROLES_CARGAN_MERMA: readonly AppRole[] = ['socio', 'encargado', 'chef']
+
 /** Can this role create kitchen orders? */
 export function canCreateKitchenOrders(role: string | AppRole | null | undefined): boolean {
   return !!role && (MANAGER_ROLES.has(role) || role === 'chef' || role === 'cocina')

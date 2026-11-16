@@ -10,13 +10,14 @@ import type { StockAnomalyItem } from '@/lib/contracts/stock-anomalies'
 export type SemaphoreColor = 'red' | 'yellow' | 'green'
 export type StockSourceFilter = 'all' | 'fudo' | 'local' | 'unmapped'
 export type StockView = 'radar' | 'conteo' | 'inventario'
-export type WasteReason = 'vencido' | 'roto' | 'consumo_interno' | 'otro'
+export type WasteReason = 'vencido' | 'mal_guardado' | 'roto' | 'consumo_interno' | 'otro'
 export type FudoConnectionState = 'checking' | 'ok' | 'warning' | 'error'
 
 export const WASTE_REASON_OPTIONS: { value: WasteReason; label: string }[] = [
   { value: 'vencido',         label: 'Venció' },
+  { value: 'mal_guardado',    label: 'Mal guardado' },
   { value: 'roto',            label: 'Roto / dañado' },
-  { value: 'consumo_interno', label: 'Consumo interno' },
+  { value: 'consumo_interno', label: 'Consumo del personal' },
   { value: 'otro',            label: 'Otro' },
 ]
 

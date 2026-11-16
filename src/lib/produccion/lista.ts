@@ -36,6 +36,8 @@ export type ProductoLista = {
   minimo_24: number | null
   en_fudo: boolean
   activo: boolean
+  /** último conteo físico (stock_items.last_counted_at) */
+  contado_at: string | null
 }
 
 export type Resultado24 = {
@@ -76,12 +78,13 @@ type FilaLista = {
     fudo_ingredient_id: string | null
     fudo_product_id: string | null
     fudo_skip: boolean | null
+    last_counted_at: string | null
   } | null
 }
 
 export async function leerLista(admin: SupabaseClient): Promise<{ productos: ProductoLista[]; falta_migracion: boolean }> {
   const { data, error } = await admin.from('produccion_lista')
-    .select('stock_item_id, va_a_la_24, minimo_24, orden, stock_items(name, unit, current_qty, min_qty, is_active, fudo_ingredient_id, fudo_product_id, fudo_skip)')
+    .select('stock_item_id, va_a_la_24, minimo_24, orden, stock_items(name, unit, current_qty, min_qty, is_active, fudo_ingredient_id, fudo_product_id, fudo_skip, last_counted_at)')
     .order('orden')
   if (error) {
     // Tabla todavía no creada (migración 20261116 sin correr)
@@ -102,6 +105,7 @@ export async function leerLista(admin: SupabaseClient): Promise<{ productos: Pro
         minimo_24: f.minimo_24 == null ? null : Number(f.minimo_24),
         en_fudo: Boolean(s.fudo_ingredient_id || s.fudo_product_id || s.fudo_skip),
         activo: s.is_active !== false,
+        contado_at: s.last_counted_at ?? null,
       }
     })
   return { productos, falta_migracion: false }

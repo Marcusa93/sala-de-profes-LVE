@@ -42,6 +42,7 @@ export function TopBar() {
     '/cocina/produccion': 'Producción',
     '/cocina/envios': 'Enviar a la 24',
     '/cocina/lista': 'Lista y mínimos',
+    '/cocina/lo-de-hoy': 'Lo de hoy · Cocina',
     '/cocina/stock': 'Stock Cocina',
     '/stock/conteo': 'Conteo',
     '/stock/rendimiento': 'Rendimiento',

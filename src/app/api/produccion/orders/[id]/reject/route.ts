@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isManagerOrAbove } from '@/lib/roles'
+import { ROLES_VALIDAN_PRODUCCION, puedeValidarProduccion } from '@/lib/roles'
 import { logAudit } from '@/lib/audit'
 import { sendPushToUser } from '@/lib/push/send'
 
@@ -43,8 +43,8 @@ export async function POST(
       .select('role, first_name, last_name')
       .eq('id', user.id)
       .single()
-    if (!profile || !isManagerOrAbove(profile.role)) {
-      return NextResponse.json({ error: 'Solo socio o encargado puede rechazar una producción' }, { status: 403 })
+    if (!profile || !(ROLES_VALIDAN_PRODUCCION as readonly string[]).includes(profile.role)) {
+      return NextResponse.json({ error: 'Solo socio, encargado o chef puede rechazar una producción' }, { status: 403 })
     }
 
     const { id: idStr } = await params
@@ -66,6 +66,9 @@ export async function POST(
       .single()
     if (orderErr || !order) {
       return NextResponse.json({ error: 'Producción no encontrada' }, { status: 404 })
+    }
+    if (!puedeValidarProduccion(profile.role, user.id, order.chef_id)) {
+      return NextResponse.json({ error: 'Esta producción la cargaste vos: la tiene que revisar otra persona' }, { status: 403 })
     }
 
     if (order.status === 'completed') {

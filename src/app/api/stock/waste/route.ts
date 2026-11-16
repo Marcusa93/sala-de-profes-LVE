@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
+import { ROLES_CARGAN_MERMA } from '@/lib/roles'
 
-const WASTE_REASONS = ['vencido', 'roto', 'consumo_interno', 'otro'] as const
+const WASTE_REASONS = ['vencido', 'mal_guardado', 'roto', 'consumo_interno', 'otro'] as const
 type WasteReason = (typeof WASTE_REASONS)[number]
 
 export const dynamic = 'force-dynamic'
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
       .select('role')
       .eq('id', user.id)
       .single()
-    if (!profile || !['socio', 'encargado'].includes(profile.role)) {
+    if (!profile || !(ROLES_CARGAN_MERMA as readonly string[]).includes(profile.role)) {
       return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
     }
 

@@ -11,7 +11,7 @@ import { format } from 'date-fns'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { useStockItems, type StockItem } from '@/lib/hooks/use-stock'
-import { canCountStock, isKitchenRole, isManagerOrAbove } from '@/lib/roles'
+import { ROLES_CARGAN_MERMA, canCountStock, isKitchenRole, isManagerOrAbove } from '@/lib/roles'
 import { ReportarFaltanteDialog } from '@/components/cocina/ReportarFaltanteDialog'
 import { STOCK_CATEGORIES } from '@/lib/constants'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -443,7 +443,7 @@ function StockPageContent() {
       <CountSheet
         item={selected}
         open={Boolean(selected)}
-        canWaste={isManager}
+        canWaste={(ROLES_CARGAN_MERMA as readonly string[]).includes(profile?.role ?? '')}
         canConfigure={isManager}
         showMoney={isManager}
         fudoBlocked={fudoBlocked}

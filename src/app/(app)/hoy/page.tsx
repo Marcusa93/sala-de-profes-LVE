@@ -31,6 +31,7 @@ import { AskBar } from '@/components/ai/AskBar'
 import { lotTone, formatLotCountdown, formatQty } from '@/lib/stock/helpers'
 import { StockAlertaBanner } from '@/components/hoy/StockAlertaBanner'
 import { EnviosA24Hoy } from '@/components/hoy/EnviosA24Hoy'
+import { CocinaHoy } from '@/components/hoy/CocinaHoy'
 
 type PurchaseOrderLite = {
   supplier_id: string
@@ -700,6 +701,13 @@ export default function HoyPage() {
           )
         })}
       </StaggerList>
+
+      {/* Jefa de cocina: confirmar producción, conteo de cierre y merma */}
+      {(isManager || profile?.role === 'chef') && (
+        <FadeIn>
+          <CocinaHoy />
+        </FadeIn>
+      )}
 
       {/* Producción que sale para la otra sucursal */}
       {isKitchenRole(profile?.role) && (
