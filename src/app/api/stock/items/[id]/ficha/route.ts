@@ -175,6 +175,7 @@ function labelMovement(
     return { kind: 'produccion', label: r.includes('input') ? 'Producción (consumo)' : 'Producción' }
   }
   if (r === 'manual_adjustment' || r === 'ajuste') return { kind: 'ajuste', label: 'Ajuste manual' }
+  if (r === 'ya_contado') return { kind: 'ajuste', label: 'Producción que ya estaba en el conteo' }
   if (r === 'transfer_out') return { kind: 'otro', label: 'Envío a la 24' }
   if (r === 'transfer_return') return { kind: 'otro', label: 'Envío a la 24 anulado (volvió)' }
 

@@ -8,8 +8,9 @@ import { puedeValidarProduccion } from '@/lib/roles'
 // ---------------------------------------------------------------------------
 // En una sola pantalla, desde el celular:
 //   1. Confirmar lo que cargó producción con «Lo hice» (está en la heladera,
-//      falta algo o no está). Primero esto y después el conteo: si se cuenta
-//      antes y después se confirma, lo producido se sumaría dos veces.
+//      falta algo o no está). Se puede hacer antes o después del conteo: si
+//      un producto se contó después de cargar la producción, al confirmarla
+//      no se vuelve a sumar (lib/produccion/ya-contado).
 //   2. Conteo de cierre de los productos de la lista de producción.
 //   3. Merma: vencido, mal guardado o consumo del personal.
 // ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ export type SalidaAConfirmar = {
   nombre: string
   cantidad: number
   unidad: string
-  /** el producto ya se contó después de que se cargó la producción */
+  /** se contó después de cargar la producción: al confirmar no se vuelve a sumar */
   contado_despues: boolean
 }
 

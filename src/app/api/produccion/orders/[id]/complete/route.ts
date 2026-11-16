@@ -7,6 +7,7 @@ import { logAudit } from '@/lib/audit'
 import { crearTareaAlTerminarProduccion } from '@/lib/protocolos/protocolos'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { snapshotProductionInputCosts, persistProductionCost } from '@/lib/produccion/cost-snapshot'
+import { noSumarLoYaContado, productosYaContados } from '@/lib/produccion/ya-contado'
 
 // ---------------------------------------------------------------------------
 // POST /api/produccion/orders/[id]/complete
@@ -184,7 +185,7 @@ export async function POST(
 
     const { data: order, error: orderErr } = await admin
       .from('production_orders')
-      .select('id, name, status, chef_id')
+      .select('id, name, status, chef_id, submitted_at, created_at')
       .eq('id', id)
       .single()
 
@@ -240,6 +241,10 @@ export async function POST(
       }, { status: 502 })
     }
 
+    // Lo que se contó después de cargar esta producción ya la incluye: se
+    // registra igual, pero esos productos no se vuelven a sumar (ver ya-contado)
+    const yaContados = await productosYaContados(admin, id, order.submitted_at ?? order.created_at)
+
     // Call the SECURITY DEFINER RPC that handles all stock movements transactionally
     const { data, error } = await admin.rpc('complete_production_order', {
       p_order_id: id,
@@ -282,10 +287,13 @@ export async function POST(
       console.warn('[production recipe output link warning]', err instanceof Error ? err.message : err)
     })
 
-    // Sync affected stock items to Fudo
-    const movements = (result.movements ?? []) as { stock_item_id: number; change: number; movement_id?: string | null }[]
-    let fudoSummary: { synced: number; errors: string[]; encolados: string[] } | null = null
+    // Sync affected stock items to Fudo (menos lo que ya estaba en el conteo)
     const warnings: string[] = []
+    const yaContado = await noSumarLoYaContado(admin, (result.movements ?? []) as { stock_item_id: number; change: number; movement_id?: string | null }[], yaContados, { userId: user.id, orderId: id })
+    if (yaContado.omitidos.length > 0) warnings.push(`Ya estaba en el conteo, no se sumó de nuevo: ${yaContado.omitidos.join(', ')}`)
+    warnings.push(...yaContado.avisos)
+    const movements = yaContado.movimientos as { stock_item_id: number; change: number; movement_id?: string | null }[]
+    let fudoSummary: { synced: number; errors: string[]; encolados: string[] } | null = null
     if (movements.length > 0) {
       try {
         const { syncProductionToFudo } = await import('@/lib/fudo/stock-sync')
@@ -370,6 +378,7 @@ export async function POST(
       cost_per_output_unit: costPerOutputUnit,
       movements: result.movements,
       fudo: fudoSummary,
+      ya_contados: yaContado.omitidos,
       message: costPerOutputUnit
         ? `Producción validada — $${Math.round(costPerOutputUnit).toLocaleString('es-AR')} por unidad`
         : 'Producción validada',

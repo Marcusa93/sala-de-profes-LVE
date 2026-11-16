@@ -20,8 +20,8 @@ import type { DatosLoDeHoy, ProduccionAConfirmar } from '@/lib/produccion/lo-de-
 //    (se corrige cuánto hay) o no está (se rechaza con el motivo).
 // 2. Conteo de cierre de la lista de producción, rápido y desde el celular.
 // 3. Merma: vencido, mal guardado o consumo del personal.
-// Primero se confirma y después se cuenta: si se cuenta antes, lo producido
-// se sumaría dos veces al confirmarlo.
+// Se puede contar y confirmar en cualquier orden: si un producto se contó
+// después de cargar la producción, al confirmarla no se vuelve a sumar.
 // ---------------------------------------------------------------------------
 
 const TZ = 'America/Argentina/Buenos_Aires'
@@ -100,7 +100,7 @@ export default function LoDeHoyCocinaPage() {
       </Paso>
 
       <Paso n={2} titulo="Conteo de cierre" detalle="Lo que hay de verdad, producto por producto">
-        <ConteoCierre datos={data} hayPorConfirmar={data.a_confirmar.some((o) => o.puede_confirmar)} onListo={recargar} />
+        <ConteoCierre datos={data} onListo={recargar} />
       </Paso>
 
       <Paso n={3} titulo="Merma" detalle="Lo que se tira (vencido, mal guardado) y el consumo del personal">
@@ -163,7 +163,8 @@ function ConfirmarProduccion({ orden: o, nombreYo, onListo }: { orden: Produccio
           : msg)
         return
       }
-      toast.success(`Confirmada: ${o.nombre}`)
+      const yaContados = Array.isArray(r.j?.ya_contados) ? (r.j.ya_contados as string[]) : []
+      toast.success(`Confirmada: ${o.nombre}${yaContados.length ? ` (${yaContados.join(', ')} ya estaba en el conteo: no se sumó de nuevo)` : ''}`)
       onListo()
     } finally {
       setTrabajando(false)
@@ -214,8 +215,8 @@ function ConfirmarProduccion({ orden: o, nombreYo, onListo }: { orden: Produccio
       {o.nota && <p className="mt-1 text-[11px] italic text-[#7d6c64]">«{o.nota}»</p>}
       {o.problema && <p className="mt-2 flex items-start gap-1 rounded-lg bg-[#fdf6ec] px-2 py-1.5 text-[11px] text-[#b0762a]"><AlertTriangle className="mt-0.5 size-3 shrink-0" /> No se pudo cerrar sola: {o.problema}</p>}
       {contadoDespues.length > 0 && (
-        <p className="mt-2 flex items-start gap-1 rounded-lg bg-[#fef2f2] px-2 py-1.5 text-[11px] text-[#ea504c]">
-          <AlertTriangle className="mt-0.5 size-3 shrink-0" /> {contadoDespues.map((s) => s.nombre).join(', ')} ya se contó después de cargar esta producción: si la confirmás, se suma de nuevo. Si ya estaba en el conteo, marcala como «No está» con ese motivo.
+        <p className="mt-2 rounded-lg bg-[#f3efe9] px-2 py-1.5 text-[11px] text-[#7d6c64]">
+          {contadoDespues.map((s) => s.nombre).join(', ')} ya se contó después de cargar esta producción: al confirmarla queda registrada, pero no se vuelve a sumar (el conteo ya la incluye).
         </p>
       )}
       {error && <p className="mt-2 rounded-lg bg-[#fef2f2] px-2 py-1.5 text-[11.5px] text-[#ea504c]">{error}</p>}
@@ -256,7 +257,7 @@ function ConfirmarProduccion({ orden: o, nombreYo, onListo }: { orden: Produccio
 // 2. Conteo de cierre
 // ---------------------------------------------------------------------------
 
-function ConteoCierre({ datos, hayPorConfirmar, onListo }: { datos: Datos; hayPorConfirmar: boolean; onListo: () => void }) {
+function ConteoCierre({ datos, onListo }: { datos: Datos; onListo: () => void }) {
   const [valores, setValores] = useState<Record<string, string>>({})
   const [comentario, setComentario] = useState('')
   const [guardando, setGuardando] = useState(false)
@@ -309,9 +310,6 @@ function ConteoCierre({ datos, hayPorConfirmar, onListo }: { datos: Datos; hayPo
     <div className="space-y-2">
       {datos.conteos_hoy.length > 0 && (
         <p className="px-1 text-[11px] text-[#006d5a]">Hoy ya contó {datos.conteos_hoy.map((c) => `${c.quien?.split(' ')[0] ?? 'alguien'} ${hora(c.hora)} (${c.lineas.length})`).join(', ')} · {contadosHoy} de {datos.lista.length} contados</p>
-      )}
-      {hayPorConfirmar && (
-        <p className="flex items-start gap-1 rounded-xl bg-[#fdf6ec] px-3 py-2 text-[11.5px] text-[#b0762a]"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" /> Primero confirmá la producción de arriba. Si contás antes y después la confirmás, se suma dos veces.</p>
       )}
 
       <div className="divide-y divide-[#f3efe9] overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
