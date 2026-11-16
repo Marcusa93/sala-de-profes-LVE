@@ -17,7 +17,7 @@ import type { EstadoCatalogo24, Linea24, ProductoLista, ResultadoCatalogo, Stock
 // Lista de producción y mínimos — sistema de producción, punto 1
 // ---------------------------------------------------------------------------
 // Qué produce la cocina y cuánto tiene que haber como mínimo, en Santa Fe y
-// en la 24. La cambian los socios; el resto la ve. Al guardar, a la 24 se le
+// en la 24. La cambian Marco y Joaquín; el resto la ve. Al guardar, a la 24 se le
 // manda su parte (qué cuenta al cierre y su mínimo). Abajo de cada producto:
 // cómo está en la 24 (si ya lo eligieron allá, cuánto hay y cuánto falta).
 // ---------------------------------------------------------------------------
@@ -29,6 +29,7 @@ type Datos = {
   productos: ProductoLista[]
   falta_migracion: boolean
   puede_editar: boolean
+  editan: string[]
   estado_24: EstadoCatalogo24
   la_24: Stock24 | null
   falta_configurar: string | null
@@ -165,7 +166,7 @@ export default function ListaProduccionPage() {
         <p className="rounded-xl bg-[#fef2f2] px-3 py-2.5 text-[12px] font-semibold text-[#ea504c]">Falta correr la migración de la lista de producción (20261116_produccion_lista.sql).</p>
       )}
       {!data.puede_editar && (
-        <p className="rounded-xl bg-[#f3efe9] px-3 py-2 text-[11.5px] text-[#7d6c64]">La lista y los mínimos los cambian los socios.</p>
+        <p className="rounded-xl bg-[#f3efe9] px-3 py-2 text-[11.5px] text-[#7d6c64]">La lista y los mínimos los cambian {data.editan.length ? data.editan.join(' y ') : 'los socios'}.</p>
       )}
 
       <EstadoLa24 datos={data} editar={editar} mandando={mandando} onMandar={() => void mandar24()} />

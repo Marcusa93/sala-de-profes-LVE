@@ -17,8 +17,25 @@ import { logAudit } from '@/lib/audit'
 // ---------------------------------------------------------------------------
 
 export const ROLES_VEN_LISTA = ['socio', 'encargado', 'chef', 'cocina'] as const
-/** Quiénes cambian la lista y los mínimos. Pedido: "yo o Joaquín" (los dos socios) */
+/** La lista y los mínimos los cambian socios… */
 export const ROLES_EDITAN_LISTA = ['socio'] as const
+/**
+ * …y solo los que dijo el pedido (16/11): Marco y Joaquín. Se puede cambiar
+ * sin tocar código con app_settings 'produccion_lista_editores' =
+ * { "user_ids": [...] }.
+ */
+const EDITORES_POR_DEFECTO = [
+  'b8f689ca-85ae-4120-8a02-521e378e8585', // Marco Rossi
+  '66c1aab8-5f89-434e-8a38-0e8abdbd4848', // Joaquín González
+]
+
+export async function editoresLista(admin: SupabaseClient): Promise<{ ids: string[]; nombres: string[] }> {
+  const { data } = await admin.from('app_settings').select('value').eq('key', 'produccion_lista_editores').maybeSingle()
+  const guardados = (data as { value: { user_ids?: unknown } } | null)?.value?.user_ids
+  const ids = Array.isArray(guardados) && guardados.length ? guardados.map(String) : EDITORES_POR_DEFECTO
+  const { data: perfiles } = await admin.from('profiles').select('id, first_name').in('id', ids).eq('is_active', true)
+  return { ids, nombres: ((perfiles ?? []) as { first_name: string | null }[]).map((p) => p.first_name ?? '').filter(Boolean) }
+}
 
 const MAX_LISTA = 300
 const MAX_A_LA_24 = 200
