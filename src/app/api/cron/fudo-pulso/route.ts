@@ -10,6 +10,7 @@ import { controlDiarioCompras } from '@/lib/compras/control-diario'
 import { procesarDescartablesParaLlevar } from '@/lib/stock/descartables'
 import { avisosOperativos, verificarMarcadosAtiempo } from '@/lib/avisos/operativos'
 import { procesarEnvios } from '@/lib/envios/salientes'
+import { reintentarCatalogo24 } from '@/lib/produccion/lista'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/fudo-pulso — cada 10 minutos (pg_cron en Supabase)
@@ -77,6 +78,8 @@ export async function GET(request: NextRequest) {
   // 2b. Envíos a la 24: manda los pendientes y pregunta si llegaron los que
   //     están en camino (si llegó con faltantes, avisa). Como mucho ~35 s.
   await paso('envios_24', () => procesarEnvios(admin))
+  // 2c. Lista de producción: si cambió y la 24 todavía no la tiene, se la manda
+  await paso('catalogo_24', () => reintentarCatalogo24(admin))
 
   // 3. Ventas de hoy
   await paso('ventas', () => asegurarVentasDeHoy(admin, { maxAgeMin: 10 }))

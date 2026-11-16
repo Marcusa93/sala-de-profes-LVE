@@ -41,6 +41,7 @@ export function TopBar() {
     '/equipo/turnos': 'Turnos',
     '/cocina/produccion': 'Producción',
     '/cocina/envios': 'Enviar a la 24',
+    '/cocina/lista': 'Lista y mínimos',
     '/cocina/stock': 'Stock Cocina',
     '/stock/conteo': 'Conteo',
     '/stock/rendimiento': 'Rendimiento',
