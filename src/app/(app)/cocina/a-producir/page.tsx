@@ -98,6 +98,10 @@ export default function QueProducirPage() {
         </button>
       </div>
 
+      <Link href="/cocina/parte" className="flex items-center justify-between rounded-xl bg-[#006d5a] px-4 py-3 text-[13px] font-bold text-white active:scale-[0.99]">
+        <span>Parte de cierre de la noche</span><span aria-hidden>→</span>
+      </Link>
+
       {/* Estado de la 24 */}
       {data.la_24 && !data.la_24.ok && (
         <p className="flex items-start gap-1 rounded-xl bg-[#fdf6ec] px-3 py-2 text-[11.5px] text-[#b0762a]"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" /> No se pudo ver el stock de la 24 ({data.la_24.error}): por ahora se cuenta solo lo de Santa Fe.</p>

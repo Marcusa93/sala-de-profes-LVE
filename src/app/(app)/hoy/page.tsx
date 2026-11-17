@@ -31,7 +31,7 @@ import { AskBar } from '@/components/ai/AskBar'
 import { lotTone, formatLotCountdown, formatQty } from '@/lib/stock/helpers'
 import { StockAlertaBanner } from '@/components/hoy/StockAlertaBanner'
 import { EnviosA24Hoy } from '@/components/hoy/EnviosA24Hoy'
-import { CocinaHoy, ProducirHoy } from '@/components/hoy/CocinaHoy'
+import { CocinaHoy, ParteHoy, ProducirHoy } from '@/components/hoy/CocinaHoy'
 
 type PurchaseOrderLite = {
   supplier_id: string
@@ -706,6 +706,11 @@ export default function HoyPage() {
       {isKitchenRole(profile?.role) && (
         <FadeIn>
           <ProducirHoy />
+        </FadeIn>
+      )}
+      {isKitchenRole(profile?.role) && (
+        <FadeIn>
+          <ParteHoy />
         </FadeIn>
       )}
 
