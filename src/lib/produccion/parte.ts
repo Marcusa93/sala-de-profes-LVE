@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { fechaOperativa, instanteDe } from '@/lib/attendance/jornada'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
+import { cargarRecetasProduccion } from '@/lib/produccion/recetas'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { logAudit } from '@/lib/audit'
 import { crearTareaAlTerminarProduccion } from '@/lib/protocolos/protocolos'
@@ -69,8 +70,31 @@ async function entradaDelFichaje(admin: SupabaseClient, userId: string, fecha: s
   return f?.effective_clock_in_at ?? f?.clock_in_at ?? null
 }
 
+/**
+ * De qué noche es el parte que se abre sin fecha. El turno de producción cruza
+ * las 06:00 (entra ~23:30, sale 07:00) y el parte se cierra al salir: con la
+ * fecha operativa de ese momento caía en el día siguiente, sin el fichaje y
+ * con las horas corridas un día (y esa noche ya no podía abrir el suyo).
+ * Es el de ayer si hoy no fichó y el fichaje de ayer sigue abierto o terminó
+ * hace menos de 8 h, o si el parte de ayer quedó sin cerrar.
+ */
+export async function fechaDelParte(admin: SupabaseClient, userId: string, ahora = new Date()): Promise<string> {
+  const hoy = fechaOperativa(ahora)
+  const ayer = new Date(Date.parse(`${hoy}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10)
+  const [{ data: fichajes }, { data: parteAyer }] = await Promise.all([
+    admin.from('attendance_logs').select('operative_date, clock_out_at').eq('user_id', userId).in('operative_date', [hoy, ayer]),
+    admin.from('partes_produccion').select('estado').eq('user_id', userId).eq('fecha', ayer).maybeSingle(),
+  ])
+  const f = (fichajes ?? []) as { operative_date: string; clock_out_at: string | null }[]
+  if (f.some((x) => x.operative_date === hoy)) return hoy
+  const reciente = f.some((x) => x.operative_date === ayer && (!x.clock_out_at || ahora.getTime() - Date.parse(x.clock_out_at) < 8 * 3_600_000))
+  if (reciente || (parteAyer as { estado?: string } | null)?.estado === 'borrador') return ayer
+  return hoy
+}
+
 /** El parte de una persona para una noche (si no existe, uno vacío sin guardar) */
-export async function leerParte(admin: SupabaseClient, userId: string, fecha = fechaOperativa()): Promise<{ parte: Parte; falta_migracion: boolean }> {
+export async function leerParte(admin: SupabaseClient, userId: string, fechaPedida?: string): Promise<{ parte: Parte; falta_migracion: boolean }> {
+  const fecha = fechaPedida ?? await fechaDelParte(admin, userId)
   const [{ data, error }, fichaje] = await Promise.all([
     admin.from('partes_produccion').select('*').eq('user_id', userId).eq('fecha', fecha).maybeSingle(),
     entradaDelFichaje(admin, userId, fecha),
@@ -154,7 +178,7 @@ function limpiarTarea(raw: Record<string, unknown>, i: number, previa?: TareaPar
 }
 
 export async function guardarParte(admin: SupabaseClient, userId: string, e: EntradaParte): Promise<{ ok: true; parte: Parte } | { ok: false; status: number; error: string }> {
-  const fecha = typeof e.fecha === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.fecha) ? e.fecha : fechaOperativa()
+  const fecha = typeof e.fecha === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.fecha) ? e.fecha : await fechaDelParte(admin, userId)
   if (e.entrada && !HHMM.test(e.entrada)) return { ok: false, status: 400, error: 'La hora de entrada no es válida' }
   if (e.salida && !HHMM.test(e.salida)) return { ok: false, status: 400, error: 'La hora de salida no es válida' }
   const tareasRaw = Array.isArray(e.tareas) ? e.tareas.slice(0, MAX_TAREAS) : []
@@ -230,11 +254,15 @@ export async function cerrarParte(admin: SupabaseClient, user: { id: string; nom
 
   const avisos: string[] = []
   const erroresCierre: string[] = []
+  // Tareas que no pueden ser una producción (ej. una masa sin receta): no
+  // traban el cierre, quedan anotadas en el resultado y se avisan
+  const sinProduccion: string[] = []
   for (const t of tareas) {
     if (t.production_order_id) continue
     const productos = t.salidas.filter((s) => !s.en_proceso && s.stock_item_id)
     if (productos.length === 0) continue // separar, en proceso: no mueve stock todavía
     const r = await crearProduccionDeTarea(admin, user, fila.fecha, t, insumo)
+    if (!r.ok && r.omitir) { sinProduccion.push(`${t.crudo_nombre}: ${r.error}`); continue }
     if (!r.ok) { erroresCierre.push(`${t.crudo_nombre}: ${r.error}`); continue }
     t.production_order_id = r.orderId
     // Se guarda en el momento: si el cierre se corta, no se vuelve a crear
@@ -258,7 +286,7 @@ export async function cerrarParte(admin: SupabaseClient, user: { id: string; nom
       production_order_id: t.production_order_id ?? null,
     })),
     producciones: tareas.map((t) => t.production_order_id).filter((x): x is number => typeof x === 'number'),
-    errores: [],
+    errores: sinProduccion,
   }
   const { data: cerrado } = await admin.from('partes_produccion')
     .update({ estado: 'cerrado', cerrado_at: new Date().toISOString(), tareas, resultado, updated_at: new Date().toISOString() })
@@ -284,12 +312,17 @@ export async function cerrarParte(admin: SupabaseClient, user: { id: string; nom
     metadata: { resultado },
   })
   if (bajos.length) avisos.push('Se avisó a los socios del rendimiento bajo')
+  for (const s of sinProduccion) avisos.push(`No se sumó al stock — ${s}`)
   return { ok: true, parte: { ...(cerrado as FilaParte), entrada_fichaje: null }, avisos }
 }
 
 /**
  * Una tarea con productos → una producción a confirmar: el crudo real usado
  * (entró − volvió − lo que sigue en proceso), cada producto y el desperdicio.
+ * Si lo que entró no se lleva en kilos (una masa: se elige el mismo producto
+ * como «lo que entró»), se registra como «Lo hice»: lo usado sale de la
+ * receta de cada producto. Sin receta no hay producción posible: `omitir`
+ * (no traba el cierre del parte).
  */
 async function crearProduccionDeTarea(
   admin: SupabaseClient,
@@ -297,14 +330,14 @@ async function crearProduccionDeTarea(
   fecha: string,
   t: TareaParte,
   insumo: Map<string, InsumoMin>,
-): Promise<{ ok: true; orderId: number } | { ok: false; error: string }> {
+): Promise<{ ok: true; orderId: number } | { ok: false; error: string; omitir?: boolean }> {
   const c = calcularTarea(t)
   const crudo = t.crudo_stock_item_id ? insumo.get(t.crudo_stock_item_id) : undefined
   if (!crudo) return { ok: false, error: 'la materia prima ya no existe' }
   const usadoKg = r3((c.usado_kg ?? 0) - c.en_proceso_kg)
-  if (!(usadoKg > 0)) return { ok: false, error: 'no quedan kilos usados para descontar' }
   const entradaUnidad = normalizeToStockUnit(usadoKg, 'kg', crudo)
-  if (!entradaUnidad.ok) return { ok: false, error: `${crudo.name} se lleva en ${crudo.unit}: no se pueden descontar kilos` }
+  const porReceta = !entradaUnidad.ok
+  if (entradaUnidad.ok && !(usadoKg > 0)) return { ok: false, error: 'no quedan kilos usados para descontar' }
 
   const salidas: { stock_item_id: string; output_name: string; qty_produced: number; unit: string; notes: string }[] = []
   for (const s of t.salidas.filter((x) => !x.en_proceso && x.stock_item_id)) {
@@ -321,12 +354,24 @@ async function crearProduccionDeTarea(
       notes: [s.porciones ? `${s.porciones} porciones` : null, s.kg ? `${s.kg} kg` : null, s.kg_cocido ? `cocido ${s.kg_cocido} kg` : null].filter(Boolean).join(' · ') || '',
     })
   }
-  const desperdicio = t.desperdicio_kg ?? c.desperdicio_calculado ?? 0
+
+  let inputs: { stock_item_id: string; qty_used: number; unit: string }[]
+  if (entradaUnidad.ok) {
+    inputs = [{ stock_item_id: crudo.id, qty_used: entradaUnidad.qty, unit: entradaUnidad.unit }]
+  } else {
+    const r = await insumosPorReceta(admin, salidas)
+    if (!r.ok) return { ok: false, error: r.error, omitir: true }
+    inputs = r.inputs
+  }
+  // Por receta, el «entró − salió» no es desperdicio (la masa pesa más que la harina)
+  const desperdicio = porReceta ? (t.desperdicio_kg ?? 0) : (t.desperdicio_kg ?? c.desperdicio_calculado ?? 0)
 
   const notas = [
     `Parte de cierre del ${fecha}`,
-    `entró ${t.entrada_kg} kg de ${crudo.name}${t.vuelve_kg ? ` (volvieron ${t.vuelve_kg} kg)` : ''}${c.en_proceso_kg ? ` (siguen en proceso ${c.en_proceso_kg} kg)` : ''}`,
-    ...c.controles.filter((x) => x.estado === 'ok' || x.estado === 'bajo').map((x) => `${x.nombre}: ${x.detalle}`),
+    porReceta
+      ? `por receta, como «Lo hice» (${crudo.name} se lleva en ${crudo.unit}${t.entrada_kg ? `; anotó ${t.entrada_kg} kg` : ''})`
+      : `entró ${t.entrada_kg} kg de ${crudo.name}${t.vuelve_kg ? ` (volvieron ${t.vuelve_kg} kg)` : ''}${c.en_proceso_kg ? ` (siguen en proceso ${c.en_proceso_kg} kg)` : ''}`,
+    ...(porReceta ? [] : c.controles.filter((x) => x.estado === 'ok' || x.estado === 'bajo').map((x) => `${x.nombre}: ${x.detalle}`)),
     t.motivo ? `Motivo: ${t.motivo}` : null,
     t.nota,
   ].filter(Boolean).join(' · ').slice(0, 1000)
@@ -343,7 +388,7 @@ async function crearProduccionDeTarea(
     await admin.from('production_orders').delete().eq('id', orderId)
     return { ok: false as const, error: msg }
   }
-  const { error: errIn } = await admin.from('production_inputs').insert({ production_order_id: orderId, stock_item_id: crudo.id, qty_used: entradaUnidad.qty, unit: entradaUnidad.unit })
+  const { error: errIn } = await admin.from('production_inputs').insert(inputs.map((i) => ({ production_order_id: orderId, ...i })))
   if (errIn) return deshacer(errIn.message)
   const filas = [
     ...salidas.map((s) => ({ production_order_id: orderId, stock_item_id: s.stock_item_id, output_name: s.output_name, qty_produced: s.qty_produced, unit: s.unit, is_waste: false, notes: s.notes || null })),
@@ -359,8 +404,34 @@ async function crearProduccionDeTarea(
     module: 'produccion',
     entityType: 'production_order',
     entityId: String(orderId),
-    description: `${user.nombre ?? 'Alguien'}: parte del ${fecha} — ${crudo.name} ${usadoKg} kg → ${salidas.map((s) => `${s.output_name} ${s.qty_produced} ${s.unit}`).join(', ')}${desperdicio > 0 ? ` · desperdicio ${r3(desperdicio)} kg` : ''}`,
+    description: `${user.nombre ?? 'Alguien'}: parte del ${fecha} — ${porReceta ? `${crudo.name} (por receta)` : `${crudo.name} ${usadoKg} kg`} → ${salidas.map((s) => `${s.output_name} ${s.qty_produced} ${s.unit}`).join(', ')}${desperdicio > 0 ? ` · desperdicio ${r3(desperdicio)} kg` : ''}`,
     metadata: { parte: true, tarea: t.id },
   })
   return { ok: true, orderId }
+}
+
+/** Lo que se usó según la receta de cada producto (para lo que no se lleva en kilos). */
+async function insumosPorReceta(
+  admin: SupabaseClient,
+  salidas: { stock_item_id: string; output_name: string; qty_produced: number }[],
+): Promise<{ ok: true; inputs: { stock_item_id: string; qty_used: number; unit: string }[] } | { ok: false; error: string }> {
+  const conCantidad = salidas.filter((s) => s.qty_produced > 0)
+  if (conCantidad.length === 0) return { ok: false, error: 'no se anotó cuántas salieron' }
+  const recetas = await cargarRecetasProduccion(admin, conCantidad.map((s) => s.stock_item_id))
+  const sinReceta = conCantidad.filter((s) => !recetas.get(s.stock_item_id)?.ingredientes.length)
+  if (sinReceta.length) {
+    return { ok: false, error: `${sinReceta.map((s) => s.output_name).join(', ')} no tiene cargado qué lleva (cargalo en Elaborados y registralo con «Lo hice»)` }
+  }
+  const total = new Map<string, { qty: number; unit: string }>()
+  for (const s of conCantidad) {
+    for (const i of recetas.get(s.stock_item_id)!.ingredientes) {
+      const n = normalizeToStockUnit(i.qty_por_unidad * s.qty_produced, i.unidad_receta ?? i.unit, { name: i.name, unit: i.unit })
+      if (!n.ok) return { ok: false, error: `la receta de ${s.output_name} tiene un problema: ${n.error}` }
+      const prev = total.get(i.stock_item_id)
+      total.set(i.stock_item_id, { qty: (prev?.qty ?? 0) + n.qty, unit: n.unit })
+    }
+  }
+  const inputs = [...total].map(([id, v]) => ({ stock_item_id: id, qty_used: r3(v.qty), unit: v.unit })).filter((i) => i.qty_used > 0)
+  if (inputs.length === 0) return { ok: false, error: 'la receta no tiene cantidades' }
+  return { ok: true, inputs }
 }

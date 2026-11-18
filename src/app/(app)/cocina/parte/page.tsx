@@ -260,7 +260,9 @@ function TareaCard({ n, tarea: t, insumos, onCambiar, onQuitar }: { n: number; t
           ) : (
             <Elegir items={crudos} placeholder="¿Qué entró? (pollo, lomo, nalga…)" onElegir={(i) => set({ crudo_stock_item_id: i.id, crudo_nombre: i.name, crudo_unidad: i.unit, controles: t.controles.length ? t.controles : controlesSugeridos(i.name) })} />
           )}
-          {crudo && entrada != null && crudo.current_qty < entrada && (
+          {t.crudo_stock_item_id && t.crudo_unidad && !esMasa(t.crudo_unidad) ? (
+            <p className="mt-1 text-[10.5px] text-[#7d6c64]">{t.crudo_nombre} se cuenta en {t.crudo_unidad}: no se descuentan kilos. Se registra con la receta de lo que salió, como «Lo hice».</p>
+          ) : crudo && entrada != null && crudo.current_qty < entrada && (
             <p className="mt-1 text-[10.5px] text-[#b0762a]">En la app hay {kg(crudo.current_qty)}: si no se cuenta antes, la confirmación se va a trabar.</p>
           )}
         </div>
@@ -277,6 +279,7 @@ function TareaCard({ n, tarea: t, insumos, onCambiar, onQuitar }: { n: number; t
       <label className="block">
         <span className="text-[10.5px] font-semibold text-[#7d6c64]">Entró (kg)</span>
         <input value={t.entrada_kg} onChange={(e) => set({ entrada_kg: e.target.value })} inputMode="decimal" placeholder="ej. 12,615" className={cn('mt-0.5 w-full rounded-xl border px-3 py-2.5 text-[17px] tabular-nums focus:outline-none', mal(t.entrada_kg) ? 'border-[#ea504c]' : 'border-[#ebe6df] focus:border-[#006d5a]')} />
+        <AvisoGramos valor={t.entrada_kg} />
       </label>
 
       {/* Salidas */}
@@ -312,6 +315,7 @@ function TareaCard({ n, tarea: t, insumos, onCambiar, onQuitar }: { n: number; t
               <label className="block">
                 <span className="text-[10px] font-semibold text-[#7d6c64]">Kilos</span>
                 <input value={s.kg} onChange={(e) => setSalida(s.id, { kg: e.target.value })} inputMode="decimal" placeholder="0" className={cn('mt-0.5 w-full rounded-lg border bg-white px-2.5 py-2 text-[15px] tabular-nums focus:outline-none', mal(s.kg) ? 'border-[#ea504c]' : 'border-[#ebe6df] focus:border-[#006d5a]')} />
+                <AvisoGramos valor={s.kg} />
               </label>
               {s.cocido && (
                 <label className="block">
@@ -396,6 +400,13 @@ function Elegir({ items, placeholder, onElegir }: { items: InsumoEnviable[]; pla
   )
 }
 
+/** 5820 en «kilos» casi seguro son gramos: avisar antes de que quede así */
+function AvisoGramos({ valor }: { valor: string }) {
+  const n = numOk(valor)
+  if (n == null || n < 100) return null
+  return <span className="mt-0.5 block text-[10.5px] font-semibold text-[#b0762a]">¿Son gramos? Acá van kilos: {n.toLocaleString('es-AR')} g = {kg(n / 1000)}</span>
+}
+
 // ---------------------------------------------------------------------------
 // Parte cerrado e historial
 // ---------------------------------------------------------------------------
@@ -408,6 +419,12 @@ function ParteCerrado({ parte }: { parte: Parte }) {
         ✓ Cerrado {parte.cerrado_at ? `a las ${horaDe(parte.cerrado_at)}` : ''} · {horaDe(parte.entrada_at)} a {horaDe(parte.salida_at)}{r ? ` (${r.horas.toLocaleString('es-AR')} h)` : ''}.
         {r && r.producciones.length > 0 && ' La producción la confirma la jefa de cocina.'}
       </p>
+      {(r?.errores ?? []).length > 0 && (
+        <div className="rounded-xl bg-[#fdf6ec] px-3 py-2.5 text-[12px] text-[#b0762a]">
+          <p className="font-semibold">No se sumó al stock:</p>
+          {r!.errores.map((e) => <p key={e}>• {e}</p>)}
+        </div>
+      )}
       {(r?.tareas ?? []).map((t) => (
         <div key={t.id} className="rounded-2xl bg-white p-3.5 ring-1 ring-[#ebe6df]">
           <p className="text-[13px] font-bold text-[#3d2c24]">{t.crudo}</p>
