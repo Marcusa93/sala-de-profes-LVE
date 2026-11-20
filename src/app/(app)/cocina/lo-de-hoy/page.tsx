@@ -12,6 +12,7 @@ import { BackToHoy } from '@/components/layout/BackToHoy'
 import { LoadingState } from '@/components/ui/LoadingState'
 import type { InsumoEnviable } from '@/lib/envios/salientes'
 import type { DatosLoDeHoy, ProduccionAConfirmar } from '@/lib/produccion/lo-de-hoy'
+import { avisoQuedoNegativo, leerFaltantes, textoFaltante, type Faltante } from '@/lib/produccion/faltantes'
 
 // ---------------------------------------------------------------------------
 // Lo de hoy · Cocina — la pantalla de la jefa de cocina (punto 2)
@@ -135,11 +136,44 @@ function ConfirmarProduccion({ orden: o, nombreYo, onListo }: { orden: Produccio
   const [motivo, setMotivo] = useState('')
   const [trabajando, setTrabajando] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // En la app figura menos stock de un insumo que lo usado: se muestra y se puede confirmar igual
+  const [faltantes, setFaltantes] = useState<Faltante[]>([])
   const contadoDespues = o.salidas.filter((s) => s.contado_despues)
+
+  /** Cierra la producción. Devuelve false si no se pudo (el motivo queda en pantalla). */
+  async function completar(permitirFaltante: boolean): Promise<boolean> {
+    const r = await pedir(`/api/produccion/orders/${o.id}/complete`, 'POST', permitirFaltante ? { permitir_faltante: true } : {})
+    if (!r.ok || r.j?.success === false) {
+      const lista = r.j?.code === 'stock_insuficiente' ? leerFaltantes(r.j) : []
+      if (lista.length > 0) { setFaltantes(lista); return false }
+      const msg = String(r.j?.error ?? 'No se pudo confirmar')
+      setError(/insuficiente/i.test(msg)
+        ? `${msg}. El stock de esa materia prima en la app está por debajo de lo que se usó: contala (o que carguen la compra en Fudo) y confirmá de nuevo.`
+        : msg)
+      return false
+    }
+    const yaContados = Array.isArray(r.j?.ya_contados) ? (r.j.ya_contados as string[]) : []
+    toast.success(`Confirmada: ${o.nombre}${yaContados.length ? ` (${yaContados.join(', ')} ya estaba en el conteo: no se sumó de nuevo)` : ''}`)
+    const quedaronNegativos = leerFaltantes(r.j)
+    if (quedaronNegativos.length > 0) toast.info(avisoQuedoNegativo(quedaronNegativos))
+    onListo()
+    return true
+  }
+
+  async function confirmarIgual() {
+    setTrabajando(true)
+    setError(null)
+    try {
+      if (await completar(true)) setFaltantes([])
+    } finally {
+      setTrabajando(false)
+    }
+  }
 
   async function confirmar(corregir: boolean) {
     setTrabajando(true)
     setError(null)
+    setFaltantes([])
     try {
       if (corregir) {
         const cambios: string[] = []
@@ -155,17 +189,7 @@ function ConfirmarProduccion({ orden: o, nombreYo, onListo }: { orden: Produccio
           await pedir(`/api/produccion/orders/${o.id}`, 'PATCH', { action: 'update', notes: `${o.nota ? `${o.nota} · ` : ''}Confirmó ${nombreYo}: faltaba (${cambios.join('; ')})`.slice(0, 1000) })
         }
       }
-      const r = await pedir(`/api/produccion/orders/${o.id}/complete`, 'POST')
-      if (!r.ok || r.j?.success === false) {
-        const msg = String(r.j?.error ?? 'No se pudo confirmar')
-        setError(/insuficiente/i.test(msg)
-          ? `${msg}. El stock de esa materia prima en la app está por debajo de lo que se usó: contala (o que carguen la compra en Fudo) y confirmá de nuevo.`
-          : msg)
-        return
-      }
-      const yaContados = Array.isArray(r.j?.ya_contados) ? (r.j.ya_contados as string[]) : []
-      toast.success(`Confirmada: ${o.nombre}${yaContados.length ? ` (${yaContados.join(', ')} ya estaba en el conteo: no se sumó de nuevo)` : ''}`)
-      onListo()
+      await completar(false)
     } finally {
       setTrabajando(false)
     }
@@ -220,6 +244,18 @@ function ConfirmarProduccion({ orden: o, nombreYo, onListo }: { orden: Produccio
         </p>
       )}
       {error && <p className="mt-2 rounded-lg bg-[#fef2f2] px-2 py-1.5 text-[11.5px] text-[#ea504c]">{error}</p>}
+      {faltantes.length > 0 && (
+        <div className="mt-2 space-y-2 rounded-xl bg-[#fdf6ec] p-2.5 text-[11.5px] text-[#8a5a1c] ring-1 ring-[#f1dcb8]">
+          <p className="flex items-start gap-1 font-semibold"><AlertTriangle className="mt-0.5 size-3 shrink-0" /> Falta stock en la app:</p>
+          <ul className="space-y-0.5 pl-4">
+            {faltantes.map((f) => <li key={f.stock_item_id} className="list-disc">{textoFaltante(f)}</li>)}
+          </ul>
+          <p>Si entró mercadería y no se cargó la compra, confirmala igual: ese insumo queda en negativo hasta que carguen la compra en Fudo. Si algún número está mal cargado, tocá «No está» y contá qué pasó.</p>
+          <button type="button" onClick={() => void confirmarIgual()} disabled={trabajando} className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#b0762a] py-2.5 text-[13px] font-bold text-white active:scale-[0.98] disabled:opacity-60">
+            {trabajando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />} Confirmar igual
+          </button>
+        </div>
+      )}
 
       {!o.puede_confirmar ? (
         <p className="mt-3 rounded-xl bg-[#f3efe9] px-3 py-2 text-[11.5px] text-[#7d6c64]">{o.es_mia ? 'La cargaste vos: la confirma otra persona.' : 'La confirman la jefa de cocina, un encargado o un socio.'}</p>

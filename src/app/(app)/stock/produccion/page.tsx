@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
 import { RechazarProduccionDialog } from '@/components/produccion/RechazarProduccionDialog'
+import { leerFaltantes, preguntaConfirmarIgual } from '@/lib/produccion/faltantes'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -200,8 +201,20 @@ export default function ProduccionDashboardPage() {
 
     setApprovingId(order.id)
     try {
-      const res = await fetch(`/api/produccion/orders/${order.id}/complete`, { method: 'POST' })
-      const json = await res.json().catch(() => null)
+      const enviar = (permitirFaltante: boolean) => fetch(`/api/produccion/orders/${order.id}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(permitirFaltante ? { permitir_faltante: true } : {}),
+      })
+      let res = await enviar(false)
+      let json = await res.json().catch(() => null)
+      // En la app figura menos stock que lo usado: mostrar los números y dejar confirmar igual
+      const faltantes = leerFaltantes(json)
+      if (!res.ok && json?.code === 'stock_insuficiente' && faltantes.length > 0) {
+        if (!window.confirm(preguntaConfirmarIgual(faltantes))) return
+        res = await enviar(true)
+        json = await res.json().catch(() => null)
+      }
       if (!res.ok || !json?.success) {
         throw new Error(json?.error ?? 'No se pudo validar la producción')
       }

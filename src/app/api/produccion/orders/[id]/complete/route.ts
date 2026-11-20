@@ -8,6 +8,7 @@ import { crearTareaAlTerminarProduccion } from '@/lib/protocolos/protocolos'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { snapshotProductionInputCosts, persistProductionCost } from '@/lib/produccion/cost-snapshot'
 import { noSumarLoYaContado, productosYaContados } from '@/lib/produccion/ya-contado'
+import { avisoQuedoNegativo, leerFaltantes, textoFaltante, type Faltante } from '@/lib/produccion/faltantes'
 
 // ---------------------------------------------------------------------------
 // POST /api/produccion/orders/[id]/complete
@@ -162,10 +163,15 @@ async function linkRecipeOutput(admin: ReturnType<typeof createAdminClient>, ord
 }
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Confirmar aunque en la app falte stock de algún insumo (lo decide quien
+    // valida, después de ver los números). Ver lib/produccion/faltantes.
+    const body = await request.json().catch(() => null) as { permitir_faltante?: unknown } | null
+    const permitirFaltante = body?.permitir_faltante === true
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
@@ -246,16 +252,26 @@ export async function POST(
     const yaContados = await productosYaContados(admin, id, order.submitted_at ?? order.created_at)
 
     // Call the SECURITY DEFINER RPC that handles all stock movements transactionally
+    // El tercer parámetro solo se manda cuando hace falta: así la llamada normal
+    // anda igual con la función vieja (antes de correr la migración 20261120).
     const { data, error } = await admin.rpc('complete_production_order', {
       p_order_id: id,
       p_user_id: user.id,
+      ...(permitirFaltante ? { p_permitir_faltante: true } : {}),
     })
 
+    if (error && permitirFaltante && error.code === 'PGRST202') {
+      return NextResponse.json({
+        error: 'Todavía no se puede confirmar con faltante de stock: falta actualizar la base (migración 20261120). Mientras tanto, contá el insumo o cargá la compra en Fudo.',
+      }, { status: 409 })
+    }
     if (error) throw error
 
     const result = data as {
       success: boolean
       error?: string
+      code?: string
+      faltantes?: Faltante[]
       order_id?: number
       total_input_qty?: number
       total_output_qty?: number
@@ -267,8 +283,13 @@ export async function POST(
     }
 
     if (!result.success) {
+      // Stock insuficiente: la pantalla muestra qué falta y ofrece confirmar igual
+      if (result.code === 'stock_insuficiente') {
+        return NextResponse.json({ error: result.error, code: result.code, faltantes: leerFaltantes(result) }, { status: 409 })
+      }
       return NextResponse.json({ error: result.error ?? 'Error al completar la orden' }, { status: 400 })
     }
+    const faltantes = leerFaltantes(result)
 
     // Congelar el costo de los insumos y persistir el costo real de la tanda
     // (el RPC v5 ya lo hace; con el RPC viejo lo calcula acá).
@@ -289,7 +310,8 @@ export async function POST(
 
     // Sync affected stock items to Fudo (menos lo que ya estaba en el conteo)
     const warnings: string[] = []
-    const yaContado = await noSumarLoYaContado(admin, (result.movements ?? []) as { stock_item_id: number; change: number; movement_id?: string | null }[], yaContados, { userId: user.id, orderId: id })
+    if (faltantes.length > 0) warnings.push(avisoQuedoNegativo(faltantes))
+    const yaContado =await noSumarLoYaContado(admin, (result.movements ?? []) as { stock_item_id: number; change: number; movement_id?: string | null }[], yaContados, { userId: user.id, orderId: id })
     if (yaContado.omitidos.length > 0) warnings.push(`Ya estaba en el conteo, no se sumó de nuevo: ${yaContado.omitidos.join(', ')}`)
     warnings.push(...yaContado.avisos)
     const movements = yaContado.movimientos as { stock_item_id: number; change: number; movement_id?: string | null }[]
@@ -328,7 +350,9 @@ export async function POST(
       .update({
         reviewed_by: user.id,
         reviewed_at: new Date().toISOString(),
-        review_notes: 'Aprobada desde Control de Producción',
+        review_notes: faltantes.length > 0
+          ? `Aprobada con faltante de stock en la app — ${faltantes.map(textoFaltante).join('; ')}`.slice(0, 1000)
+          : 'Aprobada desde Control de Producción',
       })
       .eq('id', id)
 
@@ -344,8 +368,9 @@ export async function POST(
       module: 'produccion',
       entityType: 'production_order',
       entityId: String(id),
-      description: `${validatorName ?? 'Alguien'}: validó "${order.name}"${costPerOutputUnit ? ` — $${costPerOutputUnit}/u` : ''}${result.efficiency_pct != null ? ` — eficiencia ${result.efficiency_pct}%` : ''}`,
+      description: `${validatorName ?? 'Alguien'}: validó "${order.name}"${costPerOutputUnit ? ` — $${costPerOutputUnit}/u` : ''}${result.efficiency_pct != null ? ` — eficiencia ${result.efficiency_pct}%` : ''}${faltantes.length > 0 ? ` — con faltante de stock: ${faltantes.map(textoFaltante).join('; ')}` : ''}`,
       metadata: {
+        faltantes: faltantes.length > 0 ? faltantes : undefined,
         total_input_qty: result.total_input_qty,
         total_output_qty: result.total_output_qty,
         waste_qty: result.waste_qty,
@@ -379,6 +404,7 @@ export async function POST(
       movements: result.movements,
       fudo: fudoSummary,
       ya_contados: yaContado.omitidos,
+      faltantes,
       message: costPerOutputUnit
         ? `Producción validada — $${Math.round(costPerOutputUnit).toLocaleString('es-AR')} por unidad`
         : 'Producción validada',
