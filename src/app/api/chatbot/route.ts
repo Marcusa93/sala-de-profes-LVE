@@ -1068,9 +1068,12 @@ ${context}`
             'X-Title': 'La Vieja Escuela - Sala de Profes',
           },
           body: JSON.stringify({
-            model: 'anthropic/claude-sonnet-4',
-            max_tokens: 1024,
-            temperature: 0.3,
+            // claude-sonnet-4 dejó de existir en OpenRouter (404, nov/2026). Sonnet 5.5
+            // piensa siempre (no acepta temperature): esfuerzo bajo para chat, y
+            // margen de tokens para que el razonamiento no corte la respuesta.
+            model: 'anthropic/claude-sonnet-5.5',
+            max_tokens: 4000,
+            reasoning: { effort: 'low' },
             messages: [
               { role: 'system', content: fullSystemPrompt },
               ...conversationMessages,
@@ -1103,8 +1106,9 @@ ${context}`
             'anthropic-version': '2023-06-01',
           },
           body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 1024,
+            model: 'claude-haiku-5-5',
+            max_tokens: 4000,
+            output_config: { effort: 'low' },
             system: fullSystemPrompt,
             messages: conversationMessages,
           }),
@@ -1112,7 +1116,8 @@ ${context}`
 
         if (response.ok) {
           const data = await response.json()
-          const responseText = data.content?.[0]?.text ?? 'No pude generar una respuesta.'
+          // Haiku 5.5 piensa: el primer bloque puede ser 'thinking', se toma el de texto
+          const responseText = (data.content as { type: string; text?: string }[] | undefined)?.find((b) => b.type === 'text')?.text ?? 'No pude generar una respuesta.'
           return processAIResponse(responseText, userRole)
         }
 
