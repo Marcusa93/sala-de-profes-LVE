@@ -79,7 +79,7 @@ function Documento({ inf, assets, para }: { inf: Informe; assets: string; para: 
           fixed
           // El tipo de View no declara totalPages, pero react-pdf lo pasa (probado)
           render={(p) => {
-            const { pageNumber, totalPages } = p as { pageNumber: number; totalPages: number }
+            const { pageNumber, totalPages } = p as unknown as { pageNumber: number; totalPages: number }
             return (
             <>
               <Text style={{ flex: 1 }}>La Vieja Escuela · Sala de Profes — informe armado por La Vieja (IA) con los datos de la app: revisá lo importante</Text>
