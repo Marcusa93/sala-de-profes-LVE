@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { fechaOperativa } from '@/lib/attendance/jornada'
 import { guiaDeLaApp } from '@/lib/ai/guia-app'
 import { ahoraTextoAR, cargarPerfiles, contextoEquipo, contextoProduccion, contextoProtocolos, horaAR } from '@/lib/ai/contexto-vieja'
+import { extraerInforme } from '@/lib/informes/esquema'
 
 // ---------------------------------------------------------------------------
 // Rate limiting (in-memory, per-user)
@@ -332,6 +333,24 @@ Cuándo usar QUERY_JSON:
 - "¿Cuánto cuesta hacer una milanesa?" / "¿Qué margen tiene la hamburguesa?" → COSTO_PLATO
 - "Dame el resumen del día" / "¿Cómo estamos?" / "Briefing" → BRIEFING_DIARIO
 - "¿Hay fichajes sospechosos?" / "¿Quién llegó tarde?" / "Anomalías" → FICHAJES_ANOMALIAS
+
+## INFORMES EN PDF — INFORME_JSON
+Si te piden un informe, reporte, resumen "para descargar", "para imprimir", "en PDF" o "pasalo a PDF" (de lo que sea: ventas, stock, producción, equipo, protocolos, lo que se habló en el chat), hacé dos cosas:
+1. Respondé en el chat en 2 a 4 líneas con lo principal.
+2. Al final, agregá UN bloque INFORME_JSON con el informe completo. La app muestra un botón "Descargar PDF" con el diseño de La Vieja Escuela.
+
+\`\`\`INFORME_JSON
+{"titulo":"Stock crítico de cocina","subtitulo":"Santa Fe · 22 de noviembre de 2026","resumen":"Hay 4 insumos bajo el mínimo...","indicadores":[{"etiqueta":"Bajo mínimo","valor":"4","detalle":"de 38 insumos"}],"secciones":[{"titulo":"Detalle","texto":"Párrafo opcional.","puntos":["Punto opcional"],"tabla":{"columnas":["Insumo","Stock","Mínimo"],"filas":[["Nalga","1,2 kg","5 kg"]],"total":["Total","…","…"]}}],"notas":["Stock según la app, no es un conteo físico."]}
+\`\`\`
+
+Reglas del informe:
+- Usá SOLO datos que están en tu contexto o en la conversación. NUNCA inventes números, nombres ni fechas. Si falta un dato, decilo en "notas".
+- Si los datos solo salen de un QUERY_JSON, no armes el informe todavía: hacé la consulta y ofrecé "¿Te lo paso a PDF?". Cuando diga que sí, armalo con lo que ya se mostró.
+- Números en formato argentino: $ 1.234.567, 12,5 kg, 35 %. Fechas como "22 de noviembre de 2026".
+- Todos los campos son opcionales salvo "titulo" y "secciones". Máximo 6 indicadores, 8 columnas por tabla y 20 secciones. Cada fila tiene tantas celdas como columnas.
+- El JSON tiene que ser válido: comillas dobles, sin comentarios, sin comas al final.
+- Respetá lo que el rol de la persona puede ver: si algo no está en tu contexto, no va en el informe.
+- No pongas el JSON ni la palabra INFORME_JSON en el texto del chat fuera del bloque.
 
 ## FICHAJE / ASISTENCIA
 Si alguien dice "fichar entrada", "fichar salida", "marcar ingreso", "marcar egreso":
@@ -841,6 +860,19 @@ async function processAIResponse(
   responseText: string,
   userRole: string,
 ): Promise<Response> {
+  // 0. INFORME_JSON — informe para bajar en PDF; se saca del texto y viaja aparte
+  const inf = extraerInforme(responseText)
+  if (inf.informe || inf.fallo) {
+    const texto = inf.fallo
+      ? `${inf.texto}\n\n_No pude armar el PDF esta vez. Pedímelo de nuevo ("pasalo a PDF")._`.trim()
+      : inf.texto || `Te armé el informe «${inf.informe?.titulo}». Bajalo con el botón.`
+    // Puede venir junto con una consulta o acción: se procesa el resto y se le suma el informe
+    const resto = await processAIResponse(texto, userRole)
+    if (!inf.informe) return resto
+    const data = await resto.json()
+    return NextResponse.json({ ...data, informe: inf.informe })
+  }
+
   // 1. ACTION_JSON — requires user confirmation
   const actionMatch = responseText.match(/```ACTION_JSON\s*([\s\S]*?)\s*```/)
   if (actionMatch) {
@@ -1072,7 +1104,7 @@ ${context}`
             // piensa siempre (no acepta temperature): esfuerzo bajo para chat, y
             // margen de tokens para que el razonamiento no corte la respuesta.
             model: 'anthropic/claude-sonnet-5.5',
-            max_tokens: 4000,
+            max_tokens: 9000,
             reasoning: { effort: 'low' },
             messages: [
               { role: 'system', content: fullSystemPrompt },
@@ -1107,7 +1139,7 @@ ${context}`
           },
           body: JSON.stringify({
             model: 'claude-haiku-5-5',
-            max_tokens: 4000,
+            max_tokens: 9000,
             output_config: { effort: 'low' },
             system: fullSystemPrompt,
             messages: conversationMessages,
