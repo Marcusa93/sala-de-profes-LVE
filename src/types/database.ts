@@ -2079,6 +2079,8 @@ export type Database = {
           submitted_at: string | null
           template_id: number | null
           updated_at: string
+          validacion_deshecha_at: string | null
+          validacion_deshecha_por: string | null
         }
         Insert: {
           efficiency_pct?: number | null
@@ -2100,6 +2102,8 @@ export type Database = {
           submitted_at?: string | null
           template_id?: number | null
           updated_at?: string
+          validacion_deshecha_at?: string | null
+          validacion_deshecha_por?: string | null
         }
         Update: {
           efficiency_pct?: number | null
@@ -2121,6 +2125,8 @@ export type Database = {
           submitted_at?: string | null
           template_id?: number | null
           updated_at?: string
+          validacion_deshecha_at?: string | null
+          validacion_deshecha_por?: string | null
         }
         Relationships: [
           {
@@ -3833,6 +3839,10 @@ export type Database = {
           }
       complete_production_order: {
         Args: { p_order_id: number; p_user_id: string }
+        Returns: Json
+      }
+      revert_production_order: {
+        Args: { p_order_id: number; p_user_id: string; p_nota?: string }
         Returns: Json
       }
       deduct_stock_on_sale: { Args: { p_sale_id: number }; Returns: Json }

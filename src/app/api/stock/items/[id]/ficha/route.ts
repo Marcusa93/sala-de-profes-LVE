@@ -171,6 +171,7 @@ function labelMovement(
   if (r === 'compra' || r === 'reception' || r === 'recepcion') return { kind: 'compra', label: 'Compra / recepción' }
   if (r === 'physical_count' || r === 'conteo' || r === 'count') return { kind: 'conteo', label: 'Conteo físico' }
   if (r === 'waste' || r === 'merma' || r === 'desperdicio') return { kind: 'merma', label: 'Merma' }
+  if (r === 'produccion_revertida') return { kind: 'produccion', label: 'Producción deshecha' }
   if (r.startsWith('produccion') || r === 'production') {
     return { kind: 'produccion', label: r.includes('input') ? 'Producción (consumo)' : 'Producción' }
   }

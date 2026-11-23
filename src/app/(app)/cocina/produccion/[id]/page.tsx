@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import {
   ChevronLeft, CheckCircle2, Clock, XCircle, ShieldCheck,
-  Package, Leaf, AlertTriangle, Loader2,
+  Package, Leaf, AlertTriangle, Loader2, RotateCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn } from '@/components/ui/motion'
@@ -12,6 +12,8 @@ import { cn } from '@/lib/utils'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
 import { RechazarProduccionDialog } from '@/components/produccion/RechazarProduccionDialog'
+import { CambiarValidacionDialog } from '@/components/produccion/CambiarValidacionDialog'
+import { cambiableHasta, esNotaDeCambio, puedeCambiarValidacion } from '@/lib/produccion/cambiar-validacion'
 import { leerFaltantes, preguntaConfirmarIgual } from '@/lib/produccion/faltantes'
 
 // ---------------------------------------------------------------------------
@@ -23,6 +25,8 @@ type OrderDetail = {
   name: string
   status: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled' | 'rejected'
   chef_name: string | null
+  chef_id: string | null
+  reviewed_by: string | null
   template_name: string | null
   notes: string | null
   created_at: string
@@ -111,6 +115,7 @@ export default function ProduccionDetailPage() {
   const [loading, setLoading] = useState(true)
   const [validating, setValidating] = useState(false)
   const [rechazando, setRechazando] = useState(false)
+  const [cambiando, setCambiando] = useState(false)
 
   const canValidate = isManagerOrAbove(profile?.role)
 
@@ -190,6 +195,10 @@ export default function ProduccionDetailPage() {
       </div>
     )
   }
+
+  // Deshacer una confirmada / volver a abrir una rechazada (hasta 2 días)
+  const permisoCambio = puedeCambiarValidacion(profile?.role, profile?.id, order)
+  const hastaCambio = permisoCambio.ok ? cambiableHasta(order) : null
 
   const cfg = STATUS_CONFIG[order.status]
   const StatusIcon = cfg.icon
@@ -273,6 +282,9 @@ export default function ProduccionDetailPage() {
                   <p className="mt-1 text-[14px] font-semibold">
                     Revisá la producción y aprobá para que el stock se actualice.
                   </p>
+                  {esNotaDeCambio(order.review_notes) && (
+                    <p className="mt-2 rounded-lg bg-white/10 px-2.5 py-1.5 text-[12px] text-white/80">{order.review_notes}</p>
+                  )}
                   <button
                     onClick={handleValidate}
                     disabled={validating}
@@ -293,9 +305,12 @@ export default function ProduccionDetailPage() {
                   </button>
                 </>
               ) : (
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="size-4 shrink-0" />
-                  <p className="text-[13px] font-medium">Esperando validación del encargado</p>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="size-4 shrink-0" />
+                    <p className="text-[13px] font-medium">Esperando validación del encargado</p>
+                  </div>
+                  {esNotaDeCambio(order.review_notes) && <p className="mt-1.5 text-[12px]">{order.review_notes}</p>}
                 </div>
               )}
             </div>
@@ -309,6 +324,20 @@ export default function ProduccionDetailPage() {
               <p className="mt-1 text-[11px] text-[#7d6c64]">
                 {formatDate(order.reviewed_at)} · No se tocó el stock. Si hacía falta, cargala de nuevo bien.
               </p>
+              {permisoCambio.ok && (
+                <BotonCambiar texto="Volver a abrir" hasta={hastaCambio} onClick={() => setCambiando(true)} />
+              )}
+            </div>
+          )}
+
+          {/* Validada: deshacer si fue por error */}
+          {order.status === 'completed' && permisoCambio.ok && (
+            <div className="rounded-2xl bg-[#e8f5f1] p-4 ring-1 ring-[#bfe3d8]">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-[#006d5a]">Validada</p>
+              <p className="mt-1 text-[12.5px] text-[#3d2c24]">
+                ¿Se confirmó por error (un número mal, una duplicada)? Deshacela: el stock vuelve y queda para confirmar de nuevo.
+              </p>
+              <BotonCambiar texto="Deshacer validación" hasta={hastaCambio} onClick={() => setCambiando(true)} />
             </div>
           )}
 
@@ -450,6 +479,15 @@ export default function ProduccionDetailPage() {
         </FadeIn>
       </div>
 
+      {cambiando && permisoCambio.ok && (
+        <CambiarValidacionDialog
+          orden={order}
+          cambio={permisoCambio.cambio}
+          onClose={() => setCambiando(false)}
+          onDone={() => { setCambiando(false); void loadOrder() }}
+        />
+      )}
+
       {rechazando && (
         <RechazarProduccionDialog
           orden={order}
@@ -457,6 +495,21 @@ export default function ProduccionDetailPage() {
           onDone={() => { setRechazando(false); void loadOrder() }}
         />
       )}
+    </div>
+  )
+}
+
+function BotonCambiar({ texto, hasta, onClick }: { texto: string; hasta: string | null; onClick: () => void }) {
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex items-center gap-1.5 rounded-xl bg-white px-3.5 py-2 text-[12.5px] font-semibold text-[#b0762a] ring-1 ring-[#f1dcb8] active:scale-[0.98]"
+      >
+        <RotateCcw className="size-3.5" />{texto}
+      </button>
+      {hasta && <span className="text-[10.5px] text-[#a39e97]">Se puede hasta el {formatDate(hasta)}</span>}
     </div>
   )
 }

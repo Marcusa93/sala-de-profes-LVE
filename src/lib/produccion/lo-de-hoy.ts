@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { leerLista } from '@/lib/produccion/lista'
 import { conteosDeHoy, type ConteoDelDia } from '@/lib/stock/conteo-diario'
 import { puedeValidarProduccion } from '@/lib/roles'
+import { HORAS_PARA_CAMBIAR, esNotaDeCambio, puedeCambiarValidacion, type Cambio } from '@/lib/produccion/cambiar-validacion'
 
 // ---------------------------------------------------------------------------
 // «Lo de hoy» de la jefa de cocina (sistema de producción, punto 2)
@@ -43,11 +44,22 @@ export type ProduccionAConfirmar = {
   nota: string | null
   /** por qué no se pudo cerrar sola (ej. stock insuficiente de un crudo) */
   problema: string | null
+  /** volvió a "para confirmar": se deshizo la validación o se reabrió (con el motivo) */
+  cambio_nota: string | null
   salidas: SalidaAConfirmar[]
   crudos: { nombre: string; cantidad: number; unidad: string }[]
   /** la cargó quien está mirando: la tiene que confirmar otra persona */
   es_mia: boolean
   puede_confirmar: boolean
+}
+
+/** Confirmada o rechazada hace poco que quien mira puede cambiar (deshacer / volver a abrir) */
+export type ProduccionRevisada = {
+  id: number
+  nombre: string
+  cambio: Cambio
+  cuando: string
+  quien_reviso: string | null
 }
 
 export type MermaDeHoy = { id: string; nombre: string; unidad: string; cantidad: number; nota: string | null; quien: string | null; hora: string }
@@ -57,6 +69,7 @@ export type DatosLoDeHoy = {
   falta_migracion: boolean
   a_confirmar: ProduccionAConfirmar[]
   viejas_sin_confirmar: number
+  revisadas: ProduccionRevisada[]
   conteos_hoy: ConteoDelDia[]
   mermas_hoy: MermaDeHoy[]
 }
@@ -76,7 +89,8 @@ export async function datosLoDeHoy(admin: SupabaseClient, yo: { id: string; role
   const hoy = inicioDelDiaAR()
   const desde = new Date(Date.now() - DIAS_A_CONFIRMAR * 86_400_000).toISOString()
 
-  const [lista, conteos, { data: ordenes }, { count: viejas }, { data: mermas }] = await Promise.all([
+  const desdeCambio = new Date(Date.now() - HORAS_PARA_CAMBIAR * 3_600_000).toISOString()
+  const [lista, conteos, { data: ordenes }, { count: viejas }, { data: mermas }, { data: revisadasRaw }] = await Promise.all([
     leerLista(admin),
     conteosDeHoy(admin),
     admin.from('production_orders')
@@ -87,6 +101,11 @@ export async function datosLoDeHoy(admin: SupabaseClient, yo: { id: string; role
     admin.from('stock_movements')
       .select('id, qty, note, created_at, stock_items(name, unit), profiles:created_by(first_name)')
       .eq('reason', 'waste').gte('created_at', hoy).order('created_at', { ascending: false }).limit(50),
+    admin.from('production_orders')
+      .select('id, name, status, chef_id, reviewed_by, reviewed_at, completed_at')
+      .in('status', ['completed', 'rejected'])
+      .or(`completed_at.gte.${desdeCambio},reviewed_at.gte.${desdeCambio}`)
+      .order('updated_at', { ascending: false }).limit(30),
   ])
 
   const filas = (ordenes ?? []) as unknown as FilaOrden[]
@@ -111,6 +130,7 @@ export async function datosLoDeHoy(admin: SupabaseClient, yo: { id: string; role
       cargada_at: cargada,
       nota: o.notes,
       problema: o.review_notes?.startsWith('No se pudo cerrar') ? o.review_notes.replace(/^No se pudo cerrar:\s*/, '') : null,
+      cambio_nota: esNotaDeCambio(o.review_notes) ? o.review_notes : null,
       salidas: ((salidas ?? []) as unknown as FilaSalida[])
         .filter((s) => s.production_order_id === o.id && !s.is_waste)
         .map((s) => ({
@@ -129,6 +149,24 @@ export async function datosLoDeHoy(admin: SupabaseClient, yo: { id: string; role
     }
   })
 
+  // Confirmadas o rechazadas hace poco que esta persona puede cambiar
+  type FilaRevisada = { id: number; name: string; status: string; chef_id: string | null; reviewed_by: string | null; reviewed_at: string | null; completed_at: string | null }
+  const cambiables = ((revisadasRaw ?? []) as FilaRevisada[])
+    .map((o) => ({ o, permiso: puedeCambiarValidacion(yo.role, yo.id, o) }))
+    .filter((x): x is { o: FilaRevisada; permiso: { ok: true; cambio: Cambio } } => x.permiso.ok)
+  const idsRevisores = [...new Set(cambiables.map((x) => x.o.reviewed_by).filter((v): v is string => !!v))]
+  const { data: revisores } = idsRevisores.length
+    ? await admin.from('profiles').select('id, first_name').in('id', idsRevisores)
+    : { data: [] }
+  const nombreRevisor = new Map(((revisores ?? []) as { id: string; first_name: string | null }[]).map((p) => [p.id, p.first_name]))
+  const revisadas: ProduccionRevisada[] = cambiables.map(({ o, permiso }) => ({
+    id: o.id,
+    nombre: o.name,
+    cambio: permiso.cambio,
+    cuando: (permiso.cambio === 'deshacer' ? o.completed_at ?? o.reviewed_at : o.reviewed_at) ?? '',
+    quien_reviso: o.reviewed_by ? nombreRevisor.get(o.reviewed_by) ?? null : null,
+  }))
+
   type FilaMerma = { id: string; qty: number; note: string | null; created_at: string; stock_items: { name: string; unit: string } | null; profiles: { first_name: string | null } | null }
   return {
     lista: lista.productos
@@ -137,6 +175,7 @@ export async function datosLoDeHoy(admin: SupabaseClient, yo: { id: string; role
     falta_migracion: lista.falta_migracion,
     a_confirmar,
     viejas_sin_confirmar: viejas ?? 0,
+    revisadas,
     conteos_hoy: conteos,
     mermas_hoy: ((mermas ?? []) as unknown as FilaMerma[]).map((m) => ({
       id: m.id,

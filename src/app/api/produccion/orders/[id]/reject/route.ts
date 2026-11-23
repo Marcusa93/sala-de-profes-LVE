@@ -59,9 +59,10 @@ export async function POST(
 
     const admin = createAdminClient()
 
+    // '*': validacion_deshecha_at existe solo con la migración 20261123
     const { data: order, error: orderErr } = await admin
       .from('production_orders')
-      .select('id, name, status, chef_id')
+      .select('*')
       .eq('id', id)
       .single()
     if (orderErr || !order) {
@@ -82,10 +83,14 @@ export async function POST(
 
     // Por las dudas: si por algún camino la orden ya tiene movimientos de
     // stock, no se rechaza (habría que revertirlos y eso no es automático).
-    const { count: movimientos, error: movErr } = await admin
+    // Si se deshizo la validación, lo anterior ya quedó compensado.
+    const deshecha = (order as { validacion_deshecha_at?: string | null }).validacion_deshecha_at ?? null
+    let consultaMovs = admin
       .from('stock_movements')
       .select('id', { count: 'exact', head: true })
       .eq('production_order_id', id)
+    if (deshecha) consultaMovs = consultaMovs.gt('created_at', deshecha)
+    const { count: movimientos, error: movErr } = await consultaMovs
     if (movErr) {
       console.warn('[reject production] no pude revisar movimientos de stock', movErr.message)
     } else if ((movimientos ?? 0) > 0) {

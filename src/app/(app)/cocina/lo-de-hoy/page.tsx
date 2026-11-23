@@ -4,14 +4,14 @@ import { useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import useSWR from 'swr'
 import { toast } from 'sonner'
-import { AlertTriangle, Check, ChefHat, ClipboardCheck, Loader2, Package, Search, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Check, ChefHat, ClipboardCheck, Loader2, Package, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { coincideBusqueda } from '@/lib/buscar'
 import { BackToHoy } from '@/components/layout/BackToHoy'
 import { LoadingState } from '@/components/ui/LoadingState'
 import type { InsumoEnviable } from '@/lib/envios/salientes'
-import type { DatosLoDeHoy, ProduccionAConfirmar } from '@/lib/produccion/lo-de-hoy'
+import type { DatosLoDeHoy, ProduccionAConfirmar, ProduccionRevisada } from '@/lib/produccion/lo-de-hoy'
 import { avisoQuedoNegativo, leerFaltantes, textoFaltante, type Faltante } from '@/lib/produccion/faltantes'
 
 // ---------------------------------------------------------------------------
@@ -98,6 +98,7 @@ export default function LoDeHoyCocinaPage() {
         {data.viejas_sin_confirmar > 0 && (
           <p className="px-1 text-[11px] text-[#a39e97]">Hay {data.viejas_sin_confirmar} producción{data.viejas_sin_confirmar === 1 ? '' : 'es'} vieja{data.viejas_sin_confirmar === 1 ? '' : 's'} sin confirmar: la{data.viejas_sin_confirmar === 1 ? '' : 's'} revisa un encargado en Stock → Producción.</p>
         )}
+        {(data.revisadas ?? []).length > 0 && <Revisadas lista={data.revisadas} />}
       </Paso>
 
       <Paso n={2} titulo="Conteo de cierre" detalle="Lo que hay de verdad, producto por producto">
@@ -237,6 +238,7 @@ function ConfirmarProduccion({ orden: o, nombreYo, onListo }: { orden: Produccio
         <p className="mt-1.5 text-[10.5px] text-[#a39e97]">Usó: {o.crudos.slice(0, 4).map((c) => `${num(c.cantidad)} ${c.unidad} ${c.nombre}`).join(', ')}{o.crudos.length > 4 ? ` y ${o.crudos.length - 4} más` : ''}</p>
       )}
       {o.nota && <p className="mt-1 text-[11px] italic text-[#7d6c64]">«{o.nota}»</p>}
+      {o.cambio_nota && <p className="mt-2 flex items-start gap-1 rounded-lg bg-[#fdf6ec] px-2 py-1.5 text-[11px] text-[#b0762a]"><RotateCcw className="mt-0.5 size-3 shrink-0" /> {o.cambio_nota}</p>}
       {o.problema && <p className="mt-2 flex items-start gap-1 rounded-lg bg-[#fdf6ec] px-2 py-1.5 text-[11px] text-[#b0762a]"><AlertTriangle className="mt-0.5 size-3 shrink-0" /> No se pudo cerrar sola: {o.problema}</p>}
       {contadoDespues.length > 0 && (
         <p className="mt-2 rounded-lg bg-[#f3efe9] px-2 py-1.5 text-[11px] text-[#7d6c64]">
@@ -286,6 +288,35 @@ function ConfirmarProduccion({ orden: o, nombreYo, onListo }: { orden: Produccio
         </div>
       )}
     </div>
+  )
+}
+
+/** Confirmadas o rechazadas hace poco: se pueden cambiar en el detalle (hasta 2 días) */
+function Revisadas({ lista }: { lista: ProduccionRevisada[] }) {
+  return (
+    <details className="rounded-2xl bg-white px-4 py-3 ring-1 ring-[#ebe6df]">
+      <summary className="cursor-pointer text-[12.5px] font-semibold text-[#7d6c64]">
+        ¿Confirmaste o rechazaste algo por error? ({lista.length})
+      </summary>
+      <p className="mt-2 text-[11px] text-[#a39e97]">Se puede cambiar hasta 2 días después. Tocá la producción y usá «Deshacer validación» o «Volver a abrir».</p>
+      <ul className="mt-2 divide-y divide-[#f3efe9]">
+        {lista.map((r) => (
+          <li key={r.id}>
+            <Link href={`/cocina/produccion/${r.id}`} className="flex items-center gap-2 py-2">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] text-[#3d2c24]">{r.nombre}</span>
+                <span className="block text-[10.5px] capitalize text-[#a39e97]">
+                  {r.cambio === 'deshacer' ? 'Confirmada' : 'Rechazada'}{r.cuando ? ` · ${cuando(r.cuando)}` : ''}{r.quien_reviso ? ` · ${r.quien_reviso}` : ''}
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-1 text-[11.5px] font-semibold text-[#b0762a]">
+                <RotateCcw className="size-3" />{r.cambio === 'deshacer' ? 'Deshacer' : 'Abrir'}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </details>
   )
 }
 
