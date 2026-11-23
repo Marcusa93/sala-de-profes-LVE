@@ -17,8 +17,10 @@ const horaAR = (iso: string) => new Date(iso).toLocaleTimeString('es-AR', { time
 // Reglas de pago (Marco, 10/10/2026):
 //   · Llegar antes no cuenta: se paga desde el inicio del turno.
 //   · Irse antes resta: se paga hasta la salida.
-//   · Quedarse después solo cuenta si el encargado lo autorizó (corrigió la
-//     salida en Equipo → clock_out_type 'edited'); si no, hasta el fin del turno.
+//   · Quedarse después solo cuenta si el encargado lo autorizó: con el botón
+//     "Autorizar" de Equipo (extra_autorizada_at) o corrigiendo la salida
+//     (clock_out_type 'edited'); si no, hasta el fin del turno. Cada día con
+//     horas de más dice quién las autorizó y cuándo (para las cámaras).
 //   · Sin turno cargado, o turno mal cargado (lo fichado cae casi todo fuera
 //     del turno): las horas fichadas, marcado para revisar.
 //   · Feriado (tabla feriados, por fecha operativa): 50% más.
@@ -28,11 +30,7 @@ const horaAR = (iso: string) => new Date(iso).toLocaleTimeString('es-AR', { time
 export async function calcularLiquidacion(admin: SupabaseClient, from: string, to: string) {
   // Fetch all attendance logs in period
   const [logsRes, profilesRes, ratesRes, shiftsRes, ausenciasRes, feriadosRes] = await Promise.all([
-    admin.from('attendance_logs')
-      .select('id, user_id, operative_date, clock_in_at, clock_out_at, status, clock_out_type')
-      .gte('operative_date', from)
-      .lte('operative_date', to)
-      .order('operative_date'),
+    leerFichajes(admin, from, to),
     admin.from('profiles')
       .select('id, first_name, last_name, role, puesto')
       .eq('is_active', true),
@@ -64,6 +62,7 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
 
   const logs = logsRes.data
   const profiles = profilesRes.data
+  const autorizaciones = logs ? await quienAutorizo(admin, logs) : new Map<string, Autorizacion>()
   const rates = ratesRes.data ?? []
 
   // Build rate map
@@ -93,9 +92,16 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
 
   // Aggregate per employee
   const empMap = new Map<string, {
-    days: Map<string, { hours: number; hoursFichadas: number; clockIn: string; clockOut: string | null; status: string; clockOutType: string; attendanceId: string; tramos: number; revisar: boolean; motivoRevisar: string | null; role: string; pay: number; feriado: string | null }>
+    days: Map<string, { hours: number; hoursFichadas: number; clockIn: string; clockOut: string | null; status: string; clockOutType: string; attendanceId: string; tramos: number; revisar: boolean; motivoRevisar: string | null; role: string; pay: number; feriado: string | null
+      /** Horas pagas después del fin del turno (autorizadas) */
+      horasExtra: number
+      /** Quién las autorizó, cuándo y cómo (botón "Autorizar" o salida corregida) */
+      extraAutorizo: string | null
+      extraAutorizoAt: string | null
+      extraComo: 'autorizo' | 'corrigio' | null }>
     porRol: Map<string, { hours: number; pay: number }>
     horasFeriado: number
+    horasExtra: number
     totalHours: number
     totalDays: number
     missingCheckouts: number
@@ -108,6 +114,7 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
         days: new Map(),
         porRol: new Map(),
         horasFeriado: 0,
+        horasExtra: 0,
         totalHours: 0,
         totalDays: 0,
         missingCheckouts: 0,
@@ -123,6 +130,8 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
     let fichadas = 0
     let revisar = false
     let motivoRevisar: string | null = null
+    let extra = 0
+    const autorizada = log.clock_out_type === 'edited' || !!log.extra_autorizada_at
     const turno = turnoDelFichaje(log.user_id, log.operative_date, log.clock_in_at)
     if (log.clock_out_at) {
       fichadas = differenceInMinutes(parseISO(log.clock_out_at), parseISO(log.clock_in_at)) / 60
@@ -134,16 +143,18 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
       hours = fichadas
       if (turno && !revisar) {
         // Desde el inicio del turno; hasta la salida, sin pasar el fin del
-        // turno salvo que el encargado haya autorizado la salida (edited)
+        // turno salvo que el encargado haya autorizado las horas de más
         const desde = Math.max(Date.parse(log.clock_in_at), turno.inicio)
         const out = Date.parse(log.clock_out_at)
-        const hasta = log.clock_out_type === 'edited' ? out : Math.min(out, turno.fin)
+        const hasta = autorizada ? out : Math.min(out, turno.fin)
         hours = Math.max(0, hasta - desde) / 3_600_000
+        if (autorizada) extra = Math.max(0, out - Math.max(turno.fin, desde)) / 3_600_000
         // Trabajó casi todo fuera del turno cargado: el turno estaba mal
         // cargado (cambio sin actualizar). Trabajó un turno, así que se paga
         // lo fichado (Marco, 10/10/2026) y se avisa para corregir el turno.
         if (fichadas >= 2 && hours < fichadas * 0.5) {
           hours = fichadas
+          extra = 0
           revisar = true
           motivoRevisar = 'Turno cargado distinto al trabajado: se paga lo fichado. Corregí el turno en Turnos'
         }
@@ -156,6 +167,8 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
     const acum = emp.porRol.get(rol) ?? { hours: 0, pay: 0 }
     emp.porRol.set(rol, { hours: acum.hours + hours, pay: acum.pay + pago })
     if (feriado) emp.horasFeriado += hours
+    emp.horasExtra += extra
+    const aut = extra > 0 ? autorizaciones.get(log.id) ?? null : null
 
     // Turno cortado: dos fichajes el mismo día se suman en un solo día
     const prev = emp.days.get(log.operative_date)
@@ -172,6 +185,10 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
           motivoRevisar: prev.motivoRevisar ?? motivoRevisar,
           role: prev.role === rol ? rol : 'mixto',
           pay: prev.pay + pago,
+          horasExtra: Math.round((prev.horasExtra + extra) * 100) / 100,
+          extraAutorizo: prev.extraAutorizo ?? aut?.quien ?? null,
+          extraAutorizoAt: prev.extraAutorizoAt ?? aut?.cuando ?? null,
+          extraComo: prev.extraComo ?? aut?.como ?? null,
         }
       : {
           hours: Math.round(hours * 100) / 100,
@@ -180,13 +197,17 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
           clockIn: horaAR(log.clock_in_at),
           clockOut: salida,
           status: log.status,
-          clockOutType: (log as Record<string, unknown>).clock_out_type as string ?? 'manual',
+          clockOutType: log.clock_out_type ?? 'manual',
           attendanceId: log.id,
           tramos: 1,
           revisar,
           motivoRevisar,
           role: rol,
           pay: pago,
+          horasExtra: Math.round(extra * 100) / 100,
+          extraAutorizo: aut?.quien ?? null,
+          extraAutorizoAt: aut?.cuando ?? null,
+          extraComo: aut?.como ?? null,
         })
 
     emp.totalHours += hours
@@ -198,7 +219,7 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
   const employees = profiles
     .filter(p => (empMap.has(p.id) || ausenciasPor.has(p.id)) && p.role !== 'socio')
     .map(p => {
-      const emp = empMap.get(p.id) ?? { days: new Map(), porRol: new Map<string, { hours: number; pay: number }>(), horasFeriado: 0, totalHours: 0, totalDays: 0, missingCheckouts: 0, lateArrivals: 0 }
+      const emp = empMap.get(p.id) ?? { days: new Map(), porRol: new Map<string, { hours: number; pay: number }>(), horasFeriado: 0, horasExtra: 0, totalHours: 0, totalDays: 0, missingCheckouts: 0, lateArrivals: 0 }
       const daysArray = Array.from(emp.days.entries())
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([date, data]) => ({ date, ...data, pay: Math.round(data.pay) }))
@@ -228,6 +249,7 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
         totalPay,
         byRole,
         horasFeriado: Math.round(emp.horasFeriado * 100) / 100,
+        horasExtra: Math.round(emp.horasExtra * 100) / 100,
         ausencias: ausenciasPor.get(p.id) ?? [],
         days: daysArray,
       }
@@ -251,3 +273,68 @@ export async function calcularLiquidacion(admin: SupabaseClient, from: string, t
 }
 
 export type Liquidacion = Awaited<ReturnType<typeof calcularLiquidacion>>
+
+// ---------------------------------------------------------------------------
+// Fichajes y quién autorizó las horas de más
+// ---------------------------------------------------------------------------
+
+type Fichaje = {
+  id: string; user_id: string; operative_date: string; clock_in_at: string; clock_out_at: string | null
+  status: string; clock_out_type: string | null; edited_by?: string | null
+  extra_autorizada_por?: string | null; extra_autorizada_at?: string | null
+}
+
+async function leerFichajes(admin: SupabaseClient, from: string, to: string): Promise<{ data: Fichaje[] | null }> {
+  const base = 'id, user_id, operative_date, clock_in_at, clock_out_at, status, clock_out_type, edited_by'
+  const q = (cols: string) => admin.from('attendance_logs').select(cols).gte('operative_date', from).lte('operative_date', to).order('operative_date')
+  const r = await q(`${base}, extra_autorizada_por, extra_autorizada_at`)
+  // Sin la migración de horas de más todavía: se liquida como antes
+  if (r.error) return { data: ((await q(base)).data ?? null) as unknown as Fichaje[] | null }
+  return { data: (r.data ?? null) as unknown as Fichaje[] | null }
+}
+
+type Autorizacion = { quien: string; cuando: string | null; como: 'autorizo' | 'corrigio' }
+
+/**
+ * Quién autorizó las horas de más de cada fichaje y cuándo:
+ *  · botón "Autorizar": extra_autorizada_por / extra_autorizada_at
+ *  · salida corregida: la última corrección de la salida en la auditoría
+ *    (y si no está, edited_by, sin hora)
+ */
+async function quienAutorizo(admin: SupabaseClient, logs: Fichaje[]): Promise<Map<string, Autorizacion>> {
+  const res = new Map<string, Autorizacion>()
+  const conBoton = logs.filter((l) => l.extra_autorizada_at && l.extra_autorizada_por)
+  const corregidos = logs.filter((l) => !l.extra_autorizada_at && l.clock_out_type === 'edited')
+  if (!conBoton.length && !corregidos.length) return res
+
+  const ids = [...new Set([...conBoton.map((l) => l.extra_autorizada_por!), ...corregidos.map((l) => l.edited_by).filter((x): x is string => !!x)])]
+  const [{ data: personas }, auditoria] = await Promise.all([
+    ids.length ? admin.from('profiles').select('id, first_name, last_name').in('id', ids) : Promise.resolve({ data: [] }),
+    corregidos.length
+      ? admin.from('audit_trail').select('entity_id, user_name, created_at, metadata')
+          .eq('entity_type', 'attendance_log').in('action', ['shift_extended', 'attendance_corrected'])
+          .in('entity_id', corregidos.map((l) => l.id)).order('created_at', { ascending: false })
+      : Promise.resolve({ data: [] }),
+  ])
+  const nombre = new Map(((personas ?? []) as { id: string; first_name: string | null; last_name: string | null }[])
+    .map((p) => [p.id, `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim()]))
+
+  for (const l of conBoton) {
+    res.set(l.id, { quien: nombre.get(l.extra_autorizada_por!) || 'un encargado', cuando: l.extra_autorizada_at!, como: 'autorizo' })
+  }
+  // La auditoría viene de la más nueva a la más vieja: queda la última corrección
+  const ultima = new Map<string, { user_name: string | null; created_at: string }>()
+  for (const a of (auditoria.data ?? []) as { entity_id: string; user_name: string | null; created_at: string; metadata: { new_clock_out?: string | null } | null }[]) {
+    // Solo las correcciones que cambiaron la salida
+    if (a.metadata?.new_clock_out && !ultima.has(a.entity_id)) ultima.set(a.entity_id, a)
+  }
+  for (const l of corregidos) {
+    const a = ultima.get(l.id)
+    res.set(l.id, {
+      quien: a?.user_name || (l.edited_by ? nombre.get(l.edited_by) : null) || 'un encargado',
+      cuando: a?.created_at ?? null,
+      como: 'corrigio',
+    })
+  }
+  return res
+}

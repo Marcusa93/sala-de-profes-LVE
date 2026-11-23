@@ -126,6 +126,14 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     // Pedido de los socios (16/11): a Marco y Joaquín
     target_user_ids: ['b8f689ca-85ae-4120-8a02-521e378e8585', '66c1aab8-5f89-434e-8a38-0e8abdbd4848'],
   },
+  horas_extra_autorizadas: {
+    label: 'Se autorizan horas de más',
+    description: 'Cada vez que un encargado autoriza que alguien se quede después de su turno, o le corrige la salida para después del turno: quién, a quién, hasta qué hora y cuándo.',
+    enabled: true,
+    target_roles: [],
+    // Pedido de Marco (23/11): para controlarlo con las cámaras
+    target_user_ids: ['b8f689ca-85ae-4120-8a02-521e378e8585'],
+  },
   turno_manana: {
     label: 'Recordatorio de turno del día siguiente',
     description: 'A las 18hs avisa a cada empleado que tiene turno mañana, con el horario, para que confirme con el encargado si no puede ir.',

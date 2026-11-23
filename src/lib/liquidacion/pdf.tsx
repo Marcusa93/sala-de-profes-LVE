@@ -5,6 +5,7 @@ import { es } from 'date-fns/locale/es'
 import { ROLES } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
 import type { Liquidacion } from '@/lib/liquidacion/calcular'
+import { cuandoAR } from '@/lib/attendance/horas-extra'
 
 // ---------------------------------------------------------------------------
 // PDF de la liquidación con la identidad de La Vieja Escuela
@@ -154,7 +155,7 @@ function LiquidacionPDF({ liq, assets, generadoPor }: { liq: Liquidacion; assets
           <Text style={{ fontWeight: 700, color: C.espresso }}>Cómo se calcula</Text>
           <Text>
             Se paga desde el inicio del turno (llegar antes no suma) y hasta la salida, sin pasar el fin del turno salvo
-            horas extra autorizadas por el encargado. Si el turno estaba mal cargado se paga lo fichado. Cada turno se
+            horas de más autorizadas por un encargado (en Observaciones: quién y cuándo). Si el turno estaba mal cargado se paga lo fichado. Cada turno se
             paga con la tarifa de su rol. Licencias y ausencias no suman. Feriados: 50% más.
           </Text>
           <Text style={{ marginTop: 4 }}>
@@ -229,7 +230,9 @@ function LiquidacionPDF({ liq, assets, generadoPor }: { liq: Liquidacion; assets
                   const obs = [
                     d.feriado ? `Feriado +50%` : null,
                     d.revisar ? 'Turno mal cargado: se pagó lo fichado' : null,
-                    d.clockOutType === 'edited' ? 'Salida autorizada' : null,
+                    d.horasExtra > 0
+                      ? `+${String(d.horasExtra).replace('.', ',')} h de más: ${d.extraComo === 'corrigio' ? 'corrigió la salida' : 'autorizó'} ${d.extraAutorizo ?? 'un encargado'}${d.extraAutorizoAt ? ` el ${cuandoAR(d.extraAutorizoAt)}` : ''}`
+                      : d.clockOutType === 'edited' ? 'Salida corregida' : null,
                     d.clockOutType === 'auto' ? 'Salida automática' : null,
                     !d.clockOut ? 'Sin salida' : null,
                   ].filter(Boolean).join(' · ')

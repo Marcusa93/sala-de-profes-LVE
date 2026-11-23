@@ -20,6 +20,8 @@ import {
   Loader2,
   Search,
   UserCheck,
+  Timer,
+  BadgeCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Link from 'next/link'
@@ -34,6 +36,7 @@ import { createClient } from '@/lib/supabase/client'
 import { SWR_KEYS } from '@/lib/swr/keys'
 import { ROLES } from '@/lib/constants'
 import { ETIQUETA_AUSENCIA, MOTIVOS_AUSENCIA, type Ausencia, type MotivoAusencia } from '@/lib/attendance/ausencias'
+import { ANTICIPO_AUTORIZAR_MIN, TOLERANCIA_EXTRA_MIN, cuandoAR, extraAutorizada, finDelTurno, horaAR, minutosDeMas, textoMinutos } from '@/lib/attendance/horas-extra'
 import type { Profile, AppRole } from '@/types/database'
 
 import { CreateUserDialog } from '@/components/equipo/CreateUserDialog'
@@ -51,6 +54,9 @@ type AttendanceRecord = {
   status: 'open' | 'closed' | 'missing_checkout'
   clock_out_type?: string | null
   edited_by?: string | null
+  /** Horas de más autorizadas con el botón "Autorizar" (quién y cuándo) */
+  extra_autorizada_por?: string | null
+  extra_autorizada_at?: string | null
 }
 
 type EmployeeAttendance = {
@@ -61,6 +67,8 @@ type EmployeeAttendance = {
   ausencia: Ausencia | null
   shiftStart?: string
   shiftEnd?: string
+  /** Nombre de quien autorizó las horas de más (o corrigió la salida) */
+  nombreAutorizo?: string | null
 }
 
 type TabValue = 'asistencia' | 'equipo'
@@ -105,6 +113,7 @@ export default function EquipoPage() {
   const [motivoNota, setMotivoNota] = useState('')
   const [savingMotivo, setSavingMotivo] = useState(false)
   const [anulandoId, setAnulandoId] = useState<string | null>(null)
+  const [autorizandoId, setAutorizandoId] = useState<string | null>(null)
 
   const isManager = profile?.role === 'socio' || profile?.role === 'encargado'
 
@@ -120,7 +129,12 @@ export default function EquipoPage() {
     async () => {
       const [profilesRes, attendanceRes, shiftsRes, ausenciasRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('is_active', true).order('first_name'),
-        supabase.from('attendance_logs').select('id, user_id, clock_in_at, clock_out_at, status, clock_out_type, edited_by').eq('operative_date', dateStr),
+        // Con quién y cuándo autorizó horas de más; si la base todavía no tiene
+        // esas columnas (migración sin correr), sin ellas para no romper Equipo
+        supabase.from('attendance_logs').select('id, user_id, clock_in_at, clock_out_at, status, clock_out_type, edited_by, extra_autorizada_por, extra_autorizada_at').eq('operative_date', dateStr)
+          .then(async (r) => (r.error
+            ? await supabase.from('attendance_logs').select('id, user_id, clock_in_at, clock_out_at, status, clock_out_type, edited_by').eq('operative_date', dateStr)
+            : r)),
         supabase.from('shifts').select('user_id, start_time, end_time').eq('shift_date', dateStr),
         // Solo encargados/socios pueden verlas; al resto le responde 403 y queda vacío
         fetch(`/api/admin/ausencias?desde=${dateStr}`).then((r) => (r.ok ? r.json() : { ausencias: [] })).catch(() => ({ ausencias: [] })),
@@ -132,14 +146,18 @@ export default function EquipoPage() {
       const shiftMap = new Map(
         (shiftsRes.data ?? []).map((s) => [s.user_id, s]),
       )
+      const nombrePor = new Map((profilesRes.data ?? []).map((p) => [p.id, `${p.first_name} ${p.last_name}`.trim()]))
       // Excluir perfiles que no fichan (los socios)
       return (profilesRes.data ?? [])
         .filter((p) => mustClockIn(p as Profile))
         .map((p) => {
           const shift = shiftMap.get(p.id)
+          const att = attendanceMap.get(p.id) ?? null
+          const quien = att?.extra_autorizada_por ?? (att?.clock_out_type === 'edited' ? att.edited_by : null)
           return {
             profile: p as Profile,
-            attendance: attendanceMap.get(p.id) ?? null,
+            attendance: att,
+            nombreAutorizo: quien ? nombrePor.get(quien) ?? 'un encargado' : null,
             hasShiftToday: !!shift,
             ausencia: ausenciaMap.get(p.id) ?? null,
             shiftStart: shift?.start_time,
@@ -224,6 +242,33 @@ export default function EquipoPage() {
       errorToast('No se pudo marcar la entrada', err)
     } finally {
       setMarcandoId(null)
+    }
+  }
+
+  // Horas de más: el encargado autoriza que se quede después del turno (o lo
+  // quita). Queda quién y cuándo, va a la liquidación y le avisa a Marco.
+  const handleAutorizarExtra = async (ea: EmployeeAttendance, quitar = false) => {
+    if (!ea.attendance || autorizandoId) return
+    const nombre = ea.profile.first_name ?? ''
+    const pregunta = quitar
+      ? `¿Quitarle a ${nombre} las horas de más? Se le paga hasta el fin del turno.`
+      : `¿Autorizar las horas de más de ${nombre}? Se le pagan hasta que salga. Queda registrado que lo autorizaste vos y a qué hora.`
+    if (!window.confirm(pregunta)) return
+    setAutorizandoId(ea.attendance.id)
+    try {
+      const res = await fetch('/api/admin/autorizar-extra', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attendance_id: ea.attendance.id, quitar }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success(data.message ?? 'Listo')
+      mutateAttendance()
+    } catch (err) {
+      errorToast(quitar ? 'No se pudo quitar la autorización' : 'No se pudieron autorizar las horas de más', err)
+    } finally {
+      setAutorizandoId(null)
     }
   }
 
@@ -579,6 +624,16 @@ export default function EquipoPage() {
                       )}
                     </div>
                   </div>
+                  {isManager && (
+                    <FranjaHorasDeMas
+                      ea={ea}
+                      fecha={dateStr}
+                      esHoy={isToday}
+                      esYo={ea.profile.id === profile.id}
+                      ocupado={autorizandoId === ea.attendance?.id}
+                      onAutorizar={(quitar) => void handleAutorizarExtra(ea, quitar)}
+                    />
+                  )}
                   {motivoUserId === ea.profile.id && !ea.attendance && (
                     <div className="mx-3 mb-3 space-y-2 rounded-lg bg-[#faf8f5] p-3">
                       <p className="text-xs font-medium text-[#3d2c24]">¿Por qué no fichó?</p>
@@ -815,6 +870,99 @@ export default function EquipoPage() {
           if (tab === 'asistencia') mutateAttendance()
         }}
       />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Horas de más: franja debajo de la fila de quien se pasa de su turno
+// ---------------------------------------------------------------------------
+// · Sigue trabajando y faltan 30' o menos para el fin del turno, o ya se pasó
+//   → "Autorizar" (que se quede).
+// · Ya salió más de 10' después del fin del turno → "Autorizar" (se paga
+//   hasta la salida; si no, hasta el fin del turno).
+// · Autorizadas → quién y cuándo, con "Quitar".
+
+function FranjaHorasDeMas({ ea, fecha, esHoy, esYo, ocupado, onAutorizar }: {
+  ea: EmployeeAttendance
+  fecha: string
+  esHoy: boolean
+  esYo: boolean
+  ocupado: boolean
+  onAutorizar: (quitar: boolean) => void
+}) {
+  const a = ea.attendance
+  if (!a || !ea.hasShiftToday || !ea.shiftStart || !ea.shiftEnd) return null
+  const fin = finDelTurno(fecha, ea.shiftStart, ea.shiftEnd)
+  const min = minutosDeMas(fecha, ea.shiftStart, ea.shiftEnd, a.clock_out_at)
+  const finTxt = horaAR(fin)
+  const quien = ea.nombreAutorizo ?? 'un encargado'
+
+  const boton = (texto: string, quitar = false) => (esYo && !quitar ? (
+    <span className="shrink-0 text-[10.5px] font-semibold text-[#a39e97]">Lo autoriza otro encargado</span>
+  ) : (
+    <button
+      type="button"
+      onClick={() => onAutorizar(quitar)}
+      disabled={ocupado}
+      className={quitar
+        ? 'shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-[#a39e97] hover:bg-white hover:text-[#ea504c] disabled:opacity-50'
+        : 'flex shrink-0 items-center gap-1 rounded-lg bg-[#d4943a] px-3 py-1.5 text-xs font-bold text-white active:scale-95 disabled:opacity-50'}
+    >
+      {ocupado ? <Loader2 className="size-3 animate-spin" /> : quitar ? null : <BadgeCheck className="size-3.5" />}
+      {texto}
+    </button>
+  ))
+
+  // Autorizadas con el botón: quién y cuándo
+  if (a.extra_autorizada_at) {
+    return (
+      <div className="mx-3 mb-3 flex items-center gap-2 rounded-lg bg-[#e8f5f1] px-3 py-2">
+        <BadgeCheck className="size-4 shrink-0 text-[#006d5a]" />
+        <p className="min-w-0 flex-1 text-xs leading-snug text-[#006d5a]">
+          <b>Horas de más autorizadas</b> por {quien} el {cuandoAR(a.extra_autorizada_at)}
+          {a.clock_out_at ? ` · salió ${horaAR(a.clock_out_at)} (${textoMinutos(min)} después del turno)` : ' · sigue trabajando'}
+        </p>
+        {boton('Quitar', true)}
+      </div>
+    )
+  }
+  // Salida corregida para después del turno: ya se paga
+  if (extraAutorizada(a) && min > 0) {
+    return (
+      <div className="mx-3 mb-3 flex items-center gap-2 rounded-lg bg-[#e8f5f1] px-3 py-2">
+        <BadgeCheck className="size-4 shrink-0 text-[#006d5a]" />
+        <p className="min-w-0 flex-1 text-xs leading-snug text-[#006d5a]">
+          Salida corregida por {quien}: {textoMinutos(min)} después del turno ({finTxt}), se pagan.
+        </p>
+      </div>
+    )
+  }
+
+  if (a.clock_out_at) {
+    if (min <= TOLERANCIA_EXTRA_MIN) return null
+    return (
+      <div className="mx-3 mb-3 flex items-center gap-2 rounded-lg bg-[#fdf6ec] px-3 py-2">
+        <Timer className="size-4 shrink-0 text-[#b0762a]" />
+        <p className="min-w-0 flex-1 text-xs leading-snug text-[#7a5420]">
+          <b>Se quedó {textoMinutos(min)} de más</b> (turno hasta las {finTxt}, salió {horaAR(a.clock_out_at)}). Sin autorizar se paga hasta las {finTxt}.
+        </p>
+        {boton('Autorizar')}
+      </div>
+    )
+  }
+
+  // Sigue trabajando (solo hoy: un fichaje abierto de otro día es una salida olvidada)
+  if (!esHoy || Date.now() < fin - ANTICIPO_AUTORIZAR_MIN * 60_000) return null
+  return (
+    <div className="mx-3 mb-3 flex items-center gap-2 rounded-lg bg-[#fdf6ec] px-3 py-2">
+      <Timer className="size-4 shrink-0 text-[#b0762a]" />
+      <p className="min-w-0 flex-1 text-xs leading-snug text-[#7a5420]">
+        {Date.now() < fin
+          ? <>Termina a las <b>{finTxt}</b>. Si se queda, autorizalo acá.</>
+          : <><b>Sigue trabajando</b>: {textoMinutos(min)} después del turno ({finTxt}).</>}
+      </p>
+      {boton('Autorizar')}
     </div>
   )
 }

@@ -26,7 +26,12 @@ type Turno = { user_id: string; shift_date: string; start_time: string; end_time
 type Log = {
   id: string; user_id: string; operative_date: string; clock_in_at: string; clock_out_at: string | null
   clock_out_type: string | null; clock_in_type: string | null; edited_by: string | null
+  extra_autorizada_por?: string | null; extra_autorizada_at?: string | null
 }
+
+/** Quién autorizó las horas de más: con el botón "Autorizar" o corrigiendo la salida */
+const autorizoExtra = (l: Log): string | null =>
+  l.extra_autorizada_at ? l.extra_autorizada_por ?? null : l.clock_out_type === 'edited' ? l.edited_by : null
 
 export async function informeControl(admin: SupabaseClient, from: string, to: string) {
   const ayer = fechaOperativa(new Date(Date.now() - 86_400_000))
@@ -36,7 +41,9 @@ export async function informeControl(admin: SupabaseClient, from: string, to: st
     calcularLiquidacion(admin, from, to),
     ventasPorDia(admin, from, to),
     admin.from('shifts').select('user_id, shift_date, start_time, end_time, shift_role, created_by').gte('shift_date', from).lte('shift_date', to),
-    admin.from('attendance_logs').select('id, user_id, operative_date, clock_in_at, clock_out_at, clock_out_type, clock_in_type, edited_by').gte('operative_date', from).lte('operative_date', to),
+    admin.from('attendance_logs').select('id, user_id, operative_date, clock_in_at, clock_out_at, clock_out_type, clock_in_type, edited_by, extra_autorizada_por, extra_autorizada_at').gte('operative_date', from).lte('operative_date', to)
+      // Sin la migración de horas de más todavía: sin esas columnas
+      .then(async (r) => (r.error ? await admin.from('attendance_logs').select('id, user_id, operative_date, clock_in_at, clock_out_at, clock_out_type, clock_in_type, edited_by').gte('operative_date', from).lte('operative_date', to) : r)),
     admin.from('ausencias').select('user_id, fecha, motivo, created_by').gte('fecha', from).lte('fecha', to),
     admin.from('profiles').select('id, first_name, last_name, role, puesto, is_active'),
     admin.from('protocolo_tareas').select('fecha, hora, estado, asignado_a, hecho_por, hecho_at, protocolos(nombre)').gte('fecha', from).lte('fecha', hastaCerrado),
@@ -115,9 +122,10 @@ export async function informeControl(admin: SupabaseClient, from: string, to: st
     if (l.clock_out_at) {
       const salida = Date.parse(l.clock_out_at)
       if (l.clock_out_type !== 'auto' && salida < t.fin - TOLERANCIA_MIN * 60_000 && salida > t.inicio) f.salidasAntes++
-      if (l.clock_out_type === 'edited' && salida > t.fin) {
+      const autorizo = autorizoExtra(l)
+      if (autorizo && salida > t.fin) {
         f.horasExtra += (salida - t.fin) / 3_600_000
-        const quien = nombre(l.edited_by)
+        const quien = nombre(autorizo)
         if (!f.extraAutorizadaPor.includes(quien)) f.extraAutorizadaPor.push(quien)
       }
     }
@@ -150,12 +158,12 @@ export async function informeControl(admin: SupabaseClient, from: string, to: st
   }
   for (const f of asistencia) {
     // reparto de horas extra autorizadas por quien corrigió la salida
-    for (const l of logs.filter((x) => x.user_id === f.id && x.clock_out_type === 'edited' && x.edited_by)) {
+    for (const l of logs.filter((x) => x.user_id === f.id && autorizoExtra(x))) {
       const ts = turnosPor.get(`${l.user_id}|${l.operative_date}`)
       if (!ts?.length || !l.clock_out_at) continue
       const fin = Math.max(...ts.map((x) => ventanaTurno(x.shift_date, x.start_time, x.end_time).fin))
       const extra = (Date.parse(l.clock_out_at) - fin) / 3_600_000
-      if (extra > 0) e(l.edited_by!).horasExtraAutorizadas += extra
+      if (extra > 0) e(autorizoExtra(l)!).horasExtraAutorizadas += extra
     }
   }
   for (const a of ausencias) if (a.created_by) e(a.created_by).ausenciasAnotadas++

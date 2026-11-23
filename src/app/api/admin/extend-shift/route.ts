@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { TOLERANCIA_EXTRA_MIN } from '@/lib/attendance/horas-extra'
+import { avisarHorasDeMas, finTurnoDeFichaje } from '@/lib/attendance/avisar-extra'
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/extend-shift
@@ -127,6 +129,18 @@ export async function POST(request: NextRequest) {
         authorized_by: authName,
       },
     })
+
+    // Salida corregida para después del turno = horas de más autorizadas:
+    // se le avisa a Marco igual que con el botón "Autorizar" (pedido del 23/11)
+    if (new_clock_out) {
+      const fin = await finTurnoDeFichaje(admin, { user_id: log.user_id, operative_date: log.operative_date, clock_in_at: entrada })
+      if (fin != null && Date.parse(new_clock_out) > fin + TOLERANCIA_EXTRA_MIN * 60_000) {
+        await avisarHorasDeMas(admin, {
+          autorizoId: user.id, autorizoNombre: authName, empleado: empName,
+          fecha: log.operative_date, fin, salida: new_clock_out, como: 'corrigio',
+        })
+      }
+    }
 
     return NextResponse.json({
       success: true,

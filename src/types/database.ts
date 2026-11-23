@@ -272,6 +272,8 @@ export type Database = {
           device_fingerprint: string | null
           edit_reason: string | null
           edited_by: string | null
+          extra_autorizada_at: string | null
+          extra_autorizada_por: string | null
           id: string
           is_suspicious: boolean | null
           network_ip: string | null
@@ -300,6 +302,8 @@ export type Database = {
           device_fingerprint?: string | null
           edit_reason?: string | null
           edited_by?: string | null
+          extra_autorizada_at?: string | null
+          extra_autorizada_por?: string | null
           id?: string
           is_suspicious?: boolean | null
           network_ip?: string | null
@@ -328,6 +332,8 @@ export type Database = {
           device_fingerprint?: string | null
           edit_reason?: string | null
           edited_by?: string | null
+          extra_autorizada_at?: string | null
+          extra_autorizada_por?: string | null
           id?: string
           is_suspicious?: boolean | null
           network_ip?: string | null

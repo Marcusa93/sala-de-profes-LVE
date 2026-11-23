@@ -10,6 +10,7 @@ import {
 import { FadeIn, StaggerList, StaggerItem, AnimatedNumber } from '@/components/ui/motion'
 import { ROLES } from '@/lib/constants'
 import type { AppRole } from '@/types/database'
+import { cuandoAR } from '@/lib/attendance/horas-extra'
 import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,19 @@ type DayDetail = {
   feriado: string | null
   revisar?: boolean
   motivoRevisar?: string | null
+  /** Horas pagas después del fin del turno, y quién/cuándo las autorizó */
+  horasExtra?: number
+  extraAutorizo?: string | null
+  extraAutorizoAt?: string | null
+  extraComo?: 'autorizo' | 'corrigio' | null
+}
+
+/** '+1,5 h de más · autorizó Noelia Andrada el 23/11 22:15' */
+function textoExtra(d: DayDetail): string | null {
+  if (!d.horasExtra || d.horasExtra <= 0) return null
+  const h = String(d.horasExtra).replace('.', ',')
+  const verbo = d.extraComo === 'corrigio' ? 'corrigió la salida' : 'autorizó'
+  return `+${h} h de más · ${verbo} ${d.extraAutorizo ?? 'un encargado'}${d.extraAutorizoAt ? ` el ${cuandoAR(d.extraAutorizoAt)}` : ''}`
 }
 
 type RolePay = { role: string; hours: number; hourlyRate: number; pay: number }
@@ -50,6 +64,8 @@ type Employee = {
   totalPay: number
   byRole: RolePay[]
   horasFeriado: number
+  /** Horas pagas después del fin del turno (autorizadas) */
+  horasExtra?: number
   /** Días con turno sin fichar y el motivo que anotó el encargado */
   ausencias: { fecha: string; motivo: string; etiqueta: string; nota: string | null }[]
   days: DayDetail[]
@@ -208,12 +224,12 @@ export default function LiquidacionPage() {
 
     // Day by day for each employee
     csv += `\nDETALLE DÍA POR DÍA\n`
-    csv += `Nombre,Fecha,Día,Feriado,Rol del turno,Ingreso,Egreso,Tipo egreso,Horas fichadas,Horas pagas,A pagar\n`
+    csv += `Nombre,Fecha,Día,Feriado,Rol del turno,Ingreso,Egreso,Tipo egreso,Horas fichadas,Horas pagas,Horas de más,Autorizó,Cuándo autorizó,A pagar\n`
     for (const e of employees) {
       for (const d of e.days) {
         const dayName = format(new Date(d.date + 'T12:00:00'), 'EEEE', { locale: es })
         const typeLabel = d.clockOutType === 'auto' ? 'Automático' : d.clockOutType === 'edited' ? 'Editado' : 'Manual'
-        csv += `"${e.firstName} ${e.lastName}",${d.date},"${dayName}","${d.feriado ? `Sí (+50%): ${d.feriado}` : ''}",${rolLabel(d.role)},${d.clockIn},${d.clockOut ?? '-'},${typeLabel},${d.hoursFichadas},${d.hours},"${formatMoney(d.pay)}"\n`
+        csv += `"${e.firstName} ${e.lastName}",${d.date},"${dayName}","${d.feriado ? `Sí (+50%): ${d.feriado}` : ''}",${rolLabel(d.role)},${d.clockIn},${d.clockOut ?? '-'},${typeLabel},${d.hoursFichadas},${d.hours},${d.horasExtra ?? 0},"${d.horasExtra ? d.extraAutorizo ?? '' : ''}","${d.horasExtra && d.extraAutorizoAt ? cuandoAR(d.extraAutorizoAt) : ''}","${formatMoney(d.pay)}"\n`
       }
     }
 
@@ -310,7 +326,7 @@ export default function LiquidacionPage() {
             <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Cómo se calcula</p>
             <p>
               Se paga desde el inicio del turno (llegar antes no suma) y hasta la salida, sin pasar el fin del turno
-              salvo que el encargado haya corregido la salida (✏️ = horas extra autorizadas). Si el turno estaba mal
+              salvo horas de más autorizadas por un encargado (✏️: en cada día dice quién las autorizó y cuándo). Si el turno estaba mal
               cargado (trabajó en otro horario), se paga lo fichado. Licencias y ausencias no suman. Feriados: 50% más.
             </p>
             <div>
@@ -459,6 +475,7 @@ export default function LiquidacionPage() {
                         {' · '}{emp.totalDays} día{emp.totalDays !== 1 ? 's' : ''}
                         {emp.ausencias.length > 0 && ` · ${emp.ausencias.length} ausencia${emp.ausencias.length !== 1 ? 's' : ''}`}
                         {emp.horasFeriado > 0 && ` · ${emp.horasFeriado}h en feriado`}
+                        {(emp.horasExtra ?? 0) > 0 && <span className="font-semibold text-[#b0762a]">{` · ✏️ ${emp.horasExtra}h de más`}</span>}
                         {emp.days.some(d => d.revisar) && <span className="font-semibold text-[#ea504c]">{` · ⚠️ ${emp.days.filter(d => d.revisar).length} a revisar`}</span>}
                       </p>
                     </div>
@@ -527,6 +544,7 @@ export default function LiquidacionPage() {
                                     {format(new Date(d.date + 'T12:00:00'), 'EEE d MMM', { locale: es })}
                                     {d.feriado && <span className="ml-1 rounded bg-[#fdf6ec] px-1 text-[9px] font-bold normal-case text-[#b0762a]" title={d.feriado}>Feriado +50%</span>}
                                     {d.revisar && <span className="block text-[9px] font-semibold normal-case text-[#ea504c]">⚠️ {d.motivoRevisar ?? 'Revisar'}</span>}
+                                    {textoExtra(d) && <span className="block text-[9px] font-semibold normal-case text-[#b0762a]">✏️ {textoExtra(d)}</span>}
                                   </td>
                                   <td className={`py-1.5 ${d.role !== emp.role ? 'font-semibold text-[#b0762a]' : 'text-[#7d6c64]'}`}>{rolLabel(d.role)}</td>
                                   <td className="py-1.5 text-center tabular-nums text-[#3d2c24]">{d.clockIn}</td>
