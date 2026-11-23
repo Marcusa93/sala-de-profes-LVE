@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import type { Informe } from '@/lib/informes/esquema'
+import { MensajeBot } from '@/components/chat/MensajeBot'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,74 +38,6 @@ type ActionProposal = {
   items?: { name: string; quantity: string }[]
   message?: string
   urgency?: string
-}
-
-// ---------------------------------------------------------------------------
-// Simple markdown renderer for bot messages
-// ---------------------------------------------------------------------------
-
-function renderMarkdown(text: string): React.ReactNode {
-  const lines = text.split('\n')
-  const elements: React.ReactNode[] = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    // Headers
-    if (line.startsWith('### ')) {
-      elements.push(<h4 key={i} className="mb-1 mt-3 text-xs font-bold first:mt-0">{parseBoldAndEmoji(line.slice(4))}</h4>)
-      continue
-    }
-    if (line.startsWith('## ')) {
-      elements.push(<h3 key={i} className="mb-1.5 mt-3 text-sm font-bold first:mt-0">{parseBoldAndEmoji(line.slice(3))}</h3>)
-      continue
-    }
-
-    // List items
-    if (line.startsWith('- ')) {
-      elements.push(
-        <div key={i} className="flex gap-1.5 py-0.5 pl-1">
-          <span className="shrink-0 text-[10px] leading-relaxed">•</span>
-          <span>{parseBoldAndEmoji(line.slice(2))}</span>
-        </div>
-      )
-      continue
-    }
-
-    // Numbered list
-    const numMatch = line.match(/^(\d+)\.\s(.+)/)
-    if (numMatch) {
-      elements.push(
-        <div key={i} className="flex gap-1.5 py-0.5 pl-1">
-          <span className="shrink-0 font-semibold text-[#006d5a]">{numMatch[1]}.</span>
-          <span>{parseBoldAndEmoji(numMatch[2])}</span>
-        </div>
-      )
-      continue
-    }
-
-    // Empty line = spacer
-    if (line.trim() === '') {
-      elements.push(<div key={i} className="h-1.5" />)
-      continue
-    }
-
-    // Regular paragraph
-    elements.push(<p key={i} className="py-0.5">{parseBoldAndEmoji(line)}</p>)
-  }
-
-  return <>{elements}</>
-}
-
-function parseBoldAndEmoji(text: string): React.ReactNode {
-  // Parse **bold** markers
-  const parts = text.split(/(\*\*[^*]+\*\*)/g)
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
-    }
-    return part
-  })
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +104,8 @@ function getRoleGreeting(role?: string): string {
 // Page
 // ---------------------------------------------------------------------------
 
+const CLAVE_CHARLA = 'asistente-mensajes'
+
 export default function AsistentePage() {
   const { profile, loading: profileLoading } = useProfileContext()
 
@@ -180,6 +115,22 @@ export default function AsistentePage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // La charla sobrevive a ir a otra pantalla con «Ir a…» y volver (como el
+  // chat flotante). Se lee al montar, no al primer render, para que el HTML
+  // del servidor y el del navegador coincidan.
+  const charlaCargada = useRef(false)
+  useEffect(() => {
+    try {
+      const guardada = sessionStorage.getItem(CLAVE_CHARLA)
+      if (guardada) setMessages((JSON.parse(guardada) as ChatMessage[]).map((m) => ({ ...m, timestamp: new Date(m.timestamp) })))
+    } catch { /* sin storage: arranca vacía */ }
+    charlaCargada.current = true
+  }, [])
+  useEffect(() => {
+    if (!charlaCargada.current || messages.length === 0) return
+    try { sessionStorage.setItem(CLAVE_CHARLA, JSON.stringify(messages.slice(-20))) } catch { /* storage lleno */ }
+  }, [messages])
 
   // -------------------------------------------------------------------------
   // Auto-scroll al ultimo mensaje
@@ -438,7 +389,7 @@ export default function AsistentePage() {
               }`}
             >
               {msg.role === 'assistant' ? (
-                <div className="whitespace-pre-wrap">{renderMarkdown(msg.content)}</div>
+                <MensajeBot texto={msg.content} role={profile.role} />
               ) : (
                 <p className="whitespace-pre-wrap">{msg.content}</p>
               )}
