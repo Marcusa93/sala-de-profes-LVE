@@ -43,6 +43,12 @@ export type NavItem = {
   href: string
   icon: LucideIcon
   description?: string
+  /**
+   * Solo para algunas personas, no para todo el rol. Se muestra únicamente si
+   * getNavItems recibe ese permiso (BottomNav lo pregunta a la API).
+   * 'operaciones': control interno del Jefe de Operaciones (socios y Joaquín).
+   */
+  requiere?: 'operaciones'
 }
 
 export type NavGroup = {
@@ -105,6 +111,12 @@ const SOCIO_MORE: ExpandableNavItem = {
   icon: MoreHorizontal,
   groups: [
     {
+      label: 'Jefe de Operaciones',
+      items: [
+        { label: 'Control interno', href: '/operaciones', icon: ClipboardCheck, description: 'Tareas, caja, pedidos de socios y desempeño de Santa Fe', requiere: 'operaciones' },
+      ],
+    },
+    {
       label: 'Equipo',
       items: [
         { label: 'Equipo y turnos', href: '/equipo', icon: Users, description: 'Presentes, roles y planificación semanal' },
@@ -149,6 +161,12 @@ const ENCARGADO_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
   groups: [
+    {
+      label: 'Jefe de Operaciones',
+      items: [
+        { label: 'Control interno', href: '/operaciones', icon: ClipboardCheck, description: 'Tareas, caja, pedidos de socios y desempeño de Santa Fe', requiere: 'operaciones' },
+      ],
+    },
     {
       label: 'Equipo',
       items: [
@@ -305,7 +323,22 @@ export function getAllMoreItems(more?: ExpandableNavItem): NavItem[] {
   return more.groups.flatMap((g) => g.items)
 }
 
-export function getNavItems(role?: AppRole): { items: NavItem[]; more?: ExpandableNavItem } {
+export type PermisosNav = { operaciones?: boolean }
+
+/** Saca del "Más" lo que es solo para algunas personas y no tiene el permiso */
+function filtrarMas(more: ExpandableNavItem, permisos: PermisosNav): ExpandableNavItem {
+  const groups = more.groups
+    .map((g) => ({ ...g, items: g.items.filter((i) => !i.requiere || permisos[i.requiere]) }))
+    .filter((g) => g.items.length > 0)
+  return { ...more, groups }
+}
+
+export function getNavItems(role?: AppRole, permisos: PermisosNav = {}): { items: NavItem[]; more?: ExpandableNavItem } {
+  const nav = navDelRol(role)
+  return nav.more ? { ...nav, more: filtrarMas(nav.more, permisos) } : nav
+}
+
+function navDelRol(role?: AppRole): { items: NavItem[]; more?: ExpandableNavItem } {
   if (role === 'socio') return { items: OPERATIONS_NAV, more: SOCIO_MORE }
   if (role === 'encargado') return { items: OPERATIONS_NAV, more: ENCARGADO_MORE }
   if (role === 'chef') return { items: COCINA_NAV, more: CHEF_MORE }

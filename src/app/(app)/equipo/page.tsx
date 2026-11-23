@@ -132,7 +132,7 @@ export default function EquipoPage() {
       const shiftMap = new Map(
         (shiftsRes.data ?? []).map((s) => [s.user_id, s]),
       )
-      // Excluir perfiles que no fichan (socios salvo Ricardo)
+      // Excluir perfiles que no fichan (los socios)
       return (profilesRes.data ?? [])
         .filter((p) => mustClockIn(p as Profile))
         .map((p) => {

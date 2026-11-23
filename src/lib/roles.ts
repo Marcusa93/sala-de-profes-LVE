@@ -9,10 +9,10 @@ const MANAGER_ROLES: ReadonlySet<string> = new Set(['socio', 'encargado'])
 /**
  * Socios que SÍ deben fichar (excepción a la regla general de que los socios no fichan).
  * Se listan por UUID para evitar colisiones por nombre.
+ * Hoy no hay ninguno: Ricardo Marquez estaba acá, pero es encargado, no socio
+ * (23/11/2026), y ficha como cualquier encargado.
  */
-const SOCIOS_QUE_FICHAN: ReadonlySet<string> = new Set([
-  'd058c880-9ec3-4205-be49-84476da0b2d6', // Ricardo Marquez
-])
+const SOCIOS_QUE_FICHAN: ReadonlySet<string> = new Set<string>([])
 
 /** ¿Este perfil debe fichar ingreso/egreso? */
 export function mustClockIn(

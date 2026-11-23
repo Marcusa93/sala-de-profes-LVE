@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { getAllMoreItems, getNavItems } from '@/lib/navegacion'
 import { createClient } from '@/lib/supabase/client'
 import { useState, useEffect, useCallback } from 'react'
+import useSWR from 'swr'
 import { motion, AnimatePresence, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { onNotificationRead } from '@/lib/sounds'
 
@@ -28,7 +29,14 @@ export function BottomNav() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [stockAlertCount, setStockAlertCount] = useState(0)
 
-  const nav = getNavItems(profile?.role)
+  // El control interno de operaciones es por persona (socios y Joaquín), no
+  // por rol: se le pregunta a la API una vez y queda en caché.
+  const { data: accesoOps } = useSWR<{ acceso: boolean }>(
+    profile && isManagerOrAbove(profile.role) ? '/api/operaciones?solo=acceso' : null,
+    (url: string) => fetch(url).then((r) => r.json()),
+    { revalidateOnFocus: false, dedupingInterval: 10 * 60_000 },
+  )
+  const nav = getNavItems(profile?.role, { operaciones: accesoOps?.acceso === true })
   const more = nav.more
   // Si un socio también ficha, mantenemos 4 accesos máximos para no saturar la barra.
   const items = profile?.role === 'socio' && mustClockIn(profile)
