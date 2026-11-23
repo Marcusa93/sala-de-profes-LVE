@@ -17,13 +17,18 @@ import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
-import type { CanceladoEnFudo, ResultadoPagosFudo } from '@/lib/compras/pagos-fudo'
+import type { ResultadoPagosFudo } from '@/lib/compras/pagos-fudo'
 import { SinPrecioSection, faltaPrecio } from '../_components/SinPrecio'
 import { ResumenPagar } from '../_components/ResumenPagar'
 import { TODO_EN_FUDO } from '@/lib/compras/datos-gasto'
 
 /** Todo se carga y se paga en Fudo (TODO_EN_FUDO): lo que tiene gasto allá no se paga desde acá */
 const pagaEnFudo = (r: { fudo_expense_id?: string | null }) => TODO_EN_FUDO && !!r.fudo_expense_id
+
+/** = ANULADO_EN_FUDO de lib/compras/pagos-fudo (ese módulo es de servidor) */
+const ANULADO_EN_FUDO = 'anulado_fudo'
+/** Cuántos días se muestran los gastos anulados en Fudo en el aviso */
+const DIAS_AVISO_ANULADOS = 30
 
 type Receipt = {
   id: number
@@ -33,7 +38,8 @@ type Receipt = {
   cost_total: number | null
   note: string | null
   received_date: string
-  payment_status: 'pagado' | 'a_pagar'
+  /** anulado_fudo: el gasto está anulado en Fudo y no suma a la deuda (lib/compras/pagos-fudo) */
+  payment_status: 'pagado' | 'a_pagar' | 'anulado_fudo'
   paid_at: string | null
   payment_method: string | null
   comprobante_numero?: string | null
@@ -77,7 +83,6 @@ export default function CuentasPage() {
   const [showPaid, setShowPaid] = useState(false)
   const [editState, setEditState] = useState<{ id: number; costTotal: string; note: string } | null>(null)
   const [savingEdit, setSavingEdit] = useState(false)
-  const [canceladosFudo, setCanceladosFudo] = useState<CanceladoEnFudo[]>([])
 
   const canManage = isManagerOrAbove(profile?.role)
 
@@ -89,12 +94,15 @@ export default function CuentasPage() {
     // viejos quedaban afuera del saldo); de los pagados, solo los recientes.
     // Sin filtrar por cost_total: los "a pagar" sin precio también se traen
     // (van a "Falta el precio"); los pagados sin monto se descartan abajo.
-    const [aPagar, pagados] = await Promise.all([
+    // Anulados en Fudo del último mes: no suman, solo se muestran para avisar
+    const desdeAnulados = new Date(Date.now() - DIAS_AVISO_ANULADOS * 86_400_000).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
+    const [aPagar, pagados, anulados] = await Promise.all([
       supabase.from('stock_receipts').select(campos).eq('payment_status', 'a_pagar').order('received_date', { ascending: false }).limit(5000),
       supabase.from('stock_receipts').select(campos).eq('payment_status', 'pagado').order('paid_at', { ascending: false, nullsFirst: false }).limit(200),
+      supabase.from('stock_receipts').select(campos).eq('payment_status', ANULADO_EN_FUDO).gte('received_date', desdeAnulados).order('received_date', { ascending: false }).limit(200),
     ])
     const error = aPagar.error ?? pagados.error
-    const data = [...(aPagar.data ?? []), ...(pagados.data ?? [])]
+    const data = [...(aPagar.data ?? []), ...(pagados.data ?? []), ...(anulados.error ? [] : anulados.data ?? [])]
 
     if (error) {
       if (/payment_status|paid_at|payment_method/.test(error.message)) setMigrationMissing(true)
@@ -114,7 +122,8 @@ export default function CuentasPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // Lo que ya se pagó en Fudo (orden de pago a proveedores) se marca pagado acá
+  // Lo que ya se pagó en Fudo (orden de pago a proveedores) se marca pagado
+  // acá, y lo anulado en Fudo deja de sumar
   useEffect(() => {
     if (!canManage) return
     let alive = true
@@ -122,11 +131,13 @@ export default function CuentasPage() {
       .then((r) => (r.ok ? r.json() as Promise<ResultadoPagosFudo> : null))
       .then((r) => {
         if (!alive || !r) return
-        setCanceladosFudo(r.cancelados ?? [])
         if (r.recibosPagados > 0) {
           toast.success(`${r.recibosPagados} recibo${r.recibosPagados !== 1 ? 's' : ''} ya pagado${r.recibosPagados !== 1 ? 's' : ''} en Fudo: marcado${r.recibosPagados !== 1 ? 's' : ''} como pagado${r.recibosPagados !== 1 ? 's' : ''}`)
-          void fetchData()
         }
+        for (const c of r.cancelados ?? []) {
+          toast.info(`${c.proveedor ?? 'Sin proveedor'} ${fmtMoney(c.total)}: el gasto #${c.expenseId} está anulado en Fudo, ya no suma a la deuda`, { duration: 10_000 })
+        }
+        if (r.recibosPagados > 0 || (r.cancelados ?? []).length > 0 || (r.reactivados ?? 0) > 0) void fetchData()
       })
       .catch(() => {})
     return () => { alive = false }
@@ -135,6 +146,17 @@ export default function CuentasPage() {
   const pending = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && !faltaPrecio(r.cost_total)), [receipts])
   // Cuenta corriente que llegó sin monto: aparte, sin sumar al saldo en $
   const sinPrecio = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && faltaPrecio(r.cost_total)), [receipts])
+  // Gastos anulados en Fudo: no suman, se avisan agrupados por gasto
+  const anuladosFudo = useMemo(() => {
+    const porGasto = new Map<string, { expenseId: string; proveedor: string; total: number; fecha: string }>()
+    for (const r of receipts) {
+      if (r.payment_status !== ANULADO_EN_FUDO || !r.fudo_expense_id) continue
+      const g = porGasto.get(r.fudo_expense_id) ?? { expenseId: r.fudo_expense_id, proveedor: r.supplier_name, total: 0, fecha: r.received_date }
+      g.total += Number(r.cost_total) || 0
+      porGasto.set(r.fudo_expense_id, g)
+    }
+    return [...porGasto.values()]
+  }, [receipts])
   // Pagados recientes agrupados por pago (proveedor + día + medio): se paga el
   // total de la factura, no producto por producto. El detalle, al abrir el pago.
   const pagos = useMemo(() => {
@@ -338,14 +360,14 @@ export default function CuentasPage() {
         </FadeIn>
       )}
 
-      {canceladosFudo.length > 0 && (
+      {anuladosFudo.length > 0 && (
         <FadeIn>
           <div className="rounded-2xl bg-[#fef2f2] px-4 py-3 ring-1 ring-[#ea504c]/20">
-            <p className="text-sm font-semibold text-[#ea504c]">Cancelados en Fudo, pendientes acá</p>
-            <p className="mt-0.5 text-xs text-[#7d6c64]">Revisá si hay que anular la compra en Sala de Profes o si el gasto se canceló por error en Fudo.</p>
+            <p className="text-sm font-semibold text-[#ea504c]">Anulados en Fudo: no suman a la deuda</p>
+            <p className="mt-0.5 text-xs text-[#7d6c64]">El stock no se tocó: si la mercadería no vino, se corrige contando. Si en Fudo el gasto vuelve a estar vigente, vuelve solo a la deuda.</p>
             <ul className="mt-1.5 space-y-0.5 text-xs text-[#3d2c24]">
-              {canceladosFudo.map((c) => (
-                <li key={c.expenseId}>· {c.proveedor ?? 'Sin proveedor'} — {fmtMoney(c.total)} <span className="text-[#a39e97]">(gasto #{c.expenseId} en Fudo)</span></li>
+              {anuladosFudo.map((c) => (
+                <li key={c.expenseId}>· {c.proveedor} — {fmtMoney(c.total)} <span className="text-[#a39e97]">(gasto #{c.expenseId} del {format(new Date(`${c.fecha}T12:00:00`), 'd/M', { locale: es })})</span></li>
               ))}
             </ul>
           </div>

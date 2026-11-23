@@ -101,6 +101,8 @@ export default function GastosPage() {
 
     setReceipts(
       ((data ?? []) as unknown as (Omit<ReceiptRow, 'supplier_name'> & { suppliers: { name: string } | null })[])
+        // Gasto anulado en Fudo: no es un gasto
+        .filter((r) => r.payment_status !== 'anulado_fudo')
         .map((r) => ({ ...r, supplier_name: r.suppliers?.name ?? 'Sin proveedor' }))
     )
     setLoading(false)

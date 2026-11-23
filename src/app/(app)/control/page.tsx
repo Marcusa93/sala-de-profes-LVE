@@ -356,7 +356,8 @@ export default function ControlPage() {
       const { data, error } = await supabase
         .from('stock_receipts')
         .select('cost_total')
-        .or('payment_status.is.null,payment_status.neq.pagado')
+        // Solo "a pagar": lo anulado en Fudo (anulado_fudo) no es deuda
+        .eq('payment_status', 'a_pagar')
         .not('cost_total', 'is', null)
         .gt('cost_total', 0)
         .limit(500)

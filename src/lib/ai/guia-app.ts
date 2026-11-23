@@ -62,7 +62,7 @@ const TEMAS: Tema[] = [
   {
     roles: GESTION,
     titulo: 'Compras y pedidos',
-    texto: 'Compras (/pedidos) tiene tres pasos: PEDIR (sugiere qué y cuánto por proveedor; se manda por WhatsApp y queda «en camino»), EN CAMINO (cuando la compra se carga en Fudo, en Gastos, aparece acá y «Llegó» cierra el pedido sin volver a sumar stock) y RECIBIDOS (el historial). Cuentas por pagar: /pedidos/cuentas. Gastos por período y proveedor: /pedidos/gastos.',
+    texto: 'Compras (/pedidos) tiene tres pasos: PEDIR (sugiere qué y cuánto por proveedor; se manda por WhatsApp y queda «en camino»), EN CAMINO (cuando la compra se carga en Fudo, en Gastos, aparece acá y «Llegó» cierra el pedido sin volver a sumar stock) y RECIBIDOS (el historial). Cuentas por pagar: /pedidos/cuentas (lo que se paga en Fudo se marca pagado solo, y un gasto anulado en Fudo deja de sumar a la deuda y aparece en el aviso rojo «Anulados en Fudo»). Gastos por período y proveedor: /pedidos/gastos.',
   },
   {
     roles: TODOS,

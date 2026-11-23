@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
   if (Date.now() - inicio < 70_000) {
     await paso('pagos_fudo', async () => {
       const r = await sincronizarPagosDesdeFudo(admin)
-      return { revisados: r.revisados, pagados: r.pagados, cancelados: r.cancelados.length, ajustados: r.ajustados, errores: r.errores }
+      return { revisados: r.revisados, pagados: r.pagados, anulados: r.cancelados.length, reactivados: r.reactivados, ajustados: r.ajustados, errores: r.errores }
     })
   } else {
     out.pagos_fudo = 'para el próximo pulso (este ya viene largo)'

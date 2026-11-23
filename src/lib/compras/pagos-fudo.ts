@@ -11,27 +11,46 @@ import { NOTA_DIFERENCIA_FUDO } from '@/lib/compras/datos-gasto'
 // de Fudo. Sala de Profes no se enteraba: seguían "a pagar" en Cuentas por
 // pagar. Esto revisa en Fudo los gastos de los recibos "a pagar":
 //   · pagado en Fudo   → el recibo pasa a pagado (fecha y medio de Fudo)
-//   · cancelado en Fudo → NO se toca: se devuelve para avisar (anular un
-//     recibo mueve stock, eso lo decide una persona)
+//   · anulado en Fudo  → el recibo pasa a 'anulado_fudo': deja de sumar a la
+//     deuda (Joaquín 23/11, Limplus #2507). El stock NO se toca: Fudo ya lo
+//     devolvió al anular, y lo que se contó después queda. Si en Fudo vuelve
+//     a estar vigente, el recibo vuelve solo a "a pagar".
 //   · sin pagar y con más monto en Fudo que en la app (ej. le agregaron el IVA
 //     en Fudo) → la diferencia queda "a pagar" en un recibo NOTA_DIFERENCIA_FUDO
 // Corre con el pulso de Fudo (una vez por hora) y al abrir Cuentas por pagar.
 // ---------------------------------------------------------------------------
 
-type Recibo = { id: number; fudo_expense_id: string; cost_total: number | null; supplier_id: string | null; suppliers: { name: string } | null }
+type Recibo = { id: number; fudo_expense_id: string; cost_total: number | null; supplier_id: string | null; payment_status: string; suppliers: { name: string } | null }
 type Res = { type: string; id: string; attributes?: Record<string, unknown>; relationships?: Record<string, { data: { id: string; type: string } | { id: string; type: string }[] | null }> }
 
 export type CanceladoEnFudo = { expenseId: string; receiptIds: number[]; proveedor: string | null; total: number }
-export type ResultadoPagosFudo = { revisados: number; pagados: number; recibosPagados: number; cancelados: CanceladoEnFudo[]; ajustados: number; errores: number }
+export type ResultadoPagosFudo = {
+  revisados: number
+  pagados: number
+  recibosPagados: number
+  /** Gastos que se anularon en Fudo en esta pasada (sus recibos pasaron a 'anulado_fudo') */
+  cancelados: CanceladoEnFudo[]
+  /** Gastos anulados que en Fudo volvieron a estar vigentes (sus recibos vuelven a "a pagar") */
+  reactivados: number
+  ajustados: number
+  errores: number
+}
+
+/** Recibo de un gasto anulado en Fudo: no suma a la deuda (todo filtra 'a_pagar') */
+export const ANULADO_EN_FUDO = 'anulado_fudo'
 
 const MAX_GASTOS = 150
+/** Los anulados se siguen mirando un tiempo, por si en Fudo se anuló por error */
+const DIAS_REVISAR_ANULADOS = 60
+
+const diaAR = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
 
 export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<ResultadoPagosFudo> {
   // fudo_expense_id no está en los tipos generados
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (admin.from('stock_receipts') as any)
-    .select('id, fudo_expense_id, cost_total, supplier_id, suppliers:supplier_id(name)')
-    .eq('payment_status', 'a_pagar')
+    .select('id, fudo_expense_id, cost_total, supplier_id, payment_status, suppliers:supplier_id(name)')
+    .or(`payment_status.eq.a_pagar,and(payment_status.eq.${ANULADO_EN_FUDO},received_date.gte.${diaAR(Date.now() - DIAS_REVISAR_ANULADOS * 86_400_000)})`)
     .not('fudo_expense_id', 'is', null)
     .order('id', { ascending: true })
     .limit(500)
@@ -43,8 +62,10 @@ export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<
     porGasto.set(id, [...(porGasto.get(id) ?? []), r])
   }
 
-  const res: ResultadoPagosFudo = { revisados: 0, pagados: 0, recibosPagados: 0, cancelados: [], ajustados: 0, errores: 0 }
+  const res: ResultadoPagosFudo = { revisados: 0, pagados: 0, recibosPagados: 0, cancelados: [], reactivados: 0, ajustados: 0, errores: 0 }
   const pagadosDetalle: string[] = []
+  const anuladosDetalle: string[] = []
+  const reactivadosDetalle: string[] = []
 
   for (const [expenseId, recibos] of [...porGasto].slice(0, MAX_GASTOS)) {
     res.revisados++
@@ -61,10 +82,35 @@ export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<
     const attrs = gasto.data?.attributes ?? {}
     const proveedor = recibos[0]?.suppliers?.name?.trim() ?? null
     const total = Math.round(recibos.reduce((a, r) => a + (Number(r.cost_total) || 0), 0) * 100) / 100
+    const aPagar = recibos.filter((r) => r.payment_status === 'a_pagar')
+    const anulados = recibos.filter((r) => r.payment_status === ANULADO_EN_FUDO)
 
     if (attrs.canceled === true) {
-      res.cancelados.push({ expenseId, receiptIds: recibos.map((r) => r.id), proveedor, total })
+      // Anulado en Fudo: deja de sumar a la deuda (el stock no se toca)
+      if (aPagar.length === 0) continue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: anErr } = await (admin.from('stock_receipts') as any)
+        .update({ payment_status: ANULADO_EN_FUDO })
+        .in('id', aPagar.map((r) => r.id))
+        .eq('payment_status', 'a_pagar')
+      if (anErr) { res.errores++; continue }
+      const totalAnulado = Math.round(aPagar.reduce((a, r) => a + (Number(r.cost_total) || 0), 0) * 100) / 100
+      res.cancelados.push({ expenseId, receiptIds: aPagar.map((r) => r.id), proveedor, total: totalAnulado })
+      anuladosDetalle.push(`${proveedor ?? 'Sin proveedor'} $${totalAnulado.toLocaleString('es-AR')} (gasto #${expenseId})`)
       continue
+    }
+
+    // Estaba anulado y en Fudo volvió a estar vigente: vuelve a la deuda (y
+    // sigue abajo como cualquier "a pagar": si ya está pagado, se marca)
+    if (anulados.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: reErr } = await (admin.from('stock_receipts') as any)
+        .update({ payment_status: 'a_pagar' })
+        .in('id', anulados.map((r) => r.id))
+        .eq('payment_status', ANULADO_EN_FUDO)
+      if (reErr) { res.errores++; continue }
+      res.reactivados++
+      reactivadosDetalle.push(`${proveedor ?? 'Sin proveedor'} $${total.toLocaleString('es-AR')} (gasto #${expenseId})`)
     }
     if (attrs.status !== 'PAID') {
       if (await ajustarDiferencia(admin, expenseId, Number(attrs.amount ?? NaN))) res.ajustados++
@@ -95,6 +141,21 @@ export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<
       res.recibosPagados += n
       pagadosDetalle.push(`${proveedor ?? 'Sin proveedor'} $${total.toLocaleString('es-AR')} (gasto #${expenseId})`)
     }
+  }
+
+  if (anuladosDetalle.length > 0 || reactivadosDetalle.length > 0) {
+    void logAudit(admin, {
+      userId: null,
+      userName: 'Sistema',
+      action: 'receipts_canceled_in_fudo',
+      module: 'pedidos',
+      entityType: 'stock_receipt',
+      description: [
+        anuladosDetalle.length ? `Anulados en Fudo, ya no suman a la deuda: ${anuladosDetalle.join('; ')}` : '',
+        reactivadosDetalle.length ? `Vigentes otra vez en Fudo, vuelven a la deuda: ${reactivadosDetalle.join('; ')}` : '',
+      ].filter(Boolean).join(' · ').slice(0, 1000),
+      metadata: { anulados: res.cancelados, reactivados: res.reactivados },
+    })
   }
 
   if (res.pagados > 0) {

@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
     'Costo total': r.cost_total ?? '',
     Factura: r.comprobante_numero ? `${r.comprobante_tipo ? `${r.comprobante_tipo} ` : ''}${r.comprobante_numero}` : '',
     Categoría: r.expense_category_name ?? '',
-    Estado: r.payment_status === 'a_pagar' ? 'Pendiente' : 'Pagado',
+    Estado: r.payment_status === 'a_pagar' ? 'Pendiente' : r.payment_status === 'anulado_fudo' ? 'Anulado en Fudo' : 'Pagado',
     'Medio de pago': r.payment_method ? MEDIO[r.payment_method] ?? r.payment_method : '',
     'Pagado el': r.paid_at ? r.paid_at.slice(0, 10) : '',
     'Gasto Fudo': r.fudo_expense_id ? `#${r.fudo_expense_id}` : '',

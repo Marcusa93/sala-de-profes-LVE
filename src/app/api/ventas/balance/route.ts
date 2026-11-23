@@ -116,7 +116,8 @@ export async function GET(request: NextRequest) {
     let pending = 0
     for (const r of receipts) {
       const cost = Number(r.cost_total ?? 0)
-      if (cost <= 0) continue
+      // Gasto anulado en Fudo: no fue una compra (ni deuda)
+      if (cost <= 0 || r.payment_status === 'anulado_fudo') continue
       const day = byDay.get(r.received_date)
       if (day) day.purchased += cost
 
