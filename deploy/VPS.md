@@ -23,7 +23,8 @@ ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.
 - Caddy sirve todos los sitios. Antes de cambiarlo, respaldo; después `caddy validate`; recién ahí
   `systemctl reload caddy` (**nunca restart**). Si `validate` falla, no se recarga: un Caddyfile roto tira todos los sitios.
 - **Nunca dos `next build` a la vez** (1 núcleo, poca RAM). El script compila dentro de
-  `flock /var/lock/next-build.lock`, el mismo candado que usa la 24.
+  `flock /var/lock/next-build.lock`. El de la 24 tiene que usar el mismo candado (al 24/11 todavía no
+  lo usa): hasta entonces, no deployar las dos a la vez.
 
 ## Armado (fase 1, en paralelo: Vercel sigue igual)
 
@@ -43,33 +44,37 @@ ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.
    - Más `NEXT_PUBLIC_APP_URL=https://salaprofeslve.2-25-185-242.sslip.io` (después, el dominio).
      Es `NEXT_PUBLIC_*`: se fija al compilar, así que si cambia hay que volver a deployar.
      La usan el MCP (OAuth), los PDF de informes, el resumen semanal y el link de los mails (`src/lib/app-url.ts`).
-3. **Servicio** `/etc/systemd/system/salaprofeslve.service`: copia de `salaprofes24.service` cambiando
-   usuario, carpeta, `/etc/salaprofeslve/` y el puerto. Debería quedar así (comparar con el de la 24 antes de usarlo):
+3. **Servicio** `/etc/systemd/system/salaprofeslve.service`: copia de `salaprofes24.service` con usuario,
+   carpeta, `/etc/salaprofeslve/` y el puerto 3150. Lo importante:
    ```ini
-   [Unit]
-   Description=Sala de Profes Santa Fe (LVE)
-   After=network.target
-
    [Service]
    User=salaprofeslve
    Group=salaprofeslve
    WorkingDirectory=/home/salaprofeslve/sala-de-profes-LVE
    EnvironmentFile=/etc/salaprofeslve/app.env
    EnvironmentFile=-/etc/salaprofeslve/dist.env
-   ExecStart=/opt/node22/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3150
-   Nice=10
-   MemoryMax=1G
+   Environment=PATH=/opt/node22/bin:/usr/local/bin:/usr/bin:/bin
+   Environment=NEXT_TELEMETRY_DISABLED=1
+   ExecStart=/opt/node22/bin/node /home/salaprofeslve/sala-de-profes-LVE/node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3150
    Restart=always
-
-   [Install]
-   WantedBy=multi-user.target
+   RestartSec=5
+   Nice=10
+   CPUWeight=50
+   IOWeight=50
+   MemoryMax=1G
+   MemoryHigh=768M
+   NoNewPrivileges=true
+   PrivateTmp=true
+   ProtectSystem=strict
+   ProtectHome=read-only
+   ReadWritePaths=-/home/salaprofeslve/sala-de-profes-LVE/.next -/home/salaprofeslve/sala-de-profes-LVE/.next-a -/home/salaprofeslve/sala-de-profes-LVE/.next-b
    ```
-   - Zona horaria: en Vercel la app corre en UTC y el código calcula la hora argentina a mano. Revisar qué
-     hace la 24 (`TZ` en su servicio o la zona de la VPS con `timedatectl`) y dejar Santa Fe igual.
-   - `systemctl daemon-reload && systemctl enable salaprofeslve` **antes** del primer deploy: el script
-     arranca el servicio y prueba `/login`; si el servicio no existe, el deploy da error.
-4. **Primer deploy** desde la Mac: `bash scripts/deploy-vps.sh`. Si el clon no existe, lo crea con el
-   `git bundle`; instala dependencias, compila con prioridad baja (dentro del candado) y prueba
+   - Zona horaria: la VPS está en UTC (`timedatectl`), igual que Vercel. No hace falta `TZ`.
+   - `systemctl daemon-reload && systemctl enable salaprofeslve` (sin `--now`) **antes** del primer
+     deploy: el script lo arranca y prueba `/login`; si el servicio no existe, el deploy da error.
+4. **Primer deploy** desde la Mac: `bash scripts/deploy-vps.sh` (o `REF=matias bash scripts/deploy-vps.sh`
+   para probar una rama que todavía no está en main). Si el clon no existe, lo crea con el `git bundle`;
+   instala dependencias, compila con prioridad baja (dentro del candado) y prueba
    `http://127.0.0.1:3150/login` antes de darlo por bueno.
 5. **Caddy**: `/etc/caddy/salaprofeslve.caddy` con la dirección de prueba hacia `127.0.0.1:3150`, con los
    mismos headers y `max_size 8MB` que `salaprofes24.caddy`. Después:
@@ -88,8 +93,7 @@ ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.
 2. `NEXT_PUBLIC_APP_URL=https://<dominio>` en `app.env` y `bash scripts/deploy-vps.sh`.
 3. Crons, al mismo tiempo y nunca en los dos lados a la vez:
    - `/etc/cron.d/salaprofeslve`: los 13 de `vercel.json` salvo `festejo-madre`, contra `127.0.0.1:3150`.
-     Los horarios de `vercel.json` están en **UTC**: si la VPS no está en UTC, convertirlos (mirar cómo lo
-     hace `/etc/cron.d/salaprofes24`).
+     Los horarios de `vercel.json` están en **UTC** y la VPS también: se copian tal cual.
      ```
      # m h dom mon dow  usuario  comando   (horarios en UTC, como vercel.json)
      0 6 * * *    root curl -sS -m 300 -K /etc/salaprofeslve/cron.curlrc http://127.0.0.1:3150/api/cron/fudo-sync >> /var/log/salaprofeslve-cron.log 2>&1

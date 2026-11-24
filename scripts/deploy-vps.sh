@@ -122,6 +122,9 @@ REMOTO
 )
 URL=${URL:-$URL_POR_DEFECTO}
 
-code=$(curl -s -o /dev/null -m 20 -w "%{http_code}" "$URL/login")
-echo "🌐 $URL/login → $code"
+# Prueba de afuera, forzando la IP de la VPS: algunas redes no resuelven
+# sslip.io (la de la oficina, 24/11) y daba error aunque la app anduviera.
+HOST=${URL#https://}; HOST=${HOST%%/*}
+code=$(curl -s -o /dev/null -m 20 -w "%{http_code}" --resolve "$HOST:443:${VPS#root@}" "$URL/login" || true)
+echo "🌐 $URL/login → ${code:-sin respuesta}"
 [ "$code" = "200" ]
