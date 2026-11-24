@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { APP_URL } from '@/lib/app-url'
 
 // ---------------------------------------------------------------------------
 // OAuth del conector de Fudo para claude.ai
@@ -16,7 +17,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // Para desconectar a alguien: poner revoked_at en sus filas de mcp_oauth_tokens.
 // ---------------------------------------------------------------------------
 
-export const MCP_BASE = 'https://sala-de-profes-lve.vercel.app'
+// La dirección de la app (NEXT_PUBLIC_APP_URL en la VPS; en Vercel, la de siempre)
+export const MCP_BASE = APP_URL
 export const MCP_URL = `${MCP_BASE}/api/mcp`
 export const METADATA_RECURSO = `${MCP_BASE}/.well-known/oauth-protected-resource`
 export const SCOPE = 'fudo.read'

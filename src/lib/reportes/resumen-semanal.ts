@@ -4,6 +4,7 @@ import { es } from 'date-fns/locale/es'
 import { informeControl } from '@/lib/reportes/control'
 import { calcularLiquidacion } from '@/lib/liquidacion/calcular'
 import { fechaOperativa } from '@/lib/attendance/jornada'
+import { APP_URL } from '@/lib/app-url'
 
 // ---------------------------------------------------------------------------
 // Resumen semanal para los socios (mail de los lunes)
@@ -15,7 +16,7 @@ import { fechaOperativa } from '@/lib/attendance/jornada'
 // adjunto (lo arma el cron).
 // ---------------------------------------------------------------------------
 
-const SITIO = 'https://sala-de-profes-lve.vercel.app'
+const SITIO = APP_URL
 const C = { verde: '#00593b', verdeApp: '#006d5a', crema: '#f7f3ec', espresso: '#3d2c24', texto: '#4a3a33', sub: '#7d6c64', linea: '#ebe6df', rojo: '#b3332f', ambar: '#b0762a' }
 const money = (n: number) => `$${Math.round(n).toLocaleString('es-AR')}`
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))

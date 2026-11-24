@@ -2,6 +2,10 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // El deploy de la VPS compila en la carpeta que no está en uso
+  // (NEXT_DIST_DIR=.next-a / .next-b) y recién al final la elige: la app sigue
+  // andando mientras compila. En Vercel y en local queda .next.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   turbopack: {
     root: path.resolve(__dirname),
   },

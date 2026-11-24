@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { esquemaInforme } from '@/lib/informes/esquema'
 import { informePDF, nombreArchivo } from '@/lib/informes/pdf'
 import { logAudit } from '@/lib/audit'
+import { APP_URL } from '@/lib/app-url'
 
 // ---------------------------------------------------------------------------
 // POST /api/asistente/informe-pdf — el botón "Descargar PDF" del chat.
@@ -16,7 +17,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const SITIO = 'https://sala-de-profes-lve.vercel.app'
+const SITIO = APP_URL
 
 export async function POST(request: Request) {
   try {

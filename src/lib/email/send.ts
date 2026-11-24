@@ -7,6 +7,7 @@
 
 import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { APP_URL } from '@/lib/app-url'
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null
 const FROM_EMAIL = process.env.EMAIL_FROM ?? 'Sala de Profes <info@laviejaescuelabar.com.ar>'
@@ -79,7 +80,7 @@ function wrapTemplate(title: string, body: string): string {
         <h2 style="color: #3d2c24; margin: 0 0 16px; font-size: 18px;">${title}</h2>
         ${body}
         <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #ebe6df;">
-          <a href="https://sala-de-profes-lve.vercel.app" style="display: inline-block; background: #006d5a; color: white; text-decoration: none; padding: 10px 20px; border-radius: 10px; font-size: 13px; font-weight: 600;">
+          <a href="${APP_URL}" style="display: inline-block; background: #006d5a; color: white; text-decoration: none; padding: 10px 20px; border-radius: 10px; font-size: 13px; font-weight: 600;">
             Abrir Sala de Profes
           </a>
         </div>
