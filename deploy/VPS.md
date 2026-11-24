@@ -2,7 +2,7 @@
 
 Santa Fe corría en Vercel (`https://sala-de-profes-lve.vercel.app`) hasta que Vercel la frenó
 (24/11/2026, `402 DEPLOYMENT_DISABLED`) y la dio de baja: **desde el 24/11 Santa Fe es la VPS**
-(dirección `https://salaprofeslve.2-25-185-242.sslip.io` hasta tener dominio, crons en la VPS y
+(dirección **`https://santafe.laviejaescuelabar.com.ar`** desde el 24/11, crons en la VPS y
 relojes de pg_cron apuntando acá). Se mudó a la VPS del equipo, igual que la 24
 (`https://lve24.com.ar`, desde el 19/10; ver la sección 10 de `PENDIENTES-SUCURSAL-24.md` en
 ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.js (pantallas y API).
@@ -14,9 +14,9 @@ ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.
 | Variables | `/etc/salaprofeslve/app.env` (640 root:salaprofeslve) · `dist.env` (carpeta activa) · `cron.curlrc` (600 root) |
 | Servicio | `salaprofeslve.service` → `next start -H 127.0.0.1 -p 3150` · Nice=10 · MemoryMax=1G · Restart=always |
 | Caddy | `/etc/caddy/salaprofeslve.caddy`, importado al final de `/etc/caddy/Caddyfile` |
-| Dirección de prueba | `https://salaprofeslve.2-25-185-242.sslip.io` (hasta tener dominio) |
+| **Dirección** | **`https://santafe.laviejaescuelabar.com.ar`** (DNS en Cloudflare, nube gris). `salaprofeslve.2-25-185-242.sslip.io` redirige acá salvo `/api/*` |
 | Crons | `/etc/cron.d/salaprofeslve` (13: los de `vercel.json` salvo el festejo) → `127.0.0.1:3150` · secreto en `cron.curlrc` · log `/var/log/salaprofeslve-cron.log` (prendidos el 24/11) |
-| Relojes de Supabase | Los 7 de pg_cron → `https://salaprofeslve.2-25-185-242.sslip.io` (`supabase/manual/*_reloj.sql`) |
+| Relojes de Supabase | Los 7 de pg_cron → `https://santafe.laviejaescuelabar.com.ar` (`supabase/manual/*_reloj.sql`) |
 | Deploy | `bash scripts/deploy-vps.sh` (reemplaza al push a Vercel) |
 
 ## Reglas de la VPS compartida
@@ -44,7 +44,7 @@ ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.
      `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`,
      `OPENROUTER_API_KEY`, `RESEND_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_IDS`,
      `TELEGRAM_JOB_BOT`, `VAPID_PRIVATE_KEY`.
-   - Más `NEXT_PUBLIC_APP_URL=https://salaprofeslve.2-25-185-242.sslip.io` (después, el dominio).
+   - Más `NEXT_PUBLIC_APP_URL=https://santafe.laviejaescuelabar.com.ar` (al principio fue la de sslip.io).
      Es `NEXT_PUBLIC_*`: se fija al compilar, así que si cambia hay que volver a deployar.
      La usan el MCP (OAuth), los PDF de informes, el resumen semanal y el link de los mails (`src/lib/app-url.ts`).
 3. **Servicio** `/etc/systemd/system/salaprofeslve.service`: copia de `salaprofes24.service` con usuario,
@@ -99,7 +99,7 @@ ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.
 
 1. Dominio en el DNS (Cloudflare, nube gris, como `lve24.com.ar`) y como primer nombre del bloque de Caddy;
    la dirección de sslip.io redirige al dominio salvo `/api/*` (como la 24).
-2. `NEXT_PUBLIC_APP_URL=https://<dominio>` en `app.env` y `bash scripts/deploy-vps.sh`.
+2. `NEXT_PUBLIC_APP_URL=https://santafe.laviejaescuelabar.com.ar` en `app.env` y `bash scripts/deploy-vps.sh`.
 3. Crons, al mismo tiempo y nunca en los dos lados a la vez:
    - `/etc/cron.d/salaprofeslve`: los 13 de `vercel.json` salvo `festejo-madre`, contra `127.0.0.1:3150`.
      Los horarios de `vercel.json` están en **UTC** y la VPS también: se copian tal cual.
@@ -125,8 +125,8 @@ ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.
 4. Relojes de la base: los 7 de pg_cron (`fichajes-cierre`, `fudo-pulso`, `fudo-sync-reintento`,
    `protocolos-avisos`, `resumen-semanal`, `resumen-turno-tm`, `resumen-turno-tt`) apuntan a Vercel.
    Se actualizan `supabase/manual/*_reloj.sql` con el dominio y el SQL lo corre Matías.
-5. Supabase → Authentication → URL Configuration: Site URL `https://<dominio>` y Redirect URLs
-   `https://<dominio>/**` (para "Olvidé mi contraseña"). Lo hace Matías en el panel.
+5. Supabase → Authentication → URL Configuration: Site URL `https://santafe.laviejaescuelabar.com.ar` y Redirect URLs
+   `https://santafe.laviejaescuelabar.com.ar/**` (para "Olvidé mi contraseña"). Lo hace Matías en el panel.
 6. Envíos a la 24: no cambia nada (Santa Fe llama a `lve24.com.ar` con `ENVIOS_24_URL` y `ENVIOS_CLAVE`).
    Revisar que estén en `app.env` y probar el estado de la conexión.
 7. Vercel queda de respaldo una semana, sin crons y, si se puede, redirigiendo al dominio nuevo.
@@ -153,4 +153,4 @@ recién ahí cambia. Si falla, queda la versión anterior.
 - No hay límite de tiempo por función (`maxDuration` no aplica), pero sí de memoria (MemoryMax=1G).
 - Después del cambio: los que tienen la app instalada la tienen que volver a instalar y reactivar las
   notificaciones (los avisos dependen de la dirección). Los socios con el conector de Claude (MCP) lo
-  sacan y lo vuelven a agregar con `https://<dominio>/api/mcp`.
+  sacan y lo vuelven a agregar con `https://santafe.laviejaescuelabar.com.ar/api/mcp`.

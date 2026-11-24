@@ -14,7 +14,7 @@ select cron.schedule(
   '*/5 * * * *',
   $$
   select net.http_get(
-    url := 'https://salaprofeslve.2-25-185-242.sslip.io/api/cron/protocolos',
+    url := 'https://santafe.laviejaescuelabar.com.ar/api/cron/protocolos',
     headers := jsonb_build_object(
       'Authorization',
       'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')

@@ -35,7 +35,7 @@ PUERTO=3150
 CANDADO=/var/lock/next-build.lock
 # Dirección pública: la de NEXT_PUBLIC_APP_URL en app.env de la VPS (así no hay
 # que tocar el script al pasar de sslip.io al dominio). Esta es por si falta.
-URL_POR_DEFECTO=https://salaprofeslve.2-25-185-242.sslip.io
+URL_POR_DEFECTO=https://santafe.laviejaescuelabar.com.ar
 
 # Se despliega main tal como está en GitHub (acá se trabaja en `matias` y se
 # sube con `git push origin matias:main`): lo que no está pusheado no va.

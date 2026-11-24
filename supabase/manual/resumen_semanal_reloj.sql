@@ -10,7 +10,7 @@ select cron.schedule(
   '0 11 * * 1',
   $$
   select net.http_get(
-    url := 'https://salaprofeslve.2-25-185-242.sslip.io/api/cron/resumen-semanal',
+    url := 'https://santafe.laviejaescuelabar.com.ar/api/cron/resumen-semanal',
     headers := jsonb_build_object(
       'Authorization',
       'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')
