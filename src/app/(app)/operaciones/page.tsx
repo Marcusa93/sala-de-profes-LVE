@@ -159,6 +159,9 @@ export default function ControlOperacionesPage() {
       {data.falta_migracion && (
         <p className="rounded-xl bg-[#fef2f2] px-3 py-2.5 text-[12px] font-semibold text-[#ea504c]">Falta correr la migración del control interno (20261123_control_operaciones.sql).</p>
       )}
+      {data.falta_prioridad && !data.falta_migracion && data.puede_editar && (
+        <p className="rounded-xl bg-[#fdf3e3] px-3 py-2.5 text-[12px] font-semibold text-[#9a6418]">La prioridad de los pedidos todavía no está activa: falta correr la migración 20261124_prioridad_pedidos_socios.sql.</p>
+      )}
       {!data.puede_editar && (
         <p className="flex items-start gap-2 rounded-xl bg-[#f3efe9] px-3 py-2 text-[11.5px] text-[#7d6c64]">
           <Eye className="mt-0.5 size-3.5 shrink-0" /> Lo carga Joaquín. Vos ves todo y podés anotar pedidos.
@@ -245,6 +248,7 @@ export default function ControlOperacionesPage() {
           <li><b>Hoy:</b> tildá cada tarea al terminarla. En «Cierre de ayer» cargá la diferencia de caja de Santa Fe (0 si cerró bien) y, si hay diferencia, el motivo en el día. El lunes se cargan el sábado y el domingo.</li>
           <li><b>Semana y Mes:</b> tildá cuando lo entregás. Se reinician solas el lunes y el día 1.</li>
           <li><b>Pedidos socios:</b> anotá todo lo que pida un socio con su vencimiento. Tildá «Le respondí» cuando le contestás (48 h). Si lo pasás a Noelia o Ricardo, poné la fecha de compromiso y anotá cada 48 h cómo viene: sigue siendo tuyo.</li>
+          <li><b>Prioridad:</b> cada pedido es de prioridad alta, media o baja. La lista muestra primero lo urgente, y en «Prioridad» elegís «Alta» para ver solo eso. La cambian Joaquín o quien anotó el pedido.</li>
           <li><b>Verificar:</b> cuando llega la fecha, marcá Cumplido o No cumplido, o +3 días si se reprograma. Con eso se arma Desempeño.</li>
           <li><b>Horneado:</b> cocina carga cada tanda de medialunas, bollitos y tortillas, y al cierre lo que sobró, lo que fue al budín de pan y lo que se tiró. Acá se cruza con lo vendido en Fudo: «faltan» son piezas sin explicación.</li>
           <li><b>Martes antes de la reunión:</b> lo que quedó en rojo en la semana es la lista de temas para los socios.</li>

@@ -1,6 +1,6 @@
 import { claveD, claveM, claveS, corta, DC, DIAS, dow, sumar, type Ahora } from './fechas'
 import { DIARIAS, MENSUALES, SEMANALES, diaM, diasDeCaja, estDiaria, estMensual, estSemanal } from './tareas'
-import { estDelegado, estPedido, nombreCorto, ultimaSenal } from './pedidos'
+import { estDelegado, estPedido, nombreCorto, pesoPrioridad, ultimaSenal } from './pedidos'
 import type { CajaDia, DatosOperaciones, VentasOperaciones } from './tipos'
 import type { ControlHorneado } from '@/lib/horneado/config'
 
@@ -95,20 +95,22 @@ export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas:
   grupo(mes.filter((x) => x.e === 'late').map((x) => x.t), 'rojo', 'mes', (t) => `${t.t}: venció el día ${diaM(t, n)}`, 'tareas del mes vencidas')
   grupo(mes.filter((x) => x.e === 'soon').map((x) => x.t), 'ambar', 'mes', (t) => { const v = diaM(t, n); return `${t.t}: vence el día ${v}${v === n.d ? ' (hoy)' : ''}` }, 'tareas del mes vencen pronto')
 
-  for (const p of datos.pedidos) {
+  // Los de prioridad alta, primero y marcados
+  for (const p of [...datos.pedidos].sort((a, b) => pesoPrioridad(a) - pesoPrioridad(b))) {
     if (p.estado === 'hecho') continue
     const nom = nombreCorto(p.delegado_a)
+    const urg = p.prioridad === 'alta' ? 'Prioridad alta · ' : ''
     if (p.delegado_a) {
-      if (p.compromiso && p.compromiso > p.vence) ambar(`El compromiso de ${nom} (${corta(p.compromiso)}) es después de lo que vence para el socio (${corta(p.vence)}): ${p.que}`, 'encargados')
+      if (p.compromiso && p.compromiso > p.vence) ambar(`${urg}El compromiso de ${nom} (${corta(p.compromiso)}) es después de lo que vence para el socio (${corta(p.vence)}): ${p.que}`, 'encargados')
       const ed = estDelegado(p, n)
-      if (ed === 'late') rojo(`${nom} no cumplió el compromiso del ${corta(p.compromiso!)}: ${p.que}`, 'encargados')
-      else if (ed === 'soon') ambar(`Sin seguimiento hace ${Math.floor((Date.now() - Date.parse(ultimaSenal(p))) / 86_400_000)} días (${nom}): ${p.que}`, 'encargados')
+      if (ed === 'late') rojo(`${urg}${nom} no cumplió el compromiso del ${corta(p.compromiso!)}: ${p.que}`, 'encargados')
+      else if (ed === 'soon') ambar(`${urg}Sin seguimiento hace ${Math.floor((Date.now() - Date.parse(ultimaSenal(p))) / 86_400_000)} días (${nom}): ${p.que}`, 'encargados')
     } else if ((Date.now() - Date.parse(p.created_at)) / 3_600_000 > 24) {
-      ambar(`Sin delegar desde hace más de 24 h: ${p.que}`, 'pedidos')
+      ambar(`${urg}Sin delegar desde hace más de 24 h: ${p.que}`, 'pedidos')
     }
     const e = estPedido(p, n)
-    if (e === 'late') rojo(`Pedido de ${p.pedido_por} vencido o sin respuesta en 48 h: ${p.que}`, 'pedidos')
-    else if (e === 'soon') ambar(`Pedido de ${p.pedido_por} por vencer: ${p.que}`, 'pedidos')
+    if (e === 'late') rojo(`${urg}Pedido de ${p.pedido_por} vencido o sin respuesta en 48 h: ${p.que}`, 'pedidos')
+    else if (e === 'soon') ambar(`${urg}Pedido de ${p.pedido_por} por vencer: ${p.que}`, 'pedidos')
   }
 
   if (ventas) {

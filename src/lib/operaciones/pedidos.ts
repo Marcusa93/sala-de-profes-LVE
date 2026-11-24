@@ -1,5 +1,5 @@
 import type { Ahora } from './fechas'
-import type { PedidoSocio } from './tipos'
+import type { PedidoSocio, Prioridad } from './tipos'
 
 // ---------------------------------------------------------------------------
 // Reglas de los pedidos de socios (mismas del tablero de claude.ai)
@@ -47,6 +47,16 @@ export function statsPedidos(lista: PedidoSocio[]): StatsPedidos {
 }
 
 export const nombreCorto = (n: string | null) => (n ? n.split(' ')[0] : 'Joaquín')
+
+export const TEXTO_PRIORIDAD: Record<Prioridad, string> = { alta: 'Alta', media: 'Media', baja: 'Baja' }
+const PESO_PRIORIDAD: Record<Prioridad, number> = { alta: 0, media: 1, baja: 2 }
+/** 0 = alta, 1 = media, 2 = baja (para ordenar: lo urgente primero) */
+export const pesoPrioridad = (p: PedidoSocio) => PESO_PRIORIDAD[p.prioridad] ?? 1
+
+/** Lo urgente primero; a igual prioridad, lo que vence antes */
+export function porPrioridad(a: PedidoSocio, b: PedidoSocio): number {
+  return pesoPrioridad(a) - pesoPrioridad(b) || a.vence.localeCompare(b.vence)
+}
 
 export function textoResultado(p: PedidoSocio): string {
   if (p.resultado === 'cumplido') return p.a_tiempo ? 'Cumplido a tiempo' : 'Cumplido tarde'

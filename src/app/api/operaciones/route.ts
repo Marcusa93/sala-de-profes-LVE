@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { sesionOperaciones } from '@/lib/operaciones/acceso'
 import { cambiarPedido, guardarCaja, leerDatos, marcarTarea, nuevoPedido, seguimientoPedido, type Resultado } from '@/lib/operaciones/datos'
-import { CAMBIOS_PEDIDO } from '@/lib/operaciones/tipos'
+import { CAMBIOS_PEDIDO, PRIORIDADES } from '@/lib/operaciones/tipos'
 
 // ---------------------------------------------------------------------------
 // /api/operaciones — control interno del Jefe de Operaciones (Santa Fe)
@@ -10,8 +10,8 @@ import { CAMBIOS_PEDIDO } from '@/lib/operaciones/tipos'
 //   GET ?solo=acceso  { acceso: boolean } para mostrar o no el botón del menú
 //   POST { accion: 'marcar', periodo, tarea, hecho }
 //        { accion: 'caja', fecha, diferencia, motivo }
-//        { accion: 'pedido_nuevo', que, pedido_por, delegado_a, vence, compromiso }
-//        { accion: 'pedido', id, cambio, delegado_a?, compromiso? }
+//        { accion: 'pedido_nuevo', que, pedido_por, delegado_a, vence, compromiso, prioridad? }
+//        { accion: 'pedido', id, cambio, delegado_a?, compromiso?, prioridad? }
 //        { accion: 'seguimiento', id, texto }
 // Entran solo los de app_settings 'operaciones_acceso' (ver lib/operaciones/acceso).
 // ---------------------------------------------------------------------------
@@ -30,8 +30,16 @@ const Accion = z.discriminatedUnion('accion', [
     delegado_a: z.string().max(60).nullable(),
     vence: FECHA,
     compromiso: FECHA.nullable(),
+    prioridad: z.enum(PRIORIDADES).default('media'),
   }),
-  z.object({ accion: z.literal('pedido'), id: z.uuid(), cambio: z.enum(CAMBIOS_PEDIDO), delegado_a: z.string().max(60).nullable().optional(), compromiso: FECHA.nullable().optional() }),
+  z.object({
+    accion: z.literal('pedido'),
+    id: z.uuid(),
+    cambio: z.enum(CAMBIOS_PEDIDO),
+    delegado_a: z.string().max(60).nullable().optional(),
+    compromiso: FECHA.nullable().optional(),
+    prioridad: z.enum(PRIORIDADES).optional(),
+  }),
   z.object({ accion: z.literal('seguimiento'), id: z.uuid(), texto: z.string().trim().min(1).max(200) }),
 ])
 
@@ -60,7 +68,7 @@ export async function POST(request: NextRequest) {
     case 'marcar': res = await marcarTarea(sesion, a.periodo, a.tarea, a.hecho); break
     case 'caja': res = await guardarCaja(sesion, a.fecha, a.diferencia, a.motivo); break
     case 'pedido_nuevo': res = await nuevoPedido(sesion, a); break
-    case 'pedido': res = await cambiarPedido(sesion, a.id, { cambio: a.cambio, delegado_a: a.delegado_a, compromiso: a.compromiso }); break
+    case 'pedido': res = await cambiarPedido(sesion, a.id, { cambio: a.cambio, delegado_a: a.delegado_a, compromiso: a.compromiso, prioridad: a.prioridad }); break
     case 'seguimiento': res = await seguimientoPedido(sesion, a.id, a.texto); break
   }
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status })

@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { logAudit } from '@/lib/audit'
 import { ahora, corta, sumar } from './fechas'
 import { tareaValida } from './tareas'
-import { ENCARGADOS, QUIENES, type CambioPedido, type CajaDia, type Check, type DatosOperaciones, type PedidoSocio, type Seguimiento } from './tipos'
+import { ENCARGADOS, QUIENES, esPrioridad, type CambioPedido, type CajaDia, type Check, type DatosOperaciones, type PedidoSocio, type Prioridad, type Seguimiento } from './tipos'
 import type { Sesion } from './acceso'
 
 // ---------------------------------------------------------------------------
@@ -12,9 +12,13 @@ import type { Sesion } from './acceso'
 const DIAS_HISTORIAL = 75
 const MAX_CERRADOS = 150
 const MIGRACION = '20261123_control_operaciones.sql'
+const MIGRACION_PRIORIDAD = '20261124_prioridad_pedidos_socios.sql'
 
 const faltaTabla = (msg: string | undefined) =>
   !!msg && /(operaciones_|pedidos_socios)/.test(msg) && /(does not exist|schema cache|not find)/i.test(msg)
+/** La tabla está pero todavía no la columna prioridad (falta MIGRACION_PRIORIDAD) */
+const faltaPrioridad = (msg: string | undefined) =>
+  !!msg && /prioridad/.test(msg) && /(does not exist|schema cache|not find)/i.test(msg)
 
 export type Resultado = { ok: true } | { ok: false; status: number; error: string }
 const mal = (status: number, error: string): Resultado => ({ ok: false, status, error })
@@ -25,20 +29,24 @@ export async function leerDatos(s: Sesion): Promise<DatosOperaciones> {
   const hoy = ahora().hoy
   const desde = sumar(hoy, -DIAS_HISTORIAL)
 
-  const [checks, caja, abiertos, cerrados] = await Promise.all([
+  const [checks, caja, abiertos, cerrados, prioridad] = await Promise.all([
     admin.from('operaciones_checks').select('periodo, tarea, hecho_por, hecho_at').gte('hecho_at', `${desde}T00:00:00-03:00`),
     admin.from('operaciones_caja').select('fecha, diferencia, motivo, cargado_por, updated_at').gte('fecha', desde),
     admin.from('pedidos_socios').select('*').neq('estado', 'hecho').order('vence'),
     admin.from('pedidos_socios').select('*').eq('estado', 'hecho').order('cerrado', { ascending: false }).limit(MAX_CERRADOS),
+    // Solo para saber si ya se corrió la migración de la prioridad
+    admin.from('pedidos_socios').select('prioridad').limit(1),
   ])
-  const vacio: DatosOperaciones = { puede_editar: s.puedeEditar, inicio: s.inicio, falta_migracion: false, checks: [], caja: [], pedidos: [], nombres: {}, yo: s.userId }
+  const falta_prioridad = faltaPrioridad(prioridad.error?.message)
+  const vacio: DatosOperaciones = { puede_editar: s.puedeEditar, inicio: s.inicio, falta_migracion: false, falta_prioridad, checks: [], caja: [], pedidos: [], nombres: {}, yo: s.userId }
   const error = checks.error ?? caja.error ?? abiertos.error ?? cerrados.error
   if (error) {
     if (faltaTabla(error.message)) return { ...vacio, falta_migracion: true }
     throw new Error(error.message)
   }
 
-  const pedidosBase = [...(abiertos.data ?? []), ...(cerrados.data ?? [])] as Omit<PedidoSocio, 'seguimiento'>[]
+  const pedidosBase = ([...(abiertos.data ?? []), ...(cerrados.data ?? [])] as Omit<PedidoSocio, 'seguimiento'>[])
+    .map((p) => ({ ...p, prioridad: esPrioridad(p.prioridad) ? p.prioridad : 'media' as Prioridad }))
   const ids = pedidosBase.map((p) => p.id)
   const { data: segData, error: segError } = ids.length
     ? await admin.from('pedidos_socios_seguimiento').select('id, pedido_id, texto, created_by, created_at').in('pedido_id', ids).order('created_at')
@@ -97,7 +105,7 @@ export async function guardarCaja(s: Sesion, fecha: string, diferencia: number |
   return error ? mal(500, faltaTabla(error.message) ? `Falta correr la migración ${MIGRACION}` : error.message) : OK
 }
 
-export type PedidoNuevo = { que: string; pedido_por: string; delegado_a: string | null; vence: string; compromiso: string | null }
+export type PedidoNuevo = { que: string; pedido_por: string; delegado_a: string | null; vence: string; compromiso: string | null; prioridad: Prioridad }
 
 const esEncargado = (d: string | null): d is string => !!d && (ENCARGADOS as readonly string[]).includes(d)
 
@@ -115,7 +123,7 @@ export async function nuevoPedido(s: Sesion, p: PedidoNuevo): Promise<Resultado>
   // Solo Joaquín delega al anotar; un socio anota y Joaquín decide
   const delegado = s.puedeEditar && esEncargado(p.delegado_a) ? p.delegado_a : null
   const ahoraIso = new Date().toISOString()
-  const { data, error } = await s.admin.from('pedidos_socios').insert({
+  const fila = {
     que: que.slice(0, 200),
     pedido_por: p.pedido_por,
     delegado_a: delegado,
@@ -124,7 +132,10 @@ export async function nuevoPedido(s: Sesion, p: PedidoNuevo): Promise<Resultado>
     vence: p.vence,
     estado: delegado ? 'delegado' : 'abierto',
     created_by: s.userId,
-  }).select('id').single()
+  }
+  let { data, error } = await s.admin.from('pedidos_socios').insert({ ...fila, prioridad: esPrioridad(p.prioridad) ? p.prioridad : 'media' }).select('id').single()
+  // Sin la migración de la prioridad, el pedido se anota igual (sin prioridad)
+  if (error && faltaPrioridad(error.message)) ({ data, error } = await s.admin.from('pedidos_socios').insert(fila).select('id').single())
   if (error) return mal(500, faltaTabla(error.message) ? `Falta correr la migración ${MIGRACION}` : error.message)
   const id = (data as { id: string }).id
   if (delegado) await anotar(s, id, `Delegado a ${delegado}`)
@@ -132,7 +143,7 @@ export async function nuevoPedido(s: Sesion, p: PedidoNuevo): Promise<Resultado>
   return OK
 }
 
-export type CambioEntrada = { cambio: CambioPedido; delegado_a?: string | null; compromiso?: string | null }
+export type CambioEntrada = { cambio: CambioPedido; delegado_a?: string | null; compromiso?: string | null; prioridad?: Prioridad }
 
 export async function cambiarPedido(s: Sesion, id: string, c: CambioEntrada): Promise<Resultado> {
   const { data, error } = await s.admin.from('pedidos_socios').select('*').eq('id', id).maybeSingle()
@@ -150,6 +161,19 @@ export async function cambiarPedido(s: Sesion, id: string, c: CambioEntrada): Pr
     })
     return OK
   }
+
+  // La prioridad la cambian Joaquín o quien anotó el pedido. No va al
+  // seguimiento: eso es la señal del encargado cada 48 h.
+  if (c.cambio === 'prioridad') {
+    if (!s.puedeEditar && p.created_by !== s.userId) return mal(403, 'La prioridad la cambian el Jefe de Operaciones o quien anotó el pedido')
+    if (!esPrioridad(c.prioridad)) return mal(400, 'Prioridad desconocida')
+    if (p.estado === 'hecho') return mal(400, 'El pedido ya está cerrado')
+    if (p.prioridad === c.prioridad) return OK
+    const { error: e } = await s.admin.from('pedidos_socios').update({ prioridad: c.prioridad, updated_at: new Date().toISOString() }).eq('id', id)
+    if (e) return mal(500, faltaPrioridad(e.message) ? `Falta correr la migración ${MIGRACION_PRIORIDAD}` : e.message)
+    return OK
+  }
+
   if (!s.puedeEditar) return mal(403, 'Los pedidos los mueve el Jefe de Operaciones')
 
   const hoy = ahora().hoy

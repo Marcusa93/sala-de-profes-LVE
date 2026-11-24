@@ -1,11 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, Loader2, Plus, RotateCcw, Trash2, Undo2, X } from 'lucide-react'
+import { Check, Flag, Loader2, Plus, RotateCcw, Trash2, Undo2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { corta, diaDe, diasEntre, pct, sumar, type Ahora } from '@/lib/operaciones/fechas'
-import { estDelegado, estPedido, nombreCorto, statsPedidos, textoResultado } from '@/lib/operaciones/pedidos'
-import { ENCARGADOS, QUIENES, type DatosOperaciones, type PedidoSocio } from '@/lib/operaciones/tipos'
+import { TEXTO_PRIORIDAD, estDelegado, estPedido, nombreCorto, pesoPrioridad, porPrioridad, statsPedidos, textoResultado } from '@/lib/operaciones/pedidos'
+import { ENCARGADOS, PRIORIDADES, QUIENES, type DatosOperaciones, type PedidoSocio, type Prioridad } from '@/lib/operaciones/tipos'
 import { Chip, Kpi, Pills, Vacio, inputCls, type Tono } from './ui'
 
 // ---------------------------------------------------------------------------
@@ -25,13 +25,38 @@ type Props = {
 }
 
 const OPC_ENCARGADO = [{ v: '', label: 'Joaquín' }, ...ENCARGADOS.map((e) => ({ v: e as string, label: e.split(' ')[0] }))]
+const OPC_PRIORIDAD = PRIORIDADES.map((v) => ({ v, label: TEXTO_PRIORIDAD[v] }))
+const TONO_PRIORIDAD: Record<Prioridad, Tono> = { alta: 'rojo', media: 'ambar', baja: 'gris' }
+
+/** Qué pedidos se ven: todos o los de una prioridad */
+type Filtro = 'todas' | Prioridad
+
+function ChipPrioridad({ p }: { p: PedidoSocio }) {
+  return (
+    <Chip tono={TONO_PRIORIDAD[p.prioridad]}>
+      <Flag className="mr-0.5 size-3" aria-hidden /> <span className="sr-only">Prioridad </span>{TEXTO_PRIORIDAD[p.prioridad]}
+    </Chip>
+  )
+}
 
 export function TabPedidos({ n, datos, editar, sub, setSub, enviar }: Props) {
+  const [filtro, setFiltro] = useState<Filtro>('todas')
+  const conPrioridad = !datos.falta_prioridad
+  const pasa = (p: PedidoSocio) => filtro === 'todas' || p.prioridad === filtro
   const mes = n.hoy.slice(0, 7)
-  const abiertos = datos.pedidos.filter((p) => p.estado !== 'hecho').sort((a, b) => a.vence.localeCompare(b.vence))
+  // Lo urgente primero; a igual prioridad, lo que vence antes
+  const abiertos = datos.pedidos.filter((p) => p.estado !== 'hecho').sort(porPrioridad)
+  const visibles = abiertos.filter(pasa)
   const vencidos = abiertos.filter((p) => p.vence < n.hoy).length
   const st = statsPedidos(datos.pedidos.filter((p) => p.cerrado?.slice(0, 7) === mes))
   const sinSegEnc = abiertos.filter((p) => estDelegado(p, n)).length
+  const opcFiltro: { v: Filtro; label: string }[] = [
+    { v: 'todas', label: `Todas · ${abiertos.length}` },
+    ...PRIORIDADES.map((v) => ({ v, label: `${TEXTO_PRIORIDAD[v]} · ${abiertos.filter((p) => p.prioridad === v).length}` })),
+  ]
+  const nadaFiltrado = filtro === 'todas'
+    ? <Vacio ok>No hay pedidos abiertos.</Vacio>
+    : <Vacio ok>No hay pedidos abiertos de prioridad {TEXTO_PRIORIDAD[filtro].toLowerCase()}.</Vacio>
 
   return (
     <div className="space-y-3">
@@ -58,25 +83,36 @@ export function TabPedidos({ n, datos, editar, sub, setSub, enviar }: Props) {
         ))}
       </div>
 
+      {conPrioridad && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#a39e97]"><Flag className="size-3" aria-hidden /> Prioridad</span>
+          <Pills opciones={opcFiltro} valor={filtro} onCambiar={setFiltro} etiqueta="Ver pedidos por prioridad" />
+        </div>
+      )}
+
       {sub === 'anotar' && (
         <>
-          <FormPedido n={n} editar={editar} enviar={enviar} />
-          {abiertos.length === 0 ? <Vacio ok>No hay pedidos abiertos.</Vacio> : abiertos.map((p) => <Tarjeta key={p.id} p={p} n={n} datos={datos} editar={editar} modo="anotar" enviar={enviar} />)}
+          <FormPedido n={n} editar={editar} conPrioridad={conPrioridad} enviar={enviar} />
+          {visibles.length === 0 ? nadaFiltrado : visibles.map((p) => <Tarjeta key={p.id} p={p} n={n} datos={datos} editar={editar} modo="anotar" enviar={enviar} />)}
         </>
       )}
 
       {sub === 'verificar' && (
         <>
-          {abiertos.length === 0 ? <Vacio ok>Nada por verificar.</Vacio> : abiertos.map((p) => <Tarjeta key={p.id} p={p} n={n} datos={datos} editar={editar} modo="verificar" enviar={enviar} />)}
+          {visibles.length === 0
+            ? (filtro === 'todas' ? <Vacio ok>Nada por verificar.</Vacio> : nadaFiltrado)
+            : visibles.map((p) => <Tarjeta key={p.id} p={p} n={n} datos={datos} editar={editar} modo="verificar" enviar={enviar} />)}
           <p className="pt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-[#a39e97]">Verificados</p>
           {(() => {
-            const hechos = datos.pedidos.filter((p) => p.estado === 'hecho').slice(0, 25)
-            return hechos.length === 0 ? <Vacio>Todavía no se verificó ningún pedido.</Vacio> : hechos.map((p) => <Tarjeta key={p.id} p={p} n={n} datos={datos} editar={editar} modo="verificar" enviar={enviar} />)
+            const hechos = datos.pedidos.filter((p) => p.estado === 'hecho' && pasa(p)).slice(0, 25)
+            return hechos.length === 0
+              ? <Vacio>{filtro === 'todas' ? 'Todavía no se verificó ningún pedido.' : `No hay pedidos verificados de prioridad ${TEXTO_PRIORIDAD[filtro].toLowerCase()}.`}</Vacio>
+              : hechos.map((p) => <Tarjeta key={p.id} p={p} n={n} datos={datos} editar={editar} modo="verificar" enviar={enviar} />)
           })()}
         </>
       )}
 
-      {sub === 'encargados' && <Encargados n={n} datos={datos} editar={editar} enviar={enviar} />}
+      {sub === 'encargados' && <Encargados n={n} datos={datos} editar={editar} pasa={pasa} enviar={enviar} />}
     </div>
   )
 }
@@ -84,10 +120,11 @@ export function TabPedidos({ n, datos, editar, sub, setSub, enviar }: Props) {
 // ---------------------------------------------------------------------------
 
 /** Plegado detrás de un botón: así se ven primero los pedidos abiertos */
-function FormPedido({ n, editar, enviar }: { n: Ahora; editar: boolean; enviar: Enviar }) {
+function FormPedido({ n, editar, conPrioridad, enviar }: { n: Ahora; editar: boolean; conPrioridad: boolean; enviar: Enviar }) {
   const [abierto, setAbierto] = useState(false)
   const [que, setQue] = useState('')
   const [quien, setQuien] = useState<string>(QUIENES[0])
+  const [prio, setPrio] = useState<Prioridad>('media')
   const [del, setDel] = useState('')
   const [vence, setVence] = useState(() => sumar(n.hoy, 2))
   const [comp, setComp] = useState('')
@@ -97,9 +134,9 @@ function FormPedido({ n, editar, enviar }: { n: Ahora; editar: boolean; enviar: 
     e.preventDefault()
     if (!que.trim() || !vence) return
     setGuardando(true)
-    const ok = await enviar({ accion: 'pedido_nuevo', que: que.trim(), pedido_por: quien, delegado_a: del || null, vence, compromiso: del && comp ? comp : null })
+    const ok = await enviar({ accion: 'pedido_nuevo', que: que.trim(), pedido_por: quien, delegado_a: del || null, vence, compromiso: del && comp ? comp : null, prioridad: prio })
     setGuardando(false)
-    if (ok) { setQue(''); setComp(''); setDel(''); setVence(sumar(n.hoy, 2)); setAbierto(false) }
+    if (ok) { setQue(''); setComp(''); setDel(''); setPrio('media'); setVence(sumar(n.hoy, 2)); setAbierto(false) }
   }
 
   if (!abierto) {
@@ -124,6 +161,12 @@ function FormPedido({ n, editar, enviar }: { n: Ahora; editar: boolean; enviar: 
         <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#7d6c64]">Quién lo pidió</span>
         <div className="mt-1"><Pills opciones={QUIENES.map((q) => ({ v: q as string, label: q }))} valor={quien} onCambiar={setQuien} etiqueta="Quién lo pidió" /></div>
       </div>
+      {conPrioridad && (
+        <div>
+          <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#7d6c64]">Prioridad</span>
+          <div className="mt-1"><Pills opciones={OPC_PRIORIDAD} valor={prio} onCambiar={setPrio} etiqueta="Prioridad" /></div>
+        </div>
+      )}
       {editar && (
         <div>
           <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#7d6c64]">Quién se encarga</span>
@@ -174,6 +217,9 @@ function Tarjeta({ p, n, datos, editar, modo, enviar }: { p: PedidoSocio; n: Aho
   const ed = estDelegado(p, n)
   const nivel = cerrado ? '' : est === 'late' || ed === 'late' ? 'late' : est === 'soon' || ed === 'soon' ? 'soon' : ''
   const puedeBorrar = editar || p.created_by === datos.yo
+  // La prioridad la cambian Joaquín o quien anotó el pedido
+  const conPrioridad = !datos.falta_prioridad
+  const puedePrioridad = conPrioridad && !cerrado && modo === 'anotar' && (editar || p.created_by === datos.yo)
   const cv = chipVence(p, n)
 
   async function cambio(c: Record<string, unknown>) {
@@ -199,6 +245,7 @@ function Tarjeta({ p, n, datos, editar, modo, enviar }: { p: PedidoSocio; n: Aho
       <div className="flex items-start gap-2">
         <p className="min-w-0 flex-1 text-[13.5px] font-bold leading-snug text-[#3d2c24]">{p.que}</p>
         <div className="flex shrink-0 flex-wrap justify-end gap-1">
+          {conPrioridad && <ChipPrioridad p={p} />}
           {cerrado ? (
             <Chip tono={p.resultado === 'cumplido' ? (p.a_tiempo ? 'verde' : 'ambar') : 'rojo'}>{textoResultado(p)}</Chip>
           ) : (
@@ -218,6 +265,13 @@ function Tarjeta({ p, n, datos, editar, modo, enviar }: { p: PedidoSocio; n: Aho
         {p.reprogramado > 0 && <span>Reprogramado {p.reprogramado}×</span>}
         {cerrado && p.cerrado && <span>Verificado {corta(p.cerrado)}</span>}
       </p>
+
+      {puedePrioridad && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#a39e97]">Prioridad</span>
+          <Pills opciones={OPC_PRIORIDAD} valor={p.prioridad} disabled={ocupado} onCambiar={(v) => void cambio({ cambio: 'prioridad', prioridad: v })} etiqueta="Prioridad del pedido" />
+        </div>
+      )}
 
       {!cerrado && modo === 'anotar' && editar && (
         <div className="space-y-2">
@@ -287,10 +341,11 @@ function Tarjeta({ p, n, datos, editar, modo, enviar }: { p: PedidoSocio; n: Aho
 
 // ---------------------------------------------------------------------------
 
-function Encargados({ n, datos, editar, enviar }: { n: Ahora; datos: DatosOperaciones; editar: boolean; enviar: Enviar }) {
+function Encargados({ n, datos, editar, pasa, enviar }: { n: Ahora; datos: DatosOperaciones; editar: boolean; pasa: (p: PedidoSocio) => boolean; enviar: Enviar }) {
+  // Lo urgente primero; a igual prioridad, el compromiso más cercano
   const delegados = datos.pedidos
-    .filter((p) => p.delegado_a && p.estado !== 'hecho')
-    .sort((a, b) => (a.compromiso ?? a.vence).localeCompare(b.compromiso ?? b.vence))
+    .filter((p) => p.delegado_a && p.estado !== 'hecho' && pasa(p))
+    .sort((a, b) => pesoPrioridad(a) - pesoPrioridad(b) || (a.compromiso ?? a.vence).localeCompare(b.compromiso ?? b.vence))
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2">

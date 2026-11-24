@@ -6,6 +6,10 @@
 export const ENCARGADOS = ['Noelia Andrada', 'Ricardo Marquez'] as const
 /** Quién pidió */
 export const QUIENES = ['Marco', 'Bruno', 'Franco', 'Otro socio'] as const
+/** Prioridad de un pedido de socio, de lo más urgente a lo que puede esperar */
+export const PRIORIDADES = ['alta', 'media', 'baja'] as const
+export type Prioridad = (typeof PRIORIDADES)[number]
+export const esPrioridad = (v: unknown): v is Prioridad => typeof v === 'string' && (PRIORIDADES as readonly string[]).includes(v)
 
 export type Check = { periodo: string; tarea: string; hecho_por: string | null; hecho_at: string }
 
@@ -28,6 +32,8 @@ export type PedidoSocio = {
   delegado_at: string | null
   vence: string
   compromiso: string | null
+  /** 'media' si todavía no se corrió la migración de la prioridad */
+  prioridad: Prioridad
   respondido: boolean
   respondido_at: string | null
   estado: 'abierto' | 'delegado' | 'hecho'
@@ -47,6 +53,8 @@ export type DatosOperaciones = {
   /** Desde cuándo se usa el control: lo que venció antes no cuenta */
   inicio: string
   falta_migracion: boolean
+  /** Falta 20261124_prioridad_pedidos_socios.sql: no se muestra ni se cambia la prioridad */
+  falta_prioridad: boolean
   checks: Check[]
   caja: CajaDia[]
   pedidos: PedidoSocio[]
@@ -63,5 +71,5 @@ export type VentasOperaciones = {
 }
 
 /** Cambios posibles de un pedido */
-export const CAMBIOS_PEDIDO = ['respondido', 'no_respondido', 'delegar', 'compromiso', 'cumplido', 'no_cumplido', 'reprogramar', 'reabrir', 'borrar'] as const
+export const CAMBIOS_PEDIDO = ['respondido', 'no_respondido', 'delegar', 'compromiso', 'cumplido', 'no_cumplido', 'reprogramar', 'reabrir', 'borrar', 'prioridad'] as const
 export type CambioPedido = (typeof CAMBIOS_PEDIDO)[number]
