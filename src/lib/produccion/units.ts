@@ -59,3 +59,61 @@ export function normalizeToStockUnit(
   }
   return { ok: true, qty: Math.round(converted * 1000) / 1000, unit: stockItem.unit }
 }
+
+// ---------------------------------------------------------------------------
+// Producción se carga siempre en la unidad grande (Marco, 24/11/2026)
+// ---------------------------------------------------------------------------
+// Kilos, litros o unidades: nunca gramos ni mililitros. Con una lista de
+// unidades para elegir pasaba "250 litros de aceite" cuando eran 250 ml (#67)
+// o 105 kg de levadura. Ahora la unidad es la del producto en el stock, fija,
+// y abajo del número se ve la equivalencia en chico ("= 250 ml").
+// ---------------------------------------------------------------------------
+
+/** Las únicas unidades con las que se carga producción */
+export const UNIDADES_PRODUCCION = ['kg', 'l', 'unidad'] as const
+
+const SINONIMOS: Record<string, string> = {
+  gr: 'g', gramos: 'g', kilo: 'kg', kilos: 'kg',
+  cc: 'ml', lt: 'l', litro: 'l', litros: 'l',
+  u: 'unidad', un: 'unidad', unid: 'unidad', unidades: 'unidad',
+  // Las porciones se cuentan como unidades (milanesas, sorrentinos…)
+  'porción': 'unidad', porcion: 'unidad', porciones: 'unidad',
+}
+const GRANDE: Record<string, string> = { g: 'kg', kg: 'kg', ml: 'l', l: 'l', unidad: 'unidad' }
+
+/** La unidad grande de una unidad: g → kg, ml → l, lt → l, u → unidad */
+export function unidadGrande(unit: string | null | undefined): string {
+  const base = SINONIMOS[norm(unit)] ?? norm(unit)
+  return GRANDE[base] ?? (base || 'kg')
+}
+
+/** La cantidad pasada a la unidad grande (250 g → 0,25 kg) */
+export function aUnidadGrande(qty: number, unit: string | null | undefined): { qty: number; unit: string } {
+  const base = SINONIMOS[norm(unit)] ?? norm(unit)
+  const grande = GRANDE[base]
+  if (!grande) return { qty, unit: base || 'kg' }
+  const convertida = convertQty(qty, base, grande)
+  return convertida == null ? { qty, unit: base } : { qty: Math.round(convertida * 100000) / 100000, unit: grande }
+}
+
+/** `qty` en `unidad` pasada a `destino` (con sinónimos: gr, lt, porción…); null si no se puede (kg → unidad) */
+export function aUnidadDe(qty: number, unidad: string | null | undefined, destino: string): number | null {
+  const desde = SINONIMOS[norm(unidad)] ?? norm(unidad)
+  const hacia = SINONIMOS[norm(destino)] ?? norm(destino)
+  if (!desde) return qty
+  return convertQty(qty, desde, hacia)
+}
+
+/**
+ * Lo mismo en la unidad chica, para leerlo de un vistazo: 0,25 kg → "= 250 g",
+ * 250 l → "= 250000 ml". null si no aplica (unidades, vacío).
+ */
+export function equivalenciaChica(qty: number, unit: string | null | undefined): string | null {
+  if (!Number.isFinite(qty) || qty <= 0) return null
+  // Solo si la cantidad YA está en kg o l (una en g no tiene "unidad chica")
+  const u = SINONIMOS[norm(unit)] ?? norm(unit)
+  const chica = u === 'kg' ? 'g' : u === 'l' ? 'ml' : null
+  if (!chica) return null
+  // Sin punto de miles: "2.314 kg = 2.314 g" se leía igual; "= 2314 g" no
+  return `= ${(qty * 1000).toLocaleString('es-AR', { maximumFractionDigits: 1, useGrouping: false })} ${chica}`
+}

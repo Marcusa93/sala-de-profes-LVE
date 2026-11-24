@@ -6,6 +6,7 @@ import { Check, ChefHat, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
 import { escalarReceta } from '@/lib/produccion/recetas'
+import { equivalenciaChica } from '@/lib/produccion/units'
 import type { Elaborado } from '@/lib/produccion/elaborados'
 
 // ---------------------------------------------------------------------------
@@ -145,18 +146,28 @@ export function LoHiceDialog({ elaborado, puedeCerrar, sugerido, onClose, onDone
             <div>
               <p className="mb-1 text-[12px] font-semibold text-[#3d2c24]">Se usó <span className="font-normal text-[#a39e97]">(corregí si fue distinto)</span></p>
               <div className="space-y-1">
-                {usados.map((u) => (
-                  <div key={u.stock_item_id} className="flex items-center gap-2 rounded-lg bg-[#faf8f5] px-2.5 py-1.5">
-                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-[#3d2c24]">{u.name}</span>
-                    <input
-                      inputMode="decimal"
-                      value={ajustes[u.stock_item_id] ?? String(u.qty)}
-                      onChange={(e) => setAjustes((a) => ({ ...a, [u.stock_item_id]: e.target.value }))}
-                      className="w-20 rounded-md border border-[#ebe6df] bg-white px-2 py-1 text-right text-[12.5px] tabular-nums outline-none focus:border-[#006d5a]"
-                    />
-                    <span className="w-10 text-[11px] text-[#a39e97]">{u.unit}</span>
-                  </div>
-                ))}
+                {usados.map((u) => {
+                  const valor = ajustes[u.stock_item_id] ?? String(u.qty)
+                  // En kg o litros (nunca g/ml): abajo, lo mismo en chico para leerlo fácil
+                  const equivale = equivalenciaChica(parse(valor), u.unit)
+                  return (
+                    <div key={u.stock_item_id} className="rounded-lg bg-[#faf8f5] px-2.5 py-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-[12.5px] text-[#3d2c24]">{u.name}</span>
+                        <input
+                          inputMode="decimal"
+                          value={valor}
+                          onChange={(e) => setAjustes((a) => ({ ...a, [u.stock_item_id]: e.target.value }))}
+                          className="w-20 rounded-md border border-[#ebe6df] bg-white px-2 py-1 text-right text-[12.5px] tabular-nums outline-none focus:border-[#006d5a]"
+                        />
+                        <span className="w-10 text-[11px] text-[#a39e97]">{u.unit}</span>
+                      </div>
+                      {u.unit !== u.unidad_stock ? (
+                        <p className="mt-0.5 text-[10.5px] text-[#ea504c]">La receta lo tiene en {u.unit} y el stock lo cuenta en {u.unidad_stock}: hay que corregir la receta.</p>
+                      ) : equivale && <p className="mr-12 mt-0.5 text-right text-[10px] text-[#a39e97]">{equivale}</p>}
+                    </div>
+                  )
+                })}
               </div>
             </div>
 

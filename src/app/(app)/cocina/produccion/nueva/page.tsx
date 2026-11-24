@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
 import { PRODUCTION_BATCHES, matchIngredientToStock, type ProductionBatch } from '@/lib/recipes/production-batches'
-import { convertQty } from '@/lib/produccion/units'
+import { convertQty, UNIDADES_PRODUCCION, aUnidadDe, aUnidadGrande, equivalenciaChica, unidadGrande } from '@/lib/produccion/units'
 import { esCostoConfiable } from '@/lib/costos/confiable'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
@@ -107,6 +107,32 @@ function makeInputRow(item: StockItem | null = null, unit = 'kg'): InputRow {
 
 function formatQty(n: number) {
   return n % 1 === 0 ? n.toFixed(0) : n.toFixed(3).replace(/\.?0+$/, '')
+}
+
+/**
+ * Una cantidad guardada (plantilla, receta) en la unidad del producto en el
+ * stock; sin producto, en la unidad grande (kg, l, unidad). Si no se puede
+ * pasar (kg de algo que se cuenta por unidad) queda vacía para cargarla.
+ */
+function enUnidadDe(qty: number | null | undefined, unidad: string | null | undefined, unidadStock: string | null | undefined): { qty: number | null; unit: string } {
+  if (unidadStock) return { qty: qty == null ? null : aUnidadDe(qty, unidad, unidadStock), unit: unidadStock }
+  if (qty == null) return { qty: null, unit: unidadGrande(unidad) }
+  return aUnidadGrande(qty, unidad)
+}
+
+/** Unidad fija de un renglón (la del producto en el stock): no se elige */
+function UnidadFija({ unidad }: { unidad: string }) {
+  return (
+    <div className="flex w-full items-center rounded-xl border border-[#ebe6df] bg-[#f3efe9] px-3 py-2.5 text-[14px] font-medium text-[#3d2c24]" title="La unidad es la del producto en el stock">
+      {unidad}
+    </div>
+  )
+}
+
+/** "= 250 ml" debajo de una cantidad en kg o litros */
+function Equivalencia({ qty, unidad }: { qty: string; unidad: string }) {
+  const texto = equivalenciaChica(parseFloat(qty), unidad)
+  return texto ? <p className="mt-0.5 text-[11px] text-muted-foreground">{texto}</p> : null
 }
 
 function formatMoney(n: number) {
@@ -390,7 +416,7 @@ export default function NuevaProduccionPage() {
       stock_item_id: mainMatch?.id ?? null,
       stock_item_name: mainMatch?.name ?? '',
       qty_used: '',
-      unit: mainMatch?.unit ?? selectedBatch.baseUnit,
+      unit: mainMatch?.unit ?? unidadGrande(selectedBatch.baseUnit),
     }
     const batchRows: InputRow[] = selectedBatch.secondary.map(si => {
       const matched = matchIngredientToStock(si.name, fudoItems)
@@ -399,7 +425,7 @@ export default function NuevaProduccionPage() {
         stock_item_id: matched?.id ?? null,
         stock_item_name: matched?.name ?? '',
         qty_used: '',  // se calcula cuando el usuario ponga la qty principal
-        unit: matched?.unit ?? BATCH_UNIT_MAP[si.unit] ?? si.unit,
+        unit: matched?.unit ?? unidadGrande(BATCH_UNIT_MAP[si.unit] ?? si.unit),
         fromBatch: true,
         batchIngredientName: si.name,
       }
@@ -416,7 +442,7 @@ export default function NuevaProduccionPage() {
         output_name: selectedBatch.output.name,
         qty_produced: '',
         theoretical_qty: null,
-        unit: outMatch?.unit ?? selectedBatch.output.unit,
+        unit: outMatch?.unit ?? unidadGrande(selectedBatch.output.unit),
         is_waste: false,
         notes: '',
         lot_code: '',
@@ -442,7 +468,11 @@ export default function NuevaProduccionPage() {
       if (!si) return input
       const rawQty = si.qty * ratio
       const stockItem = input.stock_item_id ? stockItems.find(item => item.id === input.stock_item_id) : null
-      if (!stockItem) return { ...input, qty_used: formatQty(rawQty) }
+      if (!stockItem) {
+        // Sin item todavía: en la unidad grande (40 g de sal → 0,04 kg), nunca g/ml
+        const grande = aUnidadGrande(rawQty, BATCH_UNIT_MAP[si.unit] ?? si.unit)
+        return { ...input, qty_used: formatQty(grande.qty), unit: grande.unit }
+      }
       const converted = convertQty(rawQty, si.unit, stockItem.unit)
       if (converted == null) {
         // No convertible (ej. gramos -> unidad sin factor de conversión).
@@ -473,12 +503,15 @@ export default function NuevaProduccionPage() {
         .map((ti) => {
           const found = stockItems.find((s) => s.id === ti.stock_item_id) ?? null
           if (found && !isFudoLinked(found)) return null
+          // La cantidad de la plantilla, en la unidad del insumo (antes quedaba
+          // el número de la plantilla con la unidad del stock sin convertir)
+          const enUnidad = enUnidadDe(ti.qty, ti.unit, found?.unit)
           return {
             localId: nextId(),
             stock_item_id: found?.id ?? ti.stock_item_id ?? null,
             stock_item_name: found?.name ?? ti.stock_items?.name ?? '',
-            qty_used: ti.qty != null ? String(ti.qty) : '',
-            unit: found?.unit ?? ti.unit ?? 'kg',
+            qty_used: enUnidad.qty != null ? formatQty(enUnidad.qty) : '',
+            unit: enUnidad.unit,
           }
         })
         .filter((r): r is InputRow => r !== null)
@@ -489,16 +522,18 @@ export default function NuevaProduccionPage() {
         ...makeInputRow(),
         stock_item_id: found && isFudoLinked(found) ? found.id : null,
         stock_item_name: found && isFudoLinked(found) ? found.name : '',
-        unit: found?.unit ?? selectedTemplate.input_unit,
+        unit: found?.unit ?? unidadGrande(selectedTemplate.input_unit),
       }])
     }
 
     // Salidas: precargar con la cantidad de referencia (default_qty) o el % legacy
     const rows: OutputRow[] = selectedTemplate.outputs.map((o) => {
       const linkedItem = stockItems.find((stockItem) => stockItem.id === o.stock_item_id) ?? null
-      const refQty = o.default_qty != null
+      const refQtyPlantilla = o.default_qty != null
         ? o.default_qty
         : (primaryInputQty > 0 ? primaryInputQty * o.theoretical_yield_pct / 100 : null)
+      const enUnidad = enUnidadDe(refQtyPlantilla, o.output_unit, linkedItem?.unit)
+      const refQty = enUnidad.qty
       return {
         localId: nextId(),
         stock_item_id: o.stock_item_id,
@@ -506,7 +541,7 @@ export default function NuevaProduccionPage() {
         output_name: o.output_name,
         qty_produced: refQty != null ? formatQty(refQty) : '',
         theoretical_qty: refQty,
-        unit: linkedItem?.unit ?? o.output_unit,
+        unit: enUnidad.unit,
         is_waste: o.is_waste,
         notes: o.notes ?? '',
         lot_code: '',
@@ -734,6 +769,18 @@ export default function NuevaProduccionPage() {
     if (blockedOutputs.length > 0) {
       setError(`Producción bloqueada: todos los productos finales deben elegirse desde el autocompletado y estar vinculados a Fudo (${blockedOutputs.map((item) => item?.name ?? 'salida sin item').join(', ')}).`)
       return
+    }
+    // Más de lo que hay en stock suele ser un número mal escrito (250 litros
+    // de aceite que eran 250 ml, #67): se pregunta antes de mandar
+    const pasados = inputDetails.filter((i) => {
+      if (!i.item || !(i.qty > 0)) return false
+      const enStock = aUnidadDe(i.qty, i.unit, i.item.unit)
+      return enStock != null && enStock > Math.max(0, Number(i.item.current_qty) || 0)
+    })
+    if (pasados.length > 0) {
+      const lista = pasados.map((i) => `· ${i.item!.name}: ${formatQty(i.qty)} ${i.unit} (en stock hay ${formatQty(Number(i.item!.current_qty) || 0)} ${i.item!.unit})`).join('\n')
+      const seguro = window.confirm(`Revisá estas cantidades: son más de lo que hay en stock.\n\n${lista}\n\n¿Están bien escritas? Ojo: todo va en kilos o litros (250 g son 0,25 kg y 250 ml son 0,25 l).`)
+      if (!seguro) return
     }
     const ok = window.confirm(validateNow
       ? `Validar "${orderName}" ahora?\n\nEsto descuenta insumos, suma producción terminada y sincroniza Fudo en el mismo paso.`
@@ -1042,11 +1089,20 @@ export default function NuevaProduccionPage() {
                           key={`${input.localId}-${input.stock_item_id ?? 'empty'}`}
                           items={stockItems}
                           value={linkedItem}
-                          onChange={(item) => updateInput(input.localId, {
-                            stock_item_id: item?.id ?? null,
-                            stock_item_name: item?.name ?? '',
-                            unit: item?.unit ?? input.unit,
-                          })}
+                          onChange={(item) => {
+                            // Si ya había una cantidad en otra unidad (0,04 kg de la receta y el
+                            // item se cuenta en g… o al revés), se convierte; si no se puede, se vacía
+                            const n = parseFloat(input.qty_used)
+                            const convertida = item && input.qty_used !== '' && Number.isFinite(n) && item.unit !== input.unit
+                              ? aUnidadDe(n, input.unit, item.unit)
+                              : undefined
+                            updateInput(input.localId, {
+                              stock_item_id: item?.id ?? null,
+                              stock_item_name: item?.name ?? '',
+                              unit: item?.unit ?? input.unit,
+                              ...(convertida !== undefined ? { qty_used: convertida == null ? '' : formatQty(convertida) } : {}),
+                            })
+                          }}
                           placeholder={searchPlaceholder}
                           requireFudoLink
                           helperText="Autocompletado cerrado: solo aparecen items vinculados a Fudo."
@@ -1073,18 +1129,12 @@ export default function NuevaProduccionPage() {
                               placeholder="0.000"
                               className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
                             />
+                            <Equivalencia qty={input.qty_used} unidad={linkedItem?.unit ?? input.unit} />
                           </div>
                           <div>
                             <label className="mb-1 block text-[12px] font-medium text-muted-foreground">Unidad</label>
-                            <select
-                              value={input.unit}
-                              onChange={(e) => updateInput(input.localId, { unit: e.target.value })}
-                              className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2.5 text-[14px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                            >
-                              {['kg', 'g', 'l', 'ml', 'unidad', 'atado', 'bandeja'].map((u) => (
-                                <option key={u} value={u}>{u}</option>
-                              ))}
-                            </select>
+                            {/* Fija: la del insumo en el stock (kg, l o unidad). Nada de g ni ml (Marco 24/11) */}
+                            <UnidadFija unidad={linkedItem?.unit ?? input.unit} />
                           </div>
                         </div>
 
@@ -1245,11 +1295,17 @@ export default function NuevaProduccionPage() {
                             const nextSuggestion = suggestedExpiryDate(item, productionDate)
                             const shouldReplaceName = !o.output_name || o.output_name === previousLinkedItem?.name
 
+                            // Misma regla que en los insumos: la cantidad pasa a la unidad del item
+                            const n = parseFloat(o.qty_produced)
+                            const convertida = item && o.qty_produced !== '' && Number.isFinite(n) && item.unit !== o.unit
+                              ? aUnidadDe(n, o.unit, item.unit)
+                              : undefined
                             updateOutput(o.localId, {
                               stock_item_id: item?.id ?? null,
                               stock_item_name: item?.name ?? '',
                               output_name: shouldReplaceName ? item?.name ?? '' : o.output_name,
                               unit: item?.unit ?? o.unit,
+                              ...(convertida !== undefined ? { qty_produced: convertida == null ? '' : formatQty(convertida) } : {}),
                               expires_on: !o.expires_on || o.expires_on === previousSuggestion
                                 ? nextSuggestion
                                 : o.expires_on,
@@ -1356,18 +1412,26 @@ export default function NuevaProduccionPage() {
                             Por debajo del rendimiento esperado
                           </p>
                         )}
+                        <Equivalencia qty={o.qty_produced} unidad={stockItems.find((s) => s.id === o.stock_item_id)?.unit ?? o.unit} />
                       </div>
                       <div>
                         <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Unidad</label>
-                        <select
-                          value={o.unit}
-                          onChange={(e) => updateOutput(o.localId, { unit: e.target.value })}
-                          className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-[13px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                        >
-                          {['kg', 'g', 'l', 'ml', 'unidad', 'porción', 'atado'].map((u) => (
-                            <option key={u} value={u}>{u}</option>
-                          ))}
-                        </select>
+                        {(() => {
+                          // Con producto: fija, la del stock. Sin producto (merma): solo kg, l o unidad
+                          const itemSalida = stockItems.find((s) => s.id === o.stock_item_id)
+                          if (itemSalida) return <UnidadFija unidad={itemSalida.unit} />
+                          return (
+                            <select
+                              value={o.unit}
+                              onChange={(e) => updateOutput(o.localId, { unit: e.target.value })}
+                              className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-[13px] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                            >
+                              {[...new Set<string>([...UNIDADES_PRODUCCION, o.unit])].map((u) => (
+                                <option key={u} value={u}>{u}</option>
+                              ))}
+                            </select>
+                          )
+                        })()}
                       </div>
                     </div>
 

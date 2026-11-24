@@ -120,14 +120,26 @@ export async function cargarRecetasProduccion(admin: SupabaseClient, outputIds?:
   return out
 }
 
-/** Insumos para producir `cantidad` unidades del elaborado (en la unidad de la receta). */
-export function escalarReceta(receta: RecetaProduccion, cantidad: number): { stock_item_id: string; name: string; qty: number; unit: string }[] {
-  return receta.ingredientes.map((i) => ({
-    stock_item_id: i.stock_item_id,
-    name: i.name,
-    qty: Math.round(i.qty_por_unidad * cantidad * 10000) / 10000,
-    unit: i.unidad_receta ?? i.unit,
-  }))
+/**
+ * Insumos para producir `cantidad` unidades del elaborado, en la unidad del
+ * insumo en el stock (kg, l o unidad: producción no se carga en gramos ni ml,
+ * Marco 24/11). Si la receta tiene una unidad que no cuadra con el stock (g de
+ * algo que se cuenta por unidad), queda en la de la receta y el servidor avisa.
+ */
+export function escalarReceta(receta: RecetaProduccion, cantidad: number): { stock_item_id: string; name: string; qty: number; unit: string; unidad_stock: string }[] {
+  return receta.ingredientes.map((i) => {
+    const bruto = i.qty_por_unidad * cantidad
+    const c = canon(bruto, i.unidad_receta ?? i.unit)
+    const enStock = toStockUnitStrict(c.qty, c.unit, i.unit)
+    return {
+      stock_item_id: i.stock_item_id,
+      name: i.name,
+      qty: Math.round((enStock ?? bruto) * 100000) / 100000,
+      unit: enStock !== null ? i.unit : i.unidad_receta ?? i.unit,
+      /** si difiere de `unit`, la receta no cuadra con el stock (g de algo que va por unidad) */
+      unidad_stock: i.unit,
+    }
+  })
 }
 
 /**

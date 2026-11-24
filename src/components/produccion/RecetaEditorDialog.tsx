@@ -5,6 +5,8 @@ import { toast } from 'sonner'
 import { Loader2, Plus, Search, Trash2, X } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
 import type { Elaborado } from '@/lib/produccion/elaborados'
+import { toStockUnitStrict } from '@/lib/recipes/recipe-cost'
+import { equivalenciaChica } from '@/lib/produccion/units'
 
 // ---------------------------------------------------------------------------
 // Qué lleva un elaborado — se carga POR TANDA, como se cocina de verdad:
@@ -12,9 +14,11 @@ import type { Elaborado } from '@/lib/produccion/elaborados'
 // unidad para escalar cualquier cantidad (Lo hice, compras, costos).
 // ---------------------------------------------------------------------------
 
-const UNIDADES = ['kg', 'g', 'l', 'ml', 'unidad'] as const
-
-type Fila = { key: string; stock_item_id: string; name: string; qty: string; unit: string }
+// La unidad de cada ingrediente es la del insumo en el stock (kg, l o unidad),
+// fija: producción no se carga en gramos ni ml (Marco 24/11). Lo que estaba
+// en g/ml se muestra pasado a kg/l; si no cuadra (g de algo que se cuenta por
+// unidad), queda vacío para cargarlo de nuevo, con el aviso de qué había.
+type Fila = { key: string; stock_item_id: string; name: string; qty: string; unit: string; antes?: string }
 
 function fold(s: string) {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -33,13 +37,18 @@ export function RecetaEditorDialog({ elaborado, insumos, onClose, onSaved }: {
 }) {
   const r = elaborado.receta
   const [rinde, setRinde] = useState(r ? redondeo(r.rinde) : '')
-  const [filas, setFilas] = useState<Fila[]>(() => (r?.ingredientes ?? []).map((i, n) => ({
-    key: `${i.stock_item_id}-${n}`,
-    stock_item_id: i.stock_item_id,
-    name: i.name,
-    qty: redondeo(i.qty_por_unidad * r!.rinde),
-    unit: i.unidad_receta ?? i.unit,
-  })))
+  const [filas, setFilas] = useState<Fila[]>(() => (r?.ingredientes ?? []).map((i, n) => {
+    const enTanda = i.qty_por_unidad * r!.rinde
+    const enStock = toStockUnitStrict(enTanda, i.unidad_receta ?? i.unit, i.unit)
+    return {
+      key: `${i.stock_item_id}-${n}`,
+      stock_item_id: i.stock_item_id,
+      name: i.name,
+      qty: enStock !== null ? redondeo(enStock) : '',
+      unit: i.unit,
+      antes: enStock === null ? `${redondeo(enTanda)} ${i.unidad_receta ?? ''}`.trim() : undefined,
+    }
+  }))
   const [buscando, setBuscando] = useState(filas.length === 0)
   const [q, setQ] = useState('')
   const [notas, setNotas] = useState('')
@@ -105,27 +114,31 @@ export function RecetaEditorDialog({ elaborado, insumos, onClose, onSaved }: {
           <div>
             <p className="mb-1.5 text-[12px] font-semibold text-[#3d2c24]">Ingredientes de esa tanda</p>
             <div className="space-y-1.5">
-              {filas.map((f) => (
-                <div key={f.key} className="flex items-center gap-1.5 rounded-lg bg-[#faf8f5] px-2 py-1.5">
-                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-[#3d2c24]">{f.name}</span>
-                  <input
-                    inputMode="decimal"
-                    value={f.qty}
-                    onChange={(e) => setFilas((fs) => fs.map((x) => (x.key === f.key ? { ...x, qty: e.target.value } : x)))}
-                    className="w-16 rounded-md border border-[#ebe6df] bg-white px-1.5 py-1 text-right text-[12.5px] tabular-nums outline-none focus:border-[#006d5a]"
-                  />
-                  <select
-                    value={f.unit}
-                    onChange={(e) => setFilas((fs) => fs.map((x) => (x.key === f.key ? { ...x, unit: e.target.value } : x)))}
-                    className="rounded-md border border-[#ebe6df] bg-white px-1 py-1 text-[12px]"
-                  >
-                    {[...new Set([f.unit, ...UNIDADES])].map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                  <button onClick={() => setFilas((fs) => fs.filter((x) => x.key !== f.key))} aria-label="Quitar" className="p-1 text-[#cfc8bf] hover:text-[#ea504c]">
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </div>
-              ))}
+              {filas.map((f) => {
+                const equivale = equivalenciaChica(parse(f.qty), f.unit)
+                return (
+                  <div key={f.key} className="rounded-lg bg-[#faf8f5] px-2 py-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-[#3d2c24]">{f.name}</span>
+                      <input
+                        inputMode="decimal"
+                        value={f.qty}
+                        onChange={(e) => setFilas((fs) => fs.map((x) => (x.key === f.key ? { ...x, qty: e.target.value } : x)))}
+                        className={`w-16 rounded-md border bg-white px-1.5 py-1 text-right text-[12.5px] tabular-nums outline-none focus:border-[#006d5a] ${f.antes && !(parse(f.qty) > 0) ? 'border-[#ea504c]' : 'border-[#ebe6df]'}`}
+                      />
+                      <span className="w-11 text-[12px] text-[#7d6c64]">{f.unit}</span>
+                      <button onClick={() => setFilas((fs) => fs.filter((x) => x.key !== f.key))} aria-label="Quitar" className="p-1 text-[#cfc8bf] hover:text-[#ea504c]">
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                    {f.antes && !(parse(f.qty) > 0) ? (
+                      <p className="mt-0.5 text-[10.5px] text-[#ea504c]">Estaba en «{f.antes}» y el stock lo cuenta en {f.unit}: cargá cuánto en {f.unit}.</p>
+                    ) : equivale && (
+                      <p className="mr-[4.5rem] mt-0.5 text-right text-[10px] text-[#a39e97]">{equivale}</p>
+                    )}
+                  </div>
+                )
+              })}
             </div>
 
             {buscando ? (
