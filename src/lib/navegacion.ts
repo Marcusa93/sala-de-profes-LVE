@@ -25,6 +25,7 @@ import {
   ScanFace,
   Sparkles,
   Wifi,
+  Croissant,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
@@ -137,6 +138,7 @@ const SOCIO_MORE: ExpandableNavItem = {
         { label: 'Parte de cierre', href: '/cocina/parte', icon: ClipboardList, description: 'Lo que se produjo en la noche: kilos, porciones, desperdicio y rendimiento' },
         { label: 'Enviar a la 24', href: '/cocina/envios', icon: Truck, description: 'Mandar producción a la otra sucursal y ver si llegó' },
         { label: 'Lo de hoy · Cocina', href: '/cocina/lo-de-hoy', icon: ClipboardCheck, description: 'Confirmar producción, conteo de cierre y merma' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear y qué sobró' },
         { label: 'Lista y mínimos', href: '/cocina/lista', icon: ClipboardList, description: 'Qué se produce y cuánto tiene que haber en cada local' },
         { label: 'Recetario de platos', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato: costo, compras y armado' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Control de roturas, faltantes y reposición' },
@@ -187,6 +189,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
         { label: 'Parte de cierre', href: '/cocina/parte', icon: ClipboardList, description: 'Lo que se produjo en la noche: kilos, porciones, desperdicio y rendimiento' },
         { label: 'Enviar a la 24', href: '/cocina/envios', icon: Truck, description: 'Mandar producción a la otra sucursal y ver si llegó' },
         { label: 'Lo de hoy · Cocina', href: '/cocina/lo-de-hoy', icon: ClipboardCheck, description: 'Confirmar producción, conteo de cierre y merma' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear y qué sobró' },
         { label: 'Lista y mínimos', href: '/cocina/lista', icon: ClipboardList, description: 'Qué se produce y cuánto tiene que haber en cada local' },
         { label: 'Recetario de platos', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato: costo, compras y armado' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Faltantes, roturas y reposición' },
@@ -217,6 +220,7 @@ const CHEF_MORE: ExpandableNavItem = {
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
         { label: 'Enviar a la 24', href: '/cocina/envios', icon: Truck, description: 'Mandar producción a la otra sucursal' },
         { label: 'Lo de hoy · Cocina', href: '/cocina/lo-de-hoy', icon: ClipboardCheck, description: 'Confirmar producción, conteo de cierre y merma' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear y qué sobró' },
         { label: 'Lista y mínimos', href: '/cocina/lista', icon: ClipboardList, description: 'Qué se produce y los mínimos de cada local' },
         { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
         { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
@@ -249,6 +253,7 @@ const COCINA_MORE: ExpandableNavItem = {
         { label: 'Enviar a la 24', href: '/cocina/envios', icon: Truck, description: 'Mandar producción a la otra sucursal' },
         { label: 'Lista y mínimos', href: '/cocina/lista', icon: ClipboardList, description: 'Qué se produce y los mínimos de cada local' },
         { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear y qué sobró' },
         { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
         { label: 'Recetario', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato y cómo se arma' },
       ],
@@ -272,6 +277,7 @@ const BARISTA_MORE: ExpandableNavItem = {
       label: 'Herramientas',
       items: [
         { label: 'Tolva', href: '/tolva', icon: Coffee, description: 'Control de la tolva del día' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear y qué sobró' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tolva, descartables y baño: tareas con horario' },
         { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'Descartables', href: '/stock?area=descartables', icon: Package, description: 'Contar vasos y tapas · avisar faltantes' },

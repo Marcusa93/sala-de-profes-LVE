@@ -2,12 +2,13 @@ import { claveD, claveM, claveS, corta, DC, DIAS, dow, sumar, type Ahora } from 
 import { DIARIAS, MENSUALES, SEMANALES, diaM, diasDeCaja, estDiaria, estMensual, estSemanal } from './tareas'
 import { estDelegado, estPedido, nombreCorto, ultimaSenal } from './pedidos'
 import type { CajaDia, DatosOperaciones, VentasOperaciones } from './tipos'
+import type { ControlHorneado } from '@/lib/horneado/config'
 
 // ---------------------------------------------------------------------------
 // Alertas del control interno: rojo = vencido, ámbar = vence pronto
 // ---------------------------------------------------------------------------
 
-export type Seccion = 'hoy' | 'semana' | 'mes' | 'pedidos' | 'encargados' | 'ventas'
+export type Seccion = 'hoy' | 'semana' | 'mes' | 'pedidos' | 'encargados' | 'ventas' | 'horneado'
 /** cantidad: cuántas cosas junta (las tareas del mismo tipo van en una sola alerta) */
 export type Alerta = { nivel: 'rojo' | 'ambar'; texto: string; seccion: Seccion; cantidad: number }
 
@@ -62,7 +63,7 @@ export function analizarVentas(v: VentasOperaciones | undefined): AnalisisVentas
 
 // ---------------------------------------------------------------------------
 
-export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas: AnalisisVentas | null): Alerta[] {
+export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas: AnalisisVentas | null, horneado: ControlHorneado | null = null): Alerta[] {
   const A: Alerta[] = []
   const rojo = (texto: string, seccion: Seccion) => A.push({ nivel: 'rojo', texto, seccion, cantidad: 1 })
   const ambar = (texto: string, seccion: Seccion) => A.push({ nivel: 'ambar', texto, seccion, cantidad: 1 })
@@ -114,6 +115,19 @@ export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas:
     if (ventas.tickets === 0) rojo(`Santa Fe: sin ventas cerradas en Fudo el ${corta(ventas.ayer)}`, 'ventas')
     else if (ventas.ratio !== null && ventas.ratio < 0.75) {
       ambar(`Santa Fe: ayer vendió ${Math.round((1 - ventas.ratio) * 100)} % menos que el promedio de los ${DIAS[dow(ventas.ayer)].toLowerCase()}s`, 'ventas')
+    }
+  }
+
+  // Horneado de ayer (medialunas, bollitos, tortillas) contra lo vendido en Fudo
+  if (horneado && !horneado.falta_migracion) {
+    for (const p of horneado.piezas) {
+      const d = p.dias[p.dias.length - 1]
+      if (!d || d.antesDelControl) continue
+      const salieron = d.vendidas + d.personal
+      if (d.sinTandas) ambar(`Ayer no se cargaron las tandas de ${p.nombre.toLowerCase()} (salieron ${salieron})`, 'horneado')
+      else if (d.diferencia > p.umbral) rojo(`Ayer faltan ${d.diferencia} ${p.nombre.toLowerCase()} sin explicar`, 'horneado')
+      else if (d.diferencia < -p.umbral) ambar(`Ayer salieron ${-d.diferencia} ${p.nombre.toLowerCase()} más de las cargadas`, 'horneado')
+      if (d.horneadas > 0 && d.sinConteo) ambar(`Ayer no se contaron las ${p.nombre.toLowerCase()} que sobraron`, 'horneado')
     }
   }
 

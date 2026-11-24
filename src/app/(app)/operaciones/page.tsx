@@ -11,10 +11,12 @@ import { DIARIAS, MENSUALES, SEMANALES, estMensual, estSemanal } from '@/lib/ope
 import { alertas, analizarVentas, hechoDe, type Alerta, type Seccion } from '@/lib/operaciones/alertas'
 import { statsPedidos } from '@/lib/operaciones/pedidos'
 import type { DatosOperaciones, VentasOperaciones } from '@/lib/operaciones/tipos'
+import type { ControlHorneado } from '@/lib/horneado/config'
 import { TabHoy, TabMes, TabSemana } from '@/components/operaciones/Tareas'
 import { TabPedidos, type SubPedidos } from '@/components/operaciones/Pedidos'
 import { TabDesempeno } from '@/components/operaciones/Desempeno'
 import { TabVentas } from '@/components/operaciones/Ventas'
+import { TabHorneado } from '@/components/operaciones/Horneado'
 
 // ---------------------------------------------------------------------------
 // Control interno del Jefe de Operaciones — Santa Fe
@@ -25,7 +27,7 @@ import { TabVentas } from '@/components/operaciones/Ventas'
 // carga Joaquín, los socios ven y anotan pedidos. La 24 tiene el suyo en su app.
 // ---------------------------------------------------------------------------
 
-type Tab = 'hoy' | 'semana' | 'mes' | 'pedidos' | 'desempeno' | 'ventas'
+type Tab = 'hoy' | 'semana' | 'mes' | 'pedidos' | 'desempeno' | 'ventas' | 'horneado'
 const TABS: { v: Tab; label: string }[] = [
   { v: 'hoy', label: 'Hoy' },
   { v: 'semana', label: 'Semana' },
@@ -33,6 +35,7 @@ const TABS: { v: Tab; label: string }[] = [
   { v: 'pedidos', label: 'Pedidos socios' },
   { v: 'desempeno', label: 'Desempeño' },
   { v: 'ventas', label: 'Ventas' },
+  { v: 'horneado', label: 'Horneado' },
 ]
 const CLAVE_TAB = 'lve-operaciones-tab'
 
@@ -53,6 +56,7 @@ const tabDe = (s: Seccion): Tab => (s === 'encargados' ? 'pedidos' : s)
 export default function ControlOperacionesPage() {
   const { data, error, isLoading, mutate } = useSWR<DatosOperaciones>('/api/operaciones', fetcher, { refreshInterval: 60_000 })
   const { data: ventas, isLoading: cargandoVentas } = useSWR<VentasOperaciones>(data ? '/api/operaciones/ventas' : null, fetcher, { revalidateOnFocus: false })
+  const { data: horneado, isLoading: cargandoHorneado, error: errorHorneado } = useSWR<ControlHorneado>(data ? '/api/operaciones/horneado' : null, fetcher, { revalidateOnFocus: false })
   const [n, setN] = useState(() => ahora())
   const [tab, setTab] = useState<Tab>('hoy')
   const [sub, setSub] = useState<SubPedidos>('anotar')
@@ -73,7 +77,7 @@ export default function ControlOperacionesPage() {
 
   const hecho = useMemo(() => hechoDe(data?.checks ?? []), [data?.checks])
   const analisis = useMemo(() => analizarVentas(ventas), [ventas])
-  const lista = useMemo<Alerta[]>(() => (data ? alertas(n, data, hecho, analisis) : []), [n, data, hecho, analisis])
+  const lista = useMemo<Alerta[]>(() => (data ? alertas(n, data, hecho, analisis, horneado ?? null) : []), [n, data, hecho, analisis, horneado])
 
   if (isLoading && !data) return <LoadingState />
   if (error && !data) {
@@ -232,6 +236,7 @@ export default function ControlOperacionesPage() {
       {tab === 'pedidos' && <TabPedidos n={n} datos={data} editar={editar} sub={sub} setSub={setSub} enviar={(b) => enviar(b)} />}
       {tab === 'desempeno' && <TabDesempeno n={n} datos={data} hecho={hecho} />}
       {tab === 'ventas' && <TabVentas ventas={ventas} analisis={analisis} cargando={cargandoVentas} />}
+      {tab === 'horneado' && <TabHorneado datos={horneado} cargando={cargandoHorneado} error={errorHorneado ? (errorHorneado as Error).message : null} />}
 
       <details className="rounded-2xl bg-white p-3.5 text-[12px] text-[#7d6c64] ring-1 ring-[#ebe6df]">
         <summary className="cursor-pointer text-[13px] font-bold text-[#3d2c24]">Cómo se usa</summary>
@@ -241,6 +246,7 @@ export default function ControlOperacionesPage() {
           <li><b>Semana y Mes:</b> tildá cuando lo entregás. Se reinician solas el lunes y el día 1.</li>
           <li><b>Pedidos socios:</b> anotá todo lo que pida un socio con su vencimiento. Tildá «Le respondí» cuando le contestás (48 h). Si lo pasás a Noelia o Ricardo, poné la fecha de compromiso y anotá cada 48 h cómo viene: sigue siendo tuyo.</li>
           <li><b>Verificar:</b> cuando llega la fecha, marcá Cumplido o No cumplido, o +3 días si se reprograma. Con eso se arma Desempeño.</li>
+          <li><b>Horneado:</b> cocina carga cada tanda de medialunas, bollitos y tortillas, y al cierre lo que sobró, lo que fue al budín de pan y lo que se tiró. Acá se cruza con lo vendido en Fudo: «faltan» son piezas sin explicación.</li>
           <li><b>Martes antes de la reunión:</b> lo que quedó en rojo en la semana es la lista de temas para los socios.</li>
         </ol>
       </details>
