@@ -7,7 +7,7 @@
 -- ---------------------------------------------------------------------------
 select cron.schedule('fudo-pulso', '*/10 * * * *', $$
   select net.http_get(
-    url := 'https://sala-de-profes-lve.vercel.app/api/cron/fudo-pulso',
+    url := 'https://salaprofeslve.2-25-185-242.sslip.io/api/cron/fudo-pulso',
     headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')),
     timeout_milliseconds := 120000
   );
@@ -15,7 +15,7 @@ $$);
 
 select cron.schedule('fudo-sync-reintento', '45 7 * * *', $$
   select net.http_get(
-    url := 'https://sala-de-profes-lve.vercel.app/api/cron/fudo-sync?si_fallo=1',
+    url := 'https://salaprofeslve.2-25-185-242.sslip.io/api/cron/fudo-sync?si_fallo=1',
     headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')),
     timeout_milliseconds := 300000
   );
@@ -23,7 +23,7 @@ $$);
 
 select cron.schedule('protocolos-avisos', '*/5 * * * *', $$
   select net.http_get(
-    url := 'https://sala-de-profes-lve.vercel.app/api/cron/protocolos',
+    url := 'https://salaprofeslve.2-25-185-242.sslip.io/api/cron/protocolos',
     headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')),
     timeout_milliseconds := 60000
   );

@@ -11,7 +11,7 @@ select cron.schedule(
   '*/15 * * * *',
   $$
   select net.http_get(
-    url := 'https://sala-de-profes-lve.vercel.app/api/cron/auto-clockout',
+    url := 'https://salaprofeslve.2-25-185-242.sslip.io/api/cron/auto-clockout',
     headers := jsonb_build_object(
       'Authorization',
       'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')

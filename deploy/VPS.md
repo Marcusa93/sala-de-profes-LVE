@@ -1,7 +1,9 @@
 # Santa Fe en la VPS (mudanza desde Vercel)
 
 Santa Fe corría en Vercel (`https://sala-de-profes-lve.vercel.app`) hasta que Vercel la frenó
-(24/11/2026, `402 DEPLOYMENT_DISABLED`). Se muda a la VPS del equipo, igual que la 24
+(24/11/2026, `402 DEPLOYMENT_DISABLED`) y la dio de baja: **desde el 24/11 Santa Fe es la VPS**
+(dirección `https://salaprofeslve.2-25-185-242.sslip.io` hasta tener dominio, crons en la VPS y
+relojes de pg_cron apuntando acá). Se mudó a la VPS del equipo, igual que la 24
 (`https://lve24.com.ar`, desde el 19/10; ver la sección 10 de `PENDIENTES-SUCURSAL-24.md` en
 ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.js (pantallas y API).
 
@@ -13,7 +15,8 @@ ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.
 | Servicio | `salaprofeslve.service` → `next start -H 127.0.0.1 -p 3150` · Nice=10 · MemoryMax=1G · Restart=always |
 | Caddy | `/etc/caddy/salaprofeslve.caddy`, importado al final de `/etc/caddy/Caddyfile` |
 | Dirección de prueba | `https://salaprofeslve.2-25-185-242.sslip.io` (hasta tener dominio) |
-| Crons | `/etc/cron.d/salaprofeslve` → `127.0.0.1:3150` · log `/var/log/salaprofeslve-cron.log` (recién en la fase 3) |
+| Crons | `/etc/cron.d/salaprofeslve` (13: los de `vercel.json` salvo el festejo) → `127.0.0.1:3150` · secreto en `cron.curlrc` · log `/var/log/salaprofeslve-cron.log` (prendidos el 24/11) |
+| Relojes de Supabase | Los 7 de pg_cron → `https://salaprofeslve.2-25-185-242.sslip.io` (`supabase/manual/*_reloj.sql`) |
 | Deploy | `bash scripts/deploy-vps.sh` (reemplaza al push a Vercel) |
 
 ## Reglas de la VPS compartida
@@ -83,8 +86,14 @@ ese repo). **La base sigue en Supabase y no se toca.** Solo se muda la app Next.
    echo 'import /etc/caddy/salaprofeslve.caddy' >> /etc/caddy/Caddyfile
    caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
    ```
-6. **Sin crons todavía**: los sigue corriendo Vercel. Si corren en los dos lados se duplican los avisos,
-   los resúmenes y las sincronizaciones con Fudo.
+6. **Crons**: con Vercel dado de baja se prendieron el mismo día (ver abajo). Si Vercel siguiera andando,
+   nunca en los dos lados a la vez: se duplican los avisos, los resúmenes y las sincronizaciones con Fudo.
+7. **Variables**: `CRON_SECRET`, base y Fudo son las de producción. `ENVIOS_CLAVE` se copió de la 24
+   (es la misma clave de los dos lados). `ENVIOS_24_URL`, `FUDO_CAJA_ID` y
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` tienen valor por defecto en el código. **Pendientes**:
+   Telegram (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_IDS`, `TELEGRAM_JOB_BOT`) y claves de IA válidas
+   (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`). Cambiar una variable que no es `NEXT_PUBLIC_*`: editar
+   `app.env` y `systemctl restart salaprofeslve`.
 
 ## El cambio (fase 3)
 
