@@ -118,23 +118,26 @@ export default function ControlOperacionesPage() {
     }))
   }
 
-  // Avance de hoy, la semana, el mes y los pedidos del mes
-  const dH = n.dow === 0 ? null : pct(DIARIAS.filter((t) => hecho(claveD(n.hoy), t.id)).length, DIARIAS.length)
+  // Avance de cada pestaña (va al lado del nombre): tareas hechas de hoy, la
+  // semana y el mes, y pedidos cumplidos del mes
   const sv = SEMANALES.map((t) => estSemanal(t, n, hecho(claveS(n.hoy), t.id), data.inicio)).filter((e) => e !== 'prev')
   const mv = MENSUALES.map((t) => estMensual(t, n, hecho(claveM(n.hoy), t.id), data.inicio)).filter((e) => e !== 'prev')
   const stMes = statsPedidos(data.pedidos.filter((p) => p.cerrado?.slice(0, 7) === n.hoy.slice(0, 7)))
-  const avances: { t: Tab; label: string; v: number | null; sub?: string }[] = [
-    { t: 'hoy', label: 'Hoy', v: dH, sub: n.dow === 0 ? 'domingo' : undefined },
-    { t: 'semana', label: 'Semana', v: pct(sv.filter((e) => e === 'done').length, sv.length) },
-    { t: 'mes', label: 'Mes', v: pct(mv.filter((e) => e === 'done').length, mv.length) },
-    { t: 'pedidos', label: 'Pedidos', v: pct(stMes.cumplidos, stMes.verificados), sub: stMes.verificados ? `${stMes.cumplidos}/${stMes.verificados}` : 'sin verificar' },
-  ]
+  const avance: Partial<Record<Tab, { v: number | null; titulo: string }>> = {
+    hoy: { v: n.dow === 0 ? null : pct(DIARIAS.filter((t) => hecho(claveD(n.hoy), t.id)).length, DIARIAS.length), titulo: 'Tareas de hoy hechas' },
+    semana: { v: pct(sv.filter((e) => e === 'done').length, sv.length), titulo: 'Tareas de la semana hechas' },
+    mes: { v: pct(mv.filter((e) => e === 'done').length, mv.length), titulo: 'Tareas del mes hechas' },
+    pedidos: { v: pct(stMes.cumplidos, stMes.verificados), titulo: 'Pedidos cumplidos este mes' },
+  }
 
-  const rojas = lista.filter((a) => a.nivel === 'rojo').length
+  // Las alertas de tareas vienen agrupadas: se cuentan las tareas, no las filas
+  const suma = (l: Alerta[]) => l.reduce((a, x) => a + x.cantidad, 0)
+  const rojas = suma(lista.filter((a) => a.nivel === 'rojo'))
+  const ambar = suma(lista.filter((a) => a.nivel === 'ambar'))
   const badge = (t: Tab) => {
     const de = lista.filter((a) => tabDe(a.seccion) === t)
-    const r = de.filter((a) => a.nivel === 'rojo').length
-    return { n: r || de.length, rojo: r > 0 }
+    const r = suma(de.filter((a) => a.nivel === 'rojo'))
+    return { n: r || suma(de), rojo: r > 0 }
   }
 
   return (
@@ -158,21 +161,11 @@ export default function ControlOperacionesPage() {
         </p>
       )}
 
-      <div className="grid grid-cols-4 gap-2">
-        {avances.map((a) => (
-          <button key={a.t} type="button" onClick={() => ir(a.t, a.t === 'pedidos' ? 'verificar' : undefined)} className="rounded-2xl bg-[#006d5a] px-2 py-2.5 text-center text-white active:scale-95">
-            <span className={cn('block text-lg font-bold tabular-nums', a.v == null ? 'text-white/60' : a.v >= 80 ? 'text-[#a9e7c7]' : a.v >= 50 ? 'text-[#f6d38a]' : 'text-[#ffb3ad]')}>{a.v == null ? '—' : `${a.v}%`}</span>
-            <span className="block text-[11px] font-semibold">{a.label}</span>
-            {a.sub && <span className="block text-[9.5px] text-white/70">{a.sub}</span>}
-          </button>
-        ))}
-      </div>
-
       <section className="space-y-2 rounded-2xl bg-white p-3.5 ring-1 ring-[#ebe6df]" aria-live="polite">
         <div className="flex items-center gap-2">
           <p className="flex-1 text-[13px] font-bold text-[#3d2c24]">Alertas</p>
           {rojas > 0 && <span className="rounded-full bg-[#fef2f2] px-2 py-0.5 text-[10.5px] font-bold text-[#c8312c]">{rojas} vencida{rojas === 1 ? '' : 's'}</span>}
-          {lista.length - rojas > 0 && <span className="rounded-full bg-[#fdf3e3] px-2 py-0.5 text-[10.5px] font-bold text-[#9a6418]">{lista.length - rojas} por vencer</span>}
+          {ambar > 0 && <span className="rounded-full bg-[#fdf3e3] px-2 py-0.5 text-[10.5px] font-bold text-[#9a6418]">{ambar} por vencer</span>}
         </div>
         {lista.length === 0 ? (
           <p className="rounded-xl bg-[#f2f9f6] px-3 py-2.5 text-[12px] font-semibold text-[#006d5a]">Sin alertas. Va al día.</p>
@@ -202,6 +195,7 @@ export default function ControlOperacionesPage() {
         <div className="flex gap-1.5" role="tablist">
           {TABS.map((t) => {
             const b = badge(t.v)
+            const av = avance[t.v]
             return (
               <button
                 key={t.v}
@@ -209,9 +203,13 @@ export default function ControlOperacionesPage() {
                 role="tab"
                 aria-selected={tab === t.v}
                 onClick={() => ir(t.v)}
+                title={av ? `${av.titulo}: ${av.v == null ? 'sin datos' : `${av.v} %`}` : undefined}
                 className={cn('flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-[12.5px] font-bold transition-colors', tab === t.v ? 'bg-[#006d5a] text-white' : 'bg-white text-[#3d2c24] ring-1 ring-[#ebe6df]')}
               >
                 {t.label}
+                {av && av.v != null && (
+                  <span className={cn('text-[11px] font-semibold tabular-nums', tab === t.v ? 'text-white/75' : av.v >= 80 ? 'text-[#006d5a]' : av.v >= 50 ? 'text-[#b0762a]' : 'text-[#c8312c]')}>{av.v}%</span>
+                )}
                 {b.n > 0 && <span className={cn('rounded-full px-1.5 text-[10px] text-white', b.rojo ? 'bg-[#ea504c]' : 'bg-[#d4943a]')}>{b.n}</span>}
               </button>
             )

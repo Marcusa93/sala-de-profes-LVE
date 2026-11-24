@@ -8,7 +8,11 @@ import type { CajaDia, DatosOperaciones, VentasOperaciones } from './tipos'
 // ---------------------------------------------------------------------------
 
 export type Seccion = 'hoy' | 'semana' | 'mes' | 'pedidos' | 'encargados' | 'ventas'
-export type Alerta = { nivel: 'rojo' | 'ambar'; texto: string; seccion: Seccion }
+/** cantidad: cuántas cosas junta (las tareas del mismo tipo van en una sola alerta) */
+export type Alerta = { nivel: 'rojo' | 'ambar'; texto: string; seccion: Seccion; cantidad: number }
+
+/** ['Bancos', 'Cobros', 'Encargados'] → 'Bancos, Cobros y Encargados' */
+const juntar = (n: string[]) => (n.length <= 1 ? n.join('') : `${n.slice(0, -1).join(', ')} y ${n[n.length - 1]}`)
 
 export type Hecho = (periodo: string, tarea: string) => boolean
 
@@ -60,33 +64,35 @@ export function analizarVentas(v: VentasOperaciones | undefined): AnalisisVentas
 
 export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas: AnalisisVentas | null): Alerta[] {
   const A: Alerta[] = []
-  const rojo = (texto: string, seccion: Seccion) => A.push({ nivel: 'rojo', texto, seccion })
-  const ambar = (texto: string, seccion: Seccion) => A.push({ nivel: 'ambar', texto, seccion })
+  const rojo = (texto: string, seccion: Seccion) => A.push({ nivel: 'rojo', texto, seccion, cantidad: 1 })
+  const ambar = (texto: string, seccion: Seccion) => A.push({ nivel: 'ambar', texto, seccion, cantidad: 1 })
+  /**
+   * Tareas del mismo tipo y estado en una sola alerta: con una sola, el
+   * detalle (hora o día); con varias, cuántas y cuáles. Así lo importante
+   * (pedidos, caja, ventas) no queda tapado por siete tareas del día.
+   */
+  function grupo<T extends { t: string }>(items: T[], nivel: Alerta['nivel'], seccion: Seccion, una: (t: T) => string, varias: string) {
+    if (items.length === 1) A.push({ nivel, texto: una(items[0]), seccion, cantidad: 1 })
+    else if (items.length > 1) A.push({ nivel, texto: `${items.length} ${varias}: ${juntar(items.map((t) => t.t))}`, seccion, cantidad: items.length })
+  }
 
   if (n.dow !== 0) {
-    for (const t of DIARIAS) {
-      const e = estDiaria(t, n, hecho(claveD(n.hoy), t.id))
-      if (e === 'late') rojo(`${t.t}: venció a las ${t.h}`, 'hoy')
-      else if (e === 'soon') ambar(`${t.t}: vence a las ${t.h}`, 'hoy')
-    }
+    const est = DIARIAS.map((t) => ({ t, e: estDiaria(t, n, hecho(claveD(n.hoy), t.id)) }))
+    grupo(est.filter((x) => x.e === 'late').map((x) => x.t), 'rojo', 'hoy', (t) => `${t.t}: venció a las ${t.h}`, 'tareas de hoy vencidas')
+    grupo(est.filter((x) => x.e === 'soon').map((x) => x.t), 'ambar', 'hoy', (t) => `${t.t}: vence a las ${t.h}`, 'tareas de hoy vencen pronto')
     const caja = new Map(datos.caja.map((c) => [c.fecha, c]))
     for (const f of diasDeCaja(n)) {
       if (cajaSinMotivo(caja.get(f))) rojo(`Diferencia de caja del ${DIAS[dow(f)].toLowerCase()} ${corta(f)} sin explicar`, 'hoy')
     }
   }
 
-  for (const t of SEMANALES) {
-    const e = estSemanal(t, n, hecho(claveS(n.hoy), t.id), datos.inicio)
-    if (e === 'late') rojo(`${t.t}: venció el ${DC[t.dow].toLowerCase()}`, 'semana')
-    else if (e === 'soon') ambar(`${t.t}: vence hoy${t.h !== '23:59' ? ` a las ${t.h}` : ''}`, 'semana')
-  }
+  const sem = SEMANALES.map((t) => ({ t, e: estSemanal(t, n, hecho(claveS(n.hoy), t.id), datos.inicio) }))
+  grupo(sem.filter((x) => x.e === 'late').map((x) => x.t), 'rojo', 'semana', (t) => `${t.t}: venció el ${DC[t.dow].toLowerCase()}`, 'tareas de la semana vencidas')
+  grupo(sem.filter((x) => x.e === 'soon').map((x) => x.t), 'ambar', 'semana', (t) => `${t.t}: vence hoy${t.h !== '23:59' ? ` a las ${t.h}` : ''}`, 'tareas de la semana vencen hoy')
 
-  for (const t of MENSUALES) {
-    const e = estMensual(t, n, hecho(claveM(n.hoy), t.id), datos.inicio)
-    const v = diaM(t, n)
-    if (e === 'late') rojo(`${t.t}: venció el día ${v}`, 'mes')
-    else if (e === 'soon') ambar(`${t.t}: vence el día ${v}${v === n.d ? ' (hoy)' : ''}`, 'mes')
-  }
+  const mes = MENSUALES.map((t) => ({ t, e: estMensual(t, n, hecho(claveM(n.hoy), t.id), datos.inicio) }))
+  grupo(mes.filter((x) => x.e === 'late').map((x) => x.t), 'rojo', 'mes', (t) => `${t.t}: venció el día ${diaM(t, n)}`, 'tareas del mes vencidas')
+  grupo(mes.filter((x) => x.e === 'soon').map((x) => x.t), 'ambar', 'mes', (t) => { const v = diaM(t, n); return `${t.t}: vence el día ${v}${v === n.d ? ' (hoy)' : ''}` }, 'tareas del mes vencen pronto')
 
   for (const p of datos.pedidos) {
     if (p.estado === 'hecho') continue

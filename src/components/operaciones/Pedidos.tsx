@@ -83,7 +83,9 @@ export function TabPedidos({ n, datos, editar, sub, setSub, enviar }: Props) {
 
 // ---------------------------------------------------------------------------
 
+/** Plegado detrás de un botón: así se ven primero los pedidos abiertos */
 function FormPedido({ n, editar, enviar }: { n: Ahora; editar: boolean; enviar: Enviar }) {
+  const [abierto, setAbierto] = useState(false)
   const [que, setQue] = useState('')
   const [quien, setQuien] = useState<string>(QUIENES[0])
   const [del, setDel] = useState('')
@@ -97,14 +99,26 @@ function FormPedido({ n, editar, enviar }: { n: Ahora; editar: boolean; enviar: 
     setGuardando(true)
     const ok = await enviar({ accion: 'pedido_nuevo', que: que.trim(), pedido_por: quien, delegado_a: del || null, vence, compromiso: del && comp ? comp : null })
     setGuardando(false)
-    if (ok) { setQue(''); setComp(''); setVence(sumar(n.hoy, 2)) }
+    if (ok) { setQue(''); setComp(''); setDel(''); setVence(sumar(n.hoy, 2)); setAbierto(false) }
+  }
+
+  if (!abierto) {
+    return (
+      <button
+        type="button"
+        onClick={() => setAbierto(true)}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#cfe4dd] bg-white py-3 text-[13.5px] font-bold text-[#006d5a] active:scale-[0.98]"
+      >
+        <Plus className="size-4" /> Anotar pedido
+      </button>
+    )
   }
 
   return (
     <form onSubmit={(e) => void anotar(e)} className="space-y-3 rounded-2xl bg-white p-3.5 ring-1 ring-[#ebe6df]">
       <label className="block">
         <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#7d6c64]">Qué pidieron</span>
-        <input value={que} onChange={(e) => setQue(e.target.value)} required maxLength={200} placeholder="Ej.: presupuesto de la cámara de frío" className={cn(inputCls, 'mt-1')} />
+        <input value={que} onChange={(e) => setQue(e.target.value)} required autoFocus maxLength={200} placeholder="Ej.: presupuesto de la cámara de frío" className={cn(inputCls, 'mt-1')} />
       </label>
       <div>
         <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#7d6c64]">Quién lo pidió</span>
@@ -128,9 +142,14 @@ function FormPedido({ n, editar, enviar }: { n: Ahora; editar: boolean; enviar: 
           </label>
         )}
       </div>
-      <button type="submit" disabled={guardando || !que.trim()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[13.5px] font-bold text-white active:scale-[0.98] disabled:opacity-50">
-        {guardando ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} Anotar pedido
-      </button>
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setAbierto(false)} disabled={guardando} className="rounded-xl bg-[#f3efe9] px-4 py-3 text-[13px] font-semibold text-[#7d6c64]">
+          Cancelar
+        </button>
+        <button type="submit" disabled={guardando || !que.trim()} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[13.5px] font-bold text-white active:scale-[0.98] disabled:opacity-50">
+          {guardando ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />} Anotar pedido
+        </button>
+      </div>
       {!editar && <p className="text-center text-[11px] text-[#a39e97]">Joaquín lo ve en su lista y decide quién se encarga.</p>}
     </form>
   )
