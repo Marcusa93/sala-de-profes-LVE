@@ -39,14 +39,21 @@ URL_POR_DEFECTO=https://salaprofeslve.2-25-185-242.sslip.io
 
 # Se despliega main tal como está en GitHub (acá se trabaja en `matias` y se
 # sube con `git push origin matias:main`): lo que no está pusheado no va.
+# Solo para probar en la VPS algo que todavía no está en main (la mudanza):
+#   REF=matias bash scripts/deploy-vps.sh
+REF=${REF:-origin/main}
 git fetch -q origin main
-REV=$(git rev-parse origin/main)
-if [ "$(git rev-parse HEAD)" != "$REV" ]; then
+REV=$(git rev-parse "$REF")
+REF_COMPLETA=$(git rev-parse --symbolic-full-name "$REF")
+[ -n "$REF_COMPLETA" ] || { echo "❌ $REF no es una rama."; exit 1; }
+if [ "$REF" != "origin/main" ]; then
+  echo "⚠️  Se despliega $REF, que no es main (solo para pruebas): $(git log --oneline -1 "$REV")"
+elif [ "$(git rev-parse HEAD)" != "$REV" ]; then
   echo "ℹ️  Ojo: tu rama actual no es igual a origin/main. Se despliega origin/main: $(git log --oneline -1 "$REV")"
 fi
 
 BUNDLE=$(mktemp -t splve).bundle
-git bundle create "$BUNDLE" refs/remotes/origin/main >/dev/null 2>&1
+git bundle create "$BUNDLE" "$REF_COMPLETA" >/dev/null 2>&1
 scp -q "$BUNDLE" "$VPS:/tmp/splve.bundle"
 rm -f "$BUNDLE"
 echo "📦 Código enviado: $(git log --oneline -1 "$REV")"
@@ -56,7 +63,7 @@ set -euo pipefail
 chown $USUARIO:$USUARIO /tmp/splve.bundle
 # Primera vez: repo vacío (el usuario y $ETC los crea el armado, ver deploy/VPS.md)
 [ -d $APP/.git ] || sudo -u $USUARIO git init -q $APP
-sudo -u $USUARIO git -C $APP fetch -q /tmp/splve.bundle refs/remotes/origin/main
+sudo -u $USUARIO git -C $APP fetch -q /tmp/splve.bundle $REF_COMPLETA
 sudo -u $USUARIO git -C $APP reset -q --hard FETCH_HEAD
 rm -f /tmp/splve.bundle
 echo "📥 VPS en: \$(sudo -u $USUARIO git -C $APP log --oneline -1)" >&2
