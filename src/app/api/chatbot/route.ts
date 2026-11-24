@@ -783,86 +783,29 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
 }
 
 // ---------------------------------------------------------------------------
-// Respuesta basada en keywords (fallback sin IA)
+// Sin IA: se avisa, no se inventa
+// ---------------------------------------------------------------------------
+// Antes, sin IA se contestaba por palabras clave volcando secciones del
+// contexto: a "¿cómo cargo un turno nuevo?" respondía con la lista de turnos
+// de hoy (24/11, OpenRouter sin crédito) y parecía que La Vieja estaba rota.
+// Ahora dice que la IA no está disponible y, a encargados y socios, por qué
+// (sin crédito, clave inválida…), para que se pueda arreglar.
 // ---------------------------------------------------------------------------
 
-function buildKeywordResponse(question: string, context: string): string {
-  const q = question.toLowerCase()
+function motivoIA(status: number): string {
+  if (status === 402) return 'sin crédito (o la clave llegó a su tope de gasto)'
+  if (status === 401 || status === 403) return 'la clave no es válida'
+  if (status === 429) return 'demasiadas consultas seguidas'
+  if (status === 404) return 'el modelo ya no existe'
+  if (status >= 500) return 'el servicio está caído'
+  return `error ${status}`
+}
 
-  const getSection = (header: string): string => {
-    const regex = new RegExp(`${header}[^]*?(?=\\n\\n|$)`, 'i')
-    const match = context.match(regex)
-    return match ? match[0] : ''
-  }
-
-  if (q.includes('trabaj') || q.includes('quien') || q.includes('equipo') || q.includes('hoy') || q.includes('fichaj') || q.includes('local')) {
-    const fichaje = getSection('FICHAJE ANTI-TRAMPA')
-    const asistencia = getSection('ASISTENCIA HOY')
-    const turnos = getSection('TURNOS HOY')
-    const sinEgreso = getSection('EGRESOS SIN MARCAR')
-    return [fichaje, asistencia, sinEgreso, turnos].filter(Boolean).join('\n\n')
-  }
-
-  if (q.includes('anomal') || q.includes('alerta') || q.includes('sospech') || q.includes('trampa') || q.includes('irreg') || q.includes('irregulari')) {
-    const anomalias = getSection('ANOMALÍAS DE ASISTENCIA')
-    const suspicious = getSection('FICHAJES SOSPECHOSOS')
-    return [anomalias, suspicious].filter(Boolean).join('\n\n') || 'No hay anomalías ni fichajes sospechosos. ✅'
-  }
-
-  if (q.includes('egreso') || q.includes('salida') || q.includes('sin marcar') || q.includes('olvidó')) {
-    return getSection('EGRESOS SIN MARCAR') || 'Todos marcaron egreso. ✅'
-  }
-
-  if (q.includes('hora') || q.includes('horas') && (q.includes('trabajo') || q.includes('trabaj') || q.includes('semana') || q.includes('mes'))) {
-    return 'Para consultar horas trabajadas de un empleado, revisá el panel de Asistencia en /admin/asistencia donde podés filtrar por empleado y período.'
-  }
-
-  if (q.includes('producc') || q.includes('confirmar') || q.includes('parte') || q.includes('envío') || q.includes('envio')) {
-    return [getSection('PRODUCCIONES PARA CONFIRMAR'), getSection('PRODUCCIONES CONFIRMADAS'), getSection('PARTES DE CIERRE'), getSection('ELABORADOS POR DEBAJO'), getSection('ÚLTIMOS ENVÍOS')].filter(Boolean).join('\n\n') || 'No tengo datos de producción ahora.'
-  }
-
-  if (q.includes('protocolo') || q.includes('baño') || q.includes('tolva')) {
-    return getSection('PROTOCOLOS DE HOY') || getSection('TUS PROTOCOLOS DE HOY') || 'No hay protocolos para hoy.'
-  }
-
-  if (q.includes('dónde') || q.includes('donde') || q.includes('cómo hago') || q.includes('como hago') || q.includes('encuentro')) {
-    return getSection('MAPA DE LA APP') || 'Fijate en el botón «Más», abajo a la derecha.'
-  }
-
-  if (q.includes('stock') || q.includes('rojo') || q.includes('critico') || q.includes('falt')) {
-    return [getSection('STOCK CRÍTICO'), getSection('STOCK EN ATENCIÓN'), getSection('RESUMEN STOCK')].filter(Boolean).join('\n\n')
-  }
-
-  if (q.includes('barra') || q.includes('cafe') || q.includes('barista')) {
-    return [getSection('BARRA'), getSection('PEDIDOS DE BARRA')].filter(Boolean).join('\n\n')
-  }
-
-  if (q.includes('pedir') || q.includes('comprar') || q.includes('pedido') || q.includes('producto')) {
-    return [getSection('STOCK CRÍTICO'), getSection('BARRA — ITEMS BAJOS'), getSection('PEDIDOS DE BARRA')].filter(Boolean).join('\n\n') || 'No hay productos pendientes de pedido.'
-  }
-
-  if (q.includes('cocina') || q.includes('checklist') || q.includes('tarea')) {
-    return [getSection('COCINA'), getSection('TAREAS PENDIENTES')].filter(Boolean).join('\n\n')
-  }
-
-  if (q.includes('aviso') || q.includes('urgent') || q.includes('notificacion') || q.includes('alerta')) {
-    return [getSection('AVISOS URGENTES'), getSection('AVISOS ACTIVOS')].filter(Boolean).join('\n\n')
-  }
-
-  if (q.includes('proveedor') || q.includes('supplier')) {
-    return getSection('PROVEEDORES ACTIVOS') || 'No hay proveedores registrados.'
-  }
-
-  if (q.includes('turno') || q.includes('horario') || q.includes('manana') || q.includes('mañana')) {
-    return [getSection('TURNOS HOY'), getSection('TURNOS MAÑANA')].filter(Boolean).join('\n\n') || 'No hay turnos programados.'
-  }
-
-  if (q.includes('receta') || q.includes('plato') || q.includes('menu')) {
-    return getSection('RECETAS') || 'No hay recetas cargadas.'
-  }
-
-  // Sin IA no se vuelca todo el contexto (son miles de líneas): se orienta
-  return 'Ahora no me puedo conectar para pensar la respuesta 😕. Probá preguntarme con palabras como «producción», «stock», «protocolos», «turnos» o «dónde está…», o buscalo en el botón «Más» (abajo a la derecha).'
+function respuestaSinIA(role: string, fallas: string[]): string {
+  const base = 'Mirá, ahora la IA no está disponible y no te puedo contestar bien 😕. Probá de nuevo en un rato.\n\nMientras tanto, lo que buscás está en el menú: botón **Más**, abajo a la derecha.'
+  if (role !== 'socio' && role !== 'encargado') return base
+  const motivo = fallas.length > 0 ? fallas.join(' · ') : 'no hay ninguna clave de IA cargada en el servidor'
+  return `${base}\n\n**Para encargados y socios:** ${motivo}. Si es crédito, se carga en openrouter.ai (Settings → Credits) o se sube el tope de la clave (Settings → Keys).`
 }
 
 // ---------------------------------------------------------------------------
@@ -1099,9 +1042,13 @@ NUNCA vomites datos sin que te los pidan.
 
 ${context}`
 
+    // Por qué falló cada IA (para avisar a encargados y socios si no anda ninguna)
+    const fallas: string[] = []
+
     // --- Intentar OpenRouter ---
     const openRouterKey = process.env.OPENROUTER_API_KEY
 
+    if (!openRouterKey) fallas.push('OpenRouter: no hay clave cargada')
     if (openRouterKey) {
       try {
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -1133,8 +1080,10 @@ ${context}`
         }
 
         console.error('Error en OpenRouter API:', response.status, await response.text())
+        fallas.push(`OpenRouter: ${motivoIA(response.status)}`)
       } catch (apiError) {
         console.error('Error al llamar a OpenRouter:', apiError)
+        fallas.push('OpenRouter: no respondió')
       }
     }
 
@@ -1167,14 +1116,16 @@ ${context}`
         }
 
         console.error('Error en Anthropic API:', response.status, await response.text())
+        fallas.push(`Anthropic: ${motivoIA(response.status)}`)
       } catch (apiError) {
         console.error('Error al llamar a Anthropic:', apiError)
+        fallas.push('Anthropic: no respondió')
       }
     }
 
-    // --- Fallback keywords ---
-    const fallbackResponse = buildKeywordResponse(message, context)
-    return NextResponse.json({ response: fallbackResponse })
+    // --- Sin IA: avisar (antes contestaba por palabras clave y parecía rota) ---
+    console.warn('[chatbot] sin IA:', fallas.join(' · ') || 'sin claves')
+    return NextResponse.json({ response: respuestaSinIA(userRole, fallas), sinIA: true })
   } catch (error) {
     console.error('Error en chatbot API:', error)
     return NextResponse.json({ error: 'Error interno del servidor.' }, { status: 500 })
