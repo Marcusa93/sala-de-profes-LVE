@@ -105,7 +105,8 @@ function TarjetaPieza({ p, registros, nombres, yo, gestion, enviar }: {
   gestion: boolean
   enviar: (b: Record<string, unknown>) => Promise<boolean>
 }) {
-  const [cargando, setCargando] = useState<TipoRegistro | null>(null)
+  // 'ayer' = lo que quedó al cierre de ayer, si nadie lo contó a la noche
+  const [cargando, setCargando] = useState<TipoRegistro | 'ayer' | null>(null)
   const horneadas = registros.filter((r) => r.tipo === 'tanda').reduce((a, r) => a + r.cantidad, 0)
   const rec = p.recomendado
   const deMas = rec ? horneadas - rec.total : 0
@@ -127,11 +128,20 @@ function TarjetaPieza({ p, registros, nombres, yo, gestion, enviar }: {
           ) : (
             <p className="text-[12px] text-[#a39e97]">Todavía no hay ventas para calcular cuántas.</p>
           )}
-          {p.sobroAyer != null && <p className="text-[11px] text-[#a39e97]">Ayer sobraron {p.sobroAyer}.</p>}
+          {p.sobroAyer != null ? (
+            <p className="text-[11px] text-[#a39e97]">Ayer sobraron {p.sobroAyer}.</p>
+          ) : !cargando && (
+            <button type="button" onClick={() => setCargando('ayer')} className="mt-1 rounded-lg bg-[#fdf6ec] px-2 py-1 text-[11px] font-semibold text-[#9a6418] active:scale-95">
+              ¿Quedaron de ayer? Cargalas
+            </button>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <p className={cn('text-2xl font-bold tabular-nums', deMas > 0 ? 'text-[#b0762a]' : 'text-[#006d5a]')}>{horneadas}</p>
           <p className="text-[10.5px] text-[#a39e97]">horneadas hoy</p>
+          {!!p.sobroAyer && (
+            <p className="text-[10.5px] text-[#7d6c64]">+{p.sobroAyer} de ayer = <b className="text-[#3d2c24]">{horneadas + p.sobroAyer}</b></p>
+          )}
         </div>
       </div>
 
@@ -143,11 +153,13 @@ function TarjetaPieza({ p, registros, nombres, yo, gestion, enviar }: {
         <FormCantidad
           tipo={cargando}
           pieza={p}
-          inicial={cargando === 'tanda' ? (rec ? Math.max(1, (horneadas === 0 && esMedialuna && rec.total > 4 ? rec.manana : rec.total - horneadas)) : 6) : (cargando === 'sobrante' ? sobrante?.cantidad ?? 0 : 1)}
+          inicial={cargando === 'tanda' ? (rec ? Math.max(1, (horneadas === 0 && esMedialuna && rec.total > 4 ? rec.manana : rec.total - horneadas)) : 6) : cargando === 'sobrante' ? sobrante?.cantidad ?? 0 : cargando === 'ayer' ? 0 : 1}
           onCancelar={() => setCargando(null)}
           onGuardar={async (cantidad, nota) => {
-            const ok = await enviar({ accion: 'agregar', pieza: p.pieza, tipo: cargando, cantidad, nota })
-            if (ok) { toast.success(`${ETIQUETA_TIPO[cargando]}: ${cantidad}`); setCargando(null) }
+            const ok = cargando === 'ayer'
+              ? await enviar({ accion: 'agregar', pieza: p.pieza, tipo: 'sobrante', cantidad, ayer: true })
+              : await enviar({ accion: 'agregar', pieza: p.pieza, tipo: cargando, cantidad, nota })
+            if (ok) { toast.success(`${cargando === 'ayer' ? 'Quedaron de ayer' : ETIQUETA_TIPO[cargando]}: ${cantidad}`); setCargando(null) }
           }}
         />
       ) : (
@@ -194,7 +206,7 @@ function TarjetaPieza({ p, registros, nombres, yo, gestion, enviar }: {
 }
 
 function FormCantidad({ tipo, pieza, inicial, onCancelar, onGuardar }: {
-  tipo: TipoRegistro
+  tipo: TipoRegistro | 'ayer'
   pieza: PiezaHoy
   inicial: number
   onCancelar: () => void
@@ -203,8 +215,9 @@ function FormCantidad({ tipo, pieza, inicial, onCancelar, onGuardar }: {
   const [cantidad, setCantidad] = useState(Math.max(0, Math.round(inicial)))
   const [nota, setNota] = useState('')
   const [guardando, setGuardando] = useState(false)
-  const minimo = tipo === 'sobrante' ? 0 : 1
+  const minimo = tipo === 'sobrante' || tipo === 'ayer' ? 0 : 1
   const pregunta = tipo === 'tanda' ? `¿Cuántas ${pieza.nombre.toLowerCase()} salieron del horno?`
+    : tipo === 'ayer' ? `¿Cuántas ${pieza.nombre.toLowerCase()} quedaron del cierre de ayer?`
     : tipo === 'sobrante' ? `¿Cuántas ${pieza.nombre.toLowerCase()} sobraron al cierre?`
       : tipo === 'budin' ? `¿Cuántas ${pieza.nombre.toLowerCase()} fueron al budín de pan?`
         : `¿Cuántas ${pieza.nombre.toLowerCase()} se tiraron?`

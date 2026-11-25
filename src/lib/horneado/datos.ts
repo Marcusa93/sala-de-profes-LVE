@@ -185,11 +185,19 @@ export async function controlHorneado(admin: SupabaseClient, dias = 14): Promise
 
 export type ResultadoHorneado = { ok: true } | { ok: false; status: number; error: string }
 
-export async function agregarRegistro(admin: SupabaseClient, userId: string, r: { pieza: Pieza; tipo: TipoRegistro; cantidad: number; nota: string | null }): Promise<ResultadoHorneado> {
-  const fecha = fechaOperativa()
-  const fila = { fecha, pieza: r.pieza, tipo: r.tipo, cantidad: r.cantidad, nota: r.nota?.trim().slice(0, 200) || null, created_by: userId }
-  // Lo que sobró se cuenta una vez por día: si ya estaba, se reemplaza
-  if (r.tipo === 'sobrante') {
+export async function agregarRegistro(admin: SupabaseClient, userId: string, r: { pieza: Pieza; tipo: TipoRegistro; cantidad: number; nota: string | null; deAyer?: boolean }): Promise<ResultadoHorneado> {
+  // «Quedaron de ayer»: el conteo del cierre de ayer, si nadie lo cargó a la noche
+  const deAyer = r.tipo === 'sobrante' && !!r.deAyer
+  const fecha = deAyer ? sumar(fechaOperativa(), -1) : fechaOperativa()
+  const nota = deAyer ? 'Contado al otro día' : r.nota?.trim().slice(0, 200) || null
+  const fila = { fecha, pieza: r.pieza, tipo: r.tipo, cantidad: r.cantidad, nota, created_by: userId }
+  if (deAyer) {
+    // No pisa el conteo que se hizo al cierre
+    const { data, error: e0 } = await admin.from('horneado_registros').select('cantidad').eq('fecha', fecha).eq('pieza', r.pieza).eq('tipo', 'sobrante').maybeSingle()
+    if (e0) return { ok: false, status: faltaTablaHorneado(e0.message) ? 503 : 500, error: faltaTablaHorneado(e0.message) ? `Falta correr la migración ${MIGRACION_HORNEADO}` : e0.message }
+    if (data) return { ok: false, status: 409, error: `Ya se contaron al cierre de ayer: ${(data as { cantidad: number }).cantidad}` }
+  } else if (r.tipo === 'sobrante') {
+    // Lo que sobró se cuenta una vez por día: si ya estaba, se reemplaza
     const { error: e1 } = await admin.from('horneado_registros').delete().eq('fecha', fecha).eq('pieza', r.pieza).eq('tipo', 'sobrante')
     if (e1) return { ok: false, status: faltaTablaHorneado(e1.message) ? 503 : 500, error: faltaTablaHorneado(e1.message) ? `Falta correr la migración ${MIGRACION_HORNEADO}` : e1.message }
   }

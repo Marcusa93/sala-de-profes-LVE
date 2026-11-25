@@ -8,7 +8,8 @@ import { agregarRegistro, borrarRegistro, horneadoDeHoy } from '@/lib/horneado/d
 // ---------------------------------------------------------------------------
 // /api/horneado — tandas de medialunas, bollitos y tortillas (Santa Fe)
 //   GET   lo cargado hoy y cuántas conviene hornear hoy
-//   POST  { accion: 'agregar', pieza, tipo, cantidad, nota? }
+//   POST  { accion: 'agregar', pieza, tipo, cantidad, nota?, ayer? }
+//         (ayer: true con tipo 'sobrante' = lo que quedó al cierre de ayer, si no se contó)
 //         { accion: 'borrar', id }
 // Carga cualquiera del equipo (quien hornea); el control lo ven socios y
 // Joaquín en /api/operaciones/horneado.
@@ -23,6 +24,8 @@ const Accion = z.discriminatedUnion('accion', [
     tipo: z.enum(['tanda', 'sobrante', 'budin', 'tirado']),
     cantidad: z.number().int().min(0).max(500),
     nota: z.string().max(200).nullable().optional(),
+    /** Solo para «sobrante»: lo que quedó al cierre de ayer, cargado hoy */
+    ayer: z.boolean().optional(),
   }),
   z.object({ accion: z.literal('borrar'), id: z.uuid() }),
 ])
@@ -64,8 +67,11 @@ export async function POST(request: NextRequest) {
   if (a.accion === 'agregar' && a.tipo !== 'sobrante' && a.cantidad === 0) {
     return NextResponse.json({ error: 'Poné cuántas' }, { status: 400 })
   }
+  if (a.accion === 'agregar' && a.ayer && a.tipo !== 'sobrante') {
+    return NextResponse.json({ error: 'De ayer solo se carga lo que sobró' }, { status: 400 })
+  }
   const res = a.accion === 'agregar'
-    ? await agregarRegistro(u.admin, u.id, { pieza: a.pieza, tipo: a.tipo, cantidad: a.cantidad, nota: a.nota ?? null })
+    ? await agregarRegistro(u.admin, u.id, { pieza: a.pieza, tipo: a.tipo, cantidad: a.cantidad, nota: a.nota ?? null, deAyer: a.ayer })
     : await borrarRegistro(u.admin, u, a.id)
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status })
   return NextResponse.json({ ok: true })
