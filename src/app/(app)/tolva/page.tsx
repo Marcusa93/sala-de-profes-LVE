@@ -33,6 +33,7 @@ type CruceRow = {
   cafes_vendidos: number
   consumo_esperado_gr: number
   diferencia_gr: number | null
+  falta_agregado?: boolean
 }
 
 // Fecha y turno actuales en hora argentina (TM hasta las 16, TT después)
@@ -50,6 +51,7 @@ export default function TolvaPage() {
   const supabase = useMemo(() => createClient(), [])
 
   const [{ dateStr, shift }] = useState(nowInArgentina)
+  const esSocio = profile?.role === 'socio'
   const [logs, setLogs] = useState<TolvaLog[]>([])
   const [cruce, setCruce] = useState<Map<string, CruceRow>>(new Map())
   const [grPorCafe, setGrPorCafe] = useState(17)
@@ -71,8 +73,10 @@ export default function TolvaPage() {
     const rows = (data ?? []) as TolvaLog[]
     setLogs(rows)
 
-    // Cruce con ventas — solo socios (info de gestión, no del barista)
-    if (profile?.role === 'socio') {
+    // Cruce con ventas — solo socios (info de gestión, no del barista).
+    // esSocio va en las dependencias: antes se leía el perfil del primer
+    // render (todavía vacío) y al abrir la pantalla directo el cruce no salía.
+    if (esSocio) {
       fetch('/api/tolva/cruce?dias=14')
         .then(r => r.json())
         .then(d => {
@@ -96,7 +100,7 @@ export default function TolvaPage() {
       if (previous?.end_gr != null) setStartGr(previous.end_gr.toString())
     }
     setLoading(false)
-  }, [supabase, dateStr, shift])
+  }, [supabase, dateStr, shift, esSocio])
 
   useEffect(() => { if (profile) fetchLogs() }, [profile, fetchLogs])
 
@@ -216,7 +220,7 @@ export default function TolvaPage() {
             Guardar turno
           </button>
           <p className="mt-1.5 text-center text-[10px] text-[#a39e97]">
-            Al arrancar cargá el inicio (viene solo del turno anterior). Al cerrar, el final.
+            Al arrancar cargá el inicio (viene solo del turno anterior). Cada vez que cargues café, sumalo en «Agregado». Al cerrar, el final.
           </p>
         </div>
       </FadeIn>
@@ -270,7 +274,9 @@ export default function TolvaPage() {
                         {l.start_gr ?? '—'} gr {l.added_gr > 0 && `+ ${l.added_gr}`} → {l.end_gr ?? 'abierto'}
                       </p>
                     </div>
-                    {c != null ? (
+                    {c != null && c < -15 ? (
+                      <span className="rounded-full bg-[#fdf3e3] px-2.5 py-1 text-[10px] font-bold text-[#9a6418]" title="El final es mayor que el inicio: cargaron café y no lo anotaron en «Agregado»">falta lo agregado</span>
+                    ) : c != null ? (
                       <span className="rounded-full bg-[#8b5e34]/10 px-2.5 py-1 text-[11px] font-bold text-[#8b5e34]">{c} gr</span>
                     ) : (
                       <span className="rounded-full bg-[#f3efe9] px-2.5 py-1 text-[10px] font-semibold text-[#a39e97]">sin cerrar</span>

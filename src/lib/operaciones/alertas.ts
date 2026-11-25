@@ -3,12 +3,13 @@ import { DIARIAS, MENSUALES, SEMANALES, diaM, diasDeCaja, estDiaria, estMensual,
 import { estDelegado, estPedido, nombreCorto, pesoPrioridad, ultimaSenal } from './pedidos'
 import type { CajaDia, DatosOperaciones, VentasOperaciones } from './tipos'
 import type { ControlHorneado } from '@/lib/horneado/config'
+import { fueraDeRango, type ControlCafe } from '@/lib/tolva/cruce'
 
 // ---------------------------------------------------------------------------
 // Alertas del control interno: rojo = vencido, ámbar = vence pronto
 // ---------------------------------------------------------------------------
 
-export type Seccion = 'hoy' | 'semana' | 'mes' | 'pedidos' | 'encargados' | 'ventas' | 'horneado'
+export type Seccion = 'hoy' | 'semana' | 'mes' | 'pedidos' | 'encargados' | 'ventas' | 'horneado' | 'cafe'
 /** cantidad: cuántas cosas junta (las tareas del mismo tipo van en una sola alerta) */
 export type Alerta = { nivel: 'rojo' | 'ambar'; texto: string; seccion: Seccion; cantidad: number }
 
@@ -63,7 +64,7 @@ export function analizarVentas(v: VentasOperaciones | undefined): AnalisisVentas
 
 // ---------------------------------------------------------------------------
 
-export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas: AnalisisVentas | null, horneado: ControlHorneado | null = null): Alerta[] {
+export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas: AnalisisVentas | null, horneado: ControlHorneado | null = null, cafe: ControlCafe | null = null): Alerta[] {
   const A: Alerta[] = []
   const rojo = (texto: string, seccion: Seccion) => A.push({ nivel: 'rojo', texto, seccion, cantidad: 1 })
   const ambar = (texto: string, seccion: Seccion) => A.push({ nivel: 'ambar', texto, seccion, cantidad: 1 })
@@ -130,6 +131,23 @@ export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas:
       else if (d.diferencia > p.umbral) rojo(`Ayer faltan ${d.diferencia} ${p.nombre.toLowerCase()} sin explicar`, 'horneado')
       else if (d.diferencia < -p.umbral) ambar(`Ayer salieron ${-d.diferencia} ${p.nombre.toLowerCase()} más de las cargadas`, 'horneado')
       if (d.horneadas > 0 && d.sinConteo) ambar(`Ayer no se contaron las ${p.nombre.toLowerCase()} que sobraron`, 'horneado')
+    }
+  }
+
+  // Café de ayer: tolva contra cafés vendidos (los dos turnos)
+  if (cafe) {
+    const ayer = sumar(n.hoy, -1)
+    const turnos = cafe.turnos.filter((t) => t.fecha === ayer)
+    const nombre = (t: { turno: string }) => (t.turno === 'TM' ? 'la mañana' : 'la tarde')
+    const sinAgregado = turnos.filter((t) => t.estado === 'falta_agregado')
+    if (sinAgregado.length) ambar(`Ayer la tolva de ${juntar(sinAgregado.map(nombre))} terminó con más café del que empezó: cargaron café y no lo anotaron`, 'cafe')
+    const sinControl = turnos.filter((t) => t.estado === 'sin_registro' || t.estado === 'sin_cerrar')
+    if (sinControl.length) ambar(`Ayer no se cerró el control de tolva de ${juntar(sinControl.map(nombre))}`, 'cafe')
+    for (const t of turnos) {
+      if (!fueraDeRango(t) || t.diferencia == null) continue
+      const g = Math.abs(t.diferencia).toLocaleString('es-AR')
+      if (t.diferencia > 0) rojo(`Ayer a ${nombre(t)} la tolva usó ${g} g de café más de lo que piden los ${t.cafes} cafés vendidos`, 'cafe')
+      else ambar(`Ayer a ${nombre(t)} se vendieron cafés por ${g} g más de lo que usó la tolva: revisar el peso o las recetas`, 'cafe')
     }
   }
 

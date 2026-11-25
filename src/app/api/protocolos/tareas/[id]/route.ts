@@ -6,7 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { sendPushToUser } from '@/lib/push/send'
 import { ANTICIPO_MIN, candidatosPara, personalDeTurno, sePuedeCerrar, type Tarea } from '@/lib/protocolos/protocolos'
 import { optimizarFoto } from '@/lib/protocolos/fotos'
-import { registrarPesoTolva } from '@/lib/protocolos/tolva'
+import { esControlDeInicio, registrarPesoTolva, validarPesoTolva } from '@/lib/protocolos/tolva'
 import { estadoConteoHoy } from '@/lib/stock/conteo-diario'
 import { instanteDe } from '@/lib/attendance/jornada'
 
@@ -122,6 +122,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       }
     }
 
+    // Tolva: en los controles que cierran un turno se pide cuánto café se
+    // cargó desde el control anterior (0 si nada). Si el peso subió y no se
+    // dice cuánto se cargó, no se cierra: el consumo daría negativo.
+    // Sin el campo (pantalla vieja todavía abierta) solo se frena si subió.
+    let agregado: number | null = null
+    if (t.protocolos.registro === 'tolva' && medicion != null && !esControlDeInicio(t.hora)) {
+      if (form.has('agregado')) {
+        const crudo = String(form.get('agregado') ?? '').replace(',', '.').trim()
+        agregado = crudo === '' ? NaN : Number(crudo)
+        if (!Number.isFinite(agregado) || agregado < 0 || agregado > 20_000) {
+          return NextResponse.json({ error: 'Falta: cuánto café cargaste en la tolva (0 si no cargaste)' }, { status: 400 })
+        }
+      }
+      const problema = await validarPesoTolva(admin, t.fecha, t.hora, medicion, agregado)
+      if (problema) return NextResponse.json({ error: problema }, { status: 400 })
+    }
+
     const etiquetas = t.protocolos.requiere_foto ? (t.protocolos.fotos?.length ? t.protocolos.fotos : ['Foto']) : []
     const archivos: File[] = []
     for (let i = 0; i < etiquetas.length; i++) {
@@ -153,7 +170,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     // El peso de la tolva pasa solo al registro de Tolva
     let enTolva: string | null = null
     if (t.protocolos.registro === 'tolva' && medicion != null) {
-      enTolva = await registrarPesoTolva(admin, t.fecha, t.hora, medicion, auth.user.id).catch((e) => {
+      enTolva = await registrarPesoTolva(admin, t.fecha, t.hora, medicion, auth.user.id, agregado ?? 0).catch((e) => {
         console.warn('[protocolos] no se pudo pasar el peso a Tolva', e)
         return null
       })

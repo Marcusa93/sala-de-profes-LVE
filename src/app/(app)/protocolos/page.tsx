@@ -9,6 +9,7 @@ import { es } from 'date-fns/locale/es'
 import { Camera, Check, ChevronDown, ClipboardList, Clock, Loader2, Settings2, Sparkles, UserPlus, X, AlertTriangle, Plus, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { esControlDeInicio } from '@/lib/protocolos/tolva'
 
 // ---------------------------------------------------------------------------
 // Protocolos con horario — hoy: limpieza del baño, 4 veces por día
@@ -357,12 +358,16 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
   const [fotos, setFotos] = useState<(Blob | null)[]>(() => etiquetas.map(() => null))
   const [nota, setNota] = useState('')
   const [medicion, setMedicion] = useState('')
+  const [agregado, setAgregado] = useState('')
   const [enviando, setEnviando] = useState(false)
   const todos = protocolo.pasos.every((p) => ok.has(p))
   const faltaFoto = etiquetas.find((_, i) => !fotos[i])
   const pideMedicion = !!protocolo.medicion_etiqueta
   const faltaMedicion = pideMedicion && !(medicion.trim() !== '' && Number(medicion.replace(',', '.')) >= 0)
-  const puede = todos && !faltaFoto && !faltaMedicion && !enviando
+  // Tolva: el control que cierra un turno pide cuánto café se cargó (0 si nada)
+  const pideAgregado = protocolo.registro === 'tolva' && pideMedicion && !esControlDeInicio(tarea.hora)
+  const faltaAgregado = pideAgregado && !(agregado.trim() !== '' && Number(agregado.replace(',', '.')) >= 0)
+  const puede = todos && !faltaFoto && !faltaMedicion && !faltaAgregado && !enviando
 
   async function enviar() {
     setEnviando(true)
@@ -372,6 +377,7 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
       fd.set('pasos', JSON.stringify(protocolo.pasos.filter((p) => ok.has(p))))
       fd.set('nota', nota)
       if (pideMedicion) fd.set('medicion', medicion.replace(',', '.'))
+      if (pideAgregado) fd.set('agregado', agregado.replace(',', '.'))
       fotos.forEach((f, i) => { if (f) fd.set(`foto_${i}`, f, `foto-${i + 1}.jpg`) })
       const r = await fetch(`/api/protocolos/tareas/${tarea.id}`, { method: 'POST', body: fd })
       const j = await r.json().catch(() => null)
@@ -427,6 +433,21 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
           </label>
         )}
 
+        {pideAgregado && (
+          <label className="block">
+            <span className="mb-1 block text-[12.5px] font-semibold text-[#3d2c24]">¿Cuánto café cargaste en la tolva desde el control anterior?</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" inputMode="decimal" min={0} value={agregado} onChange={(e) => setAgregado(e.target.value)}
+                placeholder="0 si no cargaste"
+                className="w-full rounded-xl border border-[#ebe6df] px-3 py-2.5 text-[16px] font-semibold tabular-nums outline-none focus:border-[#d4943a]"
+              />
+              <span className="text-sm font-semibold text-[#7d6c64]">gr</span>
+            </div>
+            <span className="mt-1 block text-[11px] text-[#a39e97]">Sumá todo lo que pusiste en el turno. Si no cargaste, poné 0.</span>
+          </label>
+        )}
+
         {etiquetas.length > 0 && (
           <div className={cn('grid gap-2', etiquetas.length > 1 && 'grid-cols-2')}>
             {etiquetas.map((e, i) => (
@@ -440,7 +461,7 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
         <DialogFooter>
           <button onClick={() => void enviar()} disabled={!puede} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-bold text-white disabled:opacity-40">
             {enviando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : faltaMedicion ? `Falta: ${(protocolo.medicion_etiqueta ?? '').toLowerCase()}` : faltaFoto ? `Falta: ${faltaFoto.split(' (')[0].toLowerCase()}` : 'Registrar'}
+            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : faltaMedicion ? `Falta: ${(protocolo.medicion_etiqueta ?? '').toLowerCase()}` : faltaAgregado ? 'Falta: cuánto café cargaste' : faltaFoto ? `Falta: ${faltaFoto.split(' (')[0].toLowerCase()}` : 'Registrar'}
           </button>
         </DialogFooter>
       </DialogContent>
