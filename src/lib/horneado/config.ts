@@ -31,8 +31,8 @@ export const ETIQUETA_TIPO: Record<TipoRegistro, string> = {
   tirado: 'Se tiraron',
 }
 
-/** Desde cuándo se cargan las tandas: antes no hay con qué cruzar */
-export const INICIO_HORNEADO = '2026-11-24'
+/** Desde cuándo se cargan las tandas: antes no hay con qué cruzar (el 24/11 no se cargó nada) */
+export const INICIO_HORNEADO = '2026-11-25'
 
 /** Parte de lo del día que conviene hornear a la mañana (el resto, a la tarde si hace falta) */
 export const PARTE_MANANA = 0.6
