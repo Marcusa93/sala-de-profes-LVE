@@ -397,7 +397,7 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
         <p className="-mt-2 text-[12.5px] text-[#7d6c64]">Marcá cada paso{etiquetas.length === 1 ? ' y sacá la foto' : etiquetas.length > 1 ? ` y sacá las ${etiquetas.length} fotos` : ''}. Sin todo completo no se puede cerrar.</p>
         {protocolo.enlace_url && (
           <div className="rounded-xl bg-[#e8f5f1] p-3 text-[12.5px] text-[#004d40]">
-            <p className="mb-2">{protocolo.registro === 'conteo_elaborados' ? <>Primero cargá <b>cuánto hay de cada elaborado</b> y guardalo. Después volvé acá y cerrá la tarea.</> : protocolo.registro === 'conteo_descartables' ? <>Primero cargá <b>cuántos vasos hay de cada tamaño</b> y guardá. Después volvé acá y cerrá la tarea.</> : 'Primero cargalo acá:'}</p>
+            <p className="mb-2">{protocolo.registro === 'conteo_elaborados' ? <>Primero cargá <b>cuánto hay de cada elaborado</b> y guardalo. Después volvé acá y cerrá la tarea.</> : protocolo.registro === 'conteo_descartables' ? <>Primero cargá <b>cuántos vasos hay de cada tamaño</b> y guardá. Después volvé acá y cerrá la tarea.</> : protocolo.registro === 'conteo_leche' ? <>Primero contá <b>toda la leche, la de la barra y la del depósito, en litros</b> (las abiertas a ojo: media caja = 0,5) y guardá cada una. Después volvé acá y cerrá la tarea.</> : 'Primero cargalo acá:'}</p>
             <EnlaceCarga p={protocolo} />
           </div>
         )}

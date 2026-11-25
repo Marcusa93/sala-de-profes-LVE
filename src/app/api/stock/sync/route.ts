@@ -50,7 +50,8 @@ export async function GET() {
 
 // ---------------------------------------------------------------------------
 // POST /api/stock/sync — Write stock change to Supabase + Fudo
-// Body: { stockItemId, newQty }
+// Body: { stockItemId, newQty, reason?, note?, confirmado_unidad? }
+// 409 con duda_unidad: el número parece en gramos (lib/stock/unidades)
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
@@ -75,18 +76,20 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = createAdminClient()
-    const result = await syncToFudo(admin, stockItemId, newQty, user.id, { reason, note })
+    // confirmado_unidad: quien contó confirmó un número que parecía en gramos
+    const result = await syncToFudo(admin, stockItemId, newQty, user.id, { reason, note, confirmadoUnidad: body?.confirmado_unidad === true })
 
     return NextResponse.json({
       success: result.success,
       fudoSynced: result.fudoSynced,
       error: result.error,
+      ...(result.dudaUnidad ? { duda_unidad: result.dudaUnidad } : {}),
       message: result.fudoSynced
         ? 'Stock actualizado en webapp y Fudo ✓'
         : result.success
           ? 'Stock actualizado en webapp (sin vínculo Fudo)'
           : `Stock no actualizado: ${result.error}`,
-    }, { status: result.success ? 200 : 502 })
+    }, { status: result.success ? 200 : result.dudaUnidad ? 409 : 502 })
   } catch (error) {
     console.error('[stock/sync POST]', error)
     return NextResponse.json(

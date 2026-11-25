@@ -4,6 +4,7 @@ import { estDelegado, estPedido, nombreCorto, pesoPrioridad, ultimaSenal } from 
 import type { CajaDia, DatosOperaciones, VentasOperaciones } from './tipos'
 import type { ControlHorneado } from '@/lib/horneado/config'
 import { fueraDeRango, type ControlCafe } from '@/lib/tolva/cruce'
+import { lecheFuera, type ControlLeche } from '@/lib/leche/cruce'
 
 // ---------------------------------------------------------------------------
 // Alertas del control interno: rojo = vencido, ámbar = vence pronto
@@ -64,7 +65,7 @@ export function analizarVentas(v: VentasOperaciones | undefined): AnalisisVentas
 
 // ---------------------------------------------------------------------------
 
-export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas: AnalisisVentas | null, horneado: ControlHorneado | null = null, cafe: ControlCafe | null = null): Alerta[] {
+export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas: AnalisisVentas | null, horneado: ControlHorneado | null = null, cafe: ControlCafe | null = null, leche: ControlLeche | null = null): Alerta[] {
   const A: Alerta[] = []
   const rojo = (texto: string, seccion: Seccion) => A.push({ nivel: 'rojo', texto, seccion, cantidad: 1 })
   const ambar = (texto: string, seccion: Seccion) => A.push({ nivel: 'ambar', texto, seccion, cantidad: 1 })
@@ -148,6 +149,20 @@ export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas:
       const g = Math.abs(t.diferencia).toLocaleString('es-AR')
       if (t.diferencia > 0) rojo(`Ayer a ${nombre(t)} la tolva usó ${g} g de café más de lo que piden los ${t.cafes} cafés vendidos`, 'cafe')
       else ambar(`Ayer a ${nombre(t)} se vendieron cafés por ${g} g más de lo que usó la tolva: revisar el peso o las recetas`, 'cafe')
+    }
+  }
+
+  // Leche: ayer sin contar y el último tramo entre conteos fuera de rango
+  if (leche) {
+    const ayer = sumar(n.hoy, -1)
+    const sinContar = leche.leches.filter((l) => l.diasSinContar.includes(ayer))
+    if (sinContar.length) ambar(`Ayer no se contó la leche (${juntar(sinContar.map((l) => l.nombre.toLowerCase()))})`, 'cafe')
+    for (const l of leche.leches) {
+      const i = l.intervalos[l.intervalos.length - 1]
+      if (!i || !lecheFuera(i) || i.hasta.slice(0, 10) < sumar(n.hoy, -2)) continue
+      const d = Math.abs(i.diferencia).toLocaleString('es-AR', { maximumFractionDigits: 1 })
+      if (i.diferencia > 0) rojo(`${l.nombre}: en el último conteo se usaron ${d} l más de lo que piden los ${i.vendidos} platos vendidos`, 'cafe')
+      else ambar(`${l.nombre}: las ventas piden ${d} l más de lo que se usó (¿compra sin cargar o receta de más?)`, 'cafe')
     }
   }
 

@@ -13,12 +13,14 @@ import { statsPedidos } from '@/lib/operaciones/pedidos'
 import type { DatosOperaciones, VentasOperaciones } from '@/lib/operaciones/tipos'
 import type { ControlHorneado } from '@/lib/horneado/config'
 import type { ControlCafe } from '@/lib/tolva/cruce'
+import type { ControlLeche } from '@/lib/leche/cruce'
 import { TabHoy, TabMes, TabSemana } from '@/components/operaciones/Tareas'
 import { TabPedidos, type SubPedidos } from '@/components/operaciones/Pedidos'
 import { TabDesempeno } from '@/components/operaciones/Desempeno'
 import { TabVentas } from '@/components/operaciones/Ventas'
 import { TabHorneado } from '@/components/operaciones/Horneado'
 import { TabCafe } from '@/components/operaciones/Cafe'
+import { SeccionLeche } from '@/components/operaciones/Leche'
 
 // ---------------------------------------------------------------------------
 // Control interno del Jefe de Operaciones — Santa Fe
@@ -38,7 +40,7 @@ const TABS: { v: Tab; label: string }[] = [
   { v: 'desempeno', label: 'Desempeño' },
   { v: 'ventas', label: 'Ventas' },
   { v: 'horneado', label: 'Horneado' },
-  { v: 'cafe', label: 'Café' },
+  { v: 'cafe', label: 'Café y leche' },
 ]
 const CLAVE_TAB = 'lve-operaciones-tab'
 
@@ -61,6 +63,7 @@ export default function ControlOperacionesPage() {
   const { data: ventas, isLoading: cargandoVentas } = useSWR<VentasOperaciones>(data ? '/api/operaciones/ventas' : null, fetcher, { revalidateOnFocus: false })
   const { data: horneado, isLoading: cargandoHorneado, error: errorHorneado } = useSWR<ControlHorneado>(data ? '/api/operaciones/horneado' : null, fetcher, { revalidateOnFocus: false })
   const { data: cafe, isLoading: cargandoCafe, error: errorCafe } = useSWR<ControlCafe>(data ? '/api/operaciones/cafe' : null, fetcher, { revalidateOnFocus: false })
+  const { data: leche, isLoading: cargandoLeche, error: errorLeche } = useSWR<ControlLeche>(data ? '/api/operaciones/leche' : null, fetcher, { revalidateOnFocus: false })
   const [n, setN] = useState(() => ahora())
   const [tab, setTab] = useState<Tab>('hoy')
   const [sub, setSub] = useState<SubPedidos>('anotar')
@@ -81,7 +84,7 @@ export default function ControlOperacionesPage() {
 
   const hecho = useMemo(() => hechoDe(data?.checks ?? []), [data?.checks])
   const analisis = useMemo(() => analizarVentas(ventas), [ventas])
-  const lista = useMemo<Alerta[]>(() => (data ? alertas(n, data, hecho, analisis, horneado ?? null, cafe ?? null) : []), [n, data, hecho, analisis, horneado, cafe])
+  const lista = useMemo<Alerta[]>(() => (data ? alertas(n, data, hecho, analisis, horneado ?? null, cafe ?? null, leche ?? null) : []), [n, data, hecho, analisis, horneado, cafe, leche])
 
   if (isLoading && !data) return <LoadingState />
   if (error && !data) {
@@ -244,7 +247,12 @@ export default function ControlOperacionesPage() {
       {tab === 'desempeno' && <TabDesempeno n={n} datos={data} hecho={hecho} />}
       {tab === 'ventas' && <TabVentas ventas={ventas} analisis={analisis} cargando={cargandoVentas} />}
       {tab === 'horneado' && <TabHorneado datos={horneado} cargando={cargandoHorneado} error={errorHorneado ? (errorHorneado as Error).message : null} />}
-      {tab === 'cafe' && <TabCafe datos={cafe} cargando={cargandoCafe} error={errorCafe ? (errorCafe as Error).message : null} />}
+      {tab === 'cafe' && (
+        <div className="space-y-6">
+          <TabCafe datos={cafe} cargando={cargandoCafe} error={errorCafe ? (errorCafe as Error).message : null} />
+          <SeccionLeche datos={leche} cargando={cargandoLeche} error={errorLeche ? (errorLeche as Error).message : null} />
+        </div>
+      )}
 
       <details className="rounded-2xl bg-white p-3.5 text-[12px] text-[#7d6c64] ring-1 ring-[#ebe6df]">
         <summary className="cursor-pointer text-[13px] font-bold text-[#3d2c24]">Cómo se usa</summary>
@@ -256,7 +264,7 @@ export default function ControlOperacionesPage() {
           <li><b>Prioridad:</b> cada pedido es de prioridad alta, media o baja. La lista muestra primero lo urgente, y en «Prioridad» elegís «Alta» para ver solo eso. La cambian Joaquín o quien anotó el pedido.</li>
           <li><b>Verificar:</b> cuando llega la fecha, marcá Cumplido o No cumplido, o +3 días si se reprograma. Con eso se arma Desempeño.</li>
           <li><b>Horneado:</b> cocina carga cada tanda de medialunas, bollitos y tortillas, y al cierre lo que sobró, lo que fue al budín de pan y lo que se tiró. Acá se cruza con lo vendido en Fudo: «faltan» son piezas sin explicación.</li>
-          <li><b>Café:</b> lo que usó la tolva (lo pesan los baristas en el control de tolva, con lo que cargaron) contra los cafés vendidos en Fudo por los gramos de su receta. En rojo, salió más café del que se vendió.</li>
+          <li><b>Café:</b> lo que usó la tolva (lo pesan los baristas en el control de tolva, con lo que cargaron) contra los cafés vendidos en Fudo por los gramos de su receta. En rojo, salió más café del que se vendió. <b>Leche:</b> el barista cuenta toda la leche cada noche; entre un conteo y el otro, lo usado contra lo que piden los cafés con leche vendidos.</li>
           <li><b>Martes antes de la reunión:</b> lo que quedó en rojo en la semana es la lista de temas para los socios.</li>
         </ol>
       </details>

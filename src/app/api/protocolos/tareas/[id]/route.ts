@@ -8,6 +8,7 @@ import { ANTICIPO_MIN, candidatosPara, personalDeTurno, sePuedeCerrar, type Tare
 import { optimizarFoto } from '@/lib/protocolos/fotos'
 import { esControlDeInicio, registrarPesoTolva, validarPesoTolva } from '@/lib/protocolos/tolva'
 import { estadoConteoHoy } from '@/lib/stock/conteo-diario'
+import { esLecheDeBarra } from '@/lib/leche/cruce'
 import { instanteDe } from '@/lib/attendance/jornada'
 
 // ---------------------------------------------------------------------------
@@ -108,6 +109,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (sinContar.length > 0) {
         return NextResponse.json({
           error: `Primero contá los vasos: tocá "Contar los vasos", cargá cuántos hay y guardá. Faltan: ${sinContar.map((v) => v.name).join(', ')}.`,
+        }, { status: 400 })
+      }
+    }
+
+    // Control de leche: toda la leche de barra (cada tipo) contada en Stock en
+    // la última hora. Con eso se cruza lo usado contra los cafés con leche
+    // vendidos (lib/leche/cruce)
+    if (t.protocolos.registro === 'conteo_leche') {
+      const desde = new Date(instanteDe(t.fecha, t.hora).getTime() - 60 * 60_000).toISOString()
+      const { data: items } = await admin.from('stock_items').select('name, unit, area, is_active, last_counted_at').eq('is_active', true).eq('area', 'barra').eq('unit', 'l')
+      const leches = ((items ?? []) as { name: string; unit: string; area: string | null; is_active: boolean; last_counted_at: string | null }[]).filter(esLecheDeBarra)
+      const sinContar = leches.filter((l) => !l.last_counted_at || l.last_counted_at < desde)
+      if (sinContar.length > 0) {
+        return NextResponse.json({
+          error: `Primero contá la leche: tocá "Contar la leche", cargá cuántos litros hay de cada una (la de la barra y la del depósito) y guardá. Faltan: ${sinContar.map((l) => l.name).join(', ')}.`,
         }, { status: 400 })
       }
     }

@@ -17,6 +17,7 @@ import { ReportarFaltanteDialog } from '@/components/cocina/ReportarFaltanteDial
 import type { Elaborado, ElaboradosPayload } from '@/lib/produccion/elaborados'
 import type { ConteoDelDia } from '@/lib/stock/conteo-diario'
 import { coincideBusqueda } from '@/lib/buscar'
+import { dudaDeUnidad, nombreUnidad, type DudaUnidad } from '@/lib/stock/unidades'
 
 // ---------------------------------------------------------------------------
 // Elaborados de cocina — todo lo que se prepara, en un lugar
@@ -285,6 +286,17 @@ function Conteo({ elaborados, busqueda, onListo }: { elaborados: Elaborado[]; bu
   const [errores, setErrores] = useState<Record<string, string>>({})
   const [guardando, setGuardando] = useState(false)
   const [comentario, setComentario] = useState('')
+  // Una sola unidad (kg, l o unidades): si el número parece en gramos se
+  // pregunta antes de guardar. confirmados = "sí, es así"; dudasServidor = las
+  // que frenó el servidor (que mira también el mínimo).
+  const [confirmados, setConfirmados] = useState<Record<string, boolean>>({})
+  const [dudasServidor, setDudasServidor] = useState<Record<string, DudaUnidad>>({})
+  const dudaDe = (e: Elaborado): DudaUnidad | null => {
+    if (confirmados[e.id]) return null
+    const n = parseFloat((valores[e.id] ?? '').replace(',', '.'))
+    if (!Number.isFinite(n)) return null
+    return dudaDeUnidad(e.name, e.unit, n, e.current_qty, 0) ?? dudasServidor[e.id] ?? null
+  }
 
   // Se guarda TODO lo cargado; la búsqueda solo achica lo que se ve
   const cargados = elaborados.filter((e) => (valores[e.id] ?? '').trim() !== '')
@@ -292,8 +304,9 @@ function Conteo({ elaborados, busqueda, onListo }: { elaborados: Elaborado[]; bu
   const visibles = q ? elaborados.filter((e) => coincideBusqueda(e.name, q)) : elaborados
   const falta = cargados.filter((e) => {
     const n = parseFloat((valores[e.id] ?? '').replace(',', '.'))
-    return !Number.isFinite(n) || n < 0 || (necesitaNota(e.current_qty, n, e.unit) && !(notas[e.id] ?? '').trim())
+    return !Number.isFinite(n) || n < 0 || !!dudaDe(e) || (necesitaNota(e.current_qty, n, e.unit) && !(notas[e.id] ?? '').trim())
   })
+  const conDuda = cargados.filter((e) => dudaDe(e)).length
 
   async function guardar() {
     setGuardando(true)
@@ -308,18 +321,23 @@ function Conteo({ elaborados, busqueda, onListo }: { elaborados: Elaborado[]; bu
             stock_item_id: e.id,
             qty: parseFloat((valores[e.id] ?? '').replace(',', '.')),
             nota: (notas[e.id] ?? '').trim() || null,
+            confirmado_unidad: confirmados[e.id] === true,
           })),
         }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok && !json.resultados) throw new Error(json.error ?? 'No se pudo guardar')
-      const errs = Object.fromEntries(((json.resultados ?? []) as { stock_item_id: string; ok: boolean; error?: string }[])
-        .filter((r) => !r.ok).map((r) => [r.stock_item_id, r.error ?? 'Error']))
-      setErrores(errs)
+      const res2 = (json.resultados ?? []) as { stock_item_id: string; ok: boolean; error?: string; duda_unidad?: DudaUnidad }[]
+      const errs = Object.fromEntries(res2.filter((r) => !r.ok && !r.duda_unidad).map((r) => [r.stock_item_id, r.error ?? 'Error']))
+      const dudas = Object.fromEntries(res2.filter((r) => r.duda_unidad).map((r) => [r.stock_item_id, r.duda_unidad!]))
+      setDudasServidor(dudas)
+      for (const id of Object.keys(dudas)) errs[id] = ''
+      setErrores(Object.fromEntries(Object.entries(errs).filter(([, m]) => m)))
       if (json.guardados > 0) {
         toast.success(`Conteo guardado (${json.guardados}): le llegó el aviso al equipo`)
-        setValores((v) => Object.fromEntries(Object.entries(v).filter(([id]) => errs[id])))
+        setValores((v) => Object.fromEntries(Object.entries(v).filter(([id]) => id in errs)))
         setNotas({})
+        setConfirmados({})
         if (Object.keys(errs).length === 0) setComentario('')
         onListo()
       }
@@ -334,7 +352,7 @@ function Conteo({ elaborados, busqueda, onListo }: { elaborados: Elaborado[]; bu
   return (
     <div className="space-y-2">
       <p className="px-1 text-[11.5px] text-[#7d6c64]">
-        Escribí cuánto hay de cada uno (en su unidad) y guardá todo junto. Lo que no contás, dejalo vacío.
+        Escribí cuánto hay de cada uno <b>en su unidad: kilos, litros o unidades, nunca gramos</b> (800 g = 0,8 kg). Guardá todo junto; lo que no contás, dejalo vacío.
         Al guardar, a socios y encargados les llega el resumen por notificación.
       </p>
       {q && (
@@ -358,12 +376,37 @@ function Conteo({ elaborados, busqueda, onListo }: { elaborados: Elaborado[]; bu
                 <input
                   inputMode="decimal"
                   value={v}
-                  onChange={(ev) => setValores((x) => ({ ...x, [e.id]: ev.target.value }))}
+                  onChange={(ev) => {
+                    setValores((x) => ({ ...x, [e.id]: ev.target.value }))
+                    setConfirmados((x) => (x[e.id] ? { ...x, [e.id]: false } : x))
+                    setDudasServidor((x) => { if (!x[e.id]) return x; const y = { ...x }; delete y[e.id]; return y })
+                  }}
                   placeholder="—"
                   className="w-20 rounded-lg border border-[#ebe6df] px-2 py-1.5 text-right text-[14px] font-semibold tabular-nums outline-none focus:border-[#006d5a]"
                 />
-                <span className="w-12 text-[11px] text-[#a39e97]">{e.unit}</span>
+                <span className="w-12 text-[11px] font-semibold text-[#7d6c64]">{e.unit}</span>
               </div>
+              {(() => {
+                const d = dudaDe(e)
+                if (!d) return null
+                return (
+                  <div className="mt-1.5 rounded-lg bg-[#fdf3e3] px-2.5 py-2 text-[11.5px] leading-snug text-[#9a6418]">
+                    <p className="font-semibold">{d.mensaje}</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => { setValores((x) => ({ ...x, [e.id]: String(d.sugerido).replace('.', ',') })); setDudasServidor((x) => { const y = { ...x }; delete y[e.id]; return y }) }}
+                        className="rounded-full bg-[#006d5a] px-2.5 py-1 text-[11px] font-bold text-white"
+                      >
+                        Eran gramos: poner {String(d.sugerido).replace('.', ',')} {e.unit}
+                      </button>
+                      <button type="button" onClick={() => setConfirmados((x) => ({ ...x, [e.id]: true }))} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-[#9a6418] ring-1 ring-[#e8c98f]">
+                        Sí, son {v} {nombreUnidad(e.unit)}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
               {pideNota && (
                 <input
                   value={notas[e.id] ?? ''}
@@ -392,7 +435,8 @@ function Conteo({ elaborados, busqueda, onListo }: { elaborados: Elaborado[]; bu
         {guardando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
         Guardar conteo{cargados.length > 0 ? ` (${cargados.length})` : ''}
       </button>
-      {falta.length > 0 && <p className="text-center text-[11px] text-[#d4943a]">Completá la nota de {falta.length === 1 ? 'la diferencia grande' : `las ${falta.length} diferencias grandes`}</p>}
+      {conDuda > 0 && <p className="text-center text-[11px] text-[#d4943a]">Revisá {conDuda === 1 ? 'el número que parece en gramos' : `los ${conDuda} números que parecen en gramos`}</p>}
+      {falta.length > conDuda && <p className="text-center text-[11px] text-[#d4943a]">Completá la nota de {falta.length - conDuda === 1 ? 'la diferencia grande' : `las ${falta.length - conDuda} diferencias grandes`}</p>}
     </div>
   )
 }

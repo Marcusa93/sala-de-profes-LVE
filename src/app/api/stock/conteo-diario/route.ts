@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRole } from '@/lib/supabase/require-role'
 import { COUNT_STOCK_ROLES } from '@/lib/roles'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
+import type { DudaUnidad } from '@/lib/stock/unidades'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { conteosDeHoy, estadoConteoHoy, resumenParaNotificacion, type LineaConteoDia } from '@/lib/stock/conteo-diario'
 
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
   try {
     const auth = await requireRole(ROLES)
     if (auth.response) return auth.response
-    const body = await request.json().catch(() => null) as { conteos?: { stock_item_id?: string; qty?: number; nota?: string | null }[]; comentario?: string | null } | null
+    const body = await request.json().catch(() => null) as { conteos?: { stock_item_id?: string; qty?: number; nota?: string | null; confirmado_unidad?: boolean }[]; comentario?: string | null } | null
     const conteos = (body?.conteos ?? []).slice(0, 200)
     const comentario = (body?.comentario ?? '').trim().slice(0, 1000) || null
     if (conteos.length === 0) return NextResponse.json({ error: 'No hay nada para guardar' }, { status: 400 })
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
     const porId = new Map((items ?? []).map((i) => [i.id, i]))
 
     const lineas: LineaConteoDia[] = []
-    const resultados: { stock_item_id: string; ok: boolean; error?: string }[] = []
+    const resultados: { stock_item_id: string; ok: boolean; error?: string; duda_unidad?: DudaUnidad }[] = []
     for (const c of conteos) {
       const it = porId.get(c.stock_item_id!)
       if (!it) { resultados.push({ stock_item_id: c.stock_item_id!, ok: false, error: 'No existe' }); continue }
@@ -59,8 +60,9 @@ export async function POST(request: Request) {
       const r = await syncToFudo(admin, it.id, qty, auth.user.id, {
         reason: 'physical_count',
         note: nota ? `Conteo diario: ${nota}`.slice(0, 500) : 'Conteo diario',
+        confirmadoUnidad: c.confirmado_unidad === true,
       })
-      resultados.push({ stock_item_id: it.id, ok: r.success, error: r.success ? undefined : r.error })
+      resultados.push({ stock_item_id: it.id, ok: r.success, error: r.success ? undefined : r.error, ...(r.dudaUnidad ? { duda_unidad: r.dudaUnidad } : {}) })
       if (r.success) lineas.push({ stock_item_id: it.id, name: it.name, unit: it.unit, qty, antes: Number(it.current_qty) })
     }
 

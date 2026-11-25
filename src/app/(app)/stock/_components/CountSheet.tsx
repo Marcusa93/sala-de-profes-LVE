@@ -77,20 +77,28 @@ export function CountSheet({ item, open, canWaste, canConfigure, showMoney, fudo
     return { days, label: format(new Date(item.last_counted_at), "d MMM HH:mm", { locale: es }) }
   }, [item?.last_counted_at])
 
-  async function saveCount() {
-    if (!item || parsed === null || !Number.isFinite(parsed)) { toast.error('Ingresá la cantidad contada'); return }
-    if (parsed < 0) { toast.error('No se permiten cantidades negativas'); return }
-    if (noteRequired && !note.trim()) { toast.error('La diferencia es grande: agregá una nota para auditoría'); return }
+  async function saveCount(cantidad: number | null = parsed, confirmadoUnidad = false) {
+    if (!item || cantidad === null || !Number.isFinite(cantidad)) { toast.error('Ingresá la cantidad contada'); return }
+    if (cantidad < 0) { toast.error('No se permiten cantidades negativas'); return }
+    if (noteRequired && !note.trim() && cantidad === parsed) { toast.error('La diferencia es grande: agregá una nota para auditoría'); return }
     setSaving(true)
     try {
       const res = await fetch('/api/stock/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stockItemId: item.id, newQty: parsed, reason: 'physical_count', note: note.trim() || undefined }),
+        body: JSON.stringify({ stockItemId: item.id, newQty: cantidad, reason: 'physical_count', note: note.trim() || undefined, confirmado_unidad: confirmadoUnidad }),
       })
       const data = await res.json().catch(() => ({}))
+      // Una sola unidad: el número parece en gramos o mililitros (lib/stock/unidades)
+      if (data?.duda_unidad) {
+        const d = data.duda_unidad as { sugerido: number; mensaje: string }
+        setSaving(false)
+        if (window.confirm(`${d.mensaje}\n\nAceptar: eran ${item.unit === 'l' ? 'mililitros' : 'gramos'}, guardar ${formatQty(d.sugerido)} ${item.unit}.\nCancelar: no eran ${item.unit === 'l' ? 'mililitros' : 'gramos'}.`)) return void saveCount(d.sugerido, true)
+        if (window.confirm(`¿Guardar ${formatQty(cantidad)} ${item.unit} igual?`)) return void saveCount(cantidad, true)
+        return
+      }
       if (!res.ok || data.success === false) throw new Error(data.error ?? data.message ?? 'Fudo no confirmó la actualización')
-      toast.success(`${item.name}: ${formatQty(parsed)} ${item.unit}${data.fudoSynced ? ' → Fudo ✓' : ''}`)
+      toast.success(`${item.name}: ${formatQty(cantidad)} ${item.unit}${data.fudoSynced ? ' → Fudo ✓' : ''}`)
       onUpdated()
       onClose()
     } catch (err) {

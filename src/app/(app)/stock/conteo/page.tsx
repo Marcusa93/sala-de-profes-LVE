@@ -9,6 +9,7 @@ import { FadeIn } from '@/components/ui/motion'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { STOCK_AREAS, areaFromLveCategory, suggestedCountEveryDays, isStockArea, type StockArea } from '@/lib/stock/areas'
 import { coincideBusqueda } from '@/lib/buscar'
+import { dudaDeUnidad, nombreUnidad, type DudaUnidad } from '@/lib/stock/unidades'
 
 // ---------------------------------------------------------------------------
 // Conteo guiado — "qué me toca contar hoy" (o puesta a cero)
@@ -92,6 +93,9 @@ function ConteoContent() {
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
   const [done, setDone] = useState<Record<string, number>>({})
+  // Una sola unidad (kg, l o unidades): un número que parece en gramos o
+  // mililitros se frena y se pregunta (lib/stock/unidades)
+  const [dudas, setDudas] = useState<Record<string, DudaUnidad>>({})
 
   useEffect(() => {
     (async () => {
@@ -177,11 +181,13 @@ function ConteoContent() {
   const counted = plan.filter((i) => done[i.id] !== undefined).length
   const pct = total > 0 ? Math.round((counted / total) * 100) : 0
 
-  async function saveCount(item: Item) {
+  async function saveCount(item: Item, confirmadoUnidad = false) {
     const raw = inputs[item.id]
     if (raw == null || raw.trim() === '') { toast.error('Ingresá la cantidad contada'); return }
     const newQty = parseFloat(raw.replace(',', '.'))
     if (isNaN(newQty) || newQty < 0) { toast.error('Cantidad inválida'); return }
+    const duda = confirmadoUnidad ? null : dudaDeUnidad(item.name, item.unit, newQty, item.current_qty, item.min_qty)
+    if (duda) { setDudas((p) => ({ ...p, [item.id]: duda })); return }
     const noteGiven = notes[item.id]?.trim() || ''
     const bigDiff = needsNote(item.current_qty, newQty, item.unit)
     if (bigDiff && !noteGiven && modo !== 'cero') {
@@ -195,10 +201,12 @@ function ConteoContent() {
       const res = await fetch('/api/stock/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stockItemId: item.id, newQty, reason: 'physical_count', note }),
+        body: JSON.stringify({ stockItemId: item.id, newQty, reason: 'physical_count', note, confirmado_unidad: confirmadoUnidad }),
       })
       const data = await res.json()
+      if (data?.duda_unidad) { setDudas((p) => ({ ...p, [item.id]: data.duda_unidad as DudaUnidad })); return }
       if (!res.ok || !data.success) throw new Error(data.error ?? 'No se pudo guardar')
+      setDudas((p) => { const q = { ...p }; delete q[item.id]; return q })
       setDone((prev) => ({ ...prev, [item.id]: newQty }))
       setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, current_qty: newQty, last_counted_at: new Date().toISOString() } : i)))
       toast.success(`${item.name}: ${newQty} ${item.unit}${data.fudoSynced ? ' → Fudo ✓' : ''}`)
@@ -228,6 +236,7 @@ function ConteoContent() {
         {modo === 'cero'
           ? 'Contá lo que hay físicamente: el número real se escribe en Fudo y borra los negativos. Empezá por lo producido y lo negativo.'
           : 'Lo que toca contar según su frecuencia: producidos y dulces a diario, proteínas cada 3 días, barra semanal. Cada número confirmado va a Fudo.'}
+        {' '}<b>Todo en kilos, litros o unidades, nunca en gramos</b> (800 g = 0,8 kg; 500 ml = 0,5 l).
       </p>
 
       {/* Áreas */}
@@ -331,10 +340,11 @@ function ConteoContent() {
                                   inputMode="decimal"
                                   placeholder="real"
                                   value={raw ?? ''}
-                                  onChange={(e) => setInputs((p) => ({ ...p, [item.id]: e.target.value }))}
+                                  onChange={(e) => { setInputs((p) => ({ ...p, [item.id]: e.target.value })); setDudas((p) => { if (!p[item.id]) return p; const q = { ...p }; delete q[item.id]; return q }) }}
                                   onKeyDown={(e) => { if (e.key === 'Enter') void saveCount(item) }}
                                   className="w-20 rounded-xl border border-[#ebe6df] px-2.5 py-2 text-right text-[14px] font-semibold text-[#3d2c24] outline-none focus:border-[#006d5a]"
                                 />
+                                <span className="w-6 text-[11px] font-semibold text-[#7d6c64]">{item.unit === 'unidad' ? 'u' : item.unit}</span>
                                 <button
                                   onClick={() => void saveCount(item)}
                                   disabled={saving}
@@ -352,6 +362,23 @@ function ConteoContent() {
                               placeholder={bigDiff ? 'Diferencia grande: ¿por qué? (obligatorio)' : 'Nota (opcional)'}
                               className={`mt-2 w-full rounded-xl border px-3 py-2 text-[12px] text-[#3d2c24] outline-none ${bigDiff && !(notes[item.id] ?? '').trim() ? 'border-[#d4943a]' : 'border-[#ebe6df] focus:border-[#006d5a]'}`}
                             />
+                          )}
+                          {!isDone && dudas[item.id] && (
+                            <div className="mt-2 rounded-xl bg-[#fdf3e3] px-3 py-2 text-[12px] leading-snug text-[#9a6418]">
+                              <p className="font-semibold">{dudas[item.id].mensaje}</p>
+                              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => { const d = dudas[item.id]; setInputs((p) => ({ ...p, [item.id]: String(d.sugerido).replace('.', ',') })); setDudas((p) => { const q = { ...p }; delete q[item.id]; return q }) }}
+                                  className="rounded-full bg-[#006d5a] px-3 py-1 text-[11.5px] font-bold text-white"
+                                >
+                                  Eran gramos: poner {String(dudas[item.id].sugerido).replace('.', ',')} {item.unit}
+                                </button>
+                                <button type="button" onClick={() => void saveCount(item, true)} className="rounded-full bg-white px-3 py-1 text-[11.5px] font-bold text-[#9a6418] ring-1 ring-[#e8c98f]">
+                                  Sí, son {raw} {nombreUnidad(item.unit)}
+                                </button>
+                              </div>
+                            </div>
                           )}
                           {!isDone && neg && (
                             <p className="mt-2 flex items-center gap-1 text-[11px] text-[#d4943a]">

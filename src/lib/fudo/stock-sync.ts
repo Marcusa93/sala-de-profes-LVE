@@ -24,6 +24,7 @@ import {
   type FudoEntityType,
 } from '@/lib/fudo/sync-events'
 import { notifyEvent } from '@/lib/push/notify-event'
+import { dudaDeUnidad, type DudaUnidad } from '@/lib/stock/unidades'
 import {
   mapFudoIngredientCategory,
   mapFudoProductCategory,
@@ -96,6 +97,11 @@ type StockWriteOptions = {
    * Fudo otra vez (sería doble); se registra en LVE con lo que quedó en Fudo.
    */
   fudoSumadoPorGasto?: { fudoAfter: number | null } | null
+  /**
+   * El conteo parece en gramos/mililitros (lib/stock/unidades) y quien contó
+   * confirmó que no: se guarda igual.
+   */
+  confirmadoUnidad?: boolean
 }
 
 const MOVEMENT_TYPE_BY_REASON: Record<StockWriteReason, 'ajuste' | 'merma' | 'entrada' | 'out' | 'in'> = {
@@ -992,11 +998,11 @@ export async function syncToFudo(
   newQty: number,
   userId?: string,
   options: StockWriteOptions = {},
-): Promise<{ success: boolean; fudoSynced: boolean; error?: string; movementId?: string | null; fudoPendiente?: boolean }> {
+): Promise<{ success: boolean; fudoSynced: boolean; error?: string; movementId?: string | null; fudoPendiente?: boolean; dudaUnidad?: DudaUnidad }> {
   // 1. Get the stock_item to find fudo link
   const { data: item } = await admin
     .from('stock_items')
-    .select('id, name, unit, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty, cost_per_unit')
+    .select('id, name, unit, fudo_ingredient_id, fudo_product_id, fudo_skip, current_qty, cost_per_unit, min_qty')
     .eq('id', stockItemId)
     .single()
 
@@ -1024,6 +1030,13 @@ export async function syncToFudo(
   const effectiveDelta = options.deltaOverride != null
     ? Math.round(options.deltaOverride * 1000) / 1000
     : delta
+
+  // Una sola unidad: un conteo en kg o l que parece en gramos/mililitros no se
+  // guarda (ni va a Fudo) hasta que quien contó lo corrija o lo confirme
+  if (writeReason === 'physical_count' && !options.confirmadoUnidad) {
+    const duda = dudaDeUnidad(item.name, item.unit, newQty, item.current_qty, (item as { min_qty?: number | null }).min_qty)
+    if (duda) return { success: false, fudoSynced: false, error: `${duda.mensaje} Corregí el número o confirmá que es así.`, dudaUnidad: duda }
+  }
 
   if (writeReason === 'physical_count' && stockWriteNeedsNote(item.current_qty, newQty, item.unit) && !note) {
     return {
