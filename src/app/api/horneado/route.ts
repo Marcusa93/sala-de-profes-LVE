@@ -11,6 +11,8 @@ import { agregarRegistro, borrarRegistro, horneadoDeHoy } from '@/lib/horneado/d
 //   POST  { accion: 'agregar', pieza, tipo, cantidad, nota?, ayer? }
 //         (ayer: true con tipo 'sobrante' = lo que quedó al cierre de ayer, si no se contó)
 //         { accion: 'borrar', id }
+// «Se tiraron» y «Al budín» se descuentan del insumo en Fudo como merma; al
+// borrarlas, vuelven (lib/horneado/datos).
 // Carga cualquiera del equipo (quien hornea); el control lo ven socios y
 // Joaquín en /api/operaciones/horneado.
 // ---------------------------------------------------------------------------
@@ -74,5 +76,5 @@ export async function POST(request: NextRequest) {
     ? await agregarRegistro(u.admin, u.id, { pieza: a.pieza, tipo: a.tipo, cantidad: a.cantidad, nota: a.nota ?? null, deAyer: a.ayer })
     : await borrarRegistro(u.admin, u, a.id)
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status })
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, ...(res.aviso ? { aviso: res.aviso } : {}) })
 }

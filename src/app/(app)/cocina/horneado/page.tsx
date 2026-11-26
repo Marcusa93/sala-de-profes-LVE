@@ -51,6 +51,7 @@ export default function HorneadoPage() {
       const r = await fetch('/api/horneado', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const j = await r.json().catch(() => null)
       if (!r.ok) { toast.error(j?.error ?? 'No se pudo guardar'); return false }
+      if (j?.aviso) toast.warning(j.aviso)
       return true
     } catch {
       toast.error('Sin conexión: no se guardó')
@@ -77,7 +78,7 @@ export default function HorneadoPage() {
       )}
 
       <p className="rounded-xl bg-[#f3efe9] px-3 py-2 text-[11.5px] leading-snug text-[#7d6c64]">
-        Cargá cada tanda cuando sale del horno. Al cierre, cuántas sobraron, cuántas fueron al budín de pan y cuántas se tiraron.
+        Cargá cada tanda cuando sale del horno. Al cierre, cuántas sobraron, cuántas fueron al budín de pan y cuántas se tiraron (esas dos se descuentan solas en Fudo).
       </p>
 
       {data.piezas.map((p) => (
@@ -186,11 +187,12 @@ function TarjetaPieza({ p, registros, nombres, yo, gestion, enviar }: {
                 {ETIQUETA_TIPO[r.tipo]}: <b className="tabular-nums">{r.cantidad}</b>
                 {r.created_by && nombres[r.created_by] ? <span className="text-[#a39e97]"> · {nombres[r.created_by]}</span> : null}
                 {r.nota ? <span className="text-[#a39e97]"> · {r.nota}</span> : null}
+                {r.descontado_en_fudo ? <span className="text-[#a39e97]"> · descontado en Fudo</span> : null}
               </span>
               {(gestion || r.created_by === yo) && (
                 <button
                   type="button"
-                  onClick={() => { if (window.confirm('¿Borrar este registro?')) void enviar({ accion: 'borrar', id: r.id }) }}
+                  onClick={() => { if (window.confirm(r.descontado_en_fudo ? '¿Borrar este registro? Lo descontado vuelve a Fudo.' : '¿Borrar este registro?')) void enviar({ accion: 'borrar', id: r.id }) }}
                   className="shrink-0 rounded-md p-1 text-[#a39e97] hover:bg-[#fef2f2] hover:text-[#ea504c]"
                   aria-label="Borrar registro"
                 >

@@ -76,8 +76,9 @@ type FudoWriteContext = {
 /**
  * transfer_out: envío de producción a la 24 (sale de Santa Fe).
  * transfer_return: ese envío se anuló antes de llegar y la mercadería vuelve.
+ * waste_return: se borró una merma (por ejemplo, una carga de horneado): lo descontado vuelve.
  */
-export type StockWriteReason = 'physical_count' | 'manual_adjustment' | 'waste' | 'reception' | 'transfer_out' | 'transfer_return'
+export type StockWriteReason = 'physical_count' | 'manual_adjustment' | 'waste' | 'waste_return' | 'reception' | 'transfer_out' | 'transfer_return'
 
 type StockWriteOptions = {
   reason?: StockWriteReason
@@ -108,6 +109,8 @@ const MOVEMENT_TYPE_BY_REASON: Record<StockWriteReason, 'ajuste' | 'merma' | 'en
   physical_count: 'ajuste',
   manual_adjustment: 'ajuste',
   waste: 'merma',
+  // Merma que se borró (por ejemplo, una carga de horneado): vuelve al stock
+  waste_return: 'in',
   reception: 'entrada',
   // Envío a la 24: salida propia (no es merma ni venta: reason 'transfer_out')
   transfer_out: 'out',
@@ -115,11 +118,12 @@ const MOVEMENT_TYPE_BY_REASON: Record<StockWriteReason, 'ajuste' | 'merma' | 'en
 }
 
 /** Motivos que son un MOVIMIENTO (delta sobre lo que Fudo tiene ahora), nunca un absoluto */
-const DELTA_REASONS: ReadonlySet<StockWriteReason> = new Set(['waste', 'reception', 'transfer_out', 'transfer_return'])
+const DELTA_REASONS: ReadonlySet<StockWriteReason> = new Set(['waste', 'waste_return', 'reception', 'transfer_out', 'transfer_return'])
 
 /** Origen con el que un movimiento que Fudo no aceptó queda en la cola de reintentos */
 const ORIGEN_REINTENTO: Partial<Record<StockWriteReason, string>> = {
   waste: 'merma',
+  waste_return: 'merma_anulada',
   reception: 'recepcion',
   transfer_out: 'envio_24',
   transfer_return: 'envio_24_anulado',
@@ -1019,7 +1023,9 @@ export async function syncToFudo(
       ? 'stock_reception'
       : writeReason === 'waste'
         ? 'stock_waste'
-        : writeReason === 'transfer_out'
+        : writeReason === 'waste_return'
+          ? 'stock_waste_anulada'
+          : writeReason === 'transfer_out'
           ? 'stock_envio_24'
           : writeReason === 'transfer_return'
             ? 'stock_envio_24_anulado'

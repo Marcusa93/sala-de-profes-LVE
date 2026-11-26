@@ -12,17 +12,22 @@
 export type Pieza = 'medialuna' | 'bollito' | 'tortilla'
 export type TipoRegistro = 'tanda' | 'sobrante' | 'budin' | 'tirado'
 
-export const PIEZAS: { pieza: Pieza; nombre: string; singular: string; venta: string[]; opcion: string[]; personal: string[]; umbral: number }[] = [
+// insumo: el ingrediente de Fudo (las cajas congeladas que se compran). Lo que se
+// tira o va al budín se descuenta de ahí como merma.
+export const PIEZAS: { pieza: Pieza; nombre: string; singular: string; venta: string[]; opcion: string[]; personal: string[]; insumo: string; umbral: number }[] = [
   // Medialuna, Medialuna JyQ, Medialuna Peya, Medialuna j&q peya · en el Clásico · personal
-  { pieza: 'medialuna', nombre: 'Medialunas', singular: 'medialuna', venta: ['86', '100', '369', '382'], opcion: ['86'], personal: ['116'], umbral: 4 },
+  { pieza: 'medialuna', nombre: 'Medialunas', singular: 'medialuna', venta: ['86', '100', '369', '382'], opcion: ['86'], personal: ['116'], insumo: '377', umbral: 4 },
   // Bollito, Bollito peya · en el Clásico · Bollito Personal
-  { pieza: 'bollito', nombre: 'Bollitos', singular: 'bollito', venta: ['87', '381'], opcion: ['87'], personal: ['182'], umbral: 2 },
+  { pieza: 'bollito', nombre: 'Bollitos', singular: 'bollito', venta: ['87', '381'], opcion: ['87'], personal: ['182'], insumo: '376', umbral: 2 },
   // Tortilla Fina, Tortilla fina peya · en el Clásico · personal (la vieja inactiva también)
-  { pieza: 'tortilla', nombre: 'Tortillas', singular: 'tortilla', venta: ['81', '380'], opcion: ['81'], personal: ['181', '340'], umbral: 2 },
+  { pieza: 'tortilla', nombre: 'Tortillas', singular: 'tortilla', venta: ['81', '380'], opcion: ['81'], personal: ['181', '340'], insumo: '505', umbral: 2 },
 ]
 
 /** Budín de pan: suelto y como postre de los menús (para ver si las sobrantes de verdad salen) */
 export const BUDIN_DE_PAN = '64'
+
+/** Lo que sale del stock sin venderse: se descuenta en Fudo como merma */
+export const MERMA_EN_FUDO: ReadonlySet<TipoRegistro> = new Set(['tirado', 'budin'])
 
 export const ETIQUETA_TIPO: Record<TipoRegistro, string> = {
   tanda: 'Tanda horneada',
@@ -46,6 +51,8 @@ export type Registro = {
   nota: string | null
   created_by: string | null
   created_at: string
+  /** Se descontó del insumo en Fudo (sin la migración 20261126 no viene) */
+  descontado_en_fudo?: boolean
 }
 
 /** Cuántas hornear: promedio de lo que salió ese día de la semana, redondeado para arriba */

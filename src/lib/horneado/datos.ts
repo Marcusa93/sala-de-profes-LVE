@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { fechaOperativa } from '@/lib/attendance/jornada'
 import { dow, sumar } from '@/lib/operaciones/fechas'
-import { BUDIN_DE_PAN, INICIO_HORNEADO, PARTE_MANANA, PIEZAS, type BalanceDia, type ControlHorneado, type Pieza, type Recomendado, type Registro, type TipoRegistro } from './config'
+import { syncToFudo } from '@/lib/fudo/stock-sync'
+import { BUDIN_DE_PAN, ETIQUETA_TIPO, INICIO_HORNEADO, MERMA_EN_FUDO, PARTE_MANANA, PIEZAS, type BalanceDia, type ControlHorneado, type Pieza, type Recomendado, type Registro, type TipoRegistro } from './config'
 
 // ---------------------------------------------------------------------------
 // Control de horneado (solo servidor): registros, ventas de Fudo y balance
@@ -183,7 +184,44 @@ export async function controlHorneado(admin: SupabaseClient, dias = 14): Promise
 // Cargar y borrar
 // ---------------------------------------------------------------------------
 
-export type ResultadoHorneado = { ok: true } | { ok: false; status: number; error: string }
+export type ResultadoHorneado = { ok: true; aviso?: string } | { ok: false; status: number; error: string }
+
+const r3 = (n: number) => Math.round(n * 1000) / 1000
+
+/** El insumo de la pieza en Fudo (las cajas congeladas), como item de stock de la app */
+async function insumoDe(admin: SupabaseClient, pieza: Pieza): Promise<{ id: string; current_qty: number } | null> {
+  const p = PIEZAS.find((x) => x.pieza === pieza)!
+  const { data } = await admin.from('stock_items').select('id, current_qty').eq('fudo_ingredient_id', p.insumo).eq('is_active', true).limit(1).maybeSingle()
+  const it = data as { id: string; current_qty: number | null } | null
+  return it ? { id: it.id, current_qty: Number(it.current_qty ?? 0) } : null
+}
+
+const descripcion = (pieza: Pieza, tipo: TipoRegistro, cantidad: number) => {
+  const p = PIEZAS.find((x) => x.pieza === pieza)!
+  return `${cantidad} ${cantidad === 1 ? p.singular : p.nombre.toLowerCase()} ${tipo === 'budin' ? 'al budín de pan' : 'se tiraron'}`
+}
+
+/**
+ * «Se tiraron» y «Al budín de pan» salen del stock sin venderse: se descuentan
+ * del insumo en Fudo como merma. Si Fudo no responde, queda en la cola de
+ * reintentos (lo maneja syncToFudo). Devuelve un aviso si no se pudo.
+ * Sin la columna descontado_en_fudo (migración 20261126) no se toca Fudo: no
+ * habría cómo devolverlo al borrar la carga.
+ */
+async function descontarEnFudo(admin: SupabaseClient, userId: string, registroId: string, r: { pieza: Pieza; tipo: TipoRegistro; cantidad: number; nota: string | null }): Promise<string | undefined> {
+  const { error: sinColumna } = await admin.from('horneado_registros').select('descontado_en_fudo').limit(1)
+  if (sinColumna) return undefined
+  const item = await insumoDe(admin, r.pieza)
+  if (!item) return 'Quedó cargado, pero no se descontó en Fudo: falta vincular el insumo'
+  const nota = `Horneado: ${descripcion(r.pieza, r.tipo, r.cantidad)}${r.nota ? ` (${r.nota})` : ''}`
+  const res = await syncToFudo(admin, item.id, r3(item.current_qty - r.cantidad), userId, { reason: 'waste', note: nota, deltaOverride: -r.cantidad })
+  if (!res.success) {
+    console.error('[horneado] merma en Fudo', res.error)
+    return `Quedó cargado, pero no se descontó en Fudo (${res.error ?? 'error'})`
+  }
+  await admin.from('horneado_registros').update({ descontado_en_fudo: true }).eq('id', registroId)
+  return undefined
+}
 
 export async function agregarRegistro(admin: SupabaseClient, userId: string, r: { pieza: Pieza; tipo: TipoRegistro; cantidad: number; nota: string | null; deAyer?: boolean }): Promise<ResultadoHorneado> {
   // «Quedaron de ayer»: el conteo del cierre de ayer, si nadie lo cargó a la noche
@@ -201,19 +239,44 @@ export async function agregarRegistro(admin: SupabaseClient, userId: string, r: 
     const { error: e1 } = await admin.from('horneado_registros').delete().eq('fecha', fecha).eq('pieza', r.pieza).eq('tipo', 'sobrante')
     if (e1) return { ok: false, status: faltaTablaHorneado(e1.message) ? 503 : 500, error: faltaTablaHorneado(e1.message) ? `Falta correr la migración ${MIGRACION_HORNEADO}` : e1.message }
   }
-  const { error } = await admin.from('horneado_registros').insert(fila)
-  if (error) return { ok: false, status: faltaTablaHorneado(error.message) ? 503 : 500, error: faltaTablaHorneado(error.message) ? `Falta correr la migración ${MIGRACION_HORNEADO}` : error.message }
+  const { data: creado, error } = await admin.from('horneado_registros').insert(fila).select('id').single()
+  if (error || !creado) {
+    const m = error?.message ?? 'No se guardó'
+    return { ok: false, status: faltaTablaHorneado(m) ? 503 : 500, error: faltaTablaHorneado(m) ? `Falta correr la migración ${MIGRACION_HORNEADO}` : m }
+  }
+  if (MERMA_EN_FUDO.has(r.tipo) && r.cantidad > 0) {
+    const aviso = await descontarEnFudo(admin, userId, (creado as { id: string }).id, { ...r, nota })
+    if (aviso) return { ok: true, aviso }
+  }
   return { ok: true }
 }
 
-/** Borra un registro: quien lo cargó (el mismo día) o un encargado/socio */
+/** Borra un registro: quien lo cargó (el mismo día) o un encargado/socio. Si se había descontado en Fudo, lo devuelve. */
 export async function borrarRegistro(admin: SupabaseClient, user: { id: string; role: string }, id: string): Promise<ResultadoHorneado> {
-  const { data } = await admin.from('horneado_registros').select('id, fecha, created_by').eq('id', id).maybeSingle()
-  const r = data as { id: string; fecha: string; created_by: string | null } | null
+  const { data } = await admin.from('horneado_registros').select('*').eq('id', id).maybeSingle()
+  const r = data as Registro | null
   if (!r) return { ok: false, status: 404, error: 'Ya no existe' }
   const gestion = user.role === 'socio' || user.role === 'encargado'
   if (!gestion && (r.created_by !== user.id || r.fecha !== fechaOperativa())) {
     return { ok: false, status: 403, error: 'Solo lo borra quien lo cargó (el mismo día) o un encargado' }
+  }
+  if (r.descontado_en_fudo) {
+    // Se marca antes de devolver: si se toca dos veces «borrar», devuelve una sola
+    const { data: tomado } = await admin.from('horneado_registros').update({ descontado_en_fudo: false }).eq('id', id).eq('descontado_en_fudo', true).select('id')
+    if (tomado?.length) {
+      const item = await insumoDe(admin, r.pieza)
+      const res = item
+        ? await syncToFudo(admin, item.id, r3(item.current_qty + r.cantidad), user.id, {
+          reason: 'waste_return',
+          note: `Horneado: se borró «${ETIQUETA_TIPO[r.tipo]}: ${r.cantidad}» del ${r.fecha}`,
+          deltaOverride: r.cantidad,
+        })
+        : { success: false, error: 'falta vincular el insumo' }
+      if (!res.success) {
+        await admin.from('horneado_registros').update({ descontado_en_fudo: true }).eq('id', id)
+        return { ok: false, status: 502, error: `No se borró: no se pudieron devolver en Fudo (${res.error ?? 'error'})` }
+      }
+    }
   }
   const { error } = await admin.from('horneado_registros').delete().eq('id', id)
   return error ? { ok: false, status: 500, error: error.message } : { ok: true }
