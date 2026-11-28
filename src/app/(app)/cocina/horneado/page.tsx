@@ -21,6 +21,8 @@ import { ETIQUETA_TIPO, type Pieza, type Recomendado, type Registro, type TipoRe
 type PiezaHoy = { pieza: Pieza; nombre: string; singular: string; recomendado: Recomendado | null; sobroAyer: number | null }
 type Datos = {
   hoy: string
+  /** De 6 a 12: lo que sobró se carga como lo que quedó de ayer */
+  manana?: boolean
   falta_migracion: boolean
   registros: Registro[]
   piezas: PiezaHoy[]
@@ -78,7 +80,7 @@ export default function HorneadoPage() {
       )}
 
       <p className="rounded-xl bg-[#f3efe9] px-3 py-2 text-[11.5px] leading-snug text-[#7d6c64]">
-        Cargá cada tanda cuando sale del horno. Al cierre, cuántas sobraron, cuántas fueron al budín de pan y cuántas se tiraron (esas dos se descuentan solas en Fudo).
+        Cargá cada tanda cuando sale del horno. A la mañana, antes de hornear, cuántas quedaron de ayer. Al cierre, cuántas sobraron, cuántas fueron al budín de pan y cuántas se tiraron (esas dos se descuentan solas en Fudo).
       </p>
 
       {data.piezas.map((p) => (
@@ -89,6 +91,7 @@ export default function HorneadoPage() {
           nombres={data.nombres}
           yo={data.yo}
           gestion={data.gestion}
+          manana={!!data.manana}
           enviar={enviar}
         />
       ))}
@@ -98,12 +101,13 @@ export default function HorneadoPage() {
 
 // ---------------------------------------------------------------------------
 
-function TarjetaPieza({ p, registros, nombres, yo, gestion, enviar }: {
+function TarjetaPieza({ p, registros, nombres, yo, gestion, manana, enviar }: {
   p: PiezaHoy
   registros: Registro[]
   nombres: Record<string, string>
   yo: string
   gestion: boolean
+  manana: boolean
   enviar: (b: Record<string, unknown>) => Promise<boolean>
 }) {
   // 'ayer' = lo que quedó al cierre de ayer, si nadie lo contó a la noche
@@ -131,7 +135,7 @@ function TarjetaPieza({ p, registros, nombres, yo, gestion, enviar }: {
           )}
           {p.sobroAyer != null ? (
             <p className="text-[11px] text-[#a39e97]">Ayer sobraron {p.sobroAyer}.</p>
-          ) : !cargando && (
+          ) : !cargando && !manana && (
             <button type="button" onClick={() => setCargando('ayer')} className="mt-1 rounded-lg bg-[#fdf6ec] px-2 py-1 text-[11px] font-semibold text-[#9a6418] active:scale-95">
               ¿Quedaron de ayer? Cargalas
             </button>
@@ -154,7 +158,7 @@ function TarjetaPieza({ p, registros, nombres, yo, gestion, enviar }: {
         <FormCantidad
           tipo={cargando}
           pieza={p}
-          inicial={cargando === 'tanda' ? (rec ? Math.max(1, (horneadas === 0 && esMedialuna && rec.total > 4 ? rec.manana : rec.total - horneadas)) : 6) : cargando === 'sobrante' ? sobrante?.cantidad ?? 0 : cargando === 'ayer' ? 0 : 1}
+          inicial={cargando === 'tanda' ? (rec ? Math.max(1, (horneadas === 0 && esMedialuna && rec.total > 4 ? rec.manana : rec.total - horneadas)) : 6) : cargando === 'sobrante' ? sobrante?.cantidad ?? 0 : cargando === 'ayer' ? p.sobroAyer ?? 0 : 1}
           onCancelar={() => setCargando(null)}
           onGuardar={async (cantidad, nota) => {
             const ok = cargando === 'ayer'
@@ -170,8 +174,11 @@ function TarjetaPieza({ p, registros, nombres, yo, gestion, enviar }: {
           </button>
           <div className="grid grid-cols-3 gap-2">
             {(['sobrante', 'budin', 'tirado'] as const).map((t) => (
-              <button key={t} type="button" onClick={() => setCargando(t)} className="rounded-xl bg-[#f3efe9] px-2 py-2.5 text-[11.5px] font-semibold leading-tight text-[#3d2c24] active:scale-95">
-                {t === 'sobrante' ? (sobrante ? `Sobraron: ${sobrante.cantidad}` : 'Sobraron al cierre') : ETIQUETA_TIPO[t]}
+              // A la mañana el primero es «Quedaron de ayer»: nadie cierra a esa hora
+              <button key={t} type="button" onClick={() => setCargando(t === 'sobrante' && manana ? 'ayer' : t)} className="rounded-xl bg-[#f3efe9] px-2 py-2.5 text-[11.5px] font-semibold leading-tight text-[#3d2c24] active:scale-95">
+                {t !== 'sobrante' ? ETIQUETA_TIPO[t]
+                  : manana ? (p.sobroAyer != null ? `De ayer: ${p.sobroAyer}` : 'Quedaron de ayer')
+                    : sobrante ? `Sobraron: ${sobrante.cantidad}` : 'Sobraron al cierre'}
               </button>
             ))}
           </div>
@@ -227,6 +234,7 @@ function FormCantidad({ tipo, pieza, inicial, onCancelar, onGuardar }: {
   return (
     <div className="space-y-2.5 rounded-xl bg-[#faf8f5] p-3">
       <p className="text-[12.5px] font-semibold text-[#3d2c24]">{pregunta}</p>
+      {tipo === 'ayer' && <p className="-mt-1.5 text-[11px] text-[#7d6c64]">Contá las que hay ahora, antes de hornear.</p>}
       <div className="flex items-center justify-center gap-3">
         <button type="button" onClick={() => setCantidad((c) => Math.max(minimo, c - 1))} className="flex size-11 items-center justify-center rounded-xl bg-white ring-1 ring-[#ebe6df] active:scale-95" aria-label="Una menos">
           <Minus className="size-4" />

@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { fechaOperativa } from '@/lib/attendance/jornada'
 import { dow, sumar } from '@/lib/operaciones/fechas'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
-import { BUDIN_DE_PAN, ETIQUETA_TIPO, INICIO_HORNEADO, MERMA_EN_FUDO, PARTE_MANANA, PIEZAS, type BalanceDia, type ControlHorneado, type Pieza, type Recomendado, type Registro, type TipoRegistro } from './config'
+import { BUDIN_DE_PAN, ETIQUETA_TIPO, HASTA_HORA_MANANA, INICIO_HORNEADO, MERMA_EN_FUDO, PARTE_MANANA, PIEZAS, type BalanceDia, type ControlHorneado, type Pieza, type Recomendado, type Registro, type TipoRegistro } from './config'
 
 // ---------------------------------------------------------------------------
 // Control de horneado (solo servidor): registros, ventas de Fudo y balance
@@ -14,6 +14,12 @@ import { BUDIN_DE_PAN, ETIQUETA_TIPO, INICIO_HORNEADO, MERMA_EN_FUDO, PARTE_MANA
 
 export const MIGRACION_HORNEADO = '20261123d_horneado.sql'
 export const faltaTablaHorneado = (m: string | undefined) => !!m && /horneado_registros/.test(m) && /(does not exist|schema cache|not find)/i.test(m)
+
+/** ¿Es la mañana del día operativo (de 06:00 a HASTA_HORA_MANANA, hora de Argentina)? */
+export function esLaManana(d: Date = new Date()): boolean {
+  const h = new Date(d.getTime() - 3 * 3_600_000).getUTCHours()
+  return h >= 6 && h < HASTA_HORA_MANANA
+}
 
 /** Comienzo de un día operativo: 06:00 de Argentina */
 const inicioDia = (f: string) => `${f}T06:00:00-03:00`
@@ -115,6 +121,8 @@ export async function horneadoDeHoy(admin: SupabaseClient) {
   ])
   return {
     hoy,
+    /** De 6 a 12: lo que sobró se carga como lo de ayer */
+    manana: esLaManana(),
     falta_migracion,
     registros: registros.filter((r) => r.fecha === hoy),
     piezas: PIEZAS.map((p) => ({
@@ -224,21 +232,31 @@ async function descontarEnFudo(admin: SupabaseClient, userId: string, registroId
 }
 
 export async function agregarRegistro(admin: SupabaseClient, userId: string, r: { pieza: Pieza; tipo: TipoRegistro; cantidad: number; nota: string | null; deAyer?: boolean }): Promise<ResultadoHorneado> {
-  // «Quedaron de ayer»: el conteo del cierre de ayer, si nadie lo cargó a la noche
-  const deAyer = r.tipo === 'sobrante' && !!r.deAyer
+  // «Quedaron de ayer»: el conteo del cierre de ayer. A la mañana (6 a 12) todo
+  // lo que sobró va a ayer, aunque venga como «Sobraron al cierre» (pantalla vieja)
+  const manana = esLaManana()
+  const deAyer = r.tipo === 'sobrante' && (!!r.deAyer || manana)
   const fecha = deAyer ? sumar(fechaOperativa(), -1) : fechaOperativa()
-  const nota = deAyer ? 'Contado al otro día' : r.nota?.trim().slice(0, 200) || null
-  const fila = { fecha, pieza: r.pieza, tipo: r.tipo, cantidad: r.cantidad, nota, created_by: userId }
+  let nota = deAyer ? 'Contado al otro día' : r.nota?.trim().slice(0, 200) || null
   if (deAyer) {
-    // No pisa el conteo que se hizo al cierre
-    const { data, error: e0 } = await admin.from('horneado_registros').select('cantidad').eq('fecha', fecha).eq('pieza', r.pieza).eq('tipo', 'sobrante').maybeSingle()
+    const { data, error: e0 } = await admin.from('horneado_registros').select('id, cantidad').eq('fecha', fecha).eq('pieza', r.pieza).eq('tipo', 'sobrante').maybeSingle()
     if (e0) return { ok: false, status: faltaTablaHorneado(e0.message) ? 503 : 500, error: faltaTablaHorneado(e0.message) ? `Falta correr la migración ${MIGRACION_HORNEADO}` : e0.message }
-    if (data) return { ok: false, status: 409, error: `Ya se contaron al cierre de ayer: ${(data as { cantidad: number }).cantidad}` }
+    const previo = data as { id: string; cantidad: number } | null
+    if (previo) {
+      // Pasado el mediodía no se pisa el conteo del cierre de ayer
+      if (!manana) return { ok: false, status: 409, error: `Ya se contaron al cierre de ayer: ${previo.cantidad}` }
+      if (previo.cantidad === r.cantidad) return { ok: true }
+      // A la mañana se recuenta: manda lo que hay, y queda anotado lo que se había cargado
+      nota = `Recontado a la mañana (al cierre se había cargado ${previo.cantidad})`
+      const { error: e2 } = await admin.from('horneado_registros').delete().eq('id', previo.id)
+      if (e2) return { ok: false, status: 500, error: e2.message }
+    }
   } else if (r.tipo === 'sobrante') {
     // Lo que sobró se cuenta una vez por día: si ya estaba, se reemplaza
     const { error: e1 } = await admin.from('horneado_registros').delete().eq('fecha', fecha).eq('pieza', r.pieza).eq('tipo', 'sobrante')
     if (e1) return { ok: false, status: faltaTablaHorneado(e1.message) ? 503 : 500, error: faltaTablaHorneado(e1.message) ? `Falta correr la migración ${MIGRACION_HORNEADO}` : e1.message }
   }
+  const fila = { fecha, pieza: r.pieza, tipo: r.tipo, cantidad: r.cantidad, nota, created_by: userId }
   const { data: creado, error } = await admin.from('horneado_registros').insert(fila).select('id').single()
   if (error || !creado) {
     const m = error?.message ?? 'No se guardó'

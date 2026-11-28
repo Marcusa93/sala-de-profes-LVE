@@ -36,6 +36,14 @@ export const ETIQUETA_TIPO: Record<TipoRegistro, string> = {
   tirado: 'Se tiraron',
 }
 
+/**
+ * Hasta qué hora (AR) es «la mañana»: de 06:00 a esta hora, lo que sobró se
+ * carga como lo que quedó del cierre de AYER (a la mañana nadie cierra).
+ * 27/11/2026: a las 07:29 cargaron 9 medialunas como «Sobraron al cierre» de
+ * ese mismo día, cuando era lo que había quedado del día anterior.
+ */
+export const HASTA_HORA_MANANA = 12
+
 /** Desde cuándo se cargan las tandas: antes no hay con qué cruzar (el 24/11 no se cargó nada) */
 export const INICIO_HORNEADO = '2026-11-25'
 
