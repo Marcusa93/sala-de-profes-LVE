@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { MermaCafe } from './merma'
 
 // ---------------------------------------------------------------------------
 // Tolva contra café vendido — por día y turno (TM hasta las 16, TT después)
@@ -52,6 +53,8 @@ export type ControlCafe = {
   productos: number
   /** true si no hay recetas con café: se cuenta por nombre del plato */
   por_nombre: boolean
+  /** Merma por día y semana, de pesaje a pesaje (lib/tolva/merma); la agrega /api/operaciones/cafe */
+  merma?: MermaCafe | null
 }
 
 const GR_POR_CAFE_DEFAULT = 17
@@ -85,7 +88,7 @@ function turnoDe(iso: string): { fecha: string; turno: Turno } {
 }
 
 /** Gramos de café por producto de Fudo */
-async function productosCafe(db: SupabaseClient): Promise<{ gramos: Map<string, number>; porNombre: boolean }> {
+export async function productosCafe(db: SupabaseClient): Promise<{ gramos: Map<string, number>; porNombre: boolean }> {
   const gramos = new Map<string, number>()
   const { data: insumos } = await db.from('stock_items').select('id, name, unit').ilike('name', 'caf%')
   const cafe = ((insumos ?? []) as { id: string; name: string; unit: string }[]).filter((i) => esInsumoCafe(i.name, i.unit))
@@ -119,7 +122,7 @@ async function productosCafe(db: SupabaseClient): Promise<{ gramos: Map<string, 
 }
 
 /** Ventas de esos productos desde una fecha, todas (de a 1000 filas) */
-async function ventasCafe(db: SupabaseClient, ids: string[], desdeIso: string) {
+export async function ventasCafe(db: SupabaseClient, ids: string[], desdeIso: string) {
   const filas: { fudo_product_id: string; quantity: number | null; sold_at: string }[] = []
   for (let desde = 0; desde < 50_000; desde += 1000) {
     const { data, error } = await db.from('fudo_consumo')

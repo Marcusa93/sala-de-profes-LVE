@@ -4,6 +4,7 @@ import { estDelegado, estPedido, nombreCorto, pesoPrioridad, ultimaSenal } from 
 import type { CajaDia, DatosOperaciones, VentasOperaciones } from './tipos'
 import type { ControlHorneado } from '@/lib/horneado/config'
 import { fueraDeRango, type ControlCafe } from '@/lib/tolva/cruce'
+import { mermaAlta } from '@/lib/tolva/merma'
 import { lecheFuera, type ControlLeche } from '@/lib/leche/cruce'
 
 // ---------------------------------------------------------------------------
@@ -150,6 +151,13 @@ export function alertas(n: Ahora, datos: DatosOperaciones, hecho: Hecho, ventas:
       if (t.diferencia > 0) rojo(`Ayer a ${nombre(t)} la tolva usó ${g} g de café más de lo que piden los ${t.cafes} cafés vendidos`, 'cafe')
       else ambar(`Ayer a ${nombre(t)} se vendieron cafés por ${g} g más de lo que usó la tolva: revisar el peso o las recetas`, 'cafe')
     }
+    // Merma del día, de pesaje a pesaje (con el descarte aparte)
+    const m = cafe.merma?.dias.find((d) => d.fecha === ayer)
+    if (m && m.tramos > 0 && mermaAlta(m)) {
+      const pct = Math.round((m.mermaPct ?? 0) * 100)
+      rojo(`Ayer la merma de café fue ${pct} %: se usaron ${m.merma.toLocaleString('es-AR')} g más de lo que piden los ${m.cafes} cafés vendidos${m.descarte > 0 ? ` (${m.descarte.toLocaleString('es-AR')} g de descarte, ${m.sinExplicar.toLocaleString('es-AR')} g sin explicar)` : ''}`, 'cafe')
+    }
+    if (m && m.alertas > 0) ambar(`Ayer ${m.alertas === 1 ? 'hubo una caída de la tolva que no cierra y se confirmó igual' : `hubo ${m.alertas} caídas de la tolva que no cierran y se confirmaron igual`}: revisar el control de tolva`, 'cafe')
   }
 
   // Leche: ayer sin contar y el último tramo entre conteos fuera de rango
