@@ -6,7 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { sendPushToUser } from '@/lib/push/send'
 import { ANTICIPO_MIN, candidatosPara, personalDeTurno, sePuedeCerrar, type Tarea } from '@/lib/protocolos/protocolos'
 import { optimizarFoto } from '@/lib/protocolos/fotos'
-import { esControlDeInicio, registrarPesoTolva, validarPesoTolva } from '@/lib/protocolos/tolva'
+import { registrarPesoTolva, validarPesajeTolva } from '@/lib/protocolos/tolva'
 import { estadoConteoHoy } from '@/lib/stock/conteo-diario'
 import { esLecheDeBarra } from '@/lib/leche/cruce'
 import { instanteDe } from '@/lib/attendance/jornada'
@@ -138,21 +138,35 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       }
     }
 
-    // Tolva: en los controles que cierran un turno se pide cuánto café se
-    // cargó desde el control anterior (0 si nada). Si el peso subió y no se
-    // dice cuánto se cargó, no se cierra: el consumo daría negativo.
-    // Sin el campo (pantalla vieja todavía abierta) solo se frena si subió.
+    // Tolva: en los cuatro controles se pide, desde el control anterior, cuánto
+    // café se cargó (recarga) y cuánto se tiró calibrando o purgando (descarte),
+    // 0 si nada. Se compara con el pesaje anterior: si subió más que lo cargado
+    // no se cierra; si bajó más de lo posible, hay que confirmarlo.
+    // Sin los campos (pantalla vieja todavía abierta) solo se frena si subió.
     let agregado: number | null = null
-    if (t.protocolos.registro === 'tolva' && medicion != null && !esControlDeInicio(t.hora)) {
-      if (form.has('agregado')) {
-        const crudo = String(form.get('agregado') ?? '').replace(',', '.').trim()
-        agregado = crudo === '' ? NaN : Number(crudo)
-        if (!Number.isFinite(agregado) || agregado < 0 || agregado > 20_000) {
-          return NextResponse.json({ error: 'Falta: cuánto café cargaste en la tolva (0 si no cargaste)' }, { status: 400 })
-        }
+    let descarte: number | null = null
+    let alertaTolva: string | null = null
+    if (t.protocolos.registro === 'tolva' && medicion != null) {
+      const numero = (campo: string) => {
+        const crudo = String(form.get(campo) ?? '').replace(',', '.').trim()
+        const n = crudo === '' ? NaN : Number(crudo)
+        return Number.isFinite(n) && n >= 0 && n <= 20_000 ? n : null
       }
-      const problema = await validarPesoTolva(admin, t.fecha, t.hora, medicion, agregado)
-      if (problema) return NextResponse.json({ error: problema }, { status: 400 })
+      if (form.has('agregado')) {
+        agregado = numero('agregado')
+        if (agregado == null) return NextResponse.json({ error: 'Falta: cuánto café cargaste en la tolva (0 si no cargaste)' }, { status: 400 })
+      }
+      if (form.has('descarte')) {
+        descarte = numero('descarte')
+        if (descarte == null) return NextResponse.json({ error: 'Falta: cuánto café tiraste calibrando o purgando (0 si nada)' }, { status: 400 })
+      }
+      const control = await validarPesajeTolva(admin, t.id, medicion, agregado, descarte, form.get('confirmado') === '1')
+      if (!control.ok) {
+        return 'confirmar' in control
+          ? NextResponse.json({ error: control.confirmar, confirmar: true }, { status: 409 })
+          : NextResponse.json({ error: control.error }, { status: 400 })
+      }
+      alertaTolva = control.alerta
     }
 
     const etiquetas = t.protocolos.requiere_foto ? (t.protocolos.fotos?.length ? t.protocolos.fotos : ['Foto']) : []
@@ -175,12 +189,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
     const fotoPath = fotos[0] ?? null
 
-    const nota = String(form.get('nota') ?? '').trim().slice(0, 500) || null
+    // Una caída de la tolva confirmada va en la nota: así les llega a los encargados
+    const notaEscrita = String(form.get('nota') ?? '').trim()
+    const nota = [notaEscrita, alertaTolva ? `⚠️ Tolva: ${alertaTolva}` : ''].filter(Boolean).join(' · ').slice(0, 500) || null
     const ahora = new Date().toISOString()
-    const { error } = await admin.from('protocolo_tareas').update({
+    const cambios = {
       estado: 'hecha', hecho_por: auth.user.id, hecho_at: ahora, foto_path: fotoPath, fotos: fotos.length ? fotos : null, pasos_ok: pasos, nota, medicion,
       ...(t.asignado_a ? {} : { asignado_a: auth.user.id, asignado_por: auth.user.id, asignado_at: ahora }),
-    }).eq('id', id).neq('estado', 'hecha')
+    }
+    // Recarga, descarte y alerta de la tolva (migración 20261128_tolva_recarga_descarte;
+    // sin ella se guarda igual el resto)
+    const deTolva = t.protocolos.registro === 'tolva' && medicion != null
+      ? { tolva_recarga_gr: agregado, tolva_descarte_gr: descarte, tolva_alerta: alertaTolva }
+      : null
+    let { error } = await admin.from('protocolo_tareas').update(deTolva ? { ...cambios, ...deTolva } : cambios).eq('id', id).neq('estado', 'hecha')
+    if (error && deTolva && /tolva_(recarga|descarte|alerta)/.test(error.message)) {
+      ;({ error } = await admin.from('protocolo_tareas').update(cambios).eq('id', id).neq('estado', 'hecha'))
+    }
     if (error) throw error
 
     // El peso de la tolva pasa solo al registro de Tolva

@@ -94,7 +94,7 @@ const TEMAS: Tema[] = [
   {
     roles: ['socio', 'encargado', 'barista'],
     titulo: 'Barra',
-    texto: 'Tolva (/tolva): el cuaderno de la tolva de café por turno (inicio, agregado y final; el consumo se calcula solo). Descartables (vasos y tapas): se cuentan desde Stock, área descartables, y se descuentan solos al vender para llevar.',
+    texto: 'Tolva (/tolva): el cuaderno de la tolva de café por turno (inicio, agregado y final; el consumo se calcula solo). El peso se carga en el protocolo Control de tolva (4 veces por día): en cada control se pone el peso, la recarga (cuánto café se cargó desde el control anterior) y el descarte (cuánto se tiró calibrando o purgando), 0 si nada. Si el peso subió más que la recarga no se puede cerrar; si bajó más de lo posible en ese tiempo, hay que confirmarlo y les llega el aviso a los encargados. Descartables (vasos y tapas): se cuentan desde Stock, área descartables, y se descuentan solos al vender para llevar.',
   },
   {
     roles: TODOS,

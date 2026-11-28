@@ -9,7 +9,6 @@ import { es } from 'date-fns/locale/es'
 import { Camera, Check, ChevronDown, ClipboardList, Clock, Loader2, Settings2, Sparkles, UserPlus, X, AlertTriangle, Plus, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { esControlDeInicio } from '@/lib/protocolos/tolva'
 
 // ---------------------------------------------------------------------------
 // Protocolos con horario — hoy: limpieza del baño, 4 veces por día
@@ -359,17 +358,23 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
   const [nota, setNota] = useState('')
   const [medicion, setMedicion] = useState('')
   const [agregado, setAgregado] = useState('')
+  const [descarte, setDescarte] = useState('')
+  /** Caída grande de la tolva: el servidor pide confirmarla */
+  const [aConfirmar, setAConfirmar] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
   const todos = protocolo.pasos.every((p) => ok.has(p))
   const faltaFoto = etiquetas.find((_, i) => !fotos[i])
   const pideMedicion = !!protocolo.medicion_etiqueta
   const faltaMedicion = pideMedicion && !(medicion.trim() !== '' && Number(medicion.replace(',', '.')) >= 0)
-  // Tolva: el control que cierra un turno pide cuánto café se cargó (0 si nada)
-  const pideAgregado = protocolo.registro === 'tolva' && pideMedicion && !esControlDeInicio(tarea.hora)
-  const faltaAgregado = pideAgregado && !(agregado.trim() !== '' && Number(agregado.replace(',', '.')) >= 0)
-  const puede = todos && !faltaFoto && !faltaMedicion && !faltaAgregado && !enviando
+  // Tolva: en cada control, desde el control anterior, cuánto café se cargó y
+  // cuánto se tiró calibrando o purgando (0 si nada)
+  const pideAgregado = protocolo.registro === 'tolva' && pideMedicion
+  const numeroOk = (v: string) => v.trim() !== '' && Number(v.replace(',', '.')) >= 0
+  const faltaAgregado = pideAgregado && !numeroOk(agregado)
+  const faltaDescarte = pideAgregado && !numeroOk(descarte)
+  const puede = todos && !faltaFoto && !faltaMedicion && !faltaAgregado && !faltaDescarte && !enviando
 
-  async function enviar() {
+  async function enviar(confirmado = false) {
     setEnviando(true)
     try {
       const fd = new FormData()
@@ -377,10 +382,19 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
       fd.set('pasos', JSON.stringify(protocolo.pasos.filter((p) => ok.has(p))))
       fd.set('nota', nota)
       if (pideMedicion) fd.set('medicion', medicion.replace(',', '.'))
-      if (pideAgregado) fd.set('agregado', agregado.replace(',', '.'))
+      if (pideAgregado) {
+        fd.set('agregado', agregado.replace(',', '.'))
+        fd.set('descarte', descarte.replace(',', '.'))
+        if (confirmado) fd.set('confirmado', '1')
+      }
       fotos.forEach((f, i) => { if (f) fd.set(`foto_${i}`, f, `foto-${i + 1}.jpg`) })
       const r = await fetch(`/api/protocolos/tareas/${tarea.id}`, { method: 'POST', body: fd })
       const j = await r.json().catch(() => null)
+      if (r.status === 409 && j?.confirmar) {
+        setAConfirmar(String(j.error))
+        setEnviando(false)
+        return
+      }
       if (!r.ok) throw new Error(j?.error ?? 'No se pudo registrar')
       toast.success(j?.enTolva ? `¡Listo! El peso quedó en Tolva (${j.enTolva})` : etiquetas.length > 1 ? '¡Listo! Quedó registrado con las fotos' : '¡Listo! Quedó registrado')
       onDone()
@@ -424,7 +438,7 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
             <span className="mb-1 block text-[12.5px] font-semibold text-[#3d2c24]">{protocolo.medicion_etiqueta}</span>
             <div className="flex items-center gap-2">
               <input
-                type="number" inputMode="decimal" min={0} value={medicion} onChange={(e) => setMedicion(e.target.value)}
+                type="number" inputMode="decimal" min={0} value={medicion} onChange={(e) => { setMedicion(e.target.value); setAConfirmar(null) }}
                 placeholder="0"
                 className="w-full rounded-xl border border-[#ebe6df] px-3 py-2.5 text-[16px] font-semibold tabular-nums outline-none focus:border-[#d4943a]"
               />
@@ -435,17 +449,46 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
 
         {pideAgregado && (
           <label className="block">
-            <span className="mb-1 block text-[12.5px] font-semibold text-[#3d2c24]">¿Cuánto café cargaste en la tolva desde el control anterior?</span>
+            <span className="mb-1 block text-[12.5px] font-semibold text-[#3d2c24]">Recarga: ¿cuánto café cargaste en la tolva desde el control anterior?</span>
             <div className="flex items-center gap-2">
               <input
-                type="number" inputMode="decimal" min={0} value={agregado} onChange={(e) => setAgregado(e.target.value)}
+                type="number" inputMode="decimal" min={0} value={agregado} onChange={(e) => { setAgregado(e.target.value); setAConfirmar(null) }}
                 placeholder="0 si no cargaste"
                 className="w-full rounded-xl border border-[#ebe6df] px-3 py-2.5 text-[16px] font-semibold tabular-nums outline-none focus:border-[#d4943a]"
               />
               <span className="text-sm font-semibold text-[#7d6c64]">gr</span>
             </div>
-            <span className="mt-1 block text-[11px] text-[#a39e97]">Sumá todo lo que pusiste en el turno. Si no cargaste, poné 0.</span>
+            <span className="mt-1 block text-[11px] text-[#a39e97]">Sumá todo lo que pusiste desde el control anterior. Si no cargaste, poné 0.</span>
           </label>
+        )}
+
+        {pideAgregado && (
+          <label className="block">
+            <span className="mb-1 block text-[12.5px] font-semibold text-[#3d2c24]">Descarte: ¿cuánto café tiraste calibrando o purgando desde el control anterior?</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" inputMode="decimal" min={0} value={descarte} onChange={(e) => { setDescarte(e.target.value); setAConfirmar(null) }}
+                placeholder="0 si no tiraste"
+                className="w-full rounded-xl border border-[#ebe6df] px-3 py-2.5 text-[16px] font-semibold tabular-nums outline-none focus:border-[#d4943a]"
+              />
+              <span className="text-sm font-semibold text-[#7d6c64]">gr</span>
+            </div>
+            <span className="mt-1 block text-[11px] text-[#a39e97]">El café molido que se tira al ajustar el molino o al purgar. Si no tiraste, poné 0.</span>
+          </label>
+        )}
+
+        {aConfirmar && (
+          <div className="space-y-2 rounded-xl bg-[#fdf6ec] p-3 text-[12.5px] text-[#9a6418] ring-1 ring-[#f0dcc0]">
+            <p className="flex items-start gap-1.5 font-semibold"><AlertTriangle className="mt-0.5 size-4 shrink-0" /> {aConfirmar}</p>
+            <button
+              type="button"
+              onClick={() => void enviar(true)}
+              disabled={enviando}
+              className="w-full rounded-lg bg-[#b0762a] py-2 text-[13px] font-bold text-white disabled:opacity-50"
+            >
+              Sí, pesé bien: registrar igual
+            </button>
+          </div>
         )}
 
         {etiquetas.length > 0 && (
@@ -459,9 +502,9 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
         <textarea value={nota} onChange={(e) => setNota(e.target.value)} maxLength={500} rows={2} placeholder={protocolo.registro === 'conteo_elaborados' ? 'Lo que falta producir (les llega a los encargados)' : 'Algo para avisar (opcional, les llega a los encargados): falta papel, pérdida en el inodoro…'} className="w-full rounded-xl border border-[#ebe6df] px-3 py-2 text-[13px] outline-none focus:border-[#d4943a]" />
 
         <DialogFooter>
-          <button onClick={() => void enviar()} disabled={!puede} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-bold text-white disabled:opacity-40">
+          <button onClick={() => void enviar()} disabled={!puede || !!aConfirmar} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-bold text-white disabled:opacity-40">
             {enviando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : faltaMedicion ? `Falta: ${(protocolo.medicion_etiqueta ?? '').toLowerCase()}` : faltaAgregado ? 'Falta: cuánto café cargaste' : faltaFoto ? `Falta: ${faltaFoto.split(' (')[0].toLowerCase()}` : 'Registrar'}
+            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : faltaMedicion ? `Falta: ${(protocolo.medicion_etiqueta ?? '').toLowerCase()}` : faltaAgregado ? 'Falta: cuánto café cargaste' : faltaDescarte ? 'Falta: cuánto café tiraste' : aConfirmar ? 'Confirmá arriba o corregí el peso' : faltaFoto ? `Falta: ${faltaFoto.split(' (')[0].toLowerCase()}` : 'Registrar'}
           </button>
         </DialogFooter>
       </DialogContent>
