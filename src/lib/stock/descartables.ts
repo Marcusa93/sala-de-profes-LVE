@@ -89,7 +89,8 @@ export async function procesarDescartablesParaLlevar(admin: SupabaseClient): Pro
     }
 
     await admin.from('stock_items').update({ current_qty: despues, updated_at: new Date().toISOString() }).eq('id', item.id)
-    await admin.from('stock_logs').insert({ stock_item_id: item.id, user_id: null, action: 'consumo_para_llevar', old_qty: antes, new_qty: despues, note: `${n} ${item.unit} usados en ventas para llevar` })
+    // «Antes» = lo que había en Fudo (despues + n), no el número de LVE, que puede venir atrasado
+    await admin.from('stock_logs').insert({ stock_item_id: item.id, user_id: null, action: 'consumo_para_llevar', old_qty: Math.round((despues + n) * 1000) / 1000, new_qty: despues, note: `${n} ${item.unit} usados en ventas para llevar` })
     out.descartables[item.name] = n
 
     // Aviso de mínimo (uno cada 12 h por descartable)

@@ -1179,25 +1179,33 @@ export async function syncToFudo(
   }
 
   // 4. Log the change (conteos) + kardex (movimiento valorizado)
+  // El movimiento termina en el número con el que LVE quedó (finalQty), que
+  // para merma/recepción/envío es el que devolvió Fudo. Si es un MOVIMIENTO,
+  // la cantidad es la del movimiento (effectiveDelta) y el «antes» es lo que
+  // había en Fudo: el número de LVE puede venir atrasado (el espejo es cada
+  // hora) y esa diferencia no es parte de la merma. Antes se usaba
+  // finalQty − current_qty: 1 medialuna al budín quedaba como merma de 5
+  // (26/11/2026) y un envío de 1 kg de panceta como 3.244 kg. El salto del
+  // espejo igual queda en stock_logs como 'fudo_mirror' (trigger fn_stock_log).
+  const esMovimiento = DELTA_REASONS.has(writeReason)
+  const appliedDelta = esMovimiento ? effectiveDelta : Math.round((finalQty - item.current_qty) * 1000) / 1000
+  const previousQty = esMovimiento ? Math.round((finalQty - effectiveDelta) * 1000) / 1000 : item.current_qty
+
   await admin.from('stock_logs').insert({
     stock_item_id: stockItemId,
     user_id: userId ?? null,
     action: writeReason,
-    old_qty: item.current_qty,
+    old_qty: previousQty,
     new_qty: finalQty,
     note,
   })
 
-  // El movimiento se registra contra el número con el que LVE quedó (finalQty),
-  // que para merma/recepción es el que devolvió Fudo. Así previous → new → qty
-  // cierran entre sí en el kardex.
-  const appliedDelta = Math.round((finalQty - item.current_qty) * 1000) / 1000
   const movementId = appliedDelta !== 0
     ? await insertStockMovement(admin, {
       stock_item_id: stockItemId,
       movement_type: MOVEMENT_TYPE_BY_REASON[writeReason],
       qty: appliedDelta,
-      previous_qty: item.current_qty,
+      previous_qty: previousQty,
       new_qty: finalQty,
       reason: writeReason,
       note,
